@@ -1,15 +1,16 @@
-# [Project name]
+# Group Budget Monitor
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Monitors spending by group across the Comcast Replit Enterprise account, lets admins set per-group budgets, and emails a configurable list of admins when a group crosses 50/75/90/100% of its budget.
 
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/budget-monitor run dev` — run the web frontend
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `DATABASE_URL` — Postgres connection string; `REPLIT_ENTERPRISE_API_KEY` — Replit Enterprise API key (secret)
 
 ## Stack
 
@@ -18,19 +19,33 @@ _Replace the heading above with the project's name, and this line with one sente
 - DB: PostgreSQL + Drizzle ORM
 - Validation: Zod (`zod/v4`), `drizzle-zod`
 - API codegen: Orval (from OpenAPI spec)
+- Frontend: React + Vite, wouter, TanStack Query, shadcn/ui
 - Build: esbuild (CJS bundle)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `lib/api-spec/openapi.yaml` — API contract (source of truth); codegen → `lib/api-client-react` (hooks) and `lib/api-zod` (validation)
+- `lib/db/src/schema/` — DB tables: `group_budgets`, `admin_emails`, `alerts`, `fired_thresholds`
+- `artifacts/api-server/src/lib/enterprise.ts` — Replit Enterprise API client, serial rate-limited usage queue, directory + spend caches
+- `artifacts/api-server/src/lib/checker.ts` — background threshold checker (every 10 min) + manual check
+- `artifacts/api-server/src/lib/email.ts` — email sending layer (awaiting an email connector)
+- `artifacts/api-server/src/routes/monitor.ts` — all budget-monitor routes
+- `artifacts/budget-monitor/` — web frontend (dashboard `/`, alerts `/alerts`, settings `/settings`); theme in `src/index.css`
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Enterprise `/usage` is rate-limited (~100 req/min): every usage call goes through ONE serial priority queue (`enterprise.ts`) with pacing, Retry-After backoff, and X-RateLimit awareness. Never call `/usage` outside the queue.
+- Group spend loads progressively: `/api/groups` returns immediately with `spendLoaded=false` per group plus `isComplete`/`pendingCount`; the frontend polls every 8s until complete. Null spend is "loading", never $0.
+- Spend cache TTL 10 min; directory (workspaces/groups/members) TTL 15 min; both in-memory, warmed on server start.
+- Billing period = the `interval.startTime` the Enterprise API resolves for `billingPeriod=current`; threshold fire state is keyed by (groupId, periodStart, threshold) in `fired_thresholds` so each threshold emails at most once per period and resets automatically on a new period.
+- If email isn't connected or no admin emails exist, crossed thresholds are NOT marked fired — they retry once email is configured.
+- One email per check per group (highest due threshold) to avoid alert storms when a budget is first set on an already-over group.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Dashboard: all Enterprise groups with current-period spend, inline budget set/edit/remove, % used with color-coded threshold badges, account-wide summary stats, per-group refresh.
+- Alerts: history of alert emails (sent/failed) plus a "run check now" action.
+- Settings: admin notification email list; system status (Enterprise API, email, background checker).
 
 ## User preferences
 
@@ -38,7 +53,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- After editing `lib/api-spec/openapi.yaml`, run codegen before touching server or frontend code. Avoid `format: email` in the spec — Orval emits `zod.email()` which doesn't exist in zod v3 index typings.
+- Express 5: async handlers must be `Promise<void>`; use `res.status().json(); return;`.
 
 ## Pointers
 

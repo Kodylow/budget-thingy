@@ -10,6 +10,16 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: groups
+    description: Enterprise groups and usage
+  - name: budgets
+    description: Per-group budgets
+  - name: admins
+    description: Admin notification emails
+  - name: alerts
+    description: Alert history and checks
+  - name: status
+    description: App/system status
 paths:
   /healthz:
     get:
@@ -24,7 +34,239 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /groups:
+    get:
+      operationId: listGroups
+      tags: [groups]
+      summary: List all groups with usage and budget state
+      description: >
+        Returns every group across all workspaces of the Enterprise account,
+        joined with current billing-period spend (loaded progressively under the
+        Enterprise API rate limit), the configured budget, and threshold state.
+      responses:
+        "200":
+          description: Group list with usage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupsResponse"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /groups/{groupId}/refresh:
+    post:
+      operationId: refreshGroupUsage
+      tags: [groups]
+      summary: Force-refresh one group's usage
+      description: Queues a high-priority usage fetch for one group, bypassing cache TTL.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      responses:
+        "202":
+          description: Refresh queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+  /summary:
+    get:
+      operationId: getSummary
+      tags: [groups]
+      summary: Dashboard summary
+      description: Aggregate stats across all groups and budgets for the current billing period.
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Summary"
+  /budgets:
+    get:
+      operationId: listBudgets
+      tags: [budgets]
+      summary: List all configured group budgets
+      responses:
+        "200":
+          description: Budget list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupBudget"
+  /groups/{groupId}/budget:
+    put:
+      operationId: setGroupBudget
+      tags: [budgets]
+      summary: Set or update the budget for a group
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupBudgetInput"
+      responses:
+        "200":
+          description: Budget saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupBudget"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteGroupBudget
+      tags: [budgets]
+      summary: Remove the budget for a group
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      responses:
+        "200":
+          description: Budget removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          description: No budget configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admins:
+    get:
+      operationId: listAdmins
+      tags: [admins]
+      summary: List admin notification emails
+      responses:
+        "200":
+          description: Admin email list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminEmail"
+    post:
+      operationId: addAdmin
+      tags: [admins]
+      summary: Add an admin notification email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminEmailInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminEmail"
+        "400":
+          description: Invalid or duplicate email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admins/{adminId}:
+    delete:
+      operationId: deleteAdmin
+      tags: [admins]
+      summary: Remove an admin notification email
+      parameters:
+        - name: adminId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /alerts:
+    get:
+      operationId: listAlerts
+      tags: [alerts]
+      summary: Alert history
+      description: Sent threshold alerts, newest first.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+  /alerts/check:
+    post:
+      operationId: runAlertCheck
+      tags: [alerts]
+      summary: Run the budget threshold check now
+      description: Refreshes usage for all budgeted groups and sends any due alert emails immediately.
+      responses:
+        "200":
+          description: Check completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResult"
+        "503":
+          description: Enterprise API not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /status:
+    get:
+      operationId: getStatus
+      tags: [status]
+      summary: System status
+      description: Enterprise API connectivity, email configuration, and background checker state.
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
 components:
+  parameters:
+    GroupIdPath:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +275,207 @@ components:
           type: string
       required:
         - status
-
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+    Group:
+      type: object
+      required: [groupId, workspaceId, name, type, spendLoaded, thresholdsFired]
+      properties:
+        groupId:
+          type: string
+        workspaceId:
+          type: string
+        workspaceName:
+          type: ["string", "null"]
+        name:
+          type: string
+        type:
+          type: string
+          description: Group type (custom, admin, member, guest)
+        memberCount:
+          type: ["integer", "null"]
+          description: Number of members in the group, null while loading
+        spendLoaded:
+          type: boolean
+          description: Whether spend for the current billing period has been fetched yet
+        spendUsd:
+          type: ["number", "null"]
+          description: Current billing-period spend in USD, null while loading
+        spendUpdatedAt:
+          type: ["string", "null"]
+          description: ISO timestamp when spend was last fetched
+        budgetUsd:
+          type: ["number", "null"]
+          description: Configured budget in USD, null if no budget set
+        percentUsed:
+          type: ["number", "null"]
+          description: spend / budget * 100, null if no budget or spend not loaded
+        thresholdsFired:
+          type: array
+          description: Thresholds (50, 75, 90, 100) already alerted this billing period
+          items:
+            type: integer
+    GroupsResponse:
+      type: object
+      required: [groups, isComplete, pendingCount, billingPeriodLabel]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/Group"
+        isComplete:
+          type: boolean
+          description: False while background usage fetches are still pending; poll every ~8s until true
+        pendingCount:
+          type: integer
+          description: Number of groups whose spend has not been fetched yet
+        billingPeriodLabel:
+          type: string
+          description: Human label of the current billing period, e.g. "Jul 2026"
+    Summary:
+      type: object
+      required:
+        [
+          totalGroups,
+          budgetedGroups,
+          totalSpendUsd,
+          totalBudgetUsd,
+          groupsOver50,
+          groupsOver75,
+          groupsOver90,
+          groupsOver100,
+          alertsSentThisPeriod,
+          billingPeriodLabel,
+          isComplete,
+        ]
+      properties:
+        totalGroups:
+          type: integer
+        budgetedGroups:
+          type: integer
+        totalSpendUsd:
+          type: number
+          description: Sum of loaded group spend this billing period
+        totalBudgetUsd:
+          type: number
+          description: Sum of all configured budgets
+        groupsOver50:
+          type: integer
+        groupsOver75:
+          type: integer
+        groupsOver90:
+          type: integer
+        groupsOver100:
+          type: integer
+        alertsSentThisPeriod:
+          type: integer
+        billingPeriodLabel:
+          type: string
+        isComplete:
+          type: boolean
+    GroupBudget:
+      type: object
+      required: [groupId, amountUsd, updatedAt]
+      properties:
+        groupId:
+          type: string
+        amountUsd:
+          type: number
+        updatedAt:
+          type: string
+    GroupBudgetInput:
+      type: object
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+    AdminEmail:
+      type: object
+      required: [id, email, createdAt]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        createdAt:
+          type: string
+    AdminEmailInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          minLength: 3
+    Alert:
+      type: object
+      required:
+        [id, groupId, groupName, threshold, spendUsd, budgetUsd, recipients, sentAt, status]
+      properties:
+        id:
+          type: integer
+        groupId:
+          type: string
+        groupName:
+          type: string
+        threshold:
+          type: integer
+          description: Threshold percent crossed (50, 75, 90, 100)
+        spendUsd:
+          type: number
+        budgetUsd:
+          type: number
+        recipients:
+          type: array
+          items:
+            type: string
+        sentAt:
+          type: string
+        status:
+          type: string
+          description: sent or failed
+        errorMessage:
+          type: ["string", "null"]
+    CheckResult:
+      type: object
+      required: [checkedGroups, alertsSent]
+      properties:
+        checkedGroups:
+          type: integer
+        alertsSent:
+          type: integer
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+    SystemStatus:
+      type: object
+      required:
+        [enterpriseApiConfigured, enterpriseApiOk, emailConfigured, checkerIntervalMinutes]
+      properties:
+        enterpriseApiConfigured:
+          type: boolean
+          description: Whether REPLIT_ENTERPRISE_API_KEY is set
+        enterpriseApiOk:
+          type: boolean
+          description: Whether the last Enterprise API call succeeded
+        enterpriseApiError:
+          type: ["string", "null"]
+          description: Last Enterprise API error message, if any
+        emailConfigured:
+          type: boolean
+          description: Whether the email connector is set up
+        checkerIntervalMinutes:
+          type: integer
+        lastCheckAt:
+          type: ["string", "null"]
