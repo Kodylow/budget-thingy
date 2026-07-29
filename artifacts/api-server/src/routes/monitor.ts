@@ -324,19 +324,14 @@ router.get("/summary", async (req, res): Promise<void> => {
           continue;
         }
         totalSpendUsd += spend.spendUsd;
-        if (budget.amountUsd != null && budget.amountUsd > 0) {
-          totalRemainingUsd += budget.amountUsd - spend.spendUsd;
-          const pct = (spend.spendUsd / budget.amountUsd) * 100;
-          if (pct >= 50) over50 += 1;
-          if (pct >= 75) over75 += 1;
-          if (pct >= 90) over90 += 1;
-          if (pct >= 100) over100 += 1;
-        }
       }
     } catch (err) {
       req.log.error({ err }, "summary directory fetch failed");
     }
   }
+
+  // Remaining is team budget total (from spreadsheet) minus all loaded spend.
+  totalRemainingUsd = totalBudgetUsd - totalSpendUsd;
 
   const billing = getBillingPeriod();
   const allAlerts = await db.select().from(alertsTable);
