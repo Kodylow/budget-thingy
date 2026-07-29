@@ -308,12 +308,15 @@ router.get("/summary", async (req, res): Promise<void> => {
     res.status(400).json({ error: (err as Error).message });
     return;
   }
-  const budgets = await db.select().from(groupBudgetsTable);
+  const [budgets, teamBudgets] = await Promise.all([
+    db.select().from(groupBudgetsTable),
+    db.select().from(teamBudgetsTable),
+  ]);
   const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
+  const totalBudgetUsd = teamBudgets.reduce((sum, tb) => sum + tb.amountUsd, 0);
 
   let totalGroups = 0;
   let totalSpendUsd = 0;
-  let totalBudgetUsd = 0;
   let totalRemainingUsd = 0;
   let budgetedGroups = 0;
   let pending = 0;
@@ -330,7 +333,6 @@ router.get("/summary", async (req, res): Promise<void> => {
         const budget = effectiveGroupBudget(budgetMap.get(g.id), g, dir.budgets.groupLimits);
         if (budget.amountUsd != null && budget.amountUsd > 0) {
           budgetedGroups += 1;
-          totalBudgetUsd += budget.amountUsd;
         }
         const spend = getSpend(g.id, range.key);
         if (!spend) {

@@ -134,7 +134,7 @@ export function TeamBudgetInput({ teamName, currentBudget }: TeamBudgetInputProp
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center justify-end gap-2">
       {currentBudget !== null ? (
         <span className="font-mono text-sm tabular-nums font-semibold" data-testid={`text-team-budget-${teamName}`}>
           ${currentBudget.toFixed(2)}
