@@ -36,7 +36,10 @@ import type {
   ListGroupsParams,
   OkResponse,
   Summary,
-  SystemStatus
+  SystemStatus,
+  TeamBudget,
+  TeamBudgetInput,
+  TeamBudgetsResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -694,6 +697,228 @@ export const useDeleteGroupBudget = <TError = ErrorType<ApiError>,
         TContext
       > => {
       return useMutation(getDeleteGroupBudgetMutationOptions(options));
+    }
+
+export const getGetTeamsBudgetsUrl = () => {
+
+
+
+
+  return `/api/teams/budgets`
+}
+
+/**
+ * @summary List all team budgets
+ */
+export const getTeamsBudgets = async ( options?: RequestInit): Promise<TeamBudgetsResponse> => {
+
+  return customFetch<TeamBudgetsResponse>(getGetTeamsBudgetsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeamsBudgetsQueryKey = () => {
+    return [
+    `/api/teams/budgets`
+    ] as const;
+    }
+
+
+export const getGetTeamsBudgetsQueryOptions = <TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamsBudgetsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamsBudgets>>> = ({ signal }) => getTeamsBudgets({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeamsBudgetsQueryResult = NonNullable<Awaited<ReturnType<typeof getTeamsBudgets>>>
+export type GetTeamsBudgetsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all team budgets
+ */
+
+export function useGetTeamsBudgets<TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeamsBudgetsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSetTeamBudgetUrl = (teamName: string,) => {
+
+
+
+
+  return `/api/teams/${teamName}/budget`
+}
+
+/**
+ * teamName must be URL-encoded (spaces as %20).
+ * @summary Set or update the budget for a team
+ */
+export const setTeamBudget = async (teamName: string,
+    teamBudgetInput: TeamBudgetInput, options?: RequestInit): Promise<TeamBudget> => {
+
+  return customFetch<TeamBudget>(getSetTeamBudgetUrl(teamName),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamBudgetInput)
+  }
+);}
+
+
+
+
+
+export const getSetTeamBudgetMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext> => {
+
+const mutationKey = ['setTeamBudget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setTeamBudget>>, {teamName: string;data: BodyType<TeamBudgetInput>}> = (props) => {
+          const {teamName,data} = props ?? {};
+
+          return  setTeamBudget(teamName,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetTeamBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof setTeamBudget>>>
+    export type SetTeamBudgetMutationBody = BodyType<TeamBudgetInput>
+    export type SetTeamBudgetMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Set or update the budget for a team
+ */
+export const useSetTeamBudget = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setTeamBudget>>,
+        TError,
+        {teamName: string;data: BodyType<TeamBudgetInput>},
+        TContext
+      > => {
+      return useMutation(getSetTeamBudgetMutationOptions(options));
+    }
+
+export const getDeleteTeamBudgetUrl = (teamName: string,) => {
+
+
+
+
+  return `/api/teams/${teamName}/budget`
+}
+
+/**
+ * teamName must be URL-encoded (spaces as %20).
+ * @summary Remove the budget override for a team
+ */
+export const deleteTeamBudget = async (teamName: string, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteTeamBudgetUrl(teamName),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteTeamBudgetMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext> => {
+
+const mutationKey = ['deleteTeamBudget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteTeamBudget>>, {teamName: string}> = (props) => {
+          const {teamName} = props ?? {};
+
+          return  deleteTeamBudget(teamName,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteTeamBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTeamBudget>>>
+
+    export type DeleteTeamBudgetMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Remove the budget override for a team
+ */
+export const useDeleteTeamBudget = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteTeamBudget>>,
+        TError,
+        {teamName: string},
+        TContext
+      > => {
+      return useMutation(getDeleteTeamBudgetMutationOptions(options));
     }
 
 export const getListAdminsUrl = () => {

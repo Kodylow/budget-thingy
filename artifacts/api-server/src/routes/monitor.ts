@@ -3,6 +3,8 @@ import { eq, desc } from "drizzle-orm";
 import {
   db,
   groupBudgetsTable,
+  groupTeamsTable,
+  teamBudgetsTable,
   adminEmailsTable,
   alertsTable,
 } from "@workspace/db";
@@ -14,6 +16,9 @@ import {
   SetGroupBudgetBody,
   SetGroupBudgetResponse,
   DeleteGroupBudgetResponse,
+  GetTeamsBudgetsResponse,
+  SetTeamBudgetBody,
+  SetTeamBudgetResponse,
   ListAdminsResponse,
   AddAdminBody,
   AddAdminResponse,
@@ -104,8 +109,12 @@ router.get("/groups", async (req, res): Promise<void> => {
     const dir = await getDirectory();
     void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
 
-    const budgets = await db.select().from(groupBudgetsTable);
+    const [budgets, groupTeams] = await Promise.all([
+      db.select().from(groupBudgetsTable),
+      db.select().from(groupTeamsTable),
+    ]);
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
+    const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const billing = getBillingPeriod();
 
     let pendingCount = 0;
@@ -126,6 +135,7 @@ router.get("/groups", async (req, res): Promise<void> => {
           workspaceId: g.workspaceId,
           workspaceName: dir.workspaces.get(g.workspaceId)?.name ?? null,
           name: g.name,
+          teamName: groupTeamMap.get(g.name) ?? null,
           type: g.type,
           memberCount: dir.groupMembers.get(g.id)?.length ?? null,
           spendLoaded: !!spend,
@@ -183,8 +193,12 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
 
     const spend = getSpend(group.id, range.key);
     const memberUsage = getMemberUsage(group.id, range.key);
-    const budgets = await db.select().from(groupBudgetsTable);
+    const [budgets, groupTeamsRows] = await Promise.all([
+      db.select().from(groupBudgetsTable),
+      db.select().from(groupTeamsTable),
+    ]);
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
+    const groupTeamMap = new Map(groupTeamsRows.map((gt) => [gt.groupName, gt.teamName]));
     const budget = effectiveGroupBudget(budgetMap.get(group.id), group, dir.budgets.groupLimits);
     const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
     const billingSpend = getSpend(group.id, "billing:current");
@@ -245,6 +259,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           workspaceId: group.workspaceId,
           workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
           name: group.name,
+          teamName: groupTeamMap.get(group.name) ?? null,
           type: group.type,
           memberCount: userIds.length,
           spendLoaded: !!spend,
@@ -360,6 +375,51 @@ router.get("/summary", async (req, res): Promise<void> => {
       isComplete: pending === 0,
     }),
   );
+});
+
+router.get("/teams/budgets", async (_req, res): Promise<void> => {
+  const budgets = await db.select().from(teamBudgetsTable);
+  res.json(
+    GetTeamsBudgetsResponse.parse({
+      budgets: budgets.map((b) => ({
+        teamName: b.teamName,
+        amountUsd: b.amountUsd,
+      })),
+    }),
+  );
+});
+
+router.put("/teams/:teamName/budget", async (req, res): Promise<void> => {
+  const teamName = decodeURIComponent(String(req.params["teamName"]));
+  const parsed = SetTeamBudgetBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const [row] = await db
+    .insert(teamBudgetsTable)
+    .values({ teamName, amountUsd: parsed.data.amountUsd })
+    .onConflictDoUpdate({
+      target: teamBudgetsTable.teamName,
+      set: { amountUsd: parsed.data.amountUsd, updatedAt: new Date() },
+    })
+    .returning();
+  if (!row) {
+    res.status(400).json({ error: "Failed to save team budget" });
+    return;
+  }
+  res.json(
+    SetTeamBudgetResponse.parse({
+      teamName: row.teamName,
+      amountUsd: row.amountUsd,
+    }),
+  );
+});
+
+router.delete("/teams/:teamName/budget", async (req, res): Promise<void> => {
+  const teamName = decodeURIComponent(String(req.params["teamName"]));
+  await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, teamName));
+  res.status(204).send();
 });
 
 router.get("/budgets", async (_req, res): Promise<void> => {

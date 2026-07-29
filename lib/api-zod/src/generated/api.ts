@@ -33,6 +33,7 @@ export const ListGroupsResponse = zod.object({
   "workspaceId": zod.string(),
   "workspaceName": zod.string().nullish(),
   "name": zod.string(),
+  "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "memberCount": zod.number().nullish().describe('Number of members in the group, null while loading'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
@@ -70,6 +71,7 @@ export const GetGroupDetailResponse = zod.object({
   "workspaceId": zod.string(),
   "workspaceName": zod.string().nullish(),
   "name": zod.string(),
+  "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "memberCount": zod.number().nullish().describe('Number of members in the group, null while loading'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
@@ -184,6 +186,50 @@ export const DeleteGroupBudgetParams = zod.object({
 export const DeleteGroupBudgetResponse = zod.object({
   "ok": zod.boolean()
 })
+
+
+/**
+ * @summary List all team budgets
+ */
+export const GetTeamsBudgetsResponse = zod.object({
+  "budgets": zod.array(zod.object({
+  "teamName": zod.string(),
+  "amountUsd": zod.number().nullable()
+}))
+})
+
+
+/**
+ * teamName must be URL-encoded (spaces as %20).
+ * @summary Set or update the budget for a team
+ */
+export const SetTeamBudgetParams = zod.object({
+  "teamName": zod.coerce.string().describe('URL-encoded team name (spaces as %20)')
+})
+
+export const setTeamBudgetBodyAmountUsdMin = 0;
+
+
+
+export const SetTeamBudgetBody = zod.object({
+  "amountUsd": zod.number().min(setTeamBudgetBodyAmountUsdMin)
+})
+
+export const SetTeamBudgetResponse = zod.object({
+  "teamName": zod.string(),
+  "amountUsd": zod.number().nullable()
+})
+
+
+/**
+ * teamName must be URL-encoded (spaces as %20).
+ * @summary Remove the budget override for a team
+ */
+export const DeleteTeamBudgetParams = zod.object({
+  "teamName": zod.coerce.string().describe('URL-encoded team name (spaces as %20)')
+})
+
+export const DeleteTeamBudgetResponse = zod.void()
 
 
 /**

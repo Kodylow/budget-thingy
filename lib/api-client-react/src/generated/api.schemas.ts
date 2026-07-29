@@ -23,6 +23,11 @@ export interface Group {
   /** @nullable */
   workspaceName?: string | null;
   name: string;
+  /**
+     * Team this group belongs to, null if unassigned
+     * @nullable
+     */
+  teamName?: string | null;
   /** Group type (custom, admin, member, guest) */
   type: string;
   /**
@@ -157,6 +162,21 @@ export interface GroupBudget {
 
 export interface GroupBudgetInput {
   /** @exclusiveMinimum 0 */
+  amountUsd: number;
+}
+
+export interface TeamBudget {
+  teamName: string;
+  /** @nullable */
+  amountUsd: number | null;
+}
+
+export interface TeamBudgetsResponse {
+  budgets: TeamBudget[];
+}
+
+export interface TeamBudgetInput {
+  /** @minimum 0 */
   amountUsd: number;
 }
 

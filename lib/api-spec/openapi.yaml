@@ -14,6 +14,8 @@ tags:
     description: Enterprise groups and usage
   - name: budgets
     description: Per-group budgets
+  - name: teams
+    description: Team budgets
   - name: admins
     description: Admin notification emails
   - name: alerts
@@ -185,6 +187,55 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /teams/budgets:
+    get:
+      operationId: getTeamsBudgets
+      tags: [teams]
+      summary: List all team budgets
+      responses:
+        "200":
+          description: Team budget list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetsResponse"
+  /teams/{teamName}/budget:
+    put:
+      operationId: setTeamBudget
+      tags: [teams]
+      summary: Set or update the budget for a team
+      description: teamName must be URL-encoded (spaces as %20).
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetInput"
+      responses:
+        "200":
+          description: Budget saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudget"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteTeamBudget
+      tags: [teams]
+      summary: Remove the budget override for a team
+      description: teamName must be URL-encoded (spaces as %20).
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      responses:
+        "204":
+          description: Budget removed
   /admins:
     get:
       operationId: listAdmins
@@ -309,6 +360,13 @@ components:
       required: true
       schema:
         type: string
+    TeamNamePath:
+      name: teamName
+      in: path
+      required: true
+      description: URL-encoded team name (spaces as %20)
+      schema:
+        type: string
     RangeType:
       name: rangeType
       in: query
@@ -363,6 +421,9 @@ components:
           type: ["string", "null"]
         name:
           type: string
+        teamName:
+          type: ["string", "null"]
+          description: Team this group belongs to, null if unassigned
         type:
           type: string
           description: Group type (custom, admin, member, guest)
@@ -528,6 +589,29 @@ components:
         amountUsd:
           type: number
           exclusiveMinimum: 0
+    TeamBudget:
+      type: object
+      required: [teamName, amountUsd]
+      properties:
+        teamName:
+          type: string
+        amountUsd:
+          type: ["number", "null"]
+    TeamBudgetsResponse:
+      type: object
+      required: [budgets]
+      properties:
+        budgets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudget"
+    TeamBudgetInput:
+      type: object
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: number
+          minimum: 0
     AdminEmail:
       type: object
       required: [id, email, createdAt]

@@ -12,6 +12,11 @@ export interface Group {
   /** @nullable */
   workspaceName?: string | null;
   name: string;
+  /**
+     * Team this group belongs to, null if unassigned
+     * @nullable
+     */
+  teamName?: string | null;
   /** Group type (custom, admin, member, guest) */
   type: string;
   /**

@@ -1,20 +1,41 @@
-import { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet } from 'lucide-react';
-import { useListGroups, useGetSummary, getListGroupsQueryKey, getGetSummaryQueryKey } from '@workspace/api-client-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  useListGroups,
+  useGetSummary,
+  useGetTeamsBudgets,
+  getListGroupsQueryKey,
+  getGetSummaryQueryKey,
+  getGetTeamsBudgetsQueryKey,
+} from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { LoadingCell } from '@/components/loading-cell';
 import { BudgetInput } from '@/components/budget-input';
+import { TeamBudgetInput } from '@/components/team-budget-input';
 import { useLocation } from 'wouter';
 import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
+
+interface TeamSection {
+  teamName: string;
+  memberCount: number;
+  spendUsd: number;
+  spendLoaded: boolean;
+  budgetUsd: number | null;
+  remainingUsd: number | null;
+  percentUsed: number | null;
+  groups: ReturnType<typeof useListGroups>['data'] extends { groups: infer G } ? G : never[];
+}
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const { rangeType, startDate, endDate } = useRange();
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set(['__all__']));
+  const initializedRef = useRef(false);
 
   const queryParams = useMemo(
     () => ({
@@ -23,7 +44,7 @@ export default function Dashboard() {
     }),
     [rangeType, startDate, endDate],
   );
-  
+
   const { data: groupsData, isLoading: groupsLoading } = useListGroups(queryParams, {
     query: {
       queryKey: getListGroupsQueryKey(queryParams),
@@ -42,6 +63,10 @@ export default function Dashboard() {
     },
   });
 
+  const { data: teamBudgetsData } = useGetTeamsBudgets({
+    query: { queryKey: getGetTeamsBudgetsQueryKey() },
+  });
+
   // Invalidate summary only on the transition to complete, not on every render.
   const wasComplete = useRef(false);
   useEffect(() => {
@@ -55,6 +80,88 @@ export default function Dashboard() {
   const groups = groupsData?.groups || [];
   const isComplete = groupsData?.isComplete ?? false;
   const pendingCount = groupsData?.pendingCount ?? 0;
+
+  // Build team budget map
+  const teamBudgetMap = useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const tb of teamBudgetsData?.budgets ?? []) {
+      m.set(tb.teamName, tb.amountUsd);
+    }
+    return m;
+  }, [teamBudgetsData]);
+
+  // Compute team sections
+  const { teamSections, unassigned } = useMemo(() => {
+    const teamMap = new Map<string, typeof groups>();
+    const unassigned: typeof groups = [];
+
+    for (const g of groups) {
+      if (g.teamName) {
+        const existing = teamMap.get(g.teamName) ?? [];
+        existing.push(g);
+        teamMap.set(g.teamName, existing);
+      } else {
+        unassigned.push(g);
+      }
+    }
+
+    const teamSections: TeamSection[] = [];
+    for (const [teamName, teamGroups] of teamMap) {
+      let memberCount = 0;
+      let spendUsd = 0;
+      let spendLoaded = true;
+      for (const g of teamGroups) {
+        memberCount += g.memberCount ?? 0;
+        if (!g.spendLoaded) {
+          spendLoaded = false;
+        } else {
+          spendUsd += g.spendUsd ?? 0;
+        }
+      }
+      const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
+      const hasBudget = budgetUsd !== null && budgetUsd > 0;
+      const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
+      const percentUsed = spendLoaded && hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
+
+      teamSections.push({
+        teamName,
+        memberCount,
+        spendUsd,
+        spendLoaded,
+        budgetUsd: budgetUsd ?? null,
+        remainingUsd,
+        percentUsed,
+        groups: teamGroups as any,
+      });
+    }
+
+    // Sort teams alphabetically
+    teamSections.sort((a, b) => a.teamName.localeCompare(b.teamName));
+
+    return { teamSections, unassigned };
+  }, [groups, teamBudgetMap]);
+
+  // Initialise all teams as expanded when data first arrives
+  useEffect(() => {
+    if (!initializedRef.current && teamSections.length > 0) {
+      initializedRef.current = true;
+      setExpandedTeams((prev) => {
+        const next = new Set(prev);
+        for (const ts of teamSections) next.add(ts.teamName);
+        if (unassigned.length > 0) next.add('__unassigned__');
+        return next;
+      });
+    }
+  }, [teamSections, unassigned]);
+
+  const toggleTeam = (teamName: string) => {
+    setExpandedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamName)) next.delete(teamName);
+      else next.add(teamName);
+      return next;
+    });
+  };
 
   const statCards = [
     {
@@ -94,6 +201,188 @@ export default function Dashboard() {
       loading: summaryLoading,
     },
   ];
+
+  const renderGroupRow = (group: (typeof groups)[0]) => (
+    <tr
+      key={group.groupId}
+      className="border-b border-border hover:bg-muted/50 transition-colors group cursor-pointer"
+      data-testid={`row-group-${group.groupId}`}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, input, a')) return;
+        setLocation(`/groups/${group.groupId}`);
+      }}
+    >
+      <td className="py-3 px-4 pl-10">
+        <div className="flex flex-col">
+          <span className="text-sm font-medium" data-testid={`text-group-name-${group.groupId}`}>
+            {group.name}
+          </span>
+          <span className="text-xs text-muted-foreground uppercase">
+            {group.type}
+          </span>
+        </div>
+      </td>
+      <td className="py-3 px-4">
+        <span className="text-sm" data-testid={`text-workspace-${group.groupId}`}>
+          {group.workspaceName || '—'}
+        </span>
+      </td>
+      <td className="py-3 px-4 text-right">
+        <span className="text-sm font-mono tabular-nums" data-testid={`text-members-${group.groupId}`}>
+          {group.memberCount ?? '—'}
+        </span>
+      </td>
+      <td className="py-3 px-4 text-right">
+        {!group.spendLoaded ? (
+          <div className="flex justify-end"><LoadingCell /></div>
+        ) : (
+          <span className="text-sm font-mono tabular-nums" data-testid={`text-spend-${group.groupId}`}>
+            ${group.spendUsd?.toFixed(2) ?? '0.00'}
+          </span>
+        )}
+      </td>
+      <td className="py-3 px-4 text-right">
+        <div className="flex flex-col items-end gap-1">
+          <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
+          {group.budgetSource && (
+            <Badge variant="secondary" className="text-[9px] h-4 px-1 py-0 uppercase bg-muted/50" title={`Budget source: ${group.budgetSource}`}>
+              {group.budgetSource}
+            </Badge>
+          )}
+        </div>
+      </td>
+      <td className="py-3 px-4 text-right">
+        {!group.spendLoaded || group.budgetUsd === null ? (
+          <span className="text-sm text-muted-foreground">—</span>
+        ) : (
+          <span className={`text-sm font-mono tabular-nums ${group.remainingUsd! < 0 ? 'text-destructive font-bold' : ''}`}>
+            ${group.remainingUsd?.toFixed(2)}
+          </span>
+        )}
+      </td>
+      <td className="py-3 px-4 text-right">
+        <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
+          {!group.spendLoaded || group.budgetUsd === null ? (
+            <span className="text-sm text-muted-foreground">—</span>
+          ) : (
+            <>
+              <ThresholdBadge
+                percentUsed={group.percentUsed ?? null}
+                thresholdsFired={group.thresholdsFired}
+              />
+              <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
+                <div
+                  className={`h-full transition-all duration-500 ${group.percentUsed! >= 100 ? 'bg-destructive' : 'bg-primary'}`}
+                  style={{ width: `${Math.min(group.percentUsed!, 100)}%` }}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+
+  const renderTeamHeader = (team: TeamSection) => {
+    const expanded = expandedTeams.has(team.teamName);
+    const hasBudget = team.budgetUsd !== null && team.budgetUsd > 0;
+    return (
+      <tr
+        key={`team-${team.teamName}`}
+        className="border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer group select-none"
+        data-testid={`row-team-${team.teamName}`}
+        onClick={() => toggleTeam(team.teamName)}
+      >
+        <td className="py-3 px-4 font-semibold text-sm" colSpan={1}>
+          <div className="flex items-center gap-2">
+            {expanded
+              ? <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+              : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            }
+            <span>{team.teamName}</span>
+            <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 font-normal">
+              {team.groups.length} group{team.groups.length !== 1 ? 's' : ''}
+            </Badge>
+          </div>
+        </td>
+        <td className="py-3 px-4">
+          {/* workspace col — blank for team header */}
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm font-mono tabular-nums font-semibold">
+            {team.memberCount}
+          </span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          {!team.spendLoaded ? (
+            <div className="flex justify-end"><LoadingCell /></div>
+          ) : (
+            <span className="text-sm font-mono tabular-nums font-semibold">
+              ${team.spendUsd.toFixed(2)}
+            </span>
+          )}
+        </td>
+        <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+          <TeamBudgetInput teamName={team.teamName} currentBudget={team.budgetUsd} />
+        </td>
+        <td className="py-3 px-4 text-right">
+          {!team.spendLoaded || !hasBudget ? (
+            <span className="text-sm text-muted-foreground">—</span>
+          ) : (
+            <span className={`text-sm font-mono tabular-nums font-semibold ${team.remainingUsd! < 0 ? 'text-destructive' : ''}`}>
+              ${team.remainingUsd!.toFixed(2)}
+            </span>
+          )}
+        </td>
+        <td className="py-3 px-4 text-right">
+          <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
+            {!team.spendLoaded || !hasBudget ? (
+              <span className="text-sm text-muted-foreground">—</span>
+            ) : (
+              <>
+                <span className={`text-xs font-mono tabular-nums font-semibold ${team.percentUsed! >= 100 ? 'text-destructive' : team.percentUsed! >= 75 ? 'text-yellow-600' : ''}`}>
+                  {team.percentUsed!.toFixed(1)}%
+                </span>
+                <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
+                  <div
+                    className={`h-full transition-all duration-500 ${team.percentUsed! >= 100 ? 'bg-destructive' : 'bg-primary'}`}
+                    style={{ width: `${Math.min(team.percentUsed!, 100)}%` }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const renderUnassignedHeader = () => {
+    const expanded = expandedTeams.has('__unassigned__');
+    return (
+      <tr
+        key="team-unassigned"
+        className="border-b border-border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer select-none"
+        data-testid="row-team-unassigned"
+        onClick={() => toggleTeam('__unassigned__')}
+      >
+        <td className="py-3 px-4 font-semibold text-sm text-muted-foreground" colSpan={7}>
+          <div className="flex items-center gap-2">
+            {expanded
+              ? <ChevronDown className="h-4 w-4 flex-shrink-0" />
+              : <ChevronRight className="h-4 w-4 flex-shrink-0" />
+            }
+            <span>Unassigned</span>
+            <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 font-normal">
+              {unassigned.length} group{unassigned.length !== 1 ? 's' : ''}
+            </Badge>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const hasTeams = teamSections.length > 0;
 
   return (
     <div className="p-8 space-y-6">
@@ -147,7 +436,7 @@ export default function Dashboard() {
         <CardHeader>
           <CardTitle>Groups</CardTitle>
           <CardDescription>
-            Monitor spending and set budgets for each group
+            Monitor spending and set budgets by team
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -186,86 +475,26 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {groups.map((group) => (
-                    <tr
-                      key={group.groupId}
-                      className="border-b border-border hover:bg-muted/50 transition-colors group cursor-pointer"
-                      data-testid={`row-group-${group.groupId}`}
-                      onClick={(e) => {
-                        if ((e.target as HTMLElement).closest('button, input, a')) return;
-                        setLocation(`/groups/${group.groupId}`);
-                      }}
-                    >
-                      <td className="py-3 px-4">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium" data-testid={`text-group-name-${group.groupId}`}>
-                            {group.name}
-                          </span>
-                          <span className="text-xs text-muted-foreground uppercase">
-                            {group.type}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="text-sm" data-testid={`text-workspace-${group.groupId}`}>
-                          {group.workspaceName || '—'}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <span className="text-sm font-mono tabular-nums" data-testid={`text-members-${group.groupId}`}>
-                          {group.memberCount ?? '—'}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {!group.spendLoaded ? (
-                          <div className="flex justify-end"><LoadingCell /></div>
-                        ) : (
-                          <span className="text-sm font-mono tabular-nums" data-testid={`text-spend-${group.groupId}`}>
-                            ${group.spendUsd?.toFixed(2) ?? '0.00'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex flex-col items-end gap-1">
-                          <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
-                          {group.budgetSource && (
-                            <Badge variant="secondary" className="text-[9px] h-4 px-1 py-0 uppercase bg-muted/50" title={`Budget source: ${group.budgetSource}`}>
-                              {group.budgetSource}
-                            </Badge>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {!group.spendLoaded || group.budgetUsd === null ? (
-                          <span className="text-sm text-muted-foreground">—</span>
-                        ) : (
-                          <span className={`text-sm font-mono tabular-nums ${group.remainingUsd! < 0 ? 'text-destructive font-bold' : ''}`}>
-                            ${group.remainingUsd?.toFixed(2)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-                          {!group.spendLoaded || group.budgetUsd === null ? (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          ) : (
-                            <>
-                              <ThresholdBadge
-                                percentUsed={group.percentUsed ?? null}
-                                thresholdsFired={group.thresholdsFired}
-                              />
-                              <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
-                                <div 
-                                  className={`h-full transition-all duration-500 ${group.percentUsed! >= 100 ? 'bg-destructive' : 'bg-primary'}`} 
-                                  style={{ width: `${Math.min(group.percentUsed!, 100)}%` }} 
-                                />
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {hasTeams ? (
+                    <>
+                      {teamSections.map((team) => (
+                        <React.Fragment key={`team-section-${team.teamName}`}>
+                          {renderTeamHeader(team)}
+                          {expandedTeams.has(team.teamName) &&
+                            team.groups.map((g: any) => renderGroupRow(g))}
+                        </React.Fragment>
+                      ))}
+                      {unassigned.length > 0 && (
+                        <React.Fragment key="team-section-unassigned">
+                          {renderUnassignedHeader()}
+                          {expandedTeams.has('__unassigned__') &&
+                            unassigned.map((g) => renderGroupRow(g))}
+                        </React.Fragment>
+                      )}
+                    </>
+                  ) : (
+                    groups.map((group) => renderGroupRow(group))
+                  )}
                 </tbody>
               </table>
               {groups.length === 0 && (
