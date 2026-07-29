@@ -13,6 +13,6 @@ export interface GroupsResponse {
   isComplete: boolean;
   /** Number of groups whose spend has not been fetched yet */
   pendingCount: number;
-  /** Human label of the current billing period, e.g. "Jul 2026" */
+  /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
 }

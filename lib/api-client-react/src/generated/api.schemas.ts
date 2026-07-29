@@ -43,10 +43,20 @@ export interface Group {
      */
   spendUpdatedAt?: string | null;
   /**
-     * Configured budget in USD, null if no budget set
+     * Effective budget in USD (app budget if set, else platform group limit), null if neither
      * @nullable
      */
   budgetUsd?: number | null;
+  /**
+     * Where the effective budget comes from ("app" or "platform"), null if no budget
+     * @nullable
+     */
+  budgetSource?: string | null;
+  /**
+     * budget - spend, null if no budget or spend not loaded
+     * @nullable
+     */
+  remainingUsd?: number | null;
   /**
      * spend / budget * 100, null if no budget or spend not loaded
      * @nullable
@@ -62,8 +72,63 @@ export interface GroupsResponse {
   isComplete: boolean;
   /** Number of groups whose spend has not been fetched yet */
   pendingCount: number;
-  /** Human label of the current billing period, e.g. "Jul 2026" */
+  /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
+}
+
+export interface GroupMember {
+  userId: string;
+  /** @nullable */
+  username?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /**
+     * Full name if available
+     * @nullable
+     */
+  name?: string | null;
+  /**
+     * Workspace role (admin, member, viewer, guest)
+     * @nullable
+     */
+  role?: string | null;
+  /**
+     * Whether the member's workspace access is disabled
+     * @nullable
+     */
+  isDisabled?: boolean | null;
+  /**
+     * Platform per-user limit, or the workspace default user limit; null if none
+     * @nullable
+     */
+  allocatedBudgetUsd?: number | null;
+  /**
+     * user_limit, workspace_default, or null
+     * @nullable
+     */
+  budgetSource?: string | null;
+  spendLoaded: boolean;
+  /**
+     * Usage in the selected range attributable to this user within the group
+     * @nullable
+     */
+  spendUsd?: number | null;
+  /** @nullable */
+  remainingUsd?: number | null;
+  /** @nullable */
+  percentUsed?: number | null;
+}
+
+export interface GroupDetail {
+  group: Group;
+  members: GroupMember[];
+  /** Sum of loaded member spend (reconciles with group spend plus unattributed) */
+  membersSpendUsd: number;
+  /** Group spend not attributable to a listed member (deleted users, shared costs) */
+  unattributedSpendUsd: number;
+  /** False while member usage is still loading; poll every ~8s until true */
+  isComplete: boolean;
+  rangeLabel: string;
 }
 
 export interface Summary {
@@ -71,8 +136,10 @@ export interface Summary {
   budgetedGroups: number;
   /** Sum of loaded group spend this billing period */
   totalSpendUsd: number;
-  /** Sum of all configured budgets */
+  /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
+  /** Sum of remaining budget across budgeted groups with loaded spend */
+  totalRemainingUsd?: number;
   groupsOver50: number;
   groupsOver75: number;
   groupsOver90: number;
@@ -142,6 +209,71 @@ export interface SystemStatus {
   /** @nullable */
   lastCheckAt?: string | null;
 }
+
+export type RangeTypeParameter = typeof RangeTypeParameter[keyof typeof RangeTypeParameter];
+
+
+export const RangeTypeParameter = {
+  billing: 'billing',
+  mtd: 'mtd',
+  ytd: 'ytd',
+  custom: 'custom',
+} as const;
+
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+export type StartDateParameter = string;
+
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+export type EndDateParameter = string;
+
+export type ListGroupsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
+export type GetGroupDetailParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
+export type GetSummaryParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
 
 export type ListAlertsParams = {
 /**

@@ -57,10 +57,72 @@ async function rawFetch(
   return { body, headers: res.headers };
 }
 
-/**
- * Serial priority queue for /usage calls (~100 req/min budget).
- * All /usage requests MUST go through this queue — never call /usage concurrently.
- */
+// ---------- Date ranges ----------
+
+export type RangeType = "billing" | "mtd" | "ytd" | "custom";
+
+export interface UsageRange {
+  key: string; // cache key
+  label: string;
+  params: Record<string, string>; // billingPeriod OR startTime/endTime
+}
+
+export function resolveRange(
+  rangeType: string | undefined,
+  startDate?: string,
+  endDate?: string,
+): UsageRange {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  switch (rangeType) {
+    case "mtd": {
+      const start = new Date(Date.UTC(y, m, 1)).toISOString();
+      return {
+        key: `mtd:${y}-${m + 1}`,
+        label: `${now.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })} (MTD)`,
+        params: { startTime: start, endTime: now.toISOString() },
+      };
+    }
+    case "ytd": {
+      const start = new Date(Date.UTC(y, 0, 1)).toISOString();
+      return {
+        key: `ytd:${y}`,
+        label: `${y} year to date`,
+        params: { startTime: start, endTime: now.toISOString() },
+      };
+    }
+    case "custom": {
+      if (!startDate || !endDate) {
+        throw new EnterpriseApiError(400, "startDate and endDate are required for a custom range");
+      }
+      const start = new Date(`${startDate}T00:00:00.000Z`);
+      const end = new Date(`${endDate}T00:00:00.000Z`);
+      end.setUTCDate(end.getUTCDate() + 1); // inclusive end date -> exclusive boundary
+      if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+        throw new EnterpriseApiError(400, "Invalid custom date range");
+      }
+      return {
+        key: `custom:${startDate}:${endDate}`,
+        label: `${startDate} to ${endDate}`,
+        params: { startTime: start.toISOString(), endTime: end.toISOString() },
+      };
+    }
+    default:
+      return {
+        key: "billing:current",
+        label: now.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }),
+        params: { billingPeriod: "current" },
+      };
+  }
+}
+
+export function isBadRangeError(err: unknown): boolean {
+  return err instanceof EnterpriseApiError && err.status === 400;
+}
+
+// ---------- Serial usage queue (~100 req/min budget) ----------
+
 type QueueTask = {
   run: () => Promise<void>;
   priority: number; // 0 = high (interactive), 1 = low (background)
@@ -86,7 +148,7 @@ function pumpQueue(): void {
       if (!task) break;
       queuedKeys.delete(task.key);
       await task.run();
-      // Gentle pacing: ~1.5 calls/sec keeps well under 100/min with headroom.
+      // Gentle pacing: keeps well under 100/min with headroom.
       await new Promise((r) => setTimeout(r, 700));
     }
     queueRunning = false;
@@ -103,6 +165,20 @@ function enqueueUsage(key: string, priority: number, run: () => Promise<void>): 
 
 export function pendingUsageCount(): number {
   return usageQueue.length + (queueRunning ? 1 : 0);
+}
+
+interface UsageGroupEntry {
+  key: { userId?: string; workspaceId?: string; projectId?: string; date?: string };
+  totalCostUsd: number;
+}
+
+interface UsageData {
+  interval: { startTime: string; endTime: string };
+  totalCostUsd: number;
+  attributableTotalCostUsd: number;
+  unattributableTotalCostUsd: number;
+  groups: UsageGroupEntry[];
+  pagination: { cursor: string | null; hasMore: boolean };
 }
 
 async function usageFetch(
@@ -137,7 +213,7 @@ async function usageFetch(
   }
 }
 
-// ---------- Directory (cheap endpoints, paginate fully) ----------
+// ---------- Directory (workspaces, groups, members, platform budgets) ----------
 
 interface Pagination {
   cursor: string | null;
@@ -178,12 +254,42 @@ export interface EnterpriseGroup {
   type: string;
 }
 
-interface UsageData {
-  interval: { startTime: string; endTime: string };
-  totalCostUsd: number;
+export interface EnterpriseMember {
+  userId: string;
+  username: string;
+  email: string;
+  name: string | null;
+  // per-workspace role/disabled state
+  workspaces: Map<string, { role: string; isDisabled: boolean }>;
 }
 
-// ---------- Caches ----------
+interface RawMember {
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  workspaces: { id: string; role: string; isDisabled: boolean }[];
+}
+
+export interface PlatformBudgets {
+  // workspaceId -> group limits (groupId -> amountUsd)
+  groupLimits: Map<string, Map<string, number>>;
+  // workspaceId -> user limits (userId -> amountUsd)
+  userLimits: Map<string, Map<string, number>>;
+  // workspaceId -> default per-user limit
+  workspaceDefaults: Map<string, number>;
+}
+
+interface RawBudget {
+  type: string;
+  workspaceId?: string;
+  groupId?: string;
+  userId?: string;
+  amountUsd?: number;
+}
 
 const DIRECTORY_TTL_MS = 15 * 60 * 1000;
 const USAGE_TTL_MS = 10 * 60 * 1000;
@@ -192,7 +298,9 @@ interface DirectoryCache {
   fetchedAt: number;
   workspaces: Map<string, EnterpriseWorkspace>;
   groups: EnterpriseGroup[];
-  memberCounts: Map<string, number>;
+  groupMembers: Map<string, string[]>; // groupId -> userIds
+  members: Map<string, EnterpriseMember>; // userId -> member
+  budgets: PlatformBudgets;
 }
 
 let directoryCache: DirectoryCache | null = null;
@@ -208,28 +316,77 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
     try {
       const workspaces = await paginate<EnterpriseWorkspace>("/workspaces", {});
       const wsMap = new Map(workspaces.map((w) => [w.id, w]));
+
       const groups: EnterpriseGroup[] = [];
       for (const ws of workspaces) {
-        const wsGroups = await paginate<EnterpriseGroup>("/groups", {
-          workspaceId: ws.id,
-        });
+        const wsGroups = await paginate<EnterpriseGroup>("/groups", { workspaceId: ws.id });
         for (const g of wsGroups) {
           groups.push({ ...g, workspaceId: g.workspaceId || ws.id });
         }
       }
-      const memberCounts = new Map<string, number>();
+
+      const groupMembers = new Map<string, string[]>();
       for (const g of groups) {
         try {
           const users = await paginate<{ userId: string }>(
             `/groups/${encodeURIComponent(g.id)}/users`,
             {},
           );
-          memberCounts.set(g.id, users.length);
+          groupMembers.set(g.id, users.map((u) => u.userId));
         } catch (err) {
           logger.warn({ err, groupId: g.id }, "Failed to fetch group members");
         }
       }
-      directoryCache = { fetchedAt: Date.now(), workspaces: wsMap, groups, memberCounts };
+
+      const rawMembers = await paginate<RawMember>("/members", {});
+      const members = new Map<string, EnterpriseMember>();
+      for (const rm of rawMembers) {
+        const name =
+          [rm.user.firstName, rm.user.lastName].filter(Boolean).join(" ") || null;
+        members.set(rm.user.id, {
+          userId: rm.user.id,
+          username: rm.user.username,
+          email: rm.user.email,
+          name,
+          workspaces: new Map(
+            rm.workspaces.map((w) => [w.id, { role: w.role, isDisabled: w.isDisabled }]),
+          ),
+        });
+      }
+
+      const budgets: PlatformBudgets = {
+        groupLimits: new Map(),
+        userLimits: new Map(),
+        workspaceDefaults: new Map(),
+      };
+      try {
+        const rawBudgets = await paginate<RawBudget>("/budgets", {});
+        for (const b of rawBudgets) {
+          if (!b.workspaceId || b.amountUsd == null) continue;
+          if (b.type === "workspace_group_limit" && b.groupId) {
+            if (!budgets.groupLimits.has(b.workspaceId))
+              budgets.groupLimits.set(b.workspaceId, new Map());
+            budgets.groupLimits.get(b.workspaceId)!.set(b.groupId, b.amountUsd);
+          } else if (b.type === "workspace_user_limit" && b.userId) {
+            if (!budgets.userLimits.has(b.workspaceId))
+              budgets.userLimits.set(b.workspaceId, new Map());
+            budgets.userLimits.get(b.workspaceId)!.set(b.userId, b.amountUsd);
+          } else if (b.type === "workspace_default_user_limit") {
+            budgets.workspaceDefaults.set(b.workspaceId, b.amountUsd);
+          }
+        }
+      } catch (err) {
+        logger.warn({ err }, "Failed to fetch platform budgets");
+      }
+
+      directoryCache = {
+        fetchedAt: Date.now(),
+        workspaces: wsMap,
+        groups,
+        groupMembers,
+        members,
+        budgets,
+      };
       return directoryCache;
     } finally {
       directoryPromise = null;
@@ -238,6 +395,8 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
   return directoryPromise;
 }
 
+// ---------- Group spend cache (keyed by groupId + range) ----------
+
 export interface GroupSpend {
   spendUsd: number;
   fetchedAt: number;
@@ -245,14 +404,15 @@ export interface GroupSpend {
   periodEnd: string;
 }
 
-const spendCache = new Map<string, GroupSpend>();
+const spendCache = new Map<string, GroupSpend>(); // `${rangeKey}|${groupId}`
 
-export function getSpend(groupId: string): GroupSpend | undefined {
-  return spendCache.get(groupId);
+export function getSpend(groupId: string, rangeKey = "billing:current"): GroupSpend | undefined {
+  return spendCache.get(`${rangeKey}|${groupId}`);
 }
 
 export function getBillingPeriod(): { start: string | null; label: string } {
-  for (const s of spendCache.values()) {
+  for (const [k, s] of spendCache) {
+    if (!k.startsWith("billing:current|")) continue;
     const d = new Date(s.periodStart);
     return {
       start: s.periodStart,
@@ -266,26 +426,24 @@ export function getBillingPeriod(): { start: string | null; label: string } {
   };
 }
 
-/**
- * Queue a spend fetch for one group. priority 0 = interactive, 1 = background.
- * Returns false if an identical fetch is already queued.
- */
 export function queueGroupSpendFetch(
   group: EnterpriseGroup,
   priority: number,
   force = false,
   onDone?: (spend: GroupSpend) => void,
+  range: UsageRange = resolveRange("billing"),
 ): boolean {
-  const cached = spendCache.get(group.id);
+  const cacheKey = `${range.key}|${group.id}`;
+  const cached = spendCache.get(cacheKey);
   if (!force && cached && Date.now() - cached.fetchedAt < USAGE_TTL_MS) {
     return false;
   }
-  return enqueueUsage(`usage:${group.id}`, priority, async () => {
+  return enqueueUsage(`usage:${cacheKey}`, priority, async () => {
     try {
       const data = await usageFetch({
         workspaceId: group.workspaceId,
         groupId: group.id,
-        billingPeriod: "current",
+        ...range.params,
       });
       const spend: GroupSpend = {
         spendUsd: data.totalCostUsd,
@@ -293,22 +451,88 @@ export function queueGroupSpendFetch(
         periodStart: data.interval.startTime,
         periodEnd: data.interval.endTime,
       };
-      spendCache.set(group.id, spend);
+      spendCache.set(cacheKey, spend);
       onDone?.(spend);
     } catch (err) {
-      logger.error({ err, groupId: group.id }, "Failed to fetch group usage");
+      logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch group usage");
     }
   });
 }
 
-/** Ensure spend fetches are queued for every group (background priority). */
 export async function refreshAllGroupSpends(
   priority = 1,
   onGroupDone?: (group: EnterpriseGroup, spend: GroupSpend) => void,
+  range: UsageRange = resolveRange("billing"),
 ): Promise<EnterpriseGroup[]> {
   const dir = await getDirectory();
   for (const g of dir.groups) {
-    queueGroupSpendFetch(g, priority, false, (spend) => onGroupDone?.(g, spend));
+    queueGroupSpendFetch(g, priority, false, (spend) => onGroupDone?.(g, spend), range);
   }
   return dir.groups;
+}
+
+// ---------- Per-member group usage (groupBy=member, one call per group+range) ----------
+
+export interface MemberUsage {
+  fetchedAt: number;
+  byUser: Map<string, number>;
+  attributableTotalCostUsd: number;
+  unattributableTotalCostUsd: number;
+  totalCostUsd: number;
+}
+
+const memberUsageCache = new Map<string, MemberUsage>(); // `${rangeKey}|${groupId}`
+
+export function getMemberUsage(groupId: string, rangeKey: string): MemberUsage | undefined {
+  return memberUsageCache.get(`${rangeKey}|${groupId}`);
+}
+
+export function queueMemberUsageFetch(
+  group: EnterpriseGroup,
+  range: UsageRange,
+  priority = 0,
+  force = false,
+): boolean {
+  const cacheKey = `${range.key}|${group.id}`;
+  const cached = memberUsageCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.fetchedAt < USAGE_TTL_MS) {
+    return false;
+  }
+  return enqueueUsage(`member-usage:${cacheKey}`, priority, async () => {
+    try {
+      const byUser = new Map<string, number>();
+      let cursor: string | undefined;
+      let first: UsageData | null = null;
+      for (let page = 0; page < 50; page++) {
+        const data = await usageFetch({
+          workspaceId: group.workspaceId,
+          groupId: group.id,
+          groupBy: "member",
+          limit: "100",
+          cursor,
+          ...range.params,
+        });
+        if (!first) first = data;
+        for (const entry of data.groups) {
+          if (entry.key.userId) {
+            byUser.set(entry.key.userId, (byUser.get(entry.key.userId) ?? 0) + entry.totalCostUsd);
+          }
+        }
+        if (!data.pagination?.hasMore || !data.pagination.cursor) break;
+        cursor = data.pagination.cursor;
+        // Pace intra-task pagination the same as the queue so a multi-page
+        // member fetch can't burst past the /usage rate budget.
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      memberUsageCache.set(cacheKey, {
+        fetchedAt: Date.now(),
+        byUser,
+        attributableTotalCostUsd: first?.attributableTotalCostUsd ?? 0,
+        unattributableTotalCostUsd: first?.unattributableTotalCostUsd ?? 0,
+        totalCostUsd: first?.totalCostUsd ?? 0,
+      });
+    } catch (err) {
+      logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
+    }
+  });
 }

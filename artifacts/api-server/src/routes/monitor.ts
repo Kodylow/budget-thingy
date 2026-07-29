@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import {
   db,
   groupBudgetsTable,
@@ -22,6 +22,7 @@ import {
   ListAlertsResponse,
   RunAlertCheckResponse,
   GetStatusResponse,
+  GetGroupDetailResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -29,9 +30,14 @@ import {
   getDirectory,
   getSpend,
   getBillingPeriod,
-  pendingUsageCount,
   queueGroupSpendFetch,
   refreshAllGroupSpends,
+  queueMemberUsageFetch,
+  getMemberUsage,
+  resolveRange,
+  isBadRangeError,
+  type UsageRange,
+  type EnterpriseGroup,
 } from "../lib/enterprise";
 import { isEmailConfigured } from "../lib/email";
 import {
@@ -40,9 +46,32 @@ import {
   getLastCheckAt,
   CHECK_INTERVAL_MINUTES,
 } from "../lib/checker";
-import { desc } from "drizzle-orm";
 
 const router: IRouter = Router();
+
+function rangeFromQuery(query: Record<string, unknown>): UsageRange {
+  return resolveRange(
+    typeof query["rangeType"] === "string" ? query["rangeType"] : undefined,
+    typeof query["startDate"] === "string" ? query["startDate"] : undefined,
+    typeof query["endDate"] === "string" ? query["endDate"] : undefined,
+  );
+}
+
+interface EffectiveBudget {
+  amountUsd: number | null;
+  source: "app" | "platform" | null;
+}
+
+function effectiveGroupBudget(
+  appBudget: number | undefined,
+  group: EnterpriseGroup,
+  platformGroupLimits: Map<string, Map<string, number>>,
+): EffectiveBudget {
+  if (appBudget != null) return { amountUsd: appBudget, source: "app" };
+  const platform = platformGroupLimits.get(group.workspaceId)?.get(group.id);
+  if (platform != null) return { amountUsd: platform, source: "platform" };
+  return { amountUsd: null, source: null };
+}
 
 function alertToJson(a: typeof alertsTable.$inferSelect) {
   return {
@@ -64,40 +93,50 @@ router.get("/groups", async (req, res): Promise<void> => {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
   }
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
   try {
     const dir = await getDirectory();
-    // Make sure fetches are queued for anything stale (background priority).
-    void refreshAllGroupSpends(1).catch(() => undefined);
+    void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
 
     const budgets = await db.select().from(groupBudgetsTable);
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
-    const period = getBillingPeriod();
+    const billing = getBillingPeriod();
 
     let pendingCount = 0;
     const groups = await Promise.all(
       dir.groups.map(async (g) => {
-        const spend = getSpend(g.id);
+        const spend = getSpend(g.id, range.key);
         if (!spend) pendingCount += 1;
-        const budgetUsd = budgetMap.get(g.id) ?? null;
+        const budget = effectiveGroupBudget(budgetMap.get(g.id), g, dir.budgets.groupLimits);
+        // Threshold state is always tracked against the current billing period.
+        const billingSpend = getSpend(g.id, "billing:current");
         const fired =
-          spend && budgetUsd != null
-            ? await getFiredThresholds(g.id, spend.periodStart)
+          billingSpend && budget.amountUsd != null
+            ? await getFiredThresholds(g.id, billingSpend.periodStart)
             : [];
+        const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
         return {
           groupId: g.id,
           workspaceId: g.workspaceId,
           workspaceName: dir.workspaces.get(g.workspaceId)?.name ?? null,
           name: g.name,
           type: g.type,
-          memberCount: dir.memberCounts.get(g.id) ?? null,
+          memberCount: dir.groupMembers.get(g.id)?.length ?? null,
           spendLoaded: !!spend,
           spendUsd: spend?.spendUsd ?? null,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
-          budgetUsd,
+          budgetUsd: budget.amountUsd,
+          budgetSource: budget.source,
+          remainingUsd:
+            spend && hasBudget ? budget.amountUsd! - spend.spendUsd : null,
           percentUsed:
-            spend && budgetUsd != null && budgetUsd > 0
-              ? (spend.spendUsd / budgetUsd) * 100
-              : null,
+            spend && hasBudget ? (spend.spendUsd / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
         };
       }),
@@ -108,11 +147,128 @@ router.get("/groups", async (req, res): Promise<void> => {
         groups,
         isComplete: pendingCount === 0,
         pendingCount,
-        billingPeriodLabel: period.label,
+        billingPeriodLabel: range.key === "billing:current" ? billing.label : range.label,
       }),
     );
   } catch (err) {
     req.log.error({ err }, "listGroups failed");
+    res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
+  }
+});
+
+router.get("/groups/:groupId", async (req, res): Promise<void> => {
+  if (!isConfigured()) {
+    res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
+    return;
+  }
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  try {
+    const groupId = String(req.params["groupId"]);
+    const dir = await getDirectory();
+    const group = dir.groups.find((g) => g.id === groupId);
+    if (!group) {
+      res.status(404).json({ error: "Group not found" });
+      return;
+    }
+
+    // Ensure both the group total and per-member usage are queued (high priority).
+    queueGroupSpendFetch(group, 0, false, undefined, range);
+    queueMemberUsageFetch(group, range, 0);
+
+    const spend = getSpend(group.id, range.key);
+    const memberUsage = getMemberUsage(group.id, range.key);
+    const budgets = await db.select().from(groupBudgetsTable);
+    const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
+    const budget = effectiveGroupBudget(budgetMap.get(group.id), group, dir.budgets.groupLimits);
+    const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
+    const billingSpend = getSpend(group.id, "billing:current");
+    const fired =
+      billingSpend && budget.amountUsd != null
+        ? await getFiredThresholds(group.id, billingSpend.periodStart)
+        : [];
+
+    const userIds = dir.groupMembers.get(group.id) ?? [];
+    const wsUserLimits = dir.budgets.userLimits.get(group.workspaceId);
+    const wsDefault = dir.budgets.workspaceDefaults.get(group.workspaceId);
+
+    const members = userIds.map((userId) => {
+      const m = dir.members.get(userId);
+      const ws = m?.workspaces.get(group.workspaceId);
+      const userLimit = wsUserLimits?.get(userId);
+      const allocated = userLimit ?? wsDefault ?? null;
+      const budgetSource =
+        userLimit != null ? "user_limit" : wsDefault != null ? "workspace_default" : null;
+      const spendLoaded = !!memberUsage;
+      const spendUsd = memberUsage ? (memberUsage.byUser.get(userId) ?? 0) : null;
+      return {
+        userId,
+        username: m?.username ?? null,
+        email: m?.email ?? null,
+        name: m?.name ?? null,
+        role: ws?.role ?? null,
+        isDisabled: ws?.isDisabled ?? null,
+        allocatedBudgetUsd: allocated,
+        budgetSource,
+        spendLoaded,
+        spendUsd,
+        remainingUsd:
+          spendLoaded && allocated != null && spendUsd != null ? allocated - spendUsd : null,
+        percentUsed:
+          spendLoaded && allocated != null && allocated > 0 && spendUsd != null
+            ? (spendUsd / allocated) * 100
+            : null,
+      };
+    });
+
+    // Reconciliation: members listed in usage but no longer in the group
+    // (removed users) still count toward group spend — fold them into
+    // unattributed so member rows + unattributed = group total.
+    let listedMembersSpend = 0;
+    if (memberUsage) {
+      for (const userId of userIds) {
+        listedMembersSpend += memberUsage.byUser.get(userId) ?? 0;
+      }
+    }
+    const groupTotal = memberUsage?.totalCostUsd ?? spend?.spendUsd ?? 0;
+    const unattributed = memberUsage ? Math.max(0, groupTotal - listedMembersSpend) : 0;
+
+    res.json(
+      GetGroupDetailResponse.parse({
+        group: {
+          groupId: group.id,
+          workspaceId: group.workspaceId,
+          workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
+          name: group.name,
+          type: group.type,
+          memberCount: userIds.length,
+          spendLoaded: !!spend,
+          spendUsd: spend?.spendUsd ?? null,
+          spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
+          budgetUsd: budget.amountUsd,
+          budgetSource: budget.source,
+          remainingUsd: spend && hasBudget ? budget.amountUsd! - spend.spendUsd : null,
+          percentUsed: spend && hasBudget ? (spend.spendUsd / budget.amountUsd!) * 100 : null,
+          thresholdsFired: fired,
+        },
+        members,
+        membersSpendUsd: listedMembersSpend,
+        unattributedSpendUsd: unattributed,
+        isComplete: !!spend && !!memberUsage,
+        rangeLabel: range.label,
+      }),
+    );
+  } catch (err) {
+    if (isBadRangeError(err)) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    req.log.error({ err }, "getGroupDetail failed");
     res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
   }
 });
@@ -130,12 +286,21 @@ router.post("/groups/:groupId/refresh", async (req, res): Promise<void> => {
 });
 
 router.get("/summary", async (req, res): Promise<void> => {
-  const period = getBillingPeriod();
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
   const budgets = await db.select().from(groupBudgetsTable);
   const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
 
   let totalGroups = 0;
   let totalSpendUsd = 0;
+  let totalBudgetUsd = 0;
+  let totalRemainingUsd = 0;
+  let budgetedGroups = 0;
   let pending = 0;
   let over50 = 0;
   let over75 = 0;
@@ -147,15 +312,20 @@ router.get("/summary", async (req, res): Promise<void> => {
       const dir = await getDirectory();
       totalGroups = dir.groups.length;
       for (const g of dir.groups) {
-        const spend = getSpend(g.id);
+        const budget = effectiveGroupBudget(budgetMap.get(g.id), g, dir.budgets.groupLimits);
+        if (budget.amountUsd != null && budget.amountUsd > 0) {
+          budgetedGroups += 1;
+          totalBudgetUsd += budget.amountUsd;
+        }
+        const spend = getSpend(g.id, range.key);
         if (!spend) {
           pending += 1;
           continue;
         }
         totalSpendUsd += spend.spendUsd;
-        const budget = budgetMap.get(g.id);
-        if (budget && budget > 0) {
-          const pct = (spend.spendUsd / budget) * 100;
+        if (budget.amountUsd != null && budget.amountUsd > 0) {
+          totalRemainingUsd += budget.amountUsd - spend.spendUsd;
+          const pct = (spend.spendUsd / budget.amountUsd) * 100;
           if (pct >= 50) over50 += 1;
           if (pct >= 75) over75 += 1;
           if (pct >= 90) over90 += 1;
@@ -167,8 +337,9 @@ router.get("/summary", async (req, res): Promise<void> => {
     }
   }
 
+  const billing = getBillingPeriod();
   const allAlerts = await db.select().from(alertsTable);
-  const periodStart = period.start ? new Date(period.start) : null;
+  const periodStart = billing.start ? new Date(billing.start) : null;
   const alertsSentThisPeriod = allAlerts.filter(
     (a) => a.status === "sent" && (!periodStart || a.sentAt >= periodStart),
   ).length;
@@ -176,15 +347,16 @@ router.get("/summary", async (req, res): Promise<void> => {
   res.json(
     GetSummaryResponse.parse({
       totalGroups,
-      budgetedGroups: budgets.length,
+      budgetedGroups,
       totalSpendUsd,
-      totalBudgetUsd: budgets.reduce((s, b) => s + b.amountUsd, 0),
+      totalBudgetUsd,
+      totalRemainingUsd,
       groupsOver50: over50,
       groupsOver75: over75,
       groupsOver90: over90,
       groupsOver100: over100,
       alertsSentThisPeriod,
-      billingPeriodLabel: period.label,
+      billingPeriodLabel: range.key === "billing:current" ? billing.label : range.label,
       isComplete: pending === 0,
     }),
   );
@@ -356,8 +528,5 @@ router.get("/status", async (_req, res): Promise<void> => {
     }),
   );
 });
-
-// referenced to avoid unused import when pendingUsageCount is only used elsewhere
-void pendingUsageCount;
 
 export default router;

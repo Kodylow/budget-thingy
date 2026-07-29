@@ -25,11 +25,15 @@ import type {
   Alert,
   ApiError,
   CheckResult,
+  GetGroupDetailParams,
+  GetSummaryParams,
   GroupBudget,
   GroupBudgetInput,
+  GroupDetail,
   GroupsResponse,
   HealthStatus,
   ListAlertsParams,
+  ListGroupsParams,
   OkResponse,
   Summary,
   SystemStatus
@@ -140,21 +144,28 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
 
 
-export const getListGroupsUrl = () => {
+export const getListGroupsUrl = (params?: ListGroupsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/groups`
+  return stringifiedParams.length > 0 ? `/api/groups?${stringifiedParams}` : `/api/groups`
 }
 
 /**
- * Returns every group across all workspaces of the Enterprise account, joined with current billing-period spend (loaded progressively under the Enterprise API rate limit), the configured budget, and threshold state.
+ * Returns every group across all workspaces of the Enterprise account, joined with spend for the selected date range (loaded progressively under the Enterprise API rate limit), the configured budget, and threshold state.
  * @summary List all groups with usage and budget state
  */
-export const listGroups = async ( options?: RequestInit): Promise<GroupsResponse> => {
+export const listGroups = async (params?: ListGroupsParams, options?: RequestInit): Promise<GroupsResponse> => {
 
-  return customFetch<GroupsResponse>(getListGroupsUrl(),
+  return customFetch<GroupsResponse>(getListGroupsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -167,23 +178,23 @@ export const listGroups = async ( options?: RequestInit): Promise<GroupsResponse
 
 
 
-export const getListGroupsQueryKey = () => {
+export const getListGroupsQueryKey = (params?: ListGroupsParams,) => {
     return [
-    `/api/groups`
+    `/api/groups`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listGroups>>, TError = ErrorType<ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listGroups>>, TError = ErrorType<ApiError>>(params?: ListGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListGroupsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListGroupsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGroups>>> = ({ signal }) => listGroups({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGroups>>> = ({ signal }) => listGroups(params, { signal, ...requestOptions });
 
 
 
@@ -201,11 +212,101 @@ export type ListGroupsQueryError = ErrorType<ApiError>
  */
 
 export function useListGroups<TData = Awaited<ReturnType<typeof listGroups>>, TError = ErrorType<ApiError>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: ListGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListGroupsQueryOptions(options)
+  const queryOptions = getListGroupsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetGroupDetailUrl = (groupId: string,
+    params?: GetGroupDetailParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/groups/${groupId}?${stringifiedParams}` : `/api/groups/${groupId}`
+}
+
+/**
+ * Returns one group with its spend for the selected range plus every member of the group: allocated budget (platform user limit or workspace default), actual usage, remaining budget, percent consumed, and workspace role. Member usage loads progressively; poll while isComplete is false.
+ * @summary Group drill-down with per-user usage
+ */
+export const getGroupDetail = async (groupId: string,
+    params?: GetGroupDetailParams, options?: RequestInit): Promise<GroupDetail> => {
+
+  return customFetch<GroupDetail>(getGetGroupDetailUrl(groupId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetGroupDetailQueryKey = (groupId: string,
+    params?: GetGroupDetailParams,) => {
+    return [
+    `/api/groups/${groupId}`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetGroupDetailQueryOptions = <TData = Awaited<ReturnType<typeof getGroupDetail>>, TError = ErrorType<ApiError>>(groupId: string,
+    params?: GetGroupDetailParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupDetail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGroupDetailQueryKey(groupId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGroupDetail>>> = ({ signal }) => getGroupDetail(groupId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGroupDetail>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetGroupDetailQueryResult = NonNullable<Awaited<ReturnType<typeof getGroupDetail>>>
+export type GetGroupDetailQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Group drill-down with per-user usage
+ */
+
+export function useGetGroupDetail<TData = Awaited<ReturnType<typeof getGroupDetail>>, TError = ErrorType<ApiError>>(
+ groupId: string,
+    params?: GetGroupDetailParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupDetail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetGroupDetailQueryOptions(groupId,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -290,21 +391,28 @@ export const useRefreshGroupUsage = <TError = ErrorType<unknown>,
       return useMutation(getRefreshGroupUsageMutationOptions(options));
     }
 
-export const getGetSummaryUrl = () => {
+export const getGetSummaryUrl = (params?: GetSummaryParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/summary`
+  return stringifiedParams.length > 0 ? `/api/summary?${stringifiedParams}` : `/api/summary`
 }
 
 /**
- * Aggregate stats across all groups and budgets for the current billing period.
+ * Aggregate account-level stats across all groups and budgets for the selected range.
  * @summary Dashboard summary
  */
-export const getSummary = async ( options?: RequestInit): Promise<Summary> => {
+export const getSummary = async (params?: GetSummaryParams, options?: RequestInit): Promise<Summary> => {
 
-  return customFetch<Summary>(getGetSummaryUrl(),
+  return customFetch<Summary>(getGetSummaryUrl(params),
   {
     ...options,
     method: 'GET'
@@ -317,23 +425,23 @@ export const getSummary = async ( options?: RequestInit): Promise<Summary> => {
 
 
 
-export const getGetSummaryQueryKey = () => {
+export const getGetSummaryQueryKey = (params?: GetSummaryParams,) => {
     return [
-    `/api/summary`
+    `/api/summary`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getSummary>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getSummary>>, TError = ErrorType<unknown>>(params?: GetSummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetSummaryQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetSummaryQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSummary>>> = ({ signal }) => getSummary({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSummary>>> = ({ signal }) => getSummary(params, { signal, ...requestOptions });
 
 
 
@@ -351,11 +459,11 @@ export type GetSummaryQueryError = ErrorType<unknown>
  */
 
 export function useGetSummary<TData = Awaited<ReturnType<typeof getSummary>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetSummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetSummaryQueryOptions(options)
+  const queryOptions = getGetSummaryQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

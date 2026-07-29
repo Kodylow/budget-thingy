@@ -43,7 +43,9 @@ Monitors spending by group across the Comcast Replit Enterprise account, lets ad
 
 ## Product
 
-- Dashboard: all Enterprise groups with current-period spend, inline budget set/edit/remove, % used with color-coded threshold badges, account-wide summary stats, per-group refresh.
+- Dashboard: all Enterprise groups with spend for a selectable range (billing period / MTD / YTD / custom dates), inline budget set/edit/remove, remaining budget, % used with color-coded threshold badges and progress bars, account-wide summary stats, per-group refresh.
+- Group drill-down (`/groups/:groupId`): per-member allocated budget (platform user limit or workspace default), usage, remaining, % used, role; reconciliation footer (member spend + unattributed = group total).
+- Budgets merge two sources: app budgets (set in this tool, used for email alerting) and platform budgets read from the Enterprise `/budgets` API (`workspace_group_limit`); `budgetSource` distinguishes them. Platform budgets are read-only here.
 - Alerts: history of alert emails (sent/failed) plus a "run check now" action.
 - Settings: admin notification email list; system status (Enterprise API, email, background checker).
 

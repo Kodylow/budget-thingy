@@ -32,10 +32,20 @@ export interface Group {
      */
   spendUpdatedAt?: string | null;
   /**
-     * Configured budget in USD, null if no budget set
+     * Effective budget in USD (app budget if set, else platform group limit), null if neither
      * @nullable
      */
   budgetUsd?: number | null;
+  /**
+     * Where the effective budget comes from ("app" or "platform"), null if no budget
+     * @nullable
+     */
+  budgetSource?: string | null;
+  /**
+     * budget - spend, null if no budget or spend not loaded
+     * @nullable
+     */
+  remainingUsd?: number | null;
   /**
      * spend / budget * 100, null if no budget or spend not loaded
      * @nullable

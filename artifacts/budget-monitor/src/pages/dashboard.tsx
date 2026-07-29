@@ -1,40 +1,56 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet } from 'lucide-react';
 import { useListGroups, useGetSummary, getListGroupsQueryKey, getGetSummaryQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { LoadingCell } from '@/components/loading-cell';
 import { BudgetInput } from '@/components/budget-input';
+import { useLocation } from 'wouter';
+import { useRange } from '@/components/range-context';
+import { RangeFilter } from '@/components/range-filter';
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
+  const { rangeType, startDate, endDate } = useRange();
+
+  const queryParams = useMemo(
+    () => ({
+      rangeType,
+      ...(rangeType === 'custom' ? { startDate, endDate } : {}),
+    }),
+    [rangeType, startDate, endDate],
+  );
   
-  const { data: groupsData, isLoading: groupsLoading } = useListGroups({
+  const { data: groupsData, isLoading: groupsLoading } = useListGroups(queryParams, {
     query: {
-      queryKey: getListGroupsQueryKey(),
+      queryKey: getListGroupsQueryKey(queryParams),
       refetchInterval: (query) => {
         return query.state.data?.isComplete ? false : 8000;
       },
     },
   });
 
-  const { data: summary, isLoading: summaryLoading } = useGetSummary({
+  const { data: summary, isLoading: summaryLoading } = useGetSummary(queryParams, {
     query: {
-      queryKey: getGetSummaryQueryKey(),
+      queryKey: getGetSummaryQueryKey(queryParams),
       refetchInterval: (query) => {
         return query.state.data?.isComplete ? false : 8000;
       },
     },
   });
 
+  // Invalidate summary only on the transition to complete, not on every render.
+  const wasComplete = useRef(false);
   useEffect(() => {
-    if (groupsData?.isComplete) {
-      queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey() });
+    const complete = groupsData?.isComplete ?? false;
+    if (complete && !wasComplete.current) {
+      queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey(queryParams) });
     }
-  }, [groupsData?.isComplete, queryClient]);
+    wasComplete.current = complete;
+  }, [groupsData?.isComplete, queryClient, queryParams]);
 
   const groups = groupsData?.groups || [];
   const isComplete = groupsData?.isComplete ?? false;
@@ -56,6 +72,14 @@ export default function Dashboard() {
       loading: summaryLoading,
     },
     {
+      title: 'Remaining',
+      value: summary && summary.totalRemainingUsd !== undefined ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
+      description: 'Across budgeted groups',
+      icon: Wallet,
+      loading: summaryLoading,
+      valueClassName: summary && summary.totalRemainingUsd !== undefined && summary.totalRemainingUsd < 0 ? 'text-destructive' : '',
+    },
+    {
       title: 'Over Threshold',
       value: summary ? summary.groupsOver75.toString() : '—',
       description: `${summary?.groupsOver100 || 0} over budget`,
@@ -73,7 +97,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight" data-testid="text-dashboard-title">
             Dashboard
@@ -82,15 +106,18 @@ export default function Dashboard() {
             {groupsData?.billingPeriodLabel || 'Loading...'}
           </p>
         </div>
-        {!isComplete && (
-          <Badge variant="outline" className="flex items-center gap-2" data-testid="badge-loading-status">
-            <RefreshCw className="h-3 w-3 animate-spin" />
-            Loading {pendingCount} groups...
-          </Badge>
-        )}
+        <div className="flex items-center gap-4">
+          <RangeFilter />
+          {!isComplete && (
+            <Badge variant="outline" className="flex items-center gap-2" data-testid="badge-loading-status">
+              <RefreshCw className="h-3 w-3 animate-spin" />
+              Loading {pendingCount} groups...
+            </Badge>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
@@ -103,11 +130,11 @@ export default function Dashboard() {
                 {stat.loading ? (
                   <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
                 ) : (
-                  <div className="text-2xl font-bold font-mono tabular-nums" data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                  <div className={`text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ''}`} data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
                     {stat.value}
                   </div>
                 )}
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-xs text-muted-foreground mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
                   {stat.description}
                 </p>
               </CardContent>
@@ -151,6 +178,9 @@ export default function Dashboard() {
                       Budget
                     </th>
                     <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
+                      Remaining
+                    </th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
                       Usage
                     </th>
                   </tr>
@@ -159,15 +189,19 @@ export default function Dashboard() {
                   {groups.map((group) => (
                     <tr
                       key={group.groupId}
-                      className="border-b border-border hover:bg-muted/50 transition-colors group"
+                      className="border-b border-border hover:bg-muted/50 transition-colors group cursor-pointer"
                       data-testid={`row-group-${group.groupId}`}
+                      onClick={(e) => {
+                        if ((e.target as HTMLElement).closest('button, input, a')) return;
+                        setLocation(`/groups/${group.groupId}`);
+                      }}
                     >
                       <td className="py-3 px-4">
                         <div className="flex flex-col">
                           <span className="text-sm font-medium" data-testid={`text-group-name-${group.groupId}`}>
                             {group.name}
                           </span>
-                          <span className="text-xs text-muted-foreground">
+                          <span className="text-xs text-muted-foreground uppercase">
                             {group.type}
                           </span>
                         </div>
@@ -184,7 +218,7 @@ export default function Dashboard() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         {!group.spendLoaded ? (
-                          <LoadingCell />
+                          <div className="flex justify-end"><LoadingCell /></div>
                         ) : (
                           <span className="text-sm font-mono tabular-nums" data-testid={`text-spend-${group.groupId}`}>
                             ${group.spendUsd?.toFixed(2) ?? '0.00'}
@@ -192,17 +226,43 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
+                        <div className="flex flex-col items-end gap-1">
+                          <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
+                          {group.budgetSource && (
+                            <Badge variant="secondary" className="text-[9px] h-4 px-1 py-0 uppercase bg-muted/50" title={`Budget source: ${group.budgetSource}`}>
+                              {group.budgetSource}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-right">
                         {!group.spendLoaded || group.budgetUsd === null ? (
                           <span className="text-sm text-muted-foreground">—</span>
                         ) : (
-                          <ThresholdBadge
-                            percentUsed={group.percentUsed ?? null}
-                            thresholdsFired={group.thresholdsFired}
-                          />
+                          <span className={`text-sm font-mono tabular-nums ${group.remainingUsd! < 0 ? 'text-destructive font-bold' : ''}`}>
+                            ${group.remainingUsd?.toFixed(2)}
+                          </span>
                         )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
+                          {!group.spendLoaded || group.budgetUsd === null ? (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          ) : (
+                            <>
+                              <ThresholdBadge
+                                percentUsed={group.percentUsed ?? null}
+                                thresholdsFired={group.thresholdsFired}
+                              />
+                              <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
+                                <div 
+                                  className={`h-full transition-all duration-500 ${group.percentUsed! >= 100 ? 'bg-destructive' : 'bg-primary'}`} 
+                                  style={{ width: `${Math.min(group.percentUsed!, 100)}%` }} 
+                                />
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

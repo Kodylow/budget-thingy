@@ -7,6 +7,8 @@ import { AppShell } from '@/components/app-shell';
 import Dashboard from '@/pages/dashboard';
 import Alerts from '@/pages/alerts';
 import Settings from '@/pages/settings';
+import GroupDetail from '@/pages/group-detail';
+import { RangeProvider } from '@/components/range-context';
 
 const queryClient = new QueryClient();
 
@@ -17,6 +19,7 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/alerts" component={Alerts} />
         <Route path="/settings" component={Settings} />
+        <Route path="/groups/:groupId" component={GroupDetail} />
         <Route component={NotFound} />
       </Switch>
     </AppShell>
@@ -27,10 +30,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
+        <RangeProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+            <Router />
+          </WouterRouter>
+        </RangeProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

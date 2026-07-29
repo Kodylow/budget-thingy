@@ -11,8 +11,10 @@ export interface Summary {
   budgetedGroups: number;
   /** Sum of loaded group spend this billing period */
   totalSpendUsd: number;
-  /** Sum of all configured budgets */
+  /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
+  /** Sum of remaining budget across budgeted groups with loaded spend */
+  totalRemainingUsd?: number;
   groupsOver50: number;
   groupsOver75: number;
   groupsOver90: number;

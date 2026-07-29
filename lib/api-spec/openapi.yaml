@@ -41,8 +41,12 @@ paths:
       summary: List all groups with usage and budget state
       description: >
         Returns every group across all workspaces of the Enterprise account,
-        joined with current billing-period spend (loaded progressively under the
-        Enterprise API rate limit), the configured budget, and threshold state.
+        joined with spend for the selected date range (loaded progressively under
+        the Enterprise API rate limit), the configured budget, and threshold state.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
       responses:
         "200":
           description: Group list with usage
@@ -50,6 +54,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GroupsResponse"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /groups/{groupId}:
+    get:
+      operationId: getGroupDetail
+      tags: [groups]
+      summary: Group drill-down with per-user usage
+      description: >
+        Returns one group with its spend for the selected range plus every member
+        of the group: allocated budget (platform user limit or workspace default),
+        actual usage, remaining budget, percent consumed, and workspace role.
+        Member usage loads progressively; poll while isComplete is false.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Group detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupDetail"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "503":
           description: Enterprise API not configured or unreachable
           content:
@@ -76,7 +114,11 @@ paths:
       operationId: getSummary
       tags: [groups]
       summary: Dashboard summary
-      description: Aggregate stats across all groups and budgets for the current billing period.
+      description: Aggregate account-level stats across all groups and budgets for the selected range.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
       responses:
         "200":
           description: Summary
@@ -267,6 +309,28 @@ components:
       required: true
       schema:
         type: string
+    RangeType:
+      name: rangeType
+      in: query
+      required: false
+      description: Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+      schema:
+        type: string
+        enum: [billing, mtd, ytd, custom]
+    StartDate:
+      name: startDate
+      in: query
+      required: false
+      description: Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+      schema:
+        type: string
+    EndDate:
+      name: endDate
+      in: query
+      required: false
+      description: Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: object
@@ -316,7 +380,13 @@ components:
           description: ISO timestamp when spend was last fetched
         budgetUsd:
           type: ["number", "null"]
-          description: Configured budget in USD, null if no budget set
+          description: Effective budget in USD (app budget if set, else platform group limit), null if neither
+        budgetSource:
+          type: ["string", "null"]
+          description: Where the effective budget comes from ("app" or "platform"), null if no budget
+        remainingUsd:
+          type: ["number", "null"]
+          description: budget - spend, null if no budget or spend not loaded
         percentUsed:
           type: ["number", "null"]
           description: spend / budget * 100, null if no budget or spend not loaded
@@ -341,7 +411,62 @@ components:
           description: Number of groups whose spend has not been fetched yet
         billingPeriodLabel:
           type: string
-          description: Human label of the current billing period, e.g. "Jul 2026"
+          description: Human label of the selected range, e.g. "Jul 2026" or "Year to date"
+    GroupMember:
+      type: object
+      required: [userId, spendLoaded]
+      properties:
+        userId:
+          type: string
+        username:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        name:
+          type: ["string", "null"]
+          description: Full name if available
+        role:
+          type: ["string", "null"]
+          description: Workspace role (admin, member, viewer, guest)
+        isDisabled:
+          type: ["boolean", "null"]
+          description: Whether the member's workspace access is disabled
+        allocatedBudgetUsd:
+          type: ["number", "null"]
+          description: Platform per-user limit, or the workspace default user limit; null if none
+        budgetSource:
+          type: ["string", "null"]
+          description: user_limit, workspace_default, or null
+        spendLoaded:
+          type: boolean
+        spendUsd:
+          type: ["number", "null"]
+          description: Usage in the selected range attributable to this user within the group
+        remainingUsd:
+          type: ["number", "null"]
+        percentUsed:
+          type: ["number", "null"]
+    GroupDetail:
+      type: object
+      required: [group, members, isComplete, rangeLabel, membersSpendUsd, unattributedSpendUsd]
+      properties:
+        group:
+          $ref: "#/components/schemas/Group"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupMember"
+        membersSpendUsd:
+          type: number
+          description: Sum of loaded member spend (reconciles with group spend plus unattributed)
+        unattributedSpendUsd:
+          type: number
+          description: Group spend not attributable to a listed member (deleted users, shared costs)
+        isComplete:
+          type: boolean
+          description: False while member usage is still loading; poll every ~8s until true
+        rangeLabel:
+          type: string
     Summary:
       type: object
       required:
@@ -368,7 +493,10 @@ components:
           description: Sum of loaded group spend this billing period
         totalBudgetUsd:
           type: number
-          description: Sum of all configured budgets
+          description: Sum of all effective group budgets (app or platform)
+        totalRemainingUsd:
+          type: number
+          description: Sum of remaining budget across budgeted groups with loaded spend
         groupsOver50:
           type: integer
         groupsOver75:
