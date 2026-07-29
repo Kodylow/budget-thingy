@@ -1,4 +1,7 @@
 import { logger } from "./logger";
+import { db } from "@workspace/db";
+import { apiDirectoryCacheTable, apiSpendCacheTable } from "@workspace/db/schema";
+import { eq } from "drizzle-orm";
 
 const BASE_URL = "https://api.replit.com/v1";
 
@@ -308,6 +311,171 @@ interface RawBudget {
 const DIRECTORY_TTL_MS = 15 * 60 * 1000;
 const USAGE_TTL_MS = 10 * 60 * 1000;
 
+// ---------- DB serialisation helpers ----------
+
+interface SerializedDirectory {
+  fetchedAt: number;
+  workspaces: Record<string, EnterpriseWorkspace>;
+  groups: EnterpriseGroup[];
+  groupMembers: Record<string, string[]>;
+  members: Record<
+    string,
+    {
+      userId: string;
+      username: string;
+      email: string;
+      name: string | null;
+      workspaces: Record<string, { role: string; isDisabled: boolean }>;
+    }
+  >;
+  budgets: {
+    groupLimits: Record<string, Record<string, number>>;
+    userLimits: Record<string, Record<string, number>>;
+    workspaceDefaults: Record<string, number>;
+  };
+}
+
+function serializeDirectory(d: DirectoryCache): SerializedDirectory {
+  const workspaces: Record<string, EnterpriseWorkspace> = {};
+  for (const [k, v] of d.workspaces) workspaces[k] = v;
+
+  const groupMembers: Record<string, string[]> = {};
+  for (const [k, v] of d.groupMembers) groupMembers[k] = v;
+
+  const members: SerializedDirectory["members"] = {};
+  for (const [k, v] of d.members) {
+    const ws: Record<string, { role: string; isDisabled: boolean }> = {};
+    for (const [wk, wv] of v.workspaces) ws[wk] = wv;
+    members[k] = { userId: v.userId, username: v.username, email: v.email, name: v.name, workspaces: ws };
+  }
+
+  const groupLimits: Record<string, Record<string, number>> = {};
+  for (const [wsId, m] of d.budgets.groupLimits) {
+    groupLimits[wsId] = {};
+    for (const [gId, amt] of m) groupLimits[wsId]![gId] = amt;
+  }
+  const userLimits: Record<string, Record<string, number>> = {};
+  for (const [wsId, m] of d.budgets.userLimits) {
+    userLimits[wsId] = {};
+    for (const [uId, amt] of m) userLimits[wsId]![uId] = amt;
+  }
+  const workspaceDefaults: Record<string, number> = {};
+  for (const [wsId, amt] of d.budgets.workspaceDefaults) workspaceDefaults[wsId] = amt;
+
+  return { fetchedAt: d.fetchedAt, workspaces, groups: d.groups, groupMembers, members, budgets: { groupLimits, userLimits, workspaceDefaults } };
+}
+
+function deserializeDirectory(s: SerializedDirectory): DirectoryCache {
+  const workspaces = new Map<string, EnterpriseWorkspace>(Object.entries(s.workspaces));
+  const groupMembers = new Map<string, string[]>(Object.entries(s.groupMembers));
+
+  const members = new Map<string, EnterpriseMember>();
+  for (const [k, v] of Object.entries(s.members)) {
+    members.set(k, {
+      userId: v.userId,
+      username: v.username,
+      email: v.email,
+      name: v.name,
+      workspaces: new Map(Object.entries(v.workspaces)),
+    });
+  }
+
+  const groupLimits = new Map<string, Map<string, number>>();
+  for (const [wsId, m] of Object.entries(s.budgets.groupLimits)) {
+    groupLimits.set(wsId, new Map(Object.entries(m)));
+  }
+  const userLimits = new Map<string, Map<string, number>>();
+  for (const [wsId, m] of Object.entries(s.budgets.userLimits)) {
+    userLimits.set(wsId, new Map(Object.entries(m)));
+  }
+  const workspaceDefaults = new Map<string, number>(Object.entries(s.budgets.workspaceDefaults));
+
+  return {
+    fetchedAt: s.fetchedAt,
+    workspaces,
+    groups: s.groups,
+    groupMembers,
+    members,
+    budgets: { groupLimits, userLimits, workspaceDefaults },
+  };
+}
+
+// ---------- DB write-through helpers (fire-and-forget) ----------
+
+function persistDirectoryToDb(d: DirectoryCache): void {
+  const serialized = serializeDirectory(d);
+  db.insert(apiDirectoryCacheTable)
+    .values({ id: "singleton", directoryJson: serialized, fetchedAt: new Date(d.fetchedAt) })
+    .onConflictDoUpdate({
+      target: apiDirectoryCacheTable.id,
+      set: { directoryJson: serialized, fetchedAt: new Date(d.fetchedAt) },
+    })
+    .catch((err: unknown) => logger.warn({ err }, "Failed to persist directory cache to DB"));
+}
+
+function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend): void {
+  db.insert(apiSpendCacheTable)
+    .values({
+      rangeKey,
+      groupId,
+      spendUsd: spend.spendUsd,
+      periodStart: spend.periodStart,
+      periodEnd: spend.periodEnd,
+      fetchedAt: new Date(spend.fetchedAt),
+    })
+    .onConflictDoUpdate({
+      target: [apiSpendCacheTable.rangeKey, apiSpendCacheTable.groupId],
+      set: {
+        spendUsd: spend.spendUsd,
+        periodStart: spend.periodStart,
+        periodEnd: spend.periodEnd,
+        fetchedAt: new Date(spend.fetchedAt),
+      },
+    })
+    .catch((err: unknown) => logger.warn({ err, rangeKey, groupId }, "Failed to persist spend cache to DB"));
+}
+
+// ---------- Cold-start cache hydration ----------
+
+export async function initCache(): Promise<void> {
+  try {
+    const [dirRow, spendRows] = await Promise.all([
+      db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
+      db.select().from(apiSpendCacheTable),
+    ]);
+
+    if (dirRow) {
+      try {
+        const deserialized = deserializeDirectory(dirRow.directoryJson as SerializedDirectory);
+        // Only hydrate if not already populated by a concurrent fetch
+        if (!directoryCache) {
+          directoryCache = deserialized;
+          logger.info({ fetchedAt: new Date(deserialized.fetchedAt).toISOString() }, "Directory cache hydrated from DB");
+        }
+      } catch (err) {
+        logger.warn({ err }, "Failed to deserialize directory cache from DB");
+      }
+    }
+
+    for (const row of spendRows) {
+      const cacheKey = `${row.rangeKey}|${row.groupId}`;
+      if (!spendCache.has(cacheKey)) {
+        spendCache.set(cacheKey, {
+          spendUsd: row.spendUsd,
+          fetchedAt: row.fetchedAt.getTime(),
+          periodStart: row.periodStart,
+          periodEnd: row.periodEnd,
+        });
+      }
+    }
+    if (spendRows.length > 0) {
+      logger.info({ count: spendRows.length }, "Spend cache hydrated from DB");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Failed to hydrate caches from DB — will fetch fresh on first request");
+  }
+}
+
 interface DirectoryCache {
   fetchedAt: number;
   workspaces: Map<string, EnterpriseWorkspace>;
@@ -401,6 +569,7 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
         members,
         budgets,
       };
+      persistDirectoryToDb(directoryCache);
       return directoryCache;
     } finally {
       directoryPromise = null;
@@ -466,6 +635,7 @@ export function queueGroupSpendFetch(
         periodEnd: data.interval.endTime,
       };
       spendCache.set(cacheKey, spend);
+      persistSpendToDb(range.key, group.id, spend);
       onDone?.(spend);
     } catch (err) {
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch group usage");
