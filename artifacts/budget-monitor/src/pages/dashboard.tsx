@@ -34,8 +34,7 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const { rangeType, startDate, endDate } = useRange();
-  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set(['__all__']));
-  const initializedRef = useRef(false);
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
 
   const queryParams = useMemo(
     () => ({
@@ -140,19 +139,6 @@ export default function Dashboard() {
 
     return { teamSections, unassigned };
   }, [groups, teamBudgetMap]);
-
-  // Initialise all teams as expanded when data first arrives
-  useEffect(() => {
-    if (!initializedRef.current && teamSections.length > 0) {
-      initializedRef.current = true;
-      setExpandedTeams((prev) => {
-        const next = new Set(prev);
-        for (const ts of teamSections) next.add(ts.teamName);
-        if (unassigned.length > 0) next.add('__unassigned__');
-        return next;
-      });
-    }
-  }, [teamSections, unassigned]);
 
   const toggleTeam = (teamName: string) => {
     setExpandedTeams((prev) => {
