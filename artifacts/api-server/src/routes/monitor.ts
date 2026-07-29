@@ -64,17 +64,11 @@ function rangeFromQuery(query: Record<string, unknown>): UsageRange {
 
 interface EffectiveBudget {
   amountUsd: number | null;
-  source: "app" | "platform" | null;
+  source: "app" | null;
 }
 
-function effectiveGroupBudget(
-  appBudget: number | undefined,
-  group: EnterpriseGroup,
-  platformGroupLimits: Map<string, Map<string, number>>,
-): EffectiveBudget {
+function effectiveGroupBudget(appBudget: number | undefined): EffectiveBudget {
   if (appBudget != null) return { amountUsd: appBudget, source: "app" };
-  const platform = platformGroupLimits.get(group.workspaceId)?.get(group.id);
-  if (platform != null) return { amountUsd: platform, source: "platform" };
   return { amountUsd: null, source: null };
 }
 
@@ -122,7 +116,7 @@ router.get("/groups", async (req, res): Promise<void> => {
       dir.groups.map(async (g) => {
         const spend = getSpend(g.id, range.key);
         if (!spend) pendingCount += 1;
-        const budget = effectiveGroupBudget(budgetMap.get(g.id), g, dir.budgets.groupLimits);
+        const budget = effectiveGroupBudget(budgetMap.get(g.id));
         // Threshold state is always tracked against the cutoff-anchored billing period.
         const billingSpend = getSpend(g.id, "billing:from-cutoff");
         const fired =
@@ -199,7 +193,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     ]);
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
     const groupTeamMap = new Map(groupTeamsRows.map((gt) => [gt.groupName, gt.teamName]));
-    const budget = effectiveGroupBudget(budgetMap.get(group.id), group, dir.budgets.groupLimits);
+    const budget = effectiveGroupBudget(budgetMap.get(group.id));
     const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
     const billingSpend = getSpend(group.id, "billing:from-cutoff");
     const fired =
@@ -208,16 +202,10 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         : [];
 
     const userIds = dir.groupMembers.get(group.id) ?? [];
-    const wsUserLimits = dir.budgets.userLimits.get(group.workspaceId);
-    const wsDefault = dir.budgets.workspaceDefaults.get(group.workspaceId);
 
     const members = userIds.map((userId) => {
       const m = dir.members.get(userId);
       const ws = m?.workspaces.get(group.workspaceId);
-      const userLimit = wsUserLimits?.get(userId);
-      const allocated = userLimit ?? wsDefault ?? null;
-      const budgetSource =
-        userLimit != null ? "user_limit" : wsDefault != null ? "workspace_default" : null;
       const spendLoaded = !!memberUsage;
       const spendUsd = memberUsage ? (memberUsage.byUser.get(userId) ?? 0) : null;
       return {
@@ -227,16 +215,12 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         name: m?.name ?? null,
         role: ws?.role ?? null,
         isDisabled: ws?.isDisabled ?? null,
-        allocatedBudgetUsd: allocated,
-        budgetSource,
+        allocatedBudgetUsd: null,
+        budgetSource: null,
         spendLoaded,
         spendUsd,
-        remainingUsd:
-          spendLoaded && allocated != null && spendUsd != null ? allocated - spendUsd : null,
-        percentUsed:
-          spendLoaded && allocated != null && allocated > 0 && spendUsd != null
-            ? (spendUsd / allocated) * 100
-            : null,
+        remainingUsd: null,
+        percentUsed: null,
       };
     });
 
@@ -330,7 +314,7 @@ router.get("/summary", async (req, res): Promise<void> => {
       const dir = await getDirectory();
       totalGroups = dir.groups.length;
       for (const g of dir.groups) {
-        const budget = effectiveGroupBudget(budgetMap.get(g.id), g, dir.budgets.groupLimits);
+        const budget = effectiveGroupBudget(budgetMap.get(g.id));
         if (budget.amountUsd != null && budget.amountUsd > 0) {
           budgetedGroups += 1;
         }

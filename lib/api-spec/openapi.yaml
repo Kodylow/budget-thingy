@@ -441,10 +441,10 @@ components:
           description: ISO timestamp when spend was last fetched
         budgetUsd:
           type: ["number", "null"]
-          description: Effective budget in USD (app budget if set, else platform group limit), null if neither
+          description: Effective budget in USD (from app-level group budget if set), null if not set
         budgetSource:
           type: ["string", "null"]
-          description: Where the effective budget comes from ("app" or "platform"), null if no budget
+          description: Where the effective budget comes from ("app"), null if no budget set
         remainingUsd:
           type: ["number", "null"]
           description: budget - spend, null if no budget or spend not loaded
@@ -494,10 +494,10 @@ components:
           description: Whether the member's workspace access is disabled
         allocatedBudgetUsd:
           type: ["number", "null"]
-          description: Platform per-user limit, or the workspace default user limit; null if none
+          description: Not used; always null (budgets are tracked at team level from the spreadsheet)
         budgetSource:
           type: ["string", "null"]
-          description: user_limit, workspace_default, or null
+          description: Not used; always null
         spendLoaded:
           type: boolean
         spendUsd:
