@@ -59,6 +59,10 @@ async function rawFetch(
 
 // ---------- Date ranges ----------
 
+/** All spend data before this date is excluded from every query. */
+export const SPEND_DATA_CUTOFF_ISO = "2026-05-20T00:00:00.000Z";
+export const SPEND_DATA_CUTOFF_MS = new Date(SPEND_DATA_CUTOFF_ISO).getTime();
+
 export type RangeType = "billing" | "mtd" | "ytd" | "custom";
 
 export interface UsageRange {
@@ -77,42 +81,52 @@ export function resolveRange(
   const m = now.getUTCMonth();
   switch (rangeType) {
     case "mtd": {
-      const start = new Date(Date.UTC(y, m, 1)).toISOString();
+      const rawStart = new Date(Date.UTC(y, m, 1)).getTime();
+      const effectiveStart = new Date(Math.max(rawStart, SPEND_DATA_CUTOFF_MS));
       return {
-        key: `mtd:${y}-${m + 1}`,
+        key: `mtd:${effectiveStart.toISOString().slice(0, 10)}`,
         label: `${now.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })} (MTD)`,
-        params: { startTime: start, endTime: now.toISOString() },
+        params: { startTime: effectiveStart.toISOString(), endTime: now.toISOString() },
       };
     }
     case "ytd": {
-      const start = new Date(Date.UTC(y, 0, 1)).toISOString();
+      const rawStart = new Date(Date.UTC(y, 0, 1)).getTime();
+      const effectiveStart = new Date(Math.max(rawStart, SPEND_DATA_CUTOFF_MS));
       return {
-        key: `ytd:${y}`,
+        key: `ytd:${effectiveStart.toISOString().slice(0, 10)}`,
         label: `${y} year to date`,
-        params: { startTime: start, endTime: now.toISOString() },
+        params: { startTime: effectiveStart.toISOString(), endTime: now.toISOString() },
       };
     }
     case "custom": {
       if (!startDate || !endDate) {
         throw new EnterpriseApiError(400, "startDate and endDate are required for a custom range");
       }
-      const start = new Date(`${startDate}T00:00:00.000Z`);
+      const rawStart = new Date(`${startDate}T00:00:00.000Z`);
       const end = new Date(`${endDate}T00:00:00.000Z`);
       end.setUTCDate(end.getUTCDate() + 1); // inclusive end date -> exclusive boundary
-      if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+      if (isNaN(rawStart.getTime()) || isNaN(end.getTime()) || end <= rawStart) {
         throw new EnterpriseApiError(400, "Invalid custom date range");
       }
+      const effectiveStart = new Date(Math.max(rawStart.getTime(), SPEND_DATA_CUTOFF_MS));
+      if (effectiveStart >= end) {
+        throw new EnterpriseApiError(
+          400,
+          `Date range predates available spend data (cutoff: ${SPEND_DATA_CUTOFF_ISO.slice(0, 10)})`,
+        );
+      }
+      const effectiveStartDate = effectiveStart.toISOString().slice(0, 10);
       return {
-        key: `custom:${startDate}:${endDate}`,
-        label: `${startDate} to ${endDate}`,
-        params: { startTime: start.toISOString(), endTime: end.toISOString() },
+        key: `custom:${effectiveStartDate}:${endDate}`,
+        label: `${effectiveStartDate} to ${endDate}`,
+        params: { startTime: effectiveStart.toISOString(), endTime: end.toISOString() },
       };
     }
     default:
       return {
-        key: "billing:current",
+        key: "billing:from-cutoff",
         label: now.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }),
-        params: { billingPeriod: "current" },
+        params: { startTime: SPEND_DATA_CUTOFF_ISO, endTime: now.toISOString() },
       };
   }
 }
@@ -406,13 +420,13 @@ export interface GroupSpend {
 
 const spendCache = new Map<string, GroupSpend>(); // `${rangeKey}|${groupId}`
 
-export function getSpend(groupId: string, rangeKey = "billing:current"): GroupSpend | undefined {
+export function getSpend(groupId: string, rangeKey = "billing:from-cutoff"): GroupSpend | undefined {
   return spendCache.get(`${rangeKey}|${groupId}`);
 }
 
 export function getBillingPeriod(): { start: string | null; label: string } {
   for (const [k, s] of spendCache) {
-    if (!k.startsWith("billing:current|")) continue;
+    if (!k.startsWith("billing:from-cutoff|")) continue;
     const d = new Date(s.periodStart);
     return {
       start: s.periodStart,

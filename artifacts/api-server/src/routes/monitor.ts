@@ -123,8 +123,8 @@ router.get("/groups", async (req, res): Promise<void> => {
         const spend = getSpend(g.id, range.key);
         if (!spend) pendingCount += 1;
         const budget = effectiveGroupBudget(budgetMap.get(g.id), g, dir.budgets.groupLimits);
-        // Threshold state is always tracked against the current billing period.
-        const billingSpend = getSpend(g.id, "billing:current");
+        // Threshold state is always tracked against the cutoff-anchored billing period.
+        const billingSpend = getSpend(g.id, "billing:from-cutoff");
         const fired =
           billingSpend && budget.amountUsd != null
             ? await getFiredThresholds(g.id, billingSpend.periodStart)
@@ -157,7 +157,7 @@ router.get("/groups", async (req, res): Promise<void> => {
         groups,
         isComplete: pendingCount === 0,
         pendingCount,
-        billingPeriodLabel: range.key === "billing:current" ? billing.label : range.label,
+        billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
       }),
     );
   } catch (err) {
@@ -201,7 +201,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const groupTeamMap = new Map(groupTeamsRows.map((gt) => [gt.groupName, gt.teamName]));
     const budget = effectiveGroupBudget(budgetMap.get(group.id), group, dir.budgets.groupLimits);
     const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
-    const billingSpend = getSpend(group.id, "billing:current");
+    const billingSpend = getSpend(group.id, "billing:from-cutoff");
     const fired =
       billingSpend && budget.amountUsd != null
         ? await getFiredThresholds(group.id, billingSpend.periodStart)
@@ -371,7 +371,7 @@ router.get("/summary", async (req, res): Promise<void> => {
       groupsOver90: over90,
       groupsOver100: over100,
       alertsSentThisPeriod,
-      billingPeriodLabel: range.key === "billing:current" ? billing.label : range.label,
+      billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
       isComplete: pending === 0,
     }),
   );
