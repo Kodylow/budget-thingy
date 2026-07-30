@@ -169,35 +169,52 @@ export default function ClusterDetail() {
     const projectMap = new Map<string, ClusterProject>();
     let projectsUnattributedSpend = 0;
 
-    for (const result of projectResults) {
-      const data = result.data;
+    for (let i = 0; i < projectResults.length; i++) {
+      const data = projectResults[i]?.data;
       if (!data) continue;
-      projectsUnattributedSpend += data.unattributedSpendUsd;
+
+      // Compute a deduplication ratio for this sub-group using the globally
+      // deduped rollup spend vs. the raw group total.  When a user belongs to
+      // multiple sub-groups (e.g. Admins + Members), the API returns their
+      // project spend in every sub-group response.  Scaling by this ratio
+      // removes the double-counting proportionally across all projects.
+      //
+      // Only apply the ratio when the rollup has fully loaded; otherwise fall
+      // back to 1.0 so we don't zero out costs before the data is ready.
+      const groupDetail = results[i]?.data?.group;
+      const rawSpend = groupDetail?.spendUsd ?? 0;
+      const rollupLoaded = groupDetail?.rollupSpendLoaded ?? false;
+      const dedupedSpend = rollupLoaded ? (groupDetail?.rollupSpendUsd ?? rawSpend) : rawSpend;
+      const ratio = rawSpend > 0 ? Math.min(1, dedupedSpend / rawSpend) : 1;
+
+      projectsUnattributedSpend += data.unattributedSpendUsd * ratio;
 
       for (const project of data.projects) {
+        const scaledCost = project.totalCostUsd * ratio;
         const existing = projectMap.get(project.projectId);
         if (!existing) {
           projectMap.set(project.projectId, {
             projectId: project.projectId,
             title: project.title,
-            totalCostUsd: project.totalCostUsd,
-            metrics: project.metrics.map((metric) => ({ ...metric })),
+            totalCostUsd: scaledCost,
+            metrics: project.metrics.map((metric) => ({ ...metric, costUsd: metric.costUsd * ratio })),
           });
           continue;
         }
 
-        existing.totalCostUsd += project.totalCostUsd;
+        existing.totalCostUsd += scaledCost;
         if (!existing.title && project.title) existing.title = project.title;
 
         for (const metric of project.metrics) {
+          const scaledMetricCost = metric.costUsd * ratio;
           const metricKey = `${metric.category}:${metric.id}`;
           const existingMetric = existing.metrics.find(
             (candidate) => `${candidate.category}:${candidate.id}` === metricKey,
           );
           if (existingMetric) {
-            existingMetric.costUsd += metric.costUsd;
+            existingMetric.costUsd += scaledMetricCost;
           } else {
-            existing.metrics.push({ ...metric });
+            existing.metrics.push({ ...metric, costUsd: scaledMetricCost });
           }
         }
       }
@@ -207,7 +224,7 @@ export default function ClusterDetail() {
       mergedProjects: [...projectMap.values()].sort((a, b) => b.totalCostUsd - a.totalCostUsd),
       projectsUnattributedSpend,
     };
-  }, [projectResults]);
+  }, [projectResults, results]);
 
   if (!allLoaded && results.every((r) => !r.data)) {
     return (
