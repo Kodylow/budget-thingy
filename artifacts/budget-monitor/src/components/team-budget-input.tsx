@@ -135,24 +135,6 @@ export function TeamBudgetInput({ teamName, currentBudget }: TeamBudgetInputProp
 
   return (
     <div className="flex items-center justify-end gap-2">
-      {currentBudget !== null ? (
-        <span className="font-mono text-sm tabular-nums font-semibold" data-testid={`text-team-budget-${teamName}`}>
-          ${currentBudget.toFixed(2)}
-        </span>
-      ) : (
-        <span className="text-sm text-muted-foreground" data-testid={`text-no-team-budget-${teamName}`}>
-          No budget
-        </span>
-      )}
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        data-testid={`button-edit-team-budget-${teamName}`}
-      >
-        <Pencil className="h-3 w-3" />
-      </Button>
       {currentBudget !== null && (
         <Button
           size="sm"
@@ -164,6 +146,24 @@ export function TeamBudgetInput({ teamName, currentBudget }: TeamBudgetInputProp
         >
           <X className="h-3 w-3" />
         </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        data-testid={`button-edit-team-budget-${teamName}`}
+      >
+        <Pencil className="h-3 w-3" />
+      </Button>
+      {currentBudget !== null ? (
+        <span className="font-mono text-sm tabular-nums font-semibold" data-testid={`text-team-budget-${teamName}`}>
+          ${currentBudget.toFixed(2)}
+        </span>
+      ) : (
+        <span className="text-sm text-muted-foreground" data-testid={`text-no-team-budget-${teamName}`}>
+          No budget
+        </span>
       )}
     </div>
   );

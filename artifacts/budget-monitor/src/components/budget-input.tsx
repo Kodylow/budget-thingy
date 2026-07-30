@@ -133,25 +133,7 @@ export function BudgetInput({ groupId, currentBudget }: BudgetInputProps) {
   }
 
   return (
-    <div className="flex items-center gap-2">
-      {currentBudget !== null ? (
-        <span className="font-mono text-sm tabular-nums" data-testid={`text-budget-${groupId}`}>
-          ${currentBudget.toFixed(2)}
-        </span>
-      ) : (
-        <span className="text-sm text-muted-foreground" data-testid={`text-no-budget-${groupId}`}>
-          No budget
-        </span>
-      )}
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-        onClick={() => setEditing(true)}
-        data-testid={`button-edit-budget-${groupId}`}
-      >
-        <Pencil className="h-3 w-3" />
-      </Button>
+    <div className="flex items-center justify-end gap-2">
       {currentBudget !== null && (
         <Button
           size="sm"
@@ -163,6 +145,24 @@ export function BudgetInput({ groupId, currentBudget }: BudgetInputProps) {
         >
           <X className="h-3 w-3" />
         </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+        onClick={() => setEditing(true)}
+        data-testid={`button-edit-budget-${groupId}`}
+      >
+        <Pencil className="h-3 w-3" />
+      </Button>
+      {currentBudget !== null ? (
+        <span className="font-mono text-sm tabular-nums" data-testid={`text-budget-${groupId}`}>
+          ${currentBudget.toFixed(2)}
+        </span>
+      ) : (
+        <span className="text-sm text-muted-foreground" data-testid={`text-no-budget-${groupId}`}>
+          No budget
+        </span>
       )}
     </div>
   );
