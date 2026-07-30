@@ -31,3 +31,4 @@ export * from './systemStatus';
 export * from './teamBudget';
 export * from './teamBudgetInput';
 export * from './teamBudgetsResponse';
+export * from './groupProjects';

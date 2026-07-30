@@ -26,10 +26,12 @@ import type {
   ApiError,
   CheckResult,
   GetGroupDetailParams,
+  GetGroupProjectsParams,
   GetSummaryParams,
   GroupBudget,
   GroupBudgetInput,
   GroupDetail,
+  GroupProjectsResponse,
   GroupsResponse,
   HealthStatus,
   ListAlertsParams,
@@ -318,6 +320,92 @@ export function useGetGroupDetail<TData = Awaited<ReturnType<typeof getGroupDeta
 
 
 
+
+
+
+
+export const getGetGroupProjectsUrl = (groupId: string,
+    params?: GetGroupProjectsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/groups/${groupId}/projects?${stringifiedParams}` : `/api/groups/${groupId}/projects`
+}
+
+/**
+ * Returns project-level spend breakdown for a group in the selected date range.
+ * Project usage loads progressively; poll while isComplete is false.
+ * @summary Group project spend drill-down
+ */
+export const getGroupProjects = async (groupId: string,
+    params?: GetGroupProjectsParams, options?: RequestInit): Promise<GroupProjectsResponse> => {
+
+  return customFetch<GroupProjectsResponse>(getGetGroupProjectsUrl(groupId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+export const getGetGroupProjectsQueryKey = (groupId: string,
+    params?: GetGroupProjectsParams,) => {
+    return [
+    `/api/groups/${groupId}/projects`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetGroupProjectsQueryOptions = <TData = Awaited<ReturnType<typeof getGroupProjects>>, TError = ErrorType<ApiError>>(groupId: string,
+    params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGroupProjectsQueryKey(groupId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGroupProjects>>> = ({ signal }) => getGroupProjects(groupId,params, { signal, ...requestOptions });
+
+
+
+
+   return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGroupProjects>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetGroupProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof getGroupProjects>>>
+export type GetGroupProjectsQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Group project spend drill-down
+ */
+
+export function useGetGroupProjects<TData = Awaited<ReturnType<typeof getGroupProjects>>, TError = ErrorType<ApiError>>(
+ groupId: string,
+    params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetGroupProjectsQueryOptions(groupId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 
 

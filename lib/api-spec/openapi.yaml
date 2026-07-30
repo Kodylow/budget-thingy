@@ -97,6 +97,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /groups/{groupId}/projects:
+    get:
+      operationId: getGroupProjects
+      tags: [groups]
+      summary: Group project spend drill-down
+      description: >
+        Returns project-level spend breakdown for a group in the selected date range.
+        Project usage loads progressively; poll while isComplete is false.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Project spend breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupProjectsResponse"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /groups/{groupId}/refresh:
     post:
       operationId: refreshGroupUsage
@@ -521,6 +553,48 @@ components:
           type: ["number", "null"]
         percentUsed:
           type: ["number", "null"]
+    ProjectMetric:
+      type: object
+      required: [id, name, category, costUsd]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+          description: "Metric category: ai, hosting, storage, or other"
+        costUsd:
+          type: number
+    GroupProject:
+      type: object
+      required: [projectId, title, totalCostUsd, metrics]
+      properties:
+        projectId:
+          type: string
+        title:
+          type: ["string", "null"]
+          description: Project title, or null if untitled
+        totalCostUsd:
+          type: number
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMetric"
+    GroupProjectsResponse:
+      type: object
+      required: [projects, unattributedSpendUsd, isComplete]
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupProject"
+        unattributedSpendUsd:
+          type: number
+          description: Group spend not attributable to any returned project row
+        isComplete:
+          type: boolean
+          description: False while project usage is still loading; poll every ~8s until true
     GroupDetail:
       type: object
       required: [group, members, isComplete, rangeLabel, membersSpendUsd, unattributedSpendUsd]

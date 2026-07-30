@@ -111,6 +111,37 @@ export const GetGroupDetailResponse = zod.object({
 
 
 /**
+ * Returns project-level spend breakdown for a group in the selected date range.
+ * @summary Group project spend drill-down
+ */
+export const GetGroupProjectsParams = zod.object({
+  "groupId": zod.coerce.string()
+})
+
+export const GetGroupProjectsQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional(),
+  "startDate": zod.coerce.string().optional(),
+  "endDate": zod.coerce.string().optional()
+})
+
+export const GetGroupProjectsResponse = zod.object({
+  "projects": zod.array(zod.object({
+    "projectId": zod.string(),
+    "title": zod.string().nullable(),
+    "totalCostUsd": zod.number(),
+    "metrics": zod.array(zod.object({
+      "id": zod.string(),
+      "name": zod.string(),
+      "category": zod.string(),
+      "costUsd": zod.number()
+    }))
+  })),
+  "unattributedSpendUsd": zod.number(),
+  "isComplete": zod.boolean()
+})
+
+
+/**
  * Queues a high-priority usage fetch for one group, bypassing cache TTL.
  * @summary Force-refresh one group's usage
  */

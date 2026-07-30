@@ -28,6 +28,7 @@ import {
   RunAlertCheckResponse,
   GetStatusResponse,
   GetGroupDetailResponse,
+  GetGroupProjectsResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -39,6 +40,10 @@ import {
   refreshAllGroupSpends,
   queueMemberUsageFetch,
   getMemberUsage,
+  queueProjectUsageFetch,
+  getProjectUsage,
+  queueProjectTitlesFetch,
+  getProjectTitles,
   getDedupedUsageRollup,
   getDedupedMemberCounts,
   resolveRange,
@@ -190,9 +195,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       return;
     }
 
-    // Ensure both the group total and per-member usage are queued (high priority).
+    // Ensure group total, per-member usage, and per-project usage are queued (high priority).
     queueGroupSpendFetch(group, 0, false, undefined, range);
     queueMemberUsageFetch(group, range, 0);
+    queueProjectUsageFetch(group, range, 0);
+    queueProjectTitlesFetch(group.workspaceId, 0);
 
     const spend = getSpend(group.id, range.key);
     const memberUsage = getMemberUsage(group.id, range.key);
@@ -283,6 +290,70 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       return;
     }
     req.log.error({ err }, "getGroupDetail failed");
+    res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
+  }
+});
+
+router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
+  if (!isConfigured()) {
+    res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
+    return;
+  }
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  try {
+    const groupId = String(req.params["groupId"]);
+    const dir = await getDirectory();
+    const group = dir.groups.find((g) => g.id === groupId);
+    if (!group) {
+      res.status(404).json({ error: "Group not found" });
+      return;
+    }
+
+    // Kick off fetches (high priority); serve from cache if available.
+    queueProjectUsageFetch(group, range, 0);
+    queueProjectTitlesFetch(group.workspaceId, 0);
+
+    const projectUsage = getProjectUsage(group.id, range.key);
+    const titleMap = getProjectTitles(group.workspaceId);
+    const groupSpend = getSpend(group.id, range.key);
+
+    const isComplete = !!projectUsage;
+
+    const projects = projectUsage
+      ? Array.from(projectUsage.byProject.values())
+          .map((p) => ({
+            projectId: p.projectId,
+            title: titleMap.get(p.projectId) ?? null,
+            totalCostUsd: p.totalCostUsd,
+            metrics: p.metrics,
+          }))
+          .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
+      : [];
+
+    // Reconciliation: sum of project rows vs. group total
+    const projectsSum = projects.reduce((sum, p) => sum + p.totalCostUsd, 0);
+    const groupTotal = projectUsage?.totalCostUsd ?? groupSpend?.spendUsd ?? 0;
+    const unattributedSpendUsd = Math.max(0, groupTotal - projectsSum);
+
+    res.json(
+      GetGroupProjectsResponse.parse({
+        projects,
+        unattributedSpendUsd,
+        isComplete,
+      }),
+    );
+  } catch (err) {
+    if (isBadRangeError(err)) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    req.log.error({ err }, "getGroupProjects failed");
     res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
   }
 });

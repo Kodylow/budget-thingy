@@ -1,5 +1,5 @@
 import { useRoute, Link } from 'wouter';
-import { useGetGroupDetail, getGetGroupDetailQueryKey } from '@workspace/api-client-react';
+import { useGetGroupDetail, getGetGroupDetailQueryKey, useGetGroupProjects, getGetGroupProjectsQueryKey } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,14 @@ export default function GroupDetail() {
     query: {
       queryKey: getGetGroupDetailQueryKey(groupId, queryParams),
       refetchInterval: (query) => query.state.data?.isComplete ? false : 8000,
+    }
+  });
+
+  const { data: projectsData } = useGetGroupProjects(groupId, queryParams, {
+    query: {
+      queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
+      refetchInterval: (query) => query.state.data?.isComplete ? false : 8000,
+      enabled: !!groupId,
     }
   });
 
@@ -261,6 +269,101 @@ export default function GroupDetail() {
                   </td>
                 </tr>
               </tfoot>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Projects</CardTitle>
+          <CardDescription>Per-project spending within the group for the selected period</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Project</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Storage</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Other</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!projectsData?.isComplete && (!projectsData || projectsData.projects.length === 0) ? (
+                  // Skeleton rows while loading
+                  [1, 2, 3].map((i) => (
+                    <tr key={i} className="border-b border-border/50">
+                      <td className="py-3 px-4"><LoadingCell /></td>
+                      <td className="py-3 px-4 text-right"><div className="flex justify-end"><LoadingCell /></div></td>
+                      <td className="py-3 px-4 text-right"><div className="flex justify-end"><LoadingCell /></div></td>
+                      <td className="py-3 px-4 text-right"><div className="flex justify-end"><LoadingCell /></div></td>
+                      <td className="py-3 px-4 text-right"><div className="flex justify-end"><LoadingCell /></div></td>
+                      <td className="py-3 px-4 text-right"><div className="flex justify-end"><LoadingCell /></div></td>
+                    </tr>
+                  ))
+                ) : (
+                  projectsData?.projects.map((project) => {
+                    const aiSpend = project.metrics.filter(m => m.category === 'ai').reduce((s, m) => s + m.costUsd, 0);
+                    const hostingSpend = project.metrics.filter(m => m.category === 'hosting').reduce((s, m) => s + m.costUsd, 0);
+                    const storageSpend = project.metrics.filter(m => m.category === 'storage').reduce((s, m) => s + m.costUsd, 0);
+                    const otherSpend = project.metrics.filter(m => !['ai', 'hosting', 'storage'].includes(m.category)).reduce((s, m) => s + m.costUsd, 0);
+                    return (
+                      <tr key={project.projectId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">{project.title ?? <span className="italic text-muted-foreground">Untitled</span>}</span>
+                            <span className="text-xs text-muted-foreground font-mono">{project.projectId}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                            <span className="text-sm font-mono tabular-nums">{aiSpend > 0 ? `$${aiSpend.toFixed(2)}` : '—'}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                            <span className="text-sm font-mono tabular-nums">{hostingSpend > 0 ? `$${hostingSpend.toFixed(2)}` : '—'}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                            <span className="text-sm font-mono tabular-nums">{storageSpend > 0 ? `$${storageSpend.toFixed(2)}` : '—'}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                            <span className="text-sm font-mono tabular-nums">{otherSpend > 0 ? `$${otherSpend.toFixed(2)}` : '—'}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <span className="text-sm font-mono tabular-nums font-medium">${project.totalCostUsd.toFixed(2)}</span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+
+                {projectsData && projectsData.unattributedSpendUsd > 0 && (
+                  <tr className="border-b border-border/50 bg-muted/10">
+                    <td className="py-3 px-4">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium italic">Unattributed Spend</span>
+                        <span className="text-xs text-muted-foreground">Not linked to a specific project</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
+                    <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
+                    <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
+                    <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
+                    <td className="py-3 px-4 text-right">
+                      <span className="text-sm font-mono tabular-nums">${projectsData.unattributedSpendUsd.toFixed(2)}</span>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
             </table>
           </div>
         </CardContent>

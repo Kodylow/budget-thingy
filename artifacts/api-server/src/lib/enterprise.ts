@@ -190,9 +190,17 @@ export function pendingUsageCount(): number {
   return usageQueue.length + (queueRunning ? 1 : 0);
 }
 
+interface UsageMetricEntry {
+  id: string;
+  name: string;
+  category: string;
+  costUsd: number;
+}
+
 interface UsageGroupEntry {
   key: { userId?: string; workspaceId?: string; projectId?: string; date?: string };
   totalCostUsd: number;
+  metrics?: UsageMetricEntry[];
 }
 
 interface UsageData {
@@ -742,6 +750,136 @@ export function queueMemberUsageFetch(
       });
     } catch (err) {
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
+    }
+  });
+}
+
+// ---------- Per-project group usage (groupBy=project, one call per group+range) ----------
+
+export interface ProjectUsageMetric {
+  id: string;
+  name: string;
+  category: string;
+  costUsd: number;
+}
+
+export interface ProjectUsageEntry {
+  projectId: string;
+  totalCostUsd: number;
+  metrics: ProjectUsageMetric[];
+}
+
+export interface ProjectUsage {
+  fetchedAt: number;
+  byProject: Map<string, ProjectUsageEntry>;
+  totalCostUsd: number;
+}
+
+const projectUsageCache = new Map<string, ProjectUsage>(); // `${rangeKey}|${groupId}`
+
+export function getProjectUsage(groupId: string, rangeKey: string): ProjectUsage | undefined {
+  return projectUsageCache.get(`${rangeKey}|${groupId}`);
+}
+
+export function queueProjectUsageFetch(
+  group: EnterpriseGroup,
+  range: UsageRange,
+  priority = 0,
+  force = false,
+): boolean {
+  const cacheKey = `${range.key}|${group.id}`;
+  const cached = projectUsageCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.fetchedAt < USAGE_TTL_MS) {
+    return false;
+  }
+  return enqueueUsage(`project-usage:${cacheKey}`, priority, async () => {
+    try {
+      const byProject = new Map<string, ProjectUsageEntry>();
+      let cursor: string | undefined;
+      let firstTotal = 0;
+      for (let page = 0; page < 50; page++) {
+        const data = await usageFetch({
+          workspaceId: group.workspaceId,
+          groupId: group.id,
+          groupBy: "project",
+          limit: "100",
+          cursor,
+          ...range.params,
+        });
+        if (page === 0) firstTotal = data.totalCostUsd;
+        for (const entry of data.groups) {
+          if (entry.key.projectId) {
+            const metrics: ProjectUsageMetric[] = (entry.metrics ?? []).map((m) => ({
+              id: m.id,
+              name: m.name,
+              category: m.category,
+              costUsd: m.costUsd,
+            }));
+            const existing = byProject.get(entry.key.projectId);
+            if (existing) {
+              existing.totalCostUsd += entry.totalCostUsd;
+              // Merge metrics by id
+              for (const m of metrics) {
+                const em = existing.metrics.find((x) => x.id === m.id);
+                if (em) {
+                  em.costUsd += m.costUsd;
+                } else {
+                  existing.metrics.push({ ...m });
+                }
+              }
+            } else {
+              byProject.set(entry.key.projectId, {
+                projectId: entry.key.projectId,
+                totalCostUsd: entry.totalCostUsd,
+                metrics,
+              });
+            }
+          }
+        }
+        if (!data.pagination?.hasMore || !data.pagination.cursor) break;
+        cursor = data.pagination.cursor;
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      projectUsageCache.set(cacheKey, {
+        fetchedAt: Date.now(),
+        byProject,
+        totalCostUsd: firstTotal,
+      });
+    } catch (err) {
+      logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch project usage");
+    }
+  });
+}
+
+// ---------- Project titles (per workspace) ----------
+
+interface RawProject {
+  id: string;
+  title?: string | null;
+}
+
+const projectTitlesCache = new Map<string, Map<string, string>>(); // workspaceId -> projectId -> title
+const projectTitlesFetching = new Set<string>();
+
+export function getProjectTitles(workspaceId: string): Map<string, string> {
+  return projectTitlesCache.get(workspaceId) ?? new Map();
+}
+
+export function queueProjectTitlesFetch(workspaceId: string, priority = 0): boolean {
+  if (projectTitlesCache.has(workspaceId) || projectTitlesFetching.has(workspaceId)) return false;
+  projectTitlesFetching.add(workspaceId);
+  return enqueueUsage(`project-titles:${workspaceId}`, priority, async () => {
+    try {
+      const projects = await paginate<RawProject>("/projects", { workspaceId });
+      const titleMap = new Map<string, string>();
+      for (const p of projects) {
+        if (p.title) titleMap.set(p.id, p.title);
+      }
+      projectTitlesCache.set(workspaceId, titleMap);
+    } catch (err) {
+      logger.warn({ err, workspaceId }, "Failed to fetch project titles");
+    } finally {
+      projectTitlesFetching.delete(workspaceId);
     }
   });
 }
