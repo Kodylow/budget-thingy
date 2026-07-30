@@ -110,11 +110,11 @@ export default function Dashboard() {
       let spendUsd = 0;
       let spendLoaded = true;
       for (const g of teamGroups) {
-        memberCount += g.rollupMemberCount ?? 0;
-        if (!g.rollupSpendLoaded) {
+        memberCount += g.memberCount ?? 0;
+        if (!g.spendLoaded) {
           spendLoaded = false;
         } else {
-          spendUsd += g.rollupSpendUsd ?? 0;
+          spendUsd += g.spendUsd ?? 0;
         }
       }
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
@@ -219,11 +219,11 @@ export default function Dashboard() {
         </span>
       </td>
       <td className="py-3 px-4 text-right">
-        {!group.rollupSpendLoaded ? (
+        {!group.spendLoaded ? (
           <div className="flex justify-end"><LoadingCell /></div>
         ) : (
           <span className="text-sm font-mono tabular-nums" data-testid={`text-spend-${group.groupId}`}>
-            ${(group.rollupSpendUsd ?? 0).toFixed(2)}
+            ${(group.spendUsd ?? 0).toFixed(2)}
           </span>
         )}
       </td>
