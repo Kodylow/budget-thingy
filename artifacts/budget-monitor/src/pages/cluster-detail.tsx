@@ -5,6 +5,8 @@ import { useQueries } from '@tanstack/react-query';
 import {
   getGetGroupDetailQueryOptions,
   getGetGroupDetailQueryKey,
+  getGetGroupProjectsQueryOptions,
+  getGetGroupProjectsQueryKey,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -29,6 +31,20 @@ interface MergedMember {
   allRoles: string[];
   spendUsd: number;
   spendLoaded: boolean;
+}
+
+interface ClusterProjectMetric {
+  id: string;
+  name: string;
+  category: string;
+  costUsd: number;
+}
+
+interface ClusterProject {
+  projectId: string;
+  title: string | null;
+  totalCostUsd: number;
+  metrics: ClusterProjectMetric[];
 }
 
 export default function ClusterDetail() {
@@ -56,9 +72,21 @@ export default function ClusterDetail() {
     ),
   });
 
+  const projectResults = useQueries({
+    queries: groupIds.map((id) =>
+      getGetGroupProjectsQueryOptions(id, queryParams, {
+        query: {
+          queryKey: getGetGroupProjectsQueryKey(id, queryParams),
+          refetchInterval: (q: any) => (q.state.data?.isComplete ? false : 8000),
+        },
+      }),
+    ),
+  });
+
   const allLoaded = results.every((r) => !r.isLoading);
   const anyComplete = results.some((r) => r.data?.isComplete);
   const allComplete = results.every((r) => r.data?.isComplete);
+  const projectsComplete = projectResults.every((r) => r.data?.isComplete);
 
   // Build a map of groupId → sub-group role by parsing the fetched group names
   const groupRoleMap = useMemo(() => {
@@ -136,6 +164,50 @@ export default function ClusterDetail() {
     const roles = new Set(Object.values(groupRoleMap));
     return [...roles].sort((a, b) => (ROLE_PRIORITY[a] ?? 99) - (ROLE_PRIORITY[b] ?? 99));
   }, [groupRoleMap]);
+
+  const { mergedProjects, projectsUnattributedSpend } = useMemo(() => {
+    const projectMap = new Map<string, ClusterProject>();
+    let projectsUnattributedSpend = 0;
+
+    for (const result of projectResults) {
+      const data = result.data;
+      if (!data) continue;
+      projectsUnattributedSpend += data.unattributedSpendUsd;
+
+      for (const project of data.projects) {
+        const existing = projectMap.get(project.projectId);
+        if (!existing) {
+          projectMap.set(project.projectId, {
+            projectId: project.projectId,
+            title: project.title,
+            totalCostUsd: project.totalCostUsd,
+            metrics: project.metrics.map((metric) => ({ ...metric })),
+          });
+          continue;
+        }
+
+        existing.totalCostUsd += project.totalCostUsd;
+        if (!existing.title && project.title) existing.title = project.title;
+
+        for (const metric of project.metrics) {
+          const metricKey = `${metric.category}:${metric.id}`;
+          const existingMetric = existing.metrics.find(
+            (candidate) => `${candidate.category}:${candidate.id}` === metricKey,
+          );
+          if (existingMetric) {
+            existingMetric.costUsd += metric.costUsd;
+          } else {
+            existing.metrics.push({ ...metric });
+          }
+        }
+      }
+    }
+
+    return {
+      mergedProjects: [...projectMap.values()].sort((a, b) => b.totalCostUsd - a.totalCostUsd),
+      projectsUnattributedSpend,
+    };
+  }, [projectResults]);
 
   if (!allLoaded && results.every((r) => !r.data)) {
     return (
@@ -231,6 +303,127 @@ export default function ClusterDetail() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Projects</CardTitle>
+          <CardDescription>
+            Combined project spending across the {groupIds.length} Admin/Member/Viewer sub-groups for the selected period
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Project</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Storage</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Other</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!projectsComplete && mergedProjects.length === 0 ? (
+                  [1, 2, 3].map((i) => (
+                    <tr key={i} className="border-b border-border/50">
+                      <td className="py-3 px-4"><LoadingCell /></td>
+                      {[1, 2, 3, 4, 5].map((cell) => (
+                        <td key={cell} className="py-3 px-4 text-right">
+                          <div className="flex justify-end"><LoadingCell /></div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                ) : (
+                  mergedProjects.map((project) => {
+                    const spendForCategory = (category: string) =>
+                      project.metrics
+                        .filter((metric) => metric.category === category)
+                        .reduce((sum, metric) => sum + metric.costUsd, 0);
+                    const otherSpend = project.metrics
+                      .filter((metric) => !['ai', 'hosting', 'storage'].includes(metric.category))
+                      .reduce((sum, metric) => sum + metric.costUsd, 0);
+
+                    return (
+                      <tr key={project.projectId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">
+                              {project.title ?? <span className="italic text-muted-foreground">Untitled</span>}
+                            </span>
+                            <span className="text-xs text-muted-foreground font-mono">{project.projectId}</span>
+                          </div>
+                        </td>
+                        {['ai', 'hosting', 'storage'].map((category) => (
+                          <td key={category} className="py-3 px-4 text-right">
+                            {!projectsComplete ? (
+                              <div className="flex justify-end"><LoadingCell /></div>
+                            ) : (
+                              <span className="text-sm font-mono tabular-nums">
+                                {spendForCategory(category) > 0 ? `$${spendForCategory(category).toFixed(2)}` : '—'}
+                              </span>
+                            )}
+                          </td>
+                        ))}
+                        <td className="py-3 px-4 text-right">
+                          {!projectsComplete ? (
+                            <div className="flex justify-end"><LoadingCell /></div>
+                          ) : (
+                            <span className="text-sm font-mono tabular-nums">
+                              {otherSpend > 0 ? `$${otherSpend.toFixed(2)}` : '—'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <span className="text-sm font-mono tabular-nums font-medium">
+                            ${project.totalCostUsd.toFixed(2)}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+
+                {projectsUnattributedSpend > 0 && (
+                  <tr className="border-b border-border/50 bg-muted/10">
+                    <td className="py-3 px-4">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium italic">Unattributed Spend</span>
+                        <span className="text-xs text-muted-foreground">Not linked to a specific project</span>
+                      </div>
+                    </td>
+                    {[1, 2, 3, 4].map((cell) => (
+                      <td key={cell} className="py-3 px-4 text-right">
+                        <span className="text-sm text-muted-foreground">—</span>
+                      </td>
+                    ))}
+                    <td className="py-3 px-4 text-right">
+                      <span className="text-sm font-mono tabular-nums">${projectsUnattributedSpend.toFixed(2)}</span>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="bg-muted/30 font-medium border-t border-border">
+                  <td className="py-3 px-4 text-sm">Combined Total</td>
+                  {[1, 2, 3, 4].map((cell) => (
+                    <td key={cell} className="py-3 px-4" />
+                  ))}
+                  <td className="py-3 px-4 text-right">
+                    <span className="text-sm font-mono tabular-nums">${totalGroupSpend.toFixed(2)}</span>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+
+            {projectsComplete && mergedProjects.length === 0 && projectsUnattributedSpend === 0 && (
+              <div className="text-center py-12 text-muted-foreground">No project spend found.</div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
