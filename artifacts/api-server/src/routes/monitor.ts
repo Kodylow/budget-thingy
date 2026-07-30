@@ -328,16 +328,18 @@ router.get("/summary", async (req, res): Promise<void> => {
     try {
       const dir = await getDirectory();
       totalGroups = dir.groups.length;
-      for (const g of dir.groups) queueMemberUsageFetch(g, range, 1);
       for (const g of dir.groups) {
         const budget = effectiveGroupBudget(budgetMap.get(g.id));
         if (budget.amountUsd != null && budget.amountUsd > 0) {
           budgetedGroups += 1;
         }
+        const spend = getSpend(g.id, range.key);
+        if (!spend) {
+          pending += 1;
+        } else {
+          totalSpendUsd += spend.spendUsd;
+        }
       }
-      const rollup = getDedupedUsageRollup(dir.groups, range.key);
-      totalSpendUsd = rollup.totalSpendUsd;
-      pending = rollup.pendingCount;
     } catch (err) {
       req.log.error({ err }, "summary directory fetch failed");
     }
