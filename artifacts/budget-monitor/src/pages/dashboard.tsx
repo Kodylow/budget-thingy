@@ -557,6 +557,57 @@ export default function Dashboard() {
                     groups.map((group) => renderGroupRow(group))
                   )}
                 </tbody>
+                {groups.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/40 font-semibold">
+                      <td className="py-3 px-4 text-sm">
+                        Total
+                      </td>
+                      <td className="py-3 px-4" />
+                      <td className="py-3 px-4 text-right">
+                        <span className="text-sm font-mono tabular-nums">
+                          {groups.reduce((s, g) => s + (g.memberCount ?? 0), 0)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {summary ? (
+                          <span className="text-sm font-mono tabular-nums">
+                            ${summary.totalSpendUsd.toFixed(2)}
+                          </span>
+                        ) : (
+                          <div className="flex justify-end"><LoadingCell /></div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <span className="text-sm font-mono tabular-nums">
+                          {summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : '—'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <span className={`text-sm font-mono tabular-nums ${summary && summary.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
+                          {summary ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {summary && summary.totalBudgetUsd > 0 ? (
+                          <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
+                            <span className={`text-xs font-mono tabular-nums ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? 'text-destructive' : ''}`}>
+                              {((summary.totalSpendUsd / summary.totalBudgetUsd) * 100).toFixed(1)}%
+                            </span>
+                            <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
+                              <div
+                                className={`h-full transition-all duration-500 ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? 'bg-destructive' : 'bg-primary'}`}
+                                style={{ width: `${Math.min((summary.totalSpendUsd / summary.totalBudgetUsd) * 100, 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
               {groups.length === 0 && (
                 <div className="text-center py-12 text-muted-foreground" data-testid="text-no-groups">
