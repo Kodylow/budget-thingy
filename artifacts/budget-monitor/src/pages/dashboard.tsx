@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers } from 'lucide-react';
 import {
   useListGroups,
   useGetSummary,
@@ -18,6 +18,7 @@ import { TeamBudgetInput } from '@/components/team-budget-input';
 import { useLocation } from 'wouter';
 import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
+import { buildGroupClusters, roleBadgeClass, type GroupCluster } from '@/lib/group-clusters';
 
 interface TeamSection {
   teamName: string;
@@ -269,9 +270,83 @@ export default function Dashboard() {
     </tr>
   );
 
+  const renderClusterRow = (cluster: GroupCluster) => {
+    const roles = Object.values(cluster.groupRoles);
+    const uniqueRoles = [...new Set(roles)].sort(
+      (a, b) => (roleBadgeClass(a) ? 0 : 0) || a.localeCompare(b),
+    );
+    const clusterUrl =
+      `/clusters?ids=${encodeURIComponent(cluster.groupIds.join(','))}&name=${encodeURIComponent(cluster.baseName)}`;
+    return (
+      <tr
+        key={cluster.clusterKey}
+        className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
+        onClick={() => setLocation(clusterUrl)}
+      >
+        <td className="py-3 px-4 pl-10">
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium">{cluster.baseName}</span>
+            <div className="flex items-center gap-1">
+              <Layers className="h-3 w-3 text-muted-foreground" />
+              <div className="flex gap-1">
+                {uniqueRoles.map((r) => (
+                  <span
+                    key={r}
+                    className={`inline-flex items-center border rounded px-1.5 py-0 text-[9px] font-medium ${roleBadgeClass(r)}`}
+                  >
+                    {r}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </td>
+        <td className="py-3 px-4">
+          <span className="text-sm text-muted-foreground">
+            {cluster.workspaceName || '—'}
+          </span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm font-mono tabular-nums">
+            {cluster.memberCount}
+          </span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          {!cluster.spendLoaded ? (
+            <div className="flex justify-end"><LoadingCell /></div>
+          ) : (
+            <span className="text-sm font-mono tabular-nums">
+              ${cluster.spendUsd.toFixed(2)}
+            </span>
+          )}
+        </td>
+        {/* Budget, Remaining, Usage — not applicable at cluster level */}
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm text-muted-foreground">—</span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm text-muted-foreground">—</span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm text-muted-foreground">—</span>
+        </td>
+      </tr>
+    );
+  };
+
+  const renderTeamGroups = (team: TeamSection) => {
+    const clusters = buildGroupClusters(team.groups as any[]);
+    return clusters.map((cluster) =>
+      cluster.isSingleGroup
+        ? renderGroupRow(cluster.singleGroup as any)
+        : renderClusterRow(cluster),
+    );
+  };
+
   const renderTeamHeader = (team: TeamSection) => {
     const expanded = expandedTeams.has(team.teamName);
     const hasBudget = team.budgetUsd !== null && team.budgetUsd > 0;
+    const clusterCount = buildGroupClusters(team.groups as any[]).length;
     return (
       <tr
         key={`team-${team.teamName}`}
@@ -287,7 +362,7 @@ export default function Dashboard() {
             }
             <span>{team.teamName}</span>
             <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 font-normal">
-              {team.groups.length} group{team.groups.length !== 1 ? 's' : ''}
+              {clusterCount} group{clusterCount !== 1 ? 's' : ''}
             </Badge>
           </div>
         </td>
@@ -467,7 +542,7 @@ export default function Dashboard() {
                         <React.Fragment key={`team-section-${team.teamName}`}>
                           {renderTeamHeader(team)}
                           {expandedTeams.has(team.teamName) &&
-                            team.groups.map((g: any) => renderGroupRow(g))}
+                            renderTeamGroups(team)}
                         </React.Fragment>
                       ))}
                       {unassigned.length > 0 && (
