@@ -110,11 +110,11 @@ export default function Dashboard() {
       let spendUsd = 0;
       let spendLoaded = true;
       for (const g of teamGroups) {
-        memberCount += g.memberCount ?? 0;
-        if (!g.spendLoaded) {
+        memberCount += g.rollupMemberCount ?? 0;
+        if (!g.rollupSpendLoaded) {
           spendLoaded = false;
         } else {
-          spendUsd += g.spendUsd ?? 0;
+          spendUsd += g.rollupSpendUsd ?? 0;
         }
       }
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;

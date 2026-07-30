@@ -28,12 +28,12 @@ export interface GroupMember {
      */
   isDisabled?: boolean | null;
   /**
-     * Platform per-user limit, or the workspace default user limit; null if none
+     * Not used; always null (budgets are tracked at team level from the spreadsheet)
      * @nullable
      */
   allocatedBudgetUsd?: number | null;
   /**
-     * user_limit, workspace_default, or null
+     * Not used; always null
      * @nullable
      */
   budgetSource?: string | null;

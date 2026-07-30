@@ -9,7 +9,7 @@
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Sum of loaded group spend this billing period */
+  /** Member-deduplicated spend across custom groups for the selected range */
   totalSpendUsd: number;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;

@@ -42,7 +42,8 @@ paths:
       tags: [groups]
       summary: List all groups with usage and budget state
       description: >
-        Returns every group across all workspaces of the Enterprise account,
+        Returns custom/SCIM groups across all workspaces of the Enterprise account,
+        excluding built-in admin/member/guest role groups,
         joined with spend for the selected date range (loaded progressively under
         the Enterprise API rate limit), the configured budget, and threshold state.
       parameters:
@@ -116,7 +117,11 @@ paths:
       operationId: getSummary
       tags: [groups]
       summary: Dashboard summary
-      description: Aggregate account-level stats across all groups and budgets for the selected range.
+      description: >
+        Aggregate account-level stats across custom groups and budgets for the selected
+        range. Spend is deduplicated at member level: groups are ordered by workspace,
+        case-insensitive group name, then ID, and each member is attributed to the first
+        custom group in which their usage appears.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -411,7 +416,7 @@ components:
           type: boolean
     Group:
       type: object
-      required: [groupId, workspaceId, name, type, spendLoaded, thresholdsFired]
+      required: [groupId, workspaceId, name, type, spendLoaded, rollupSpendLoaded, rollupSpendUsd, rollupMemberCount, thresholdsFired]
       properties:
         groupId:
           type: string
@@ -430,12 +435,21 @@ components:
         memberCount:
           type: ["integer", "null"]
           description: Number of members in the group, null while loading
+        rollupMemberCount:
+          type: integer
+          description: Unique members attributed to this group for team and org rollups
         spendLoaded:
           type: boolean
           description: Whether spend for the current billing period has been fetched yet
         spendUsd:
           type: ["number", "null"]
-          description: Current billing-period spend in USD, null while loading
+          description: Raw per-group spend reported by the Enterprise API, null while loading
+        rollupSpendLoaded:
+          type: boolean
+          description: Whether member-level usage for every custom group is loaded
+        rollupSpendUsd:
+          type: number
+          description: Member-deduplicated spend attributed to this group for team and org rollups
         spendUpdatedAt:
           type: ["string", "null"]
           description: ISO timestamp when spend was last fetched
@@ -469,7 +483,7 @@ components:
           description: False while background usage fetches are still pending; poll every ~8s until true
         pendingCount:
           type: integer
-          description: Number of groups whose spend has not been fetched yet
+          description: Number of outstanding raw group-spend and member-usage fetches
         billingPeriodLabel:
           type: string
           description: Human label of the selected range, e.g. "Jul 2026" or "Year to date"
@@ -551,7 +565,7 @@ components:
           type: integer
         totalSpendUsd:
           type: number
-          description: Sum of loaded group spend this billing period
+          description: Member-deduplicated spend across custom groups for the selected range
         totalBudgetUsd:
           type: number
           description: Sum of all effective group budgets (app or platform)

@@ -37,6 +37,7 @@ Monitors spending by group across the Comcast Replit Enterprise account, lets ad
 - Enterprise `/usage` is rate-limited (~100 req/min): every usage call goes through ONE serial priority queue (`enterprise.ts`) with pacing, Retry-After backoff, and X-RateLimit awareness. Never call `/usage` outside the queue.
 - Group spend loads progressively: `/api/groups` returns immediately with `spendLoaded=false` per group plus `isComplete`/`pendingCount`; the frontend polls every 8s until complete. Null spend is "loading", never $0.
 - Spend cache TTL 10 min; directory (workspaces/groups/members) TTL 15 min; both in-memory, warmed on server start.
+- Dashboard group lists include custom/SCIM groups only. Team and org spend rollups deduplicate overlapping members by deterministic first-group attribution (workspace, group name, then group ID); group rows, drill-downs, and alerts keep raw per-group spend.
 - Billing period = the `interval.startTime` the Enterprise API resolves for `billingPeriod=current`; threshold fire state is keyed by (groupId, periodStart, threshold) in `fired_thresholds` so each threshold emails at most once per period and resets automatically on a new period.
 - If email isn't connected or no admin emails exist, crossed thresholds are NOT marked fired — they retry once email is configured.
 - One email per check per group (highest due threshold) to avoid alert storms when a budget is first set on an already-over group.

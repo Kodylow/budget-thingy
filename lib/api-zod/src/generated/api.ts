@@ -18,7 +18,7 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * Returns every group across all workspaces of the Enterprise account, joined with spend for the selected date range (loaded progressively under the Enterprise API rate limit), the configured budget, and threshold state.
+ * Returns custom/SCIM groups across all workspaces of the Enterprise account, excluding built-in admin/member/guest role groups, joined with spend for the selected date range (loaded progressively under the Enterprise API rate limit), the configured budget, and threshold state.
  * @summary List all groups with usage and budget state
  */
 export const ListGroupsQueryParams = zod.object({
@@ -36,17 +36,20 @@ export const ListGroupsResponse = zod.object({
   "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "memberCount": zod.number().nullish().describe('Number of members in the group, null while loading'),
+  "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
-  "spendUsd": zod.number().nullish().describe('Current billing-period spend in USD, null while loading'),
+  "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
+  "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
+  "rollupSpendUsd": zod.number().describe('Member-deduplicated spend attributed to this group for team and org rollups'),
   "spendUpdatedAt": zod.string().nullish().describe('ISO timestamp when spend was last fetched'),
-  "budgetUsd": zod.number().nullish().describe('Effective budget in USD (app budget if set, else platform group limit), null if neither'),
-  "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\" or \"platform\"), null if no budget'),
+  "budgetUsd": zod.number().nullish().describe('Effective budget in USD (from app-level group budget if set), null if not set'),
+  "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
   "remainingUsd": zod.number().nullish().describe('budget - spend, null if no budget or spend not loaded'),
   "percentUsed": zod.number().nullish().describe('spend \/ budget \* 100, null if no budget or spend not loaded'),
   "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period')
 })),
   "isComplete": zod.boolean().describe('False while background usage fetches are still pending; poll every ~8s until true'),
-  "pendingCount": zod.number().describe('Number of groups whose spend has not been fetched yet'),
+  "pendingCount": zod.number().describe('Number of outstanding raw group-spend and member-usage fetches'),
   "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"')
 })
 
@@ -74,11 +77,14 @@ export const GetGroupDetailResponse = zod.object({
   "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "memberCount": zod.number().nullish().describe('Number of members in the group, null while loading'),
+  "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
-  "spendUsd": zod.number().nullish().describe('Current billing-period spend in USD, null while loading'),
+  "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
+  "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
+  "rollupSpendUsd": zod.number().describe('Member-deduplicated spend attributed to this group for team and org rollups'),
   "spendUpdatedAt": zod.string().nullish().describe('ISO timestamp when spend was last fetched'),
-  "budgetUsd": zod.number().nullish().describe('Effective budget in USD (app budget if set, else platform group limit), null if neither'),
-  "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\" or \"platform\"), null if no budget'),
+  "budgetUsd": zod.number().nullish().describe('Effective budget in USD (from app-level group budget if set), null if not set'),
+  "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
   "remainingUsd": zod.number().nullish().describe('budget - spend, null if no budget or spend not loaded'),
   "percentUsed": zod.number().nullish().describe('spend \/ budget \* 100, null if no budget or spend not loaded'),
   "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period')
@@ -90,8 +96,8 @@ export const GetGroupDetailResponse = zod.object({
   "name": zod.string().nullish().describe('Full name if available'),
   "role": zod.string().nullish().describe('Workspace role (admin, member, viewer, guest)'),
   "isDisabled": zod.boolean().nullish().describe('Whether the member\'s workspace access is disabled'),
-  "allocatedBudgetUsd": zod.number().nullish().describe('Platform per-user limit, or the workspace default user limit; null if none'),
-  "budgetSource": zod.string().nullish().describe('user_limit, workspace_default, or null'),
+  "allocatedBudgetUsd": zod.number().nullish().describe('Not used; always null (budgets are tracked at team level from the spreadsheet)'),
+  "budgetSource": zod.string().nullish().describe('Not used; always null'),
   "spendLoaded": zod.boolean(),
   "spendUsd": zod.number().nullish().describe('Usage in the selected range attributable to this user within the group'),
   "remainingUsd": zod.number().nullish(),
@@ -118,7 +124,7 @@ export const RefreshGroupUsageResponse = zod.object({
 
 
 /**
- * Aggregate account-level stats across all groups and budgets for the selected range.
+ * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is deduplicated at member level: groups are ordered by workspace, case-insensitive group name, then ID, and each member is attributed to the first custom group in which their usage appears.
  * @summary Dashboard summary
  */
 export const GetSummaryQueryParams = zod.object({
@@ -130,7 +136,7 @@ export const GetSummaryQueryParams = zod.object({
 export const GetSummaryResponse = zod.object({
   "totalGroups": zod.number(),
   "budgetedGroups": zod.number(),
-  "totalSpendUsd": zod.number().describe('Sum of loaded group spend this billing period'),
+  "totalSpendUsd": zod.number().describe('Member-deduplicated spend across custom groups for the selected range'),
   "totalBudgetUsd": zod.number().describe('Sum of all effective group budgets (app or platform)'),
   "totalRemainingUsd": zod.number().optional().describe('Sum of remaining budget across budgeted groups with loaded spend'),
   "groupsOver50": zod.number(),

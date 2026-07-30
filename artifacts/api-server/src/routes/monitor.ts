@@ -39,6 +39,8 @@ import {
   refreshAllGroupSpends,
   queueMemberUsageFetch,
   getMemberUsage,
+  getDedupedUsageRollup,
+  getDedupedMemberCounts,
   resolveRange,
   isBadRangeError,
   type UsageRange,
@@ -102,6 +104,7 @@ router.get("/groups", async (req, res): Promise<void> => {
   try {
     const dir = await getDirectory();
     void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
+    for (const group of dir.groups) queueMemberUsageFetch(group, range, 1);
 
     const [budgets, groupTeams] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -110,12 +113,15 @@ router.get("/groups", async (req, res): Promise<void> => {
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
     const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const billing = getBillingPeriod();
+    const rollup = getDedupedUsageRollup(dir.groups, range.key);
+    const rollupMemberCounts = getDedupedMemberCounts(dir.groups, dir.groupMembers);
 
     let pendingCount = 0;
     const groups = await Promise.all(
       dir.groups.map(async (g) => {
         const spend = getSpend(g.id, range.key);
         if (!spend) pendingCount += 1;
+        const attributed = rollup.byGroup.get(g.id);
         const budget = effectiveGroupBudget(budgetMap.get(g.id));
         // Threshold state is always tracked against the cutoff-anchored billing period.
         const billingSpend = getSpend(g.id, "billing:from-cutoff");
@@ -132,8 +138,11 @@ router.get("/groups", async (req, res): Promise<void> => {
           teamName: groupTeamMap.get(g.name) ?? null,
           type: g.type,
           memberCount: dir.groupMembers.get(g.id)?.length ?? null,
+          rollupMemberCount: rollupMemberCounts.get(g.id) ?? 0,
           spendLoaded: !!spend,
           spendUsd: spend?.spendUsd ?? null,
+          rollupSpendLoaded: rollup.isComplete,
+          rollupSpendUsd: attributed?.spendUsd ?? 0,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
@@ -149,8 +158,8 @@ router.get("/groups", async (req, res): Promise<void> => {
     res.json(
       ListGroupsResponse.parse({
         groups,
-        isComplete: pendingCount === 0,
-        pendingCount,
+        isComplete: pendingCount === 0 && rollup.isComplete,
+        pendingCount: pendingCount + rollup.pendingCount,
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
       }),
     );
@@ -187,6 +196,9 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
 
     const spend = getSpend(group.id, range.key);
     const memberUsage = getMemberUsage(group.id, range.key);
+    const rollup = getDedupedUsageRollup(dir.groups, range.key);
+    const rollupMemberCounts = getDedupedMemberCounts(dir.groups, dir.groupMembers);
+    const attributed = rollup.byGroup.get(group.id);
     const [budgets, groupTeamsRows] = await Promise.all([
       db.select().from(groupBudgetsTable),
       db.select().from(groupTeamsTable),
@@ -246,8 +258,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           teamName: groupTeamMap.get(group.name) ?? null,
           type: group.type,
           memberCount: userIds.length,
+          rollupMemberCount: rollupMemberCounts.get(group.id) ?? 0,
           spendLoaded: !!spend,
           spendUsd: spend?.spendUsd ?? null,
+          rollupSpendLoaded: rollup.isComplete,
+          rollupSpendUsd: attributed?.spendUsd ?? 0,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
@@ -313,18 +328,16 @@ router.get("/summary", async (req, res): Promise<void> => {
     try {
       const dir = await getDirectory();
       totalGroups = dir.groups.length;
+      for (const g of dir.groups) queueMemberUsageFetch(g, range, 1);
       for (const g of dir.groups) {
         const budget = effectiveGroupBudget(budgetMap.get(g.id));
         if (budget.amountUsd != null && budget.amountUsd > 0) {
           budgetedGroups += 1;
         }
-        const spend = getSpend(g.id, range.key);
-        if (!spend) {
-          pending += 1;
-          continue;
-        }
-        totalSpendUsd += spend.spendUsd;
       }
+      const rollup = getDedupedUsageRollup(dir.groups, range.key);
+      totalSpendUsd = rollup.totalSpendUsd;
+      pending = rollup.pendingCount;
     } catch (err) {
       req.log.error({ err }, "summary directory fetch failed");
     }

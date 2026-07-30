@@ -35,25 +35,31 @@ export interface Group {
      * @nullable
      */
   memberCount?: number | null;
+  /** Unique members attributed to this group for team and org rollups */
+  rollupMemberCount: number;
   /** Whether spend for the current billing period has been fetched yet */
   spendLoaded: boolean;
   /**
-     * Current billing-period spend in USD, null while loading
+     * Raw per-group spend reported by the Enterprise API, null while loading
      * @nullable
      */
   spendUsd?: number | null;
+  /** Whether member-level usage for every custom group is loaded */
+  rollupSpendLoaded: boolean;
+  /** Member-deduplicated spend attributed to this group for team and org rollups */
+  rollupSpendUsd: number;
   /**
      * ISO timestamp when spend was last fetched
      * @nullable
      */
   spendUpdatedAt?: string | null;
   /**
-     * Effective budget in USD (app budget if set, else platform group limit), null if neither
+     * Effective budget in USD (from app-level group budget if set), null if not set
      * @nullable
      */
   budgetUsd?: number | null;
   /**
-     * Where the effective budget comes from ("app" or "platform"), null if no budget
+     * Where the effective budget comes from ("app"), null if no budget set
      * @nullable
      */
   budgetSource?: string | null;
@@ -75,7 +81,7 @@ export interface GroupsResponse {
   groups: Group[];
   /** False while background usage fetches are still pending; poll every ~8s until true */
   isComplete: boolean;
-  /** Number of groups whose spend has not been fetched yet */
+  /** Number of outstanding raw group-spend and member-usage fetches */
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
@@ -103,12 +109,12 @@ export interface GroupMember {
      */
   isDisabled?: boolean | null;
   /**
-     * Platform per-user limit, or the workspace default user limit; null if none
+     * Not used; always null (budgets are tracked at team level from the spreadsheet)
      * @nullable
      */
   allocatedBudgetUsd?: number | null;
   /**
-     * user_limit, workspace_default, or null
+     * Not used; always null
      * @nullable
      */
   budgetSource?: string | null;
@@ -139,7 +145,7 @@ export interface GroupDetail {
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Sum of loaded group spend this billing period */
+  /** Member-deduplicated spend across custom groups for the selected range */
   totalSpendUsd: number;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;

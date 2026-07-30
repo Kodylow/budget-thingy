@@ -2,6 +2,11 @@ import { logger } from "./logger";
 import { db } from "@workspace/db";
 import { apiDirectoryCacheTable, apiSpendCacheTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  computeDedupedMemberCounts,
+  computeDedupedUsageRollup,
+  type DedupedUsageRollup,
+} from "./usage-rollup";
 
 const BASE_URL = "https://api.replit.com/v1";
 
@@ -272,6 +277,12 @@ export interface EnterpriseGroup {
   type: string;
 }
 
+const BUILT_IN_GROUP_TYPES = new Set(["admin", "member", "guest"]);
+
+export function isCustomGroup(group: EnterpriseGroup): boolean {
+  return !BUILT_IN_GROUP_TYPES.has(group.type.toLowerCase());
+}
+
 export interface EnterpriseMember {
   userId: string;
   username: string;
@@ -318,6 +329,7 @@ interface SerializedDirectory {
   fetchedAt: number;
   workspaces: Record<string, EnterpriseWorkspace>;
   groups: EnterpriseGroup[];
+  allGroups?: EnterpriseGroup[];
   groupMembers: Record<string, string[]>;
   members: Record<
     string,
@@ -363,7 +375,15 @@ function serializeDirectory(d: DirectoryCache): SerializedDirectory {
   const workspaceDefaults: Record<string, number> = {};
   for (const [wsId, amt] of d.budgets.workspaceDefaults) workspaceDefaults[wsId] = amt;
 
-  return { fetchedAt: d.fetchedAt, workspaces, groups: d.groups, groupMembers, members, budgets: { groupLimits, userLimits, workspaceDefaults } };
+  return {
+    fetchedAt: d.fetchedAt,
+    workspaces,
+    groups: d.groups,
+    allGroups: d.allGroups,
+    groupMembers,
+    members,
+    budgets: { groupLimits, userLimits, workspaceDefaults },
+  };
 }
 
 function deserializeDirectory(s: SerializedDirectory): DirectoryCache {
@@ -391,10 +411,13 @@ function deserializeDirectory(s: SerializedDirectory): DirectoryCache {
   }
   const workspaceDefaults = new Map<string, number>(Object.entries(s.budgets.workspaceDefaults));
 
+  const allGroups = s.allGroups ?? s.groups;
+
   return {
     fetchedAt: s.fetchedAt,
     workspaces,
-    groups: s.groups,
+    groups: allGroups.filter(isCustomGroup),
+    allGroups,
     groupMembers,
     members,
     budgets: { groupLimits, userLimits, workspaceDefaults },
@@ -480,7 +503,8 @@ export async function initCache(): Promise<void> {
 interface DirectoryCache {
   fetchedAt: number;
   workspaces: Map<string, EnterpriseWorkspace>;
-  groups: EnterpriseGroup[];
+  groups: EnterpriseGroup[]; // custom/SCIM groups exposed by the dashboard
+  allGroups: EnterpriseGroup[]; // raw Enterprise API list, including built-in role groups
   groupMembers: Map<string, string[]>; // groupId -> userIds
   members: Map<string, EnterpriseMember>; // userId -> member
   budgets: PlatformBudgets;
@@ -500,13 +524,14 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
       const workspaces = await paginate<EnterpriseWorkspace>("/workspaces", {});
       const wsMap = new Map(workspaces.map((w) => [w.id, w]));
 
-      const groups: EnterpriseGroup[] = [];
+      const allGroups: EnterpriseGroup[] = [];
       for (const ws of workspaces) {
         const wsGroups = await paginate<EnterpriseGroup>("/groups", { workspaceId: ws.id });
         for (const g of wsGroups) {
-          groups.push({ ...g, workspaceId: g.workspaceId || ws.id });
+          allGroups.push({ ...g, workspaceId: g.workspaceId || ws.id });
         }
       }
+      const groups = allGroups.filter(isCustomGroup);
 
       const groupMembers = new Map<string, string[]>();
       for (const g of groups) {
@@ -566,6 +591,7 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
         fetchedAt: Date.now(),
         workspaces: wsMap,
         groups,
+        allGroups,
         groupMembers,
         members,
         budgets,
@@ -718,4 +744,23 @@ export function queueMemberUsageFetch(
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
     }
   });
+}
+
+export function getDedupedUsageRollup(
+  groups: EnterpriseGroup[],
+  rangeKey: string,
+): DedupedUsageRollup {
+  const usageByGroup = new Map<string, MemberUsage>();
+  for (const group of groups) {
+    const usage = getMemberUsage(group.id, rangeKey);
+    if (usage) usageByGroup.set(group.id, usage);
+  }
+  return computeDedupedUsageRollup(groups, usageByGroup);
+}
+
+export function getDedupedMemberCounts(
+  groups: EnterpriseGroup[],
+  membersByGroup: ReadonlyMap<string, readonly string[]>,
+): Map<string, number> {
+  return computeDedupedMemberCounts(groups, membersByGroup);
 }

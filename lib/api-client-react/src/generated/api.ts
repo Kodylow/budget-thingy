@@ -163,7 +163,7 @@ export const getListGroupsUrl = (params?: ListGroupsParams,) => {
 }
 
 /**
- * Returns every group across all workspaces of the Enterprise account, joined with spend for the selected date range (loaded progressively under the Enterprise API rate limit), the configured budget, and threshold state.
+ * Returns custom/SCIM groups across all workspaces of the Enterprise account, excluding built-in admin/member/guest role groups, joined with spend for the selected date range (loaded progressively under the Enterprise API rate limit), the configured budget, and threshold state.
  * @summary List all groups with usage and budget state
  */
 export const listGroups = async (params?: ListGroupsParams, options?: RequestInit): Promise<GroupsResponse> => {
@@ -410,7 +410,7 @@ export const getGetSummaryUrl = (params?: GetSummaryParams,) => {
 }
 
 /**
- * Aggregate account-level stats across all groups and budgets for the selected range.
+ * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is deduplicated at member level: groups are ordered by workspace, case-insensitive group name, then ID, and each member is attributed to the first custom group in which their usage appears.
  * @summary Dashboard summary
  */
 export const getSummary = async (params?: GetSummaryParams, options?: RequestInit): Promise<Summary> => {

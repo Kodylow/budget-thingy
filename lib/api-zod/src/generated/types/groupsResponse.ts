@@ -11,7 +11,7 @@ export interface GroupsResponse {
   groups: Group[];
   /** False while background usage fetches are still pending; poll every ~8s until true */
   isComplete: boolean;
-  /** Number of groups whose spend has not been fetched yet */
+  /** Number of outstanding raw group-spend and member-usage fetches */
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;

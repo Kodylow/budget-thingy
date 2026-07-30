@@ -24,25 +24,31 @@ export interface Group {
      * @nullable
      */
   memberCount?: number | null;
+  /** Unique members attributed to this group for team and org rollups */
+  rollupMemberCount: number;
   /** Whether spend for the current billing period has been fetched yet */
   spendLoaded: boolean;
   /**
-     * Current billing-period spend in USD, null while loading
+     * Raw per-group spend reported by the Enterprise API, null while loading
      * @nullable
      */
   spendUsd?: number | null;
+  /** Whether member-level usage for every custom group is loaded */
+  rollupSpendLoaded: boolean;
+  /** Member-deduplicated spend attributed to this group for team and org rollups */
+  rollupSpendUsd: number;
   /**
      * ISO timestamp when spend was last fetched
      * @nullable
      */
   spendUpdatedAt?: string | null;
   /**
-     * Effective budget in USD (app budget if set, else platform group limit), null if neither
+     * Effective budget in USD (from app-level group budget if set), null if not set
      * @nullable
      */
   budgetUsd?: number | null;
   /**
-     * Where the effective budget comes from ("app" or "platform"), null if no budget
+     * Where the effective budget comes from ("app"), null if no budget set
      * @nullable
      */
   budgetSource?: string | null;
