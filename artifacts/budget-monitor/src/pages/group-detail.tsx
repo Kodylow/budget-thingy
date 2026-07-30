@@ -309,7 +309,8 @@ export default function GroupDetail() {
                     const aiSpend = project.metrics.filter(m => m.category === 'ai').reduce((s, m) => s + m.costUsd, 0);
                     const hostingSpend = project.metrics.filter(m => m.category === 'hosting').reduce((s, m) => s + m.costUsd, 0);
                     const storageSpend = project.metrics.filter(m => m.category === 'storage').reduce((s, m) => s + m.costUsd, 0);
-                    const otherSpend = project.metrics.filter(m => !['ai', 'hosting', 'storage'].includes(m.category)).reduce((s, m) => s + m.costUsd, 0);
+                    // Remainder so the breakdown always sums to the total, regardless of API metric coverage.
+                    const otherSpend = Math.max(0, project.totalCostUsd - aiSpend - hostingSpend - storageSpend);
                     return (
                       <tr key={project.projectId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                         <td className="py-3 px-4">
@@ -364,6 +365,25 @@ export default function GroupDetail() {
                   </tr>
                 )}
               </tbody>
+              {projectsData?.isComplete && projectsData.projects.length > 0 && (
+                <tfoot>
+                  <tr className="bg-muted/30 font-medium border-t border-border">
+                    <td className="py-3 px-4 text-sm">Total</td>
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4 text-right">
+                      <span className="text-sm font-mono tabular-nums">
+                        ${(
+                          (projectsData.projects.reduce((s, p) => s + p.totalCostUsd, 0)) +
+                          projectsData.unattributedSpendUsd
+                        ).toFixed(2)}
+                      </span>
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </CardContent>

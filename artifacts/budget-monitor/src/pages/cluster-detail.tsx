@@ -359,9 +359,11 @@ export default function ClusterDetail() {
                       project.metrics
                         .filter((metric) => metric.category === category)
                         .reduce((sum, metric) => sum + metric.costUsd, 0);
-                    const otherSpend = project.metrics
-                      .filter((metric) => !['ai', 'hosting', 'storage'].includes(metric.category))
-                      .reduce((sum, metric) => sum + metric.costUsd, 0);
+                    const aiSpend = spendForCategory('ai');
+                    const hostingSpend = spendForCategory('hosting');
+                    const storageSpend = spendForCategory('storage');
+                    // Compute "other" as the remainder so the breakdown always sums to the total.
+                    const otherSpend = Math.max(0, project.totalCostUsd - aiSpend - hostingSpend - storageSpend);
 
                     return (
                       <tr key={project.projectId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
@@ -424,12 +426,14 @@ export default function ClusterDetail() {
               </tbody>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
-                  <td className="py-3 px-4 text-sm">Combined Total</td>
+                  <td className="py-3 px-4 text-sm">Total</td>
                   {[1, 2, 3, 4].map((cell) => (
                     <td key={cell} className="py-3 px-4" />
                   ))}
                   <td className="py-3 px-4 text-right">
-                    <span className="text-sm font-mono tabular-nums">${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}</span>
+                    <span className="text-sm font-mono tabular-nums">
+                      ${(mergedProjects.reduce((s, p) => s + p.totalCostUsd, 0) + projectsUnattributedSpend).toFixed(2)}
+                    </span>
                   </td>
                 </tr>
               </tfoot>
