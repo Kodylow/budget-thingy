@@ -219,11 +219,11 @@ export default function Dashboard() {
         </span>
       </td>
       <td className="py-3 px-4 text-right">
-        {!group.spendLoaded ? (
+        {!group.rollupSpendLoaded ? (
           <div className="flex justify-end"><LoadingCell /></div>
         ) : (
           <span className="text-sm font-mono tabular-nums" data-testid={`text-spend-${group.groupId}`}>
-            ${group.spendUsd?.toFixed(2) ?? '0.00'}
+            ${(group.rollupSpendUsd ?? 0).toFixed(2)}
           </span>
         )}
       </td>
