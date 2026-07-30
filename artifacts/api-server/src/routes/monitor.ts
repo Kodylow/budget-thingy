@@ -336,9 +336,13 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
           .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
       : [];
 
-    // Reconciliation: sum of project rows vs. group total
+    // Reconciliation: sum of project rows vs. group total.
+    // Anchor to groupSpend.spendUsd (the same figure shown in the header stat card)
+    // so the project table total always matches the group's reported spend.
+    // Fall back to projectUsage.totalCostUsd only when the plain-group spend
+    // hasn't loaded yet.
     const projectsSum = projects.reduce((sum, p) => sum + p.totalCostUsd, 0);
-    const groupTotal = projectUsage?.totalCostUsd ?? groupSpend?.spendUsd ?? 0;
+    const groupTotal = groupSpend?.spendUsd ?? projectUsage?.totalCostUsd ?? 0;
     const unattributedSpendUsd = Math.max(0, groupTotal - projectsSum);
 
     res.json(

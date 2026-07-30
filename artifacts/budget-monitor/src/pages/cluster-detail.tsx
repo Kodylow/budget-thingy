@@ -325,7 +325,12 @@ export default function ClusterDetail() {
         <CardHeader>
           <CardTitle>Projects</CardTitle>
           <CardDescription>
-            Combined project spending across the {groupIds.length} Admin/Member/Viewer sub-groups for the selected period
+            Combined project spending across the {groupIds.length} Admin/Member/Viewer sub-groups for the selected period.{' '}
+            <span className="text-amber-600 dark:text-amber-400 font-medium">
+              Totals are proportional estimates
+            </span>{' '}
+            — the Replit API does not expose per-user-per-project data, so figures are scaled to remove cross-role double-counting.
+            For exact per-project spend, open an individual sub-group page.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -426,7 +431,14 @@ export default function ClusterDetail() {
               </tbody>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
-                  <td className="py-3 px-4 text-sm">Total</td>
+                  <td className="py-3 px-4">
+                    <div className="flex flex-col">
+                      <span className="text-sm">Estimated Total</span>
+                      <span className="text-xs font-normal text-muted-foreground">
+                        Team total (exact): ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
+                      </span>
+                    </div>
+                  </td>
                   {[1, 2, 3, 4].map((cell) => (
                     <td key={cell} className="py-3 px-4" />
                   ))}
