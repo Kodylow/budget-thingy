@@ -65,7 +65,7 @@ async function rawFetch(
 /** All spend data before this date is excluded from every query. */
 export const SPEND_DATA_CUTOFF_ISO = "2026-05-20T00:00:00.000Z";
 export const SPEND_DATA_CUTOFF_MS = new Date(SPEND_DATA_CUTOFF_ISO).getTime();
-export const SPEND_DATA_CUTOFF_LABEL = "May 2026 (starts May 20, 2026)";
+export const SPEND_DATA_CUTOFF_LABEL = "May 2026-present";
 
 export type RangeType = "billing" | "mtd" | "ytd" | "custom";
 
