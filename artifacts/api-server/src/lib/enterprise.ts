@@ -65,6 +65,7 @@ async function rawFetch(
 /** All spend data before this date is excluded from every query. */
 export const SPEND_DATA_CUTOFF_ISO = "2026-05-20T00:00:00.000Z";
 export const SPEND_DATA_CUTOFF_MS = new Date(SPEND_DATA_CUTOFF_ISO).getTime();
+export const SPEND_DATA_CUTOFF_LABEL = "May 2026 (starts May 20, 2026)";
 
 export type RangeType = "billing" | "mtd" | "ytd" | "custom";
 
@@ -128,7 +129,7 @@ export function resolveRange(
     default:
       return {
         key: "billing:from-cutoff",
-        label: now.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }),
+        label: SPEND_DATA_CUTOFF_LABEL,
         params: { startTime: SPEND_DATA_CUTOFF_ISO, endTime: now.toISOString() },
       };
   }
@@ -596,16 +597,14 @@ export function getSpend(groupId: string, rangeKey = "billing:from-cutoff"): Gro
 export function getBillingPeriod(): { start: string | null; label: string } {
   for (const [k, s] of spendCache) {
     if (!k.startsWith("billing:from-cutoff|")) continue;
-    const d = new Date(s.periodStart);
     return {
       start: s.periodStart,
-      label: d.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }),
+      label: SPEND_DATA_CUTOFF_LABEL,
     };
   }
-  const now = new Date();
   return {
     start: null,
-    label: now.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }),
+    label: SPEND_DATA_CUTOFF_LABEL,
   };
 }
 
