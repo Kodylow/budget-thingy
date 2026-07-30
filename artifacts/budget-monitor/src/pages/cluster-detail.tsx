@@ -101,23 +101,25 @@ export default function ClusterDetail() {
   }, [results]);
 
   // Merge members across all constituent groups
-  const { mergedMembers, totalGroupSpend, totalMembersSpend, unattributedSpend, rangeLabel } =
+  const { mergedMembers, totalMembersSpend, totalUnattributedSpend, rangeLabel } =
     useMemo(() => {
       const memberMap = new Map<string, MergedMember>();
-      let totalGroupSpend = 0;
+      // Track which users have been seen so spend is only counted once per person,
+      // even if they appear in multiple sub-groups (Admin + Member, etc.).
+      const seenUserIds = new Set<string>();
       let totalMembersSpend = 0;
-      let totalGroupAttributed = 0;
+      // Use per-group unattributed from the API (deleted users / shared costs) rather
+      // than deriving it from raw group totals, which would inflate the figure.
+      let totalUnattributedSpend = 0;
       let rangeLabel = '';
 
       for (const r of results) {
         if (!r.data) continue;
-        const { group, members, membersSpendUsd, unattributedSpendUsd } = r.data;
+        const { members, unattributedSpendUsd } = r.data;
         rangeLabel = r.data.rangeLabel ?? '';
-        const subRole = groupRoleMap[group.groupId] ?? 'Member';
+        const subRole = groupRoleMap[r.data.group.groupId] ?? 'Member';
 
-        // Group-level spend totals
-        totalGroupSpend += group.spendUsd ?? 0;
-        totalGroupAttributed += membersSpendUsd ?? 0;
+        totalUnattributedSpend += unattributedSpendUsd ?? 0;
 
         for (const m of members) {
           const existing = memberMap.get(m.userId);
@@ -133,12 +135,13 @@ export default function ClusterDetail() {
               spendUsd: spend,
               spendLoaded: m.spendLoaded,
             });
+            seenUserIds.add(m.userId);
           } else {
-            // Update to highest-privilege role
+            // Update to highest-privilege role; spend is NOT added again —
+            // the same person's usage is already reflected from their first sub-group.
             const bestRole = higherRole(existing.role, subRole);
             if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
             existing.role = bestRole;
-            existing.spendUsd += spend;
             existing.spendLoaded = existing.spendLoaded && m.spendLoaded;
           }
         }
@@ -149,13 +152,10 @@ export default function ClusterDetail() {
         totalMembersSpend += m.spendUsd;
       }
 
-      const unattributedSpend = Math.max(0, totalGroupSpend - totalMembersSpend);
-
       return {
         mergedMembers: [...memberMap.values()].sort((a, b) => b.spendUsd - a.spendUsd),
-        totalGroupSpend,
         totalMembersSpend,
-        unattributedSpend,
+        totalUnattributedSpend,
         rangeLabel,
       };
     }, [results, groupRoleMap]);
@@ -276,10 +276,10 @@ export default function ClusterDetail() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold font-mono tabular-nums">
-              ${totalGroupSpend.toFixed(2)}
+              ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Combined across {groupIds.length} sub-group{groupIds.length !== 1 ? 's' : ''}
+              Each member counted once across all roles
             </p>
           </CardContent>
         </Card>
@@ -412,7 +412,7 @@ export default function ClusterDetail() {
                     <td key={cell} className="py-3 px-4" />
                   ))}
                   <td className="py-3 px-4 text-right">
-                    <span className="text-sm font-mono tabular-nums">${totalGroupSpend.toFixed(2)}</span>
+                    <span className="text-sm font-mono tabular-nums">${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}</span>
                   </td>
                 </tr>
               </tfoot>
@@ -491,7 +491,7 @@ export default function ClusterDetail() {
                   </tr>
                 ))}
 
-                {unattributedSpend > 0.005 && (
+                {totalUnattributedSpend > 0.005 && (
                   <tr className="border-b border-border/50 bg-muted/10">
                     <td className="py-3 px-4">
                       <div className="flex flex-col">
@@ -502,7 +502,7 @@ export default function ClusterDetail() {
                     <td className="py-3 px-4" />
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm font-mono tabular-nums">
-                        ${unattributedSpend.toFixed(2)}
+                        ${totalUnattributedSpend.toFixed(2)}
                       </span>
                     </td>
                   </tr>
@@ -514,7 +514,7 @@ export default function ClusterDetail() {
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
-                      ${totalGroupSpend.toFixed(2)}
+                      ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
                     </span>
                   </td>
                 </tr>
