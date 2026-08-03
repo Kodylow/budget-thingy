@@ -1,7 +1,51 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown } from 'lucide-react';
+
+// Credit pool period: May 20 2026 (spend cutoff) → May 17 2027 (expiry)
+const PACE_PERIOD_START_MS = new Date('2026-05-20T00:00:00.000Z').getTime();
+const PACE_PERIOD_END_MS   = new Date('2027-05-17T00:00:00.000Z').getTime();
+const PACE_TOTAL_DAYS = (PACE_PERIOD_END_MS - PACE_PERIOD_START_MS) / 86_400_000;
+
+type PaceStatus = 'on-track' | 'at-risk' | 'over-pace';
+interface PaceResult { status: PaceStatus; projectedUsd: number; daysRemaining: number; }
+
+function calcPace(spendUsd: number, budgetUsd: number): PaceResult | null {
+  if (budgetUsd <= 0 || spendUsd == null) return null;
+  const now = Date.now();
+  const daysElapsed = (now - PACE_PERIOD_START_MS) / 86_400_000;
+  if (daysElapsed <= 0) return null;
+  const daysRemaining = Math.max(0, (PACE_PERIOD_END_MS - now) / 86_400_000);
+  const projectedUsd = (spendUsd / daysElapsed) * PACE_TOTAL_DAYS;
+  const ratio = projectedUsd / budgetUsd;
+  const status: PaceStatus = ratio <= 1.0 ? 'on-track' : ratio <= 1.15 ? 'at-risk' : 'over-pace';
+  return { status, projectedUsd, daysRemaining };
+}
+
+function PaceCell({ spendUsd, budgetUsd, spendLoaded, semibold }: {
+  spendUsd: number; budgetUsd: number | null; spendLoaded: boolean; semibold?: boolean;
+}) {
+  if (!spendLoaded) return <span className="text-sm text-muted-foreground">—</span>;
+  if (budgetUsd == null || budgetUsd <= 0) return <span className="text-sm text-muted-foreground">—</span>;
+  const pace = calcPace(spendUsd, budgetUsd);
+  if (!pace) return <span className="text-sm text-muted-foreground">—</span>;
+  const cfg = {
+    'on-track':  { label: 'On Track',  cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' },
+    'at-risk':   { label: 'At Risk',   cls: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300' },
+    'over-pace': { label: 'Over Pace', cls: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300' },
+  }[pace.status];
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.cls} ${semibold ? 'font-semibold' : ''}`}>
+        {cfg.label}
+      </span>
+      <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
+        ${pace.projectedUsd.toFixed(0)} proj.
+      </span>
+    </div>
+  );
+}
 import {
   useListGroups,
   useGetSummary,
@@ -267,6 +311,13 @@ export default function Dashboard() {
           )}
         </div>
       </td>
+      <td className="py-3 px-4 text-right">
+        <PaceCell
+          spendUsd={group.spendUsd ?? 0}
+          budgetUsd={group.budgetUsd ?? null}
+          spendLoaded={group.spendLoaded}
+        />
+      </td>
     </tr>
   );
 
@@ -320,7 +371,10 @@ export default function Dashboard() {
             </span>
           )}
         </td>
-        {/* Budget, Remaining, Usage — not applicable at cluster level */}
+        {/* Budget, Remaining, Usage, Pace — not applicable at cluster level */}
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm text-muted-foreground">—</span>
+        </td>
         <td className="py-3 px-4 text-right">
           <span className="text-sm text-muted-foreground">—</span>
         </td>
@@ -414,6 +468,14 @@ export default function Dashboard() {
             )}
           </div>
         </td>
+        <td className="py-3 px-4 text-right">
+          <PaceCell
+            spendUsd={team.spendUsd}
+            budgetUsd={team.budgetUsd}
+            spendLoaded={team.spendLoaded}
+            semibold
+          />
+        </td>
       </tr>
     );
   };
@@ -427,7 +489,7 @@ export default function Dashboard() {
         data-testid="row-team-unassigned"
         onClick={() => toggleTeam('__unassigned__')}
       >
-        <td className="py-3 px-4 font-semibold text-sm text-muted-foreground" colSpan={7}>
+        <td className="py-3 px-4 font-semibold text-sm text-muted-foreground" colSpan={8}>
           <div className="flex items-center gap-2">
             {expanded
               ? <ChevronDown className="h-4 w-4 flex-shrink-0" />
@@ -533,6 +595,9 @@ export default function Dashboard() {
                     <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
                       Usage
                     </th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4" title="Projected total spend by May 17 2027 vs budget">
+                      Pace <span className="font-normal opacity-60">→ May '27</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -601,6 +666,18 @@ export default function Dashboard() {
                               />
                             </div>
                           </div>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {summary && summary.totalBudgetUsd > 0 ? (
+                          <PaceCell
+                            spendUsd={summary.totalSpendUsd}
+                            budgetUsd={summary.totalBudgetUsd}
+                            spendLoaded={summary.isComplete}
+                            semibold
+                          />
                         ) : (
                           <span className="text-sm text-muted-foreground">—</span>
                         )}
