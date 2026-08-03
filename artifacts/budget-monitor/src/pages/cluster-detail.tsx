@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
 import { Link } from 'wouter';
 import { useSearch } from 'wouter';
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import {
   getGetGroupDetailQueryOptions,
   getGetGroupDetailQueryKey,
-  getGetGroupProjectsQueryOptions,
-  getGetGroupProjectsQueryKey,
+  getGetClusterProjectsQueryOptions,
+  getGetClusterProjectsQueryKey,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -72,21 +72,22 @@ export default function ClusterDetail() {
     ),
   });
 
-  const projectResults = useQueries({
-    queries: groupIds.map((id) =>
-      getGetGroupProjectsQueryOptions(id, queryParams, {
-        query: {
-          queryKey: getGetGroupProjectsQueryKey(id, queryParams),
-          refetchInterval: (q: any) => (q.state.data?.isComplete ? false : 8000),
-        },
-      }),
-    ),
-  });
-
+  // Single cluster-projects query: exact figures via creator attribution (no scaling)
+  const clusterKey = groupIds.join(',');
+  const clusterProjectsQuery = useQuery(
+    getGetClusterProjectsQueryOptions(clusterKey, queryParams, {
+      query: {
+        queryKey: getGetClusterProjectsQueryKey(clusterKey, queryParams),
+        refetchInterval: (q: any) => (q.state.data?.isComplete ? false : 8000),
+        enabled: groupIds.length > 0,
+      },
+    }),
+  );
+  const clusterProjectsData = clusterProjectsQuery.data;
   const allLoaded = results.every((r) => !r.isLoading);
   const anyComplete = results.some((r) => r.data?.isComplete);
   const allComplete = results.every((r) => r.data?.isComplete);
-  const projectsComplete = projectResults.every((r) => r.data?.isComplete);
+  const projectsComplete = clusterProjectsData?.isComplete ?? false;
 
   // Build a map of groupId → sub-group role by parsing the fetched group names
   const groupRoleMap = useMemo(() => {
@@ -165,66 +166,9 @@ export default function ClusterDetail() {
     return [...roles].sort((a, b) => (ROLE_PRIORITY[a] ?? 99) - (ROLE_PRIORITY[b] ?? 99));
   }, [groupRoleMap]);
 
-  const { mergedProjects, projectsUnattributedSpend } = useMemo(() => {
-    const projectMap = new Map<string, ClusterProject>();
-    let projectsUnattributedSpend = 0;
-
-    for (let i = 0; i < projectResults.length; i++) {
-      const data = projectResults[i]?.data;
-      if (!data) continue;
-
-      // Compute a deduplication ratio for this sub-group using the globally
-      // deduped rollup spend vs. the raw group total.  When a user belongs to
-      // multiple sub-groups (e.g. Admins + Members), the API returns their
-      // project spend in every sub-group response.  Scaling by this ratio
-      // removes the double-counting proportionally across all projects.
-      //
-      // Only apply the ratio when the rollup has fully loaded; otherwise fall
-      // back to 1.0 so we don't zero out costs before the data is ready.
-      const groupDetail = results[i]?.data?.group;
-      const rawSpend = groupDetail?.spendUsd ?? 0;
-      const rollupLoaded = groupDetail?.rollupSpendLoaded ?? false;
-      const dedupedSpend = rollupLoaded ? (groupDetail?.rollupSpendUsd ?? rawSpend) : rawSpend;
-      const ratio = rawSpend > 0 ? Math.min(1, dedupedSpend / rawSpend) : 1;
-
-      projectsUnattributedSpend += data.unattributedSpendUsd * ratio;
-
-      for (const project of data.projects) {
-        const scaledCost = project.totalCostUsd * ratio;
-        const existing = projectMap.get(project.projectId);
-        if (!existing) {
-          projectMap.set(project.projectId, {
-            projectId: project.projectId,
-            title: project.title,
-            totalCostUsd: scaledCost,
-            metrics: project.metrics.map((metric) => ({ ...metric, costUsd: metric.costUsd * ratio })),
-          });
-          continue;
-        }
-
-        existing.totalCostUsd += scaledCost;
-        if (!existing.title && project.title) existing.title = project.title;
-
-        for (const metric of project.metrics) {
-          const scaledMetricCost = metric.costUsd * ratio;
-          const metricKey = `${metric.category}:${metric.id}`;
-          const existingMetric = existing.metrics.find(
-            (candidate) => `${candidate.category}:${candidate.id}` === metricKey,
-          );
-          if (existingMetric) {
-            existingMetric.costUsd += scaledMetricCost;
-          } else {
-            existing.metrics.push({ ...metric, costUsd: scaledMetricCost });
-          }
-        }
-      }
-    }
-
-    return {
-      mergedProjects: [...projectMap.values()].sort((a, b) => b.totalCostUsd - a.totalCostUsd),
-      projectsUnattributedSpend,
-    };
-  }, [projectResults, results]);
+  // Project data comes directly from the cluster-projects endpoint (creator-attributed, no scaling).
+  const mergedProjects: ClusterProject[] = clusterProjectsData?.projects ?? [];
+  const projectsUnattributedSpend = clusterProjectsData?.unattributedSpendUsd ?? 0;
 
   if (!allLoaded && results.every((r) => !r.data)) {
     return (
@@ -325,12 +269,7 @@ export default function ClusterDetail() {
         <CardHeader>
           <CardTitle>Projects</CardTitle>
           <CardDescription>
-            Combined project spending across the {groupIds.length} Admin/Member/Viewer sub-groups for the selected period.{' '}
-            <span className="text-amber-600 dark:text-amber-400 font-medium">
-              Totals are proportional estimates
-            </span>{' '}
-            — the Replit API does not expose per-user-per-project data, so figures are scaled to remove cross-role double-counting.
-            For exact per-project spend, open an individual sub-group page.
+            Project spending for this team, attributed by project creator. Each project is counted once based on who created it.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -415,7 +354,7 @@ export default function ClusterDetail() {
                     <td className="py-3 px-4">
                       <div className="flex flex-col">
                         <span className="text-sm font-medium italic">Unattributed Spend</span>
-                        <span className="text-xs text-muted-foreground">Not linked to a specific project</span>
+                        <span className="text-xs text-muted-foreground">Creator not in this team or unknown</span>
                       </div>
                     </td>
                     {[1, 2, 3, 4].map((cell) => (
@@ -431,14 +370,7 @@ export default function ClusterDetail() {
               </tbody>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
-                  <td className="py-3 px-4">
-                    <div className="flex flex-col">
-                      <span className="text-sm">Estimated Total</span>
-                      <span className="text-xs font-normal text-muted-foreground">
-                        Team total (exact): ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
-                      </span>
-                    </div>
-                  </td>
+                  <td className="py-3 px-4 text-sm">Total</td>
                   {[1, 2, 3, 4].map((cell) => (
                     <td key={cell} className="py-3 px-4" />
                   ))}

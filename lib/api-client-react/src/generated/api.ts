@@ -410,6 +410,92 @@ export function useGetGroupProjects<TData = Awaited<ReturnType<typeof getGroupPr
 
 
 
+export const getGetClusterProjectsUrl = (clusterKey: string,
+    params?: GetGroupProjectsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/clusters/${clusterKey}/projects?${stringifiedParams}` : `/api/clusters/${clusterKey}/projects`
+}
+
+/**
+ * Returns project-level spend breakdown for a cluster, attributed by project creator membership.
+ * Exact per-project figures with no proportional scaling.
+ * @summary Cluster project spend drill-down (creator-attributed)
+ */
+export const getClusterProjects = async (clusterKey: string,
+    params?: GetGroupProjectsParams, options?: RequestInit): Promise<GroupProjectsResponse> => {
+
+  return customFetch<GroupProjectsResponse>(getGetClusterProjectsUrl(clusterKey,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+export const getGetClusterProjectsQueryKey = (clusterKey: string,
+    params?: GetGroupProjectsParams,) => {
+    return [
+    `/api/clusters/${clusterKey}/projects`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetClusterProjectsQueryOptions = <TData = Awaited<ReturnType<typeof getClusterProjects>>, TError = ErrorType<ApiError>>(clusterKey: string,
+    params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClusterProjectsQueryKey(clusterKey,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClusterProjects>>> = ({ signal }) => getClusterProjects(clusterKey,params, { signal, ...requestOptions });
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!clusterKey, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetClusterProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof getClusterProjects>>>
+export type GetClusterProjectsQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Cluster project spend drill-down (creator-attributed)
+ */
+
+export function useGetClusterProjects<TData = Awaited<ReturnType<typeof getClusterProjects>>, TError = ErrorType<ApiError>>(
+ clusterKey: string,
+    params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetClusterProjectsQueryOptions(clusterKey,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
 export const getRefreshGroupUsageUrl = (groupId: string,) => {
 
 

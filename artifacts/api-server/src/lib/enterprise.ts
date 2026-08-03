@@ -856,26 +856,54 @@ export function queueProjectUsageFetch(
 interface RawProject {
   id: string;
   title?: string | null;
+  creatorId?: string | null;
 }
 
-const projectTitlesCache = new Map<string, Map<string, string>>(); // workspaceId -> projectId -> title
+export interface ProjectInfo {
+  title: string | null;
+  creatorId: string | null;
+}
+
+// workspaceId -> projectId -> { title, creatorId }
+const projectInfoCache = new Map<string, Map<string, ProjectInfo>>();
 const projectTitlesFetching = new Set<string>();
 
 export function getProjectTitles(workspaceId: string): Map<string, string> {
-  return projectTitlesCache.get(workspaceId) ?? new Map();
+  const infoMap = projectInfoCache.get(workspaceId);
+  if (!infoMap) return new Map();
+  const out = new Map<string, string>();
+  for (const [id, info] of infoMap) {
+    if (info.title) out.set(id, info.title);
+  }
+  return out;
+}
+
+/** Returns undefined if cache not yet loaded for this workspace, otherwise the project's info. */
+export function getProjectInfo(workspaceId: string, projectId: string): ProjectInfo | undefined {
+  const infoMap = projectInfoCache.get(workspaceId);
+  if (!infoMap) return undefined;
+  return infoMap.get(projectId) ?? { title: null, creatorId: null };
+}
+
+/** Returns true if project info (titles + creatorIds) has been fetched for this workspace. */
+export function hasProjectInfo(workspaceId: string): boolean {
+  return projectInfoCache.has(workspaceId);
 }
 
 export function queueProjectTitlesFetch(workspaceId: string, priority = 0): boolean {
-  if (projectTitlesCache.has(workspaceId) || projectTitlesFetching.has(workspaceId)) return false;
+  if (projectInfoCache.has(workspaceId) || projectTitlesFetching.has(workspaceId)) return false;
   projectTitlesFetching.add(workspaceId);
   return enqueueUsage(`project-titles:${workspaceId}`, priority, async () => {
     try {
       const projects = await paginate<RawProject>("/projects", { workspaceId });
-      const titleMap = new Map<string, string>();
+      const infoMap = new Map<string, ProjectInfo>();
       for (const p of projects) {
-        if (p.title) titleMap.set(p.id, p.title);
+        infoMap.set(p.id, {
+          title: p.title ?? null,
+          creatorId: p.creatorId ?? null,
+        });
       }
-      projectTitlesCache.set(workspaceId, titleMap);
+      projectInfoCache.set(workspaceId, infoMap);
     } catch (err) {
       logger.warn({ err, workspaceId }, "Failed to fetch project titles");
     } finally {

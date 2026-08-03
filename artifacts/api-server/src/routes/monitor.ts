@@ -44,12 +44,15 @@ import {
   getProjectUsage,
   queueProjectTitlesFetch,
   getProjectTitles,
+  getProjectInfo,
+  hasProjectInfo,
   getDedupedUsageRollup,
   getDedupedMemberCounts,
   resolveRange,
   isBadRangeError,
   type UsageRange,
   type EnterpriseGroup,
+  type ProjectUsageMetric,
 } from "../lib/enterprise";
 import { isEmailConfigured } from "../lib/email";
 import {
@@ -358,6 +361,119 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
       return;
     }
     req.log.error({ err }, "getGroupProjects failed");
+    res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
+  }
+});
+
+router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => {
+  if (!isConfigured()) {
+    res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
+    return;
+  }
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  try {
+    const rawKey = String(req.params["clusterKey"]);
+    const groupIds = rawKey.split(",").map((id) => id.trim()).filter(Boolean);
+    if (groupIds.length === 0) {
+      res.status(400).json({ error: "No group IDs in cluster key" });
+      return;
+    }
+
+    const dir = await getDirectory();
+    const groups = groupIds
+      .map((id) => dir.groups.find((g) => g.id === id))
+      .filter((g): g is EnterpriseGroup => g !== undefined);
+
+    if (groups.length === 0) {
+      res.status(404).json({ error: "No matching groups found" });
+      return;
+    }
+
+    // Queue fetches (high priority)
+    const workspaceIds = new Set(groups.map((g) => g.workspaceId));
+    for (const g of groups) queueProjectUsageFetch(g, range, 0);
+    for (const wsId of workspaceIds) queueProjectTitlesFetch(wsId, 0);
+
+    // Member set — union of all members across constituent groups
+    const memberSet = new Set<string>();
+    for (const g of groups) {
+      for (const userId of dir.groupMembers.get(g.id) ?? []) {
+        memberSet.add(userId);
+      }
+    }
+
+    // Collect unique projects across all sub-groups; de-dup by taking max totalCostUsd entry.
+    // When the same project appears in multiple sub-group responses (because the creator is in
+    // multiple sub-groups), we pick the entry with the highest reported total rather than summing,
+    // which would inflate the figure.
+    const projectMap = new Map<
+      string,
+      { entry: { projectId: string; totalCostUsd: number; metrics: ProjectUsageMetric[] }; workspaceId: string }
+    >();
+    let allGroupsLoaded = true;
+
+    for (const g of groups) {
+      const usage = getProjectUsage(g.id, range.key);
+      if (!usage) {
+        allGroupsLoaded = false;
+        continue;
+      }
+      for (const entry of usage.byProject.values()) {
+        const existing = projectMap.get(entry.projectId);
+        if (!existing || entry.totalCostUsd > existing.entry.totalCostUsd) {
+          projectMap.set(entry.projectId, { entry, workspaceId: g.workspaceId });
+        }
+      }
+    }
+
+    // Project info (creatorId) availability — needed for exact attribution
+    const projectInfoLoaded = Array.from(workspaceIds).every((wsId) => hasProjectInfo(wsId));
+
+    // Attribute projects by creator membership
+    const attributed: {
+      projectId: string;
+      title: string | null;
+      totalCostUsd: number;
+      metrics: ProjectUsageMetric[];
+    }[] = [];
+    let unattributedSpendUsd = 0;
+
+    for (const { entry, workspaceId } of projectMap.values()) {
+      const info = getProjectInfo(workspaceId, entry.projectId);
+      const creatorId = info?.creatorId ?? null;
+      if (creatorId !== null && memberSet.has(creatorId)) {
+        attributed.push({
+          projectId: entry.projectId,
+          title: info?.title ?? null,
+          totalCostUsd: entry.totalCostUsd,
+          metrics: entry.metrics,
+        });
+      } else {
+        unattributedSpendUsd += entry.totalCostUsd;
+      }
+    }
+
+    attributed.sort((a, b) => b.totalCostUsd - a.totalCostUsd);
+
+    res.json(
+      GetGroupProjectsResponse.parse({
+        projects: attributed,
+        unattributedSpendUsd,
+        isComplete: allGroupsLoaded && projectInfoLoaded,
+      }),
+    );
+  } catch (err) {
+    if (isBadRangeError(err)) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    req.log.error({ err }, "getClusterProjects failed");
     res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
   }
 });
