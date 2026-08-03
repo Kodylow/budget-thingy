@@ -561,6 +561,9 @@ export default function Dashboard() {
           <CardDescription>
             Monitor spending and set budgets by team
           </CardDescription>
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
+            Current credit pool expires May 17, 2027.
+          </p>
         </CardHeader>
         <CardContent>
           {groupsLoading ? (
