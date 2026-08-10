@@ -50,6 +50,7 @@ import {
   getDedupedMemberCounts,
   resolveRange,
   isBadRangeError,
+  SPEND_DATA_CUTOFF_ISO,
   type UsageRange,
   type EnterpriseGroup,
   type ProjectUsageMetric,
@@ -774,6 +775,130 @@ router.get("/status", async (_req, res): Promise<void> => {
       lastCheckAt: getLastCheckAt()?.toISOString() ?? null,
     }),
   );
+});
+
+// ---------- Trends: bucketed spend over time ----------
+
+interface TrendBucket {
+  key: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+}
+
+function generateMonthlyBuckets(): TrendBucket[] {
+  const cutoff = new Date(SPEND_DATA_CUTOFF_ISO);
+  const now = new Date();
+  const buckets: TrendBucket[] = [];
+
+  let monthStart = new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth(), 1));
+  while (monthStart <= now) {
+    const y = monthStart.getUTCFullYear();
+    const m = monthStart.getUTCMonth();
+
+    const bucketStartMs = Math.max(monthStart.getTime(), cutoff.getTime());
+    const lastDayOfMonth = new Date(Date.UTC(y, m + 1, 0)).getTime();
+    const bucketEndMs = Math.min(lastDayOfMonth, now.getTime());
+
+    const startDate = new Date(bucketStartMs).toISOString().slice(0, 10);
+    const endDate = new Date(bucketEndMs).toISOString().slice(0, 10);
+
+    if (startDate < endDate) {
+      const mo = monthStart.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+      const yr = String(y).slice(2);
+      buckets.push({ key: `custom:${startDate}:${endDate}`, label: `${mo} '${yr}`, startDate, endDate });
+    }
+
+    monthStart = new Date(Date.UTC(y, m + 1, 1));
+  }
+  return buckets;
+}
+
+function generateWeeklyBuckets(): TrendBucket[] {
+  const cutoff = new Date(SPEND_DATA_CUTOFF_ISO);
+  const now = new Date();
+  const buckets: TrendBucket[] = [];
+
+  let weekStart = new Date(cutoff.getTime());
+  while (weekStart < now) {
+    const weekEndMs = Math.min(weekStart.getTime() + 6 * 86_400_000, now.getTime());
+    const startDate = weekStart.toISOString().slice(0, 10);
+    const endDate = new Date(weekEndMs).toISOString().slice(0, 10);
+
+    if (startDate < endDate) {
+      const mo = String(weekStart.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(weekStart.getUTCDate()).padStart(2, "0");
+      buckets.push({ key: `custom:${startDate}:${endDate}`, label: `${mo}/${d}`, startDate, endDate });
+    }
+
+    weekStart = new Date(weekStart.getTime() + 7 * 86_400_000);
+  }
+  return buckets;
+}
+
+router.get("/trends", async (req, res): Promise<void> => {
+  const granularity =
+    typeof req.query["granularity"] === "string" && req.query["granularity"] === "week"
+      ? "week"
+      : "month";
+
+  const buckets = granularity === "week" ? generateWeeklyBuckets() : generateMonthlyBuckets();
+
+  if (!isConfigured()) {
+    res.json({ granularity, buckets, groups: [], isComplete: true, loadedCount: 0, totalCount: 0 });
+    return;
+  }
+
+  let dir;
+  try {
+    dir = await getDirectory();
+  } catch (err) {
+    req.log.error({ err }, "trends directory fetch failed");
+    res.status(503).json({ error: "Directory unavailable" });
+    return;
+  }
+
+  const groupTeams = await db.select().from(groupTeamsTable);
+  const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+
+  let loadedCount = 0;
+  const totalCount = dir.groups.length * buckets.length;
+
+  for (const group of dir.groups) {
+    for (const bucket of buckets) {
+      let range: UsageRange;
+      try {
+        range = resolveRange("custom", bucket.startDate, bucket.endDate);
+      } catch {
+        continue;
+      }
+      const cached = getSpend(group.id, range.key);
+      if (cached) {
+        loadedCount++;
+      } else {
+        queueGroupSpendFetch(group, 1, false, undefined, range);
+      }
+    }
+  }
+
+  const groups = dir.groups.map((g) => {
+    const teamName = teamNameMap.get(g.name) ?? null;
+    const spendByBucket: Record<string, number | null> = {};
+    for (const bucket of buckets) {
+      let range: UsageRange;
+      try {
+        range = resolveRange("custom", bucket.startDate, bucket.endDate);
+      } catch {
+        spendByBucket[bucket.key] = null;
+        continue;
+      }
+      const spend = getSpend(g.id, range.key);
+      spendByBucket[bucket.key] = spend != null ? spend.spendUsd : null;
+    }
+    return { groupId: g.id, name: g.name, teamName, spendByBucket };
+  });
+
+  res.json({ granularity, buckets, groups, isComplete: loadedCount >= totalCount, loadedCount, totalCount });
 });
 
 export default router;
