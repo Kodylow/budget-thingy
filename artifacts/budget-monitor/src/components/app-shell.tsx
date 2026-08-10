@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'wouter';
-import { LayoutDashboard, Bell, Settings } from 'lucide-react';
+import { LayoutDashboard, Bell, Settings, TrendingUp } from 'lucide-react';
 import { ReactNode } from 'react';
 
 interface AppShellProps {
@@ -11,6 +11,7 @@ export function AppShell({ children }: AppShellProps) {
 
   const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
+    { path: '/trends', label: 'Trends', icon: TrendingUp },
     { path: '/alerts', label: 'Alerts', icon: Bell },
     { path: '/settings', label: 'Settings', icon: Settings },
   ];

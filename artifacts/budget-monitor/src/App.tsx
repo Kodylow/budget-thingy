@@ -9,6 +9,7 @@ import Alerts from '@/pages/alerts';
 import Settings from '@/pages/settings';
 import GroupDetail from '@/pages/group-detail';
 import ClusterDetail from '@/pages/cluster-detail';
+import Trends from '@/pages/trends';
 import { RangeProvider } from '@/components/range-context';
 
 const queryClient = new QueryClient();
@@ -20,6 +21,7 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/alerts" component={Alerts} />
         <Route path="/settings" component={Settings} />
+        <Route path="/trends" component={Trends} />
         <Route path="/groups/:groupId" component={GroupDetail} />
         <Route path="/clusters" component={ClusterDetail} />
         <Route component={NotFound} />
