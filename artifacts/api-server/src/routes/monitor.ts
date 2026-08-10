@@ -902,8 +902,9 @@ router.get("/trends", async (req, res): Promise<void> => {
 });
 
 // ── GET /export/users.csv ─────────────────────────────────────────────────────
-// Returns a CSV of all active enterprise members with their email, name,
-// username, group, and team. Each user appears once (first custom group wins).
+// Returns a CSV of users with confirmed agent spend > 0 over the billing period.
+// Each user appears once (first custom group wins). Groups whose per-member
+// usage hasn't loaded yet are skipped; they are queued so a retry will include them.
 router.get("/export/users.csv", async (req, res) => {
   let dir: Awaited<ReturnType<typeof getDirectory>>;
   try {
@@ -914,42 +915,61 @@ router.get("/export/users.csv", async (req, res) => {
     return;
   }
 
+  const billingRange = resolveRange("billing");
   const groupTeams = await db.select().from(groupTeamsTable);
   const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
+  let groupsLoaded = 0;
+  const totalGroups = dir.groups.length;
+
   // Deduplicate: each user attributed to their first group (same rule as dashboard)
   const seen = new Set<string>();
-  const rows: { email: string; name: string; username: string; group: string; team: string }[] = [];
+  const rows: { email: string; name: string; username: string; group: string; team: string; spendUsd: number }[] = [];
 
   for (const group of dir.groups) {
+    const memberUsage = getMemberUsage(group.id, billingRange.key);
+    if (!memberUsage) {
+      // Queue fetch for next time; skip this group now (can't confirm activity)
+      queueMemberUsageFetch(group, billingRange, 1);
+      continue;
+    }
+    groupsLoaded++;
+
     const memberIds = dir.groupMembers.get(group.id) ?? [];
     const teamName = teamNameMap.get(group.name) ?? "";
+
     for (const userId of memberIds) {
+      const spendUsd = memberUsage.byUser.get(userId) ?? 0;
+      if (spendUsd <= 0) continue; // not active this period
+
       if (seen.has(userId)) continue;
       seen.add(userId);
+
       const m = dir.members.get(userId);
       if (!m) continue;
-      // Skip disabled members (disabled in every workspace they belong to)
-      const allDisabled =
-        m.workspaces.size > 0 &&
-        [...m.workspaces.values()].every((ws) => ws.isDisabled);
-      if (allDisabled) continue;
+
       rows.push({
         email: m.email,
         name: m.name ?? "",
         username: m.username,
         group: group.name,
         team: teamName,
+        spendUsd,
       });
     }
   }
 
+  // Sort by spend descending
+  rows.sort((a, b) => b.spendUsd - a.spendUsd);
+
   // Build CSV
   const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-  const header = ["Email", "Name", "Username", "Group", "Team"].map(escape).join(",");
+  const header = ["Email", "Name", "Username", "Group", "Team", "Spend (USD)"].map(escape).join(",");
   const lines = rows.map((r) =>
-    [r.email, r.name, r.username, r.group, r.team].map(escape).join(","),
+    [r.email, r.name, r.username, r.group, r.team, r.spendUsd.toFixed(2)].map(escape).join(","),
   );
+
+  const isComplete = groupsLoaded === totalGroups;
   const csv = [header, ...lines].join("\r\n");
 
   res.setHeader("Content-Type", "text/csv");
@@ -957,6 +977,9 @@ router.get("/export/users.csv", async (req, res) => {
     "Content-Disposition",
     `attachment; filename="active-users-${new Date().toISOString().slice(0, 10)}.csv"`,
   );
+  res.setHeader("X-Groups-Loaded", String(groupsLoaded));
+  res.setHeader("X-Groups-Total", String(totalGroups));
+  res.setHeader("X-Export-Complete", String(isComplete));
   res.send(csv);
 });
 
