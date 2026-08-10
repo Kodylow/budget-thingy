@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Download } from 'lucide-react';
 
 // Credit pool period: May 20 2026 (spend cutoff) → May 17 2027 (expiry)
 const PACE_PERIOD_START_MS = new Date('2026-05-20T00:00:00.000Z').getTime();
@@ -519,6 +519,14 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-4">
+          <a
+            href="/api/export/users.csv"
+            download
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <Download className="h-4 w-4" />
+            Export Users
+          </a>
           <RangeFilter />
           {!isComplete && (
             <Badge variant="outline" className="flex items-center gap-2" data-testid="badge-loading-status">

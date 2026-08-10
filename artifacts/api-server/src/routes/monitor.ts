@@ -901,4 +901,63 @@ router.get("/trends", async (req, res): Promise<void> => {
   res.json({ granularity, buckets, groups, isComplete: loadedCount >= totalCount, loadedCount, totalCount });
 });
 
+// ── GET /export/users.csv ─────────────────────────────────────────────────────
+// Returns a CSV of all active enterprise members with their email, name,
+// username, group, and team. Each user appears once (first custom group wins).
+router.get("/export/users.csv", async (req, res) => {
+  let dir: Awaited<ReturnType<typeof getDirectory>>;
+  try {
+    dir = await getDirectory();
+  } catch (err) {
+    req.log.error({ err }, "export directory fetch failed");
+    res.status(503).json({ error: "Directory unavailable" });
+    return;
+  }
+
+  const groupTeams = await db.select().from(groupTeamsTable);
+  const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+
+  // Deduplicate: each user attributed to their first group (same rule as dashboard)
+  const seen = new Set<string>();
+  const rows: { email: string; name: string; username: string; group: string; team: string }[] = [];
+
+  for (const group of dir.groups) {
+    const memberIds = dir.groupMembers.get(group.id) ?? [];
+    const teamName = teamNameMap.get(group.name) ?? "";
+    for (const userId of memberIds) {
+      if (seen.has(userId)) continue;
+      seen.add(userId);
+      const m = dir.members.get(userId);
+      if (!m) continue;
+      // Skip disabled members (disabled in every workspace they belong to)
+      const allDisabled =
+        m.workspaces.size > 0 &&
+        [...m.workspaces.values()].every((ws) => ws.isDisabled);
+      if (allDisabled) continue;
+      rows.push({
+        email: m.email,
+        name: m.name ?? "",
+        username: m.username,
+        group: group.name,
+        team: teamName,
+      });
+    }
+  }
+
+  // Build CSV
+  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const header = ["Email", "Name", "Username", "Group", "Team"].map(escape).join(",");
+  const lines = rows.map((r) =>
+    [r.email, r.name, r.username, r.group, r.team].map(escape).join(","),
+  );
+  const csv = [header, ...lines].join("\r\n");
+
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="active-users-${new Date().toISOString().slice(0, 10)}.csv"`,
+  );
+  res.send(csv);
+});
+
 export default router;
