@@ -64,6 +64,7 @@ import {
 } from "../lib/checker";
 import { requireAuth, requireAccountAdmin } from "../middlewares/requireAuth";
 import { canSeeGroup, scopeGroups, type Authorization } from "../lib/authz";
+import { getHistoryForGroups, projectEndOfPeriod } from "../lib/history";
 
 const router: IRouter = Router();
 
@@ -144,6 +145,13 @@ router.get("/groups", async (req, res): Promise<void> => {
     const rollup = getDedupedUsageRollup(scoped, range.key);
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
 
+    const historyMap = billing.start
+      ? await getHistoryForGroups(
+          scoped.map((g) => g.id),
+          billing.start,
+        )
+      : new Map<string, { date: string; spendUsd: number }[]>();
+
     let pendingCount = 0;
     const groups = await Promise.all(
       scoped.map(async (g) => {
@@ -179,6 +187,10 @@ router.get("/groups", async (req, res): Promise<void> => {
           percentUsed:
             spend && hasBudget ? (spend.spendUsd / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
+          history: historyMap.get(g.id) ?? [],
+          projectedSpendUsd: spend
+            ? projectEndOfPeriod(spend.spendUsd, spend.periodStart, spend.periodEnd)
+            : null,
         };
       }),
     );
@@ -244,6 +256,9 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       billingSpend && budget.amountUsd != null
         ? await getFiredThresholds(group.id, billingSpend.periodStart)
         : [];
+    const detailHistory = billingSpend
+      ? ((await getHistoryForGroups([group.id], billingSpend.periodStart)).get(group.id) ?? [])
+      : [];
 
     const userIds = dir.groupMembers.get(group.id) ?? [];
 
@@ -301,6 +316,10 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           remainingUsd: spend && hasBudget ? budget.amountUsd! - spend.spendUsd : null,
           percentUsed: spend && hasBudget ? (spend.spendUsd / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
+          history: detailHistory,
+          projectedSpendUsd: billingSpend
+            ? projectEndOfPeriod(billingSpend.spendUsd, billingSpend.periodStart, billingSpend.periodEnd)
+            : null,
         },
         members,
         membersSpendUsd: listedMembersSpend,

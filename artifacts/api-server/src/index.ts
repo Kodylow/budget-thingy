@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startChecker } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
+import { startSnapshotJob } from "./lib/history";
 
 const rawPort = process.env["PORT"];
 
@@ -24,7 +25,10 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-  void initCache().then(() => startChecker());
+  void initCache().then(() => {
+    startChecker();
+    startSnapshotJob();
+  });
 });
 
 function shutdown(signal: string) {

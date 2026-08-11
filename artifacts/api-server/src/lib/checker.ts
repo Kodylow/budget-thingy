@@ -137,8 +137,18 @@ export async function runCheck(force = false): Promise<{ checkedGroups: number; 
     groups.map(
       (g) =>
         new Promise<void>((resolve) => {
-          const queued = queueGroupSpendFetch(g, 0, force, () => resolve());
-          if (!queued) resolve(); // cache fresh or already queued
+          // Resolve when the fetch lands (callbacks fan out even when the
+          // fetch was queued by someone else), and guard with a timeout so a
+          // failed fetch can't hang the whole check.
+          const timer = setTimeout(resolve, 5 * 60 * 1000);
+          const result = queueGroupSpendFetch(g, 0, force, () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          if (result === "fresh_cache") {
+            clearTimeout(timer);
+            resolve();
+          }
         }),
     ),
   );
@@ -167,9 +177,12 @@ export function startChecker(): void {
         (a, b) => Number(budgeted.has(b.id)) - Number(budgeted.has(a.id)),
       );
       for (const g of ordered) {
-        queueGroupSpendFetch(g, 1, false, () => {
+        const result = queueGroupSpendFetch(g, 1, false, () => {
           if (budgeted.has(g.id)) void evaluateGroup(g).catch((err) => logger.error({ err }, "evaluateGroup failed"));
         });
+        if (result === "fresh_cache" && budgeted.has(g.id)) {
+          void evaluateGroup(g).catch((err) => logger.error({ err }, "evaluateGroup failed"));
+        }
       }
       logger.info({ groups: dir.groups.length }, "Warm-up: queued spend fetches");
     } catch (err) {

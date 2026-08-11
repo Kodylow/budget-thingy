@@ -691,19 +691,53 @@ export function getBillingPeriod(): { start: string | null; label: string } {
   };
 }
 
+/**
+ * Result of queueGroupSpendFetch:
+ * - "fresh_cache": cache is fresh, nothing queued, onDone NOT registered —
+ *   read the cached value via getSpend() if needed.
+ * - "queued": a new fetch was enqueued; onDone fires when it completes.
+ * - "duplicate_queued": an identical fetch is already in flight/queued;
+ *   onDone was still registered and fires when that fetch completes.
+ */
+export type QueueSpendResult = "fresh_cache" | "queued" | "duplicate_queued";
+
+// Completion callbacks per `${rangeKey}|${groupId}`, fanned out when the
+// in-flight fetch lands, so duplicate callers never act on stale data.
+const spendCallbacks = new Map<string, Array<(spend: GroupSpend) => void>>();
+
+function registerSpendCallback(cacheKey: string, cb: (spend: GroupSpend) => void): void {
+  const list = spendCallbacks.get(cacheKey);
+  if (list) list.push(cb);
+  else spendCallbacks.set(cacheKey, [cb]);
+}
+
+function fireSpendCallbacks(cacheKey: string, spend: GroupSpend): void {
+  const list = spendCallbacks.get(cacheKey);
+  if (!list) return;
+  spendCallbacks.delete(cacheKey);
+  for (const cb of list) {
+    try {
+      cb(spend);
+    } catch (err) {
+      logger.error({ err, cacheKey }, "Spend callback failed");
+    }
+  }
+}
+
 export function queueGroupSpendFetch(
   group: EnterpriseGroup,
   priority: number,
   force = false,
   onDone?: (spend: GroupSpend) => void,
   range: UsageRange = resolveRange("billing"),
-): boolean {
+): QueueSpendResult {
   const cacheKey = `${range.key}|${group.id}`;
   const cached = spendCache.get(cacheKey);
   if (!force && cached && Date.now() - cached.fetchedAt < USAGE_TTL_MS) {
-    return false;
+    return "fresh_cache";
   }
-  return enqueueUsage(`usage:${cacheKey}`, priority, async () => {
+  if (onDone) registerSpendCallback(cacheKey, onDone);
+  const queued = enqueueUsage(`usage:${cacheKey}`, priority, async () => {
     try {
       const data = await usageFetch({
         workspaceId: group.workspaceId,
@@ -718,11 +752,14 @@ export function queueGroupSpendFetch(
       };
       spendCache.set(cacheKey, spend);
       persistSpendToDb(range.key, group.id, spend);
-      onDone?.(spend);
+      fireSpendCallbacks(cacheKey, spend);
     } catch (err) {
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch group usage");
+      // Drop pending callbacks so they don't fire with a later, unrelated fetch.
+      spendCallbacks.delete(cacheKey);
     }
   });
+  return queued ? "queued" : "duplicate_queued";
 }
 
 export async function refreshAllGroupSpends(

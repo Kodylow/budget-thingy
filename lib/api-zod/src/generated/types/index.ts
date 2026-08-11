@@ -43,6 +43,7 @@ export * from './mobileTokenExchangeSuccess';
 export * from './okResponse';
 export * from './projectMetric';
 export * from './rangeTypeParameter';
+export * from './spendPoint';
 export * from './startDateParameter';
 export * from './summary';
 export * from './systemStatus';

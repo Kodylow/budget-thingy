@@ -82,6 +82,12 @@ export interface OkResponse {
   ok: boolean;
 }
 
+export interface SpendPoint {
+  /** UTC day of the snapshot (YYYY-MM-DD) */
+  date: string;
+  spendUsd: number;
+}
+
 export interface Group {
   groupId: string;
   workspaceId: string;
@@ -140,6 +146,13 @@ export interface Group {
   percentUsed?: number | null;
   /** Thresholds (50, 75, 90, 100) already alerted this billing period */
   thresholdsFired: number[];
+  /** Daily spend snapshots for the current billing period, oldest first */
+  history: SpendPoint[];
+  /**
+     * Linear projection of end-of-period spend, null while loading or too early in the period
+     * @nullable
+     */
+  projectedSpendUsd?: number | null;
 }
 
 export interface GroupsResponse {

@@ -5,6 +5,7 @@ import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, 
 
 // Credit pool period: May 20 2026 (spend cutoff) → May 17 2027 (expiry)
 import { useCanWrite } from '@/components/auth-context';
+import { Sparkline } from '@/components/sparkline';
 const PACE_PERIOD_START_MS = new Date('2026-05-20T00:00:00.000Z').getTime();
 const PACE_PERIOD_END_MS   = new Date('2027-05-17T00:00:00.000Z').getTime();
 const PACE_TOTAL_DAYS = (PACE_PERIOD_END_MS - PACE_PERIOD_START_MS) / 86_400_000;
@@ -275,6 +276,11 @@ export default function Dashboard() {
         )}
       </td>
       <td className="py-3 px-4 text-right">
+        <div className="flex justify-end">
+          <Sparkline points={group.history ?? []} data-testid={`sparkline-${group.groupId}`} />
+        </div>
+      </td>
+      <td className="py-3 px-4 text-right">
         <div className="flex flex-col items-end gap-1">
           {canWrite ? (
             <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
@@ -379,7 +385,10 @@ export default function Dashboard() {
             </span>
           )}
         </td>
-        {/* Budget, Remaining, Usage, Pace — not applicable at cluster level */}
+        {/* Trend, Budget, Remaining, Usage, Pace — not applicable at cluster level */}
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm text-muted-foreground">—</span>
+        </td>
         <td className="py-3 px-4 text-right">
           <span className="text-sm text-muted-foreground">—</span>
         </td>
@@ -445,6 +454,9 @@ export default function Dashboard() {
             </span>
           )}
         </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm text-muted-foreground">—</span>
+        </td>
         <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
           {canWrite ? (
             <TeamBudgetInput teamName={team.teamName} currentBudget={team.budgetUsd} />
@@ -503,7 +515,7 @@ export default function Dashboard() {
         data-testid="row-team-unassigned"
         onClick={() => toggleTeam('__unassigned__')}
       >
-        <td className="py-3 px-4 font-semibold text-sm text-muted-foreground" colSpan={8}>
+        <td className="py-3 px-4 font-semibold text-sm text-muted-foreground" colSpan={9}>
           <div className="flex items-center gap-2">
             {expanded
               ? <ChevronDown className="h-4 w-4 flex-shrink-0" />
@@ -612,6 +624,9 @@ export default function Dashboard() {
                       Spend
                     </th>
                     <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
+                      Trend
+                    </th>
+                    <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
                       Budget
                     </th>
                     <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
@@ -668,6 +683,7 @@ export default function Dashboard() {
                           <div className="flex justify-end"><LoadingCell /></div>
                         )}
                       </td>
+                      <td className="py-3 px-4" />
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
                           {summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : '—'}

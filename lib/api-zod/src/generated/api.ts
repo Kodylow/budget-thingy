@@ -142,7 +142,12 @@ export const ListGroupsResponse = zod.object({
   "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
   "remainingUsd": zod.number().nullish().describe('budget - spend, null if no budget or spend not loaded'),
   "percentUsed": zod.number().nullish().describe('spend \/ budget \* 100, null if no budget or spend not loaded'),
-  "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period')
+  "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period'),
+  "history": zod.array(zod.object({
+  "date": zod.string().describe('UTC day of the snapshot (YYYY-MM-DD)'),
+  "spendUsd": zod.number()
+})).describe('Daily spend snapshots for the current billing period, oldest first'),
+  "projectedSpendUsd": zod.number().nullish().describe('Linear projection of end-of-period spend, null while loading or too early in the period')
 })),
   "isComplete": zod.boolean().describe('False while background usage fetches are still pending; poll every ~8s until true'),
   "pendingCount": zod.number().describe('Number of outstanding raw group-spend and member-usage fetches'),
@@ -183,7 +188,12 @@ export const GetGroupDetailResponse = zod.object({
   "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
   "remainingUsd": zod.number().nullish().describe('budget - spend, null if no budget or spend not loaded'),
   "percentUsed": zod.number().nullish().describe('spend \/ budget \* 100, null if no budget or spend not loaded'),
-  "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period')
+  "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period'),
+  "history": zod.array(zod.object({
+  "date": zod.string().describe('UTC day of the snapshot (YYYY-MM-DD)'),
+  "spendUsd": zod.number()
+})).describe('Daily spend snapshots for the current billing period, oldest first'),
+  "projectedSpendUsd": zod.number().nullish().describe('Linear projection of end-of-period spend, null while loading or too early in the period')
 }),
   "members": zod.array(zod.object({
   "userId": zod.string(),
