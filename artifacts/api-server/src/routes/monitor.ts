@@ -62,8 +62,23 @@ import {
   getLastCheckAt,
   CHECK_INTERVAL_MINUTES,
 } from "../lib/checker";
+import { requireAuth, requireAccountAdmin } from "../middlewares/requireAuth";
+import { canSeeGroup, scopeGroups, type Authorization } from "../lib/authz";
 
 const router: IRouter = Router();
+
+// Every monitor endpoint requires an authenticated, authorized user.
+// Health and auth entry points live on separate routers and stay public.
+router.use(requireAuth);
+
+/**
+ * Reduce a directory's group list to the set visible to the current request's
+ * authorization. Account admins see every custom group; workspace admins see
+ * only groups whose workspace they administer.
+ */
+function visibleGroups(authz: Authorization, groups: EnterpriseGroup[]): EnterpriseGroup[] {
+  return scopeGroups(authz, groups);
+}
 
 function rangeFromQuery(query: Record<string, unknown>): UsageRange {
   return resolveRange(
@@ -112,8 +127,12 @@ router.get("/groups", async (req, res): Promise<void> => {
   }
   try {
     const dir = await getDirectory();
+    // Scope every fetch, rollup, and computation to the groups this user may
+    // see, so workspace admins never receive records or totals from other
+    // workspaces (dedup/rollup are recomputed over the visible scope).
+    const scoped = visibleGroups(req.authz!, dir.groups);
     void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
-    for (const group of dir.groups) queueMemberUsageFetch(group, range, 1);
+    for (const group of scoped) queueMemberUsageFetch(group, range, 1);
 
     const [budgets, groupTeams] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -122,12 +141,12 @@ router.get("/groups", async (req, res): Promise<void> => {
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
     const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const billing = getBillingPeriod();
-    const rollup = getDedupedUsageRollup(dir.groups, range.key);
-    const rollupMemberCounts = getDedupedMemberCounts(dir.groups, dir.groupMembers);
+    const rollup = getDedupedUsageRollup(scoped, range.key);
+    const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
 
     let pendingCount = 0;
     const groups = await Promise.all(
-      dir.groups.map(async (g) => {
+      scoped.map(async (g) => {
         const spend = getSpend(g.id, range.key);
         if (!spend) pendingCount += 1;
         const attributed = rollup.byGroup.get(g.id);
@@ -194,10 +213,12 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const groupId = String(req.params["groupId"]);
     const dir = await getDirectory();
     const group = dir.groups.find((g) => g.id === groupId);
-    if (!group) {
+    // Non-disclosing: out-of-scope groups are indistinguishable from missing.
+    if (!group || !canSeeGroup(req.authz!, group)) {
       res.status(404).json({ error: "Group not found" });
       return;
     }
+    const scoped = visibleGroups(req.authz!, dir.groups);
 
     // Ensure group total, per-member usage, and per-project usage are queued (high priority).
     queueGroupSpendFetch(group, 0, false, undefined, range);
@@ -207,8 +228,8 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
 
     const spend = getSpend(group.id, range.key);
     const memberUsage = getMemberUsage(group.id, range.key);
-    const rollup = getDedupedUsageRollup(dir.groups, range.key);
-    const rollupMemberCounts = getDedupedMemberCounts(dir.groups, dir.groupMembers);
+    const rollup = getDedupedUsageRollup(scoped, range.key);
+    const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
     const attributed = rollup.byGroup.get(group.id);
     const [budgets, groupTeamsRows] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -314,7 +335,8 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
     const groupId = String(req.params["groupId"]);
     const dir = await getDirectory();
     const group = dir.groups.find((g) => g.id === groupId);
-    if (!group) {
+    // Non-disclosing: out-of-scope groups are indistinguishable from missing.
+    if (!group || !canSeeGroup(req.authz!, group)) {
       res.status(404).json({ error: "Group not found" });
       return;
     }
@@ -387,14 +409,20 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
     }
 
     const dir = await getDirectory();
-    const groups = groupIds
+    const requestedGroups = groupIds
       .map((id) => dir.groups.find((g) => g.id === id))
       .filter((g): g is EnterpriseGroup => g !== undefined);
 
-    if (groups.length === 0) {
+    // Fail closed if any requested group is missing or outside the caller's
+    // workspace scope. Returning the same 404 avoids disclosing its existence.
+    if (
+      requestedGroups.length !== groupIds.length ||
+      requestedGroups.some((group) => !canSeeGroup(req.authz!, group))
+    ) {
       res.status(404).json({ error: "No matching groups found" });
       return;
     }
+    const groups = requestedGroups;
 
     // Queue fetches (high priority)
     const workspaceIds = new Set(groups.map((g) => g.workspaceId));
@@ -479,7 +507,7 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
   }
 });
 
-router.post("/groups/:groupId/refresh", async (req, res): Promise<void> => {
+router.post("/groups/:groupId/refresh", requireAccountAdmin, async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const dir = await getDirectory();
   const group = dir.groups.find((g) => g.id === groupId);
@@ -499,16 +527,18 @@ router.get("/summary", async (req, res): Promise<void> => {
     res.status(400).json({ error: (err as Error).message });
     return;
   }
+  const authz = req.authz!;
+  const isAccount = authz.role === "account_admin";
   const [budgets, teamBudgets] = await Promise.all([
     db.select().from(groupBudgetsTable),
     db.select().from(teamBudgetsTable),
   ]);
   const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
-  const totalBudgetUsd = teamBudgets.reduce((sum, tb) => sum + tb.amountUsd, 0);
 
   let totalGroups = 0;
   let totalSpendUsd = 0;
   let totalRemainingUsd = 0;
+  let totalBudgetUsd = 0;
   let budgetedGroups = 0;
   let pending = 0;
   let over50 = 0;
@@ -516,11 +546,16 @@ router.get("/summary", async (req, res): Promise<void> => {
   let over90 = 0;
   let over100 = 0;
 
+  // Set of visible groups, used both to scope spend and to filter alerts.
+  let visibleGroupIds = new Set<string>();
+
   if (isConfigured()) {
     try {
       const dir = await getDirectory();
-      totalGroups = dir.groups.length;
-      for (const g of dir.groups) {
+      const scoped = visibleGroups(authz, dir.groups);
+      visibleGroupIds = new Set(scoped.map((g) => g.id));
+      totalGroups = scoped.length;
+      for (const g of scoped) {
         const budget = effectiveGroupBudget(budgetMap.get(g.id));
         if (budget.amountUsd != null && budget.amountUsd > 0) {
           budgetedGroups += 1;
@@ -537,14 +572,28 @@ router.get("/summary", async (req, res): Promise<void> => {
     }
   }
 
-  // Remaining is team budget total (from spreadsheet) minus all loaded spend.
+  // Team budgets are account-wide configuration and are not workspace-scoped,
+  // so they are exposed only to account admins. Workspace admins get a total
+  // recomputed from the group budgets of the groups they can actually see.
+  if (isAccount) {
+    totalBudgetUsd = teamBudgets.reduce((sum, tb) => sum + tb.amountUsd, 0);
+  } else {
+    for (const b of budgets) {
+      if (visibleGroupIds.has(b.groupId)) totalBudgetUsd += b.amountUsd;
+    }
+  }
+
+  // Remaining is the (scoped) budget total minus loaded spend.
   totalRemainingUsd = totalBudgetUsd - totalSpendUsd;
 
   const billing = getBillingPeriod();
   const allAlerts = await db.select().from(alertsTable);
   const periodStart = billing.start ? new Date(billing.start) : null;
   const alertsSentThisPeriod = allAlerts.filter(
-    (a) => a.status === "sent" && (!periodStart || a.sentAt >= periodStart),
+    (a) =>
+      a.status === "sent" &&
+      (isAccount || visibleGroupIds.has(a.groupId)) &&
+      (!periodStart || a.sentAt >= periodStart),
   ).length;
 
   res.json(
@@ -565,7 +614,9 @@ router.get("/summary", async (req, res): Promise<void> => {
   );
 });
 
-router.get("/teams/budgets", async (_req, res): Promise<void> => {
+// Team budgets are account-wide configuration (not workspace-scoped), so they
+// are only exposed to account admins.
+router.get("/teams/budgets", requireAccountAdmin, async (_req, res): Promise<void> => {
   const budgets = await db.select().from(teamBudgetsTable);
   res.json(
     GetTeamsBudgetsResponse.parse({
@@ -577,7 +628,7 @@ router.get("/teams/budgets", async (_req, res): Promise<void> => {
   );
 });
 
-router.put("/teams/:teamName/budget", async (req, res): Promise<void> => {
+router.put("/teams/:teamName/budget", requireAccountAdmin, async (req, res): Promise<void> => {
   const teamName = decodeURIComponent(String(req.params["teamName"]));
   const parsed = SetTeamBudgetBody.safeParse(req.body);
   if (!parsed.success) {
@@ -604,17 +655,30 @@ router.put("/teams/:teamName/budget", async (req, res): Promise<void> => {
   );
 });
 
-router.delete("/teams/:teamName/budget", async (req, res): Promise<void> => {
+router.delete("/teams/:teamName/budget", requireAccountAdmin, async (req, res): Promise<void> => {
   const teamName = decodeURIComponent(String(req.params["teamName"]));
   await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, teamName));
   res.status(204).send();
 });
 
-router.get("/budgets", async (_req, res): Promise<void> => {
+router.get("/budgets", async (req, res): Promise<void> => {
+  const authz = req.authz!;
   const budgets = await db.select().from(groupBudgetsTable);
+  let visible = budgets;
+  if (authz.role !== "account_admin") {
+    // Scope budgets to the groups this workspace admin can see.
+    try {
+      const dir = await getDirectory();
+      const allowedIds = new Set(visibleGroups(authz, dir.groups).map((g) => g.id));
+      visible = budgets.filter((b) => allowedIds.has(b.groupId));
+    } catch {
+      // Fail closed: if scope can't be resolved, expose nothing.
+      visible = [];
+    }
+  }
   res.json(
     ListBudgetsResponse.parse(
-      budgets.map((b) => ({
+      visible.map((b) => ({
         groupId: b.groupId,
         amountUsd: b.amountUsd,
         updatedAt: b.updatedAt.toISOString(),
@@ -623,7 +687,7 @@ router.get("/budgets", async (_req, res): Promise<void> => {
   );
 });
 
-router.put("/groups/:groupId/budget", async (req, res): Promise<void> => {
+router.put("/groups/:groupId/budget", requireAccountAdmin, async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const parsed = SetGroupBudgetBody.safeParse(req.body);
   if (!parsed.success) {
@@ -651,7 +715,7 @@ router.put("/groups/:groupId/budget", async (req, res): Promise<void> => {
   );
 });
 
-router.delete("/groups/:groupId/budget", async (req, res): Promise<void> => {
+router.delete("/groups/:groupId/budget", requireAccountAdmin, async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const deleted = await db
     .delete(groupBudgetsTable)
@@ -664,7 +728,9 @@ router.delete("/groups/:groupId/budget", async (req, res): Promise<void> => {
   res.json(DeleteGroupBudgetResponse.parse({ ok: true }));
 });
 
-router.get("/admins", async (_req, res): Promise<void> => {
+// Notification recipients are account-only data; workspace admins can neither
+// view nor modify them.
+router.get("/admins", requireAccountAdmin, async (_req, res): Promise<void> => {
   const admins = await db.select().from(adminEmailsTable).orderBy(adminEmailsTable.id);
   res.json(
     ListAdminsResponse.parse(
@@ -679,7 +745,7 @@ router.get("/admins", async (_req, res): Promise<void> => {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-router.post("/admins", async (req, res): Promise<void> => {
+router.post("/admins", requireAccountAdmin, async (req, res): Promise<void> => {
   const parsed = AddAdminBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -712,7 +778,7 @@ router.post("/admins", async (req, res): Promise<void> => {
   );
 });
 
-router.delete("/admins/:adminId", async (req, res): Promise<void> => {
+router.delete("/admins/:adminId", requireAccountAdmin, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params["adminId"])
     ? req.params["adminId"][0]
     : req.params["adminId"];
@@ -733,17 +799,44 @@ router.delete("/admins/:adminId", async (req, res): Promise<void> => {
 });
 
 router.get("/alerts", async (req, res): Promise<void> => {
+  const authz = req.authz!;
+  const isAccount = authz.role === "account_admin";
   const parsed = ListAlertsQueryParams.safeParse(req.query);
   const limit = parsed.success && parsed.data.limit ? parsed.data.limit : 100;
-  const alerts = await db
+
+  if (isAccount) {
+    const alerts = await db
+      .select()
+      .from(alertsTable)
+      .orderBy(desc(alertsTable.sentAt))
+      .limit(limit);
+    res.json(ListAlertsResponse.parse(alerts.map(alertToJson)));
+    return;
+  }
+
+  // Workspace admins: scope alert history to visible groups, and strip the
+  // account-only recipient list from each returned alert.
+  let allowedIds = new Set<string>();
+  try {
+    const dir = await getDirectory();
+    allowedIds = new Set(visibleGroups(authz, dir.groups).map((g) => g.id));
+  } catch {
+    // Fail closed: expose no alert history if scope can't be resolved.
+    res.json(ListAlertsResponse.parse([]));
+    return;
+  }
+  const allAlerts = await db
     .select()
     .from(alertsTable)
-    .orderBy(desc(alertsTable.sentAt))
-    .limit(limit);
-  res.json(ListAlertsResponse.parse(alerts.map(alertToJson)));
+    .orderBy(desc(alertsTable.sentAt));
+  const scoped = allAlerts
+    .filter((a) => allowedIds.has(a.groupId))
+    .slice(0, limit)
+    .map((a) => ({ ...alertToJson(a), recipients: [] }));
+  res.json(ListAlertsResponse.parse(scoped));
 });
 
-router.post("/alerts/check", async (req, res): Promise<void> => {
+router.post("/alerts/check", requireAccountAdmin, async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
@@ -763,7 +856,8 @@ router.post("/alerts/check", async (req, res): Promise<void> => {
   }
 });
 
-router.get("/status", async (_req, res): Promise<void> => {
+// System status is account-only configuration; not exposed to workspace admins.
+router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
   const health = getApiHealth();
   res.json(
     GetStatusResponse.parse({

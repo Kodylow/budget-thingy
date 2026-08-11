@@ -24,7 +24,12 @@ import type {
   AdminEmailInput,
   Alert,
   ApiError,
+  AuthUserEnvelope,
+  BeginBrowserLoginParams,
   CheckResult,
+  ErrorEnvelope,
+  ForbiddenResponse,
+  GetClusterProjectsParams,
   GetGroupDetailParams,
   GetGroupProjectsParams,
   GetSummaryParams,
@@ -33,15 +38,21 @@ import type {
   GroupDetail,
   GroupProjectsResponse,
   GroupsResponse,
+  HandleBrowserLoginCallbackParams,
   HealthStatus,
   ListAlertsParams,
   ListGroupsParams,
+  LogoutBrowserSessionParams,
+  LogoutSuccess,
+  MobileTokenExchangeRequest,
+  MobileTokenExchangeSuccess,
   OkResponse,
   Summary,
   SystemStatus,
   TeamBudget,
   TeamBudgetInput,
-  TeamBudgetsResponse
+  TeamBudgetsResponse,
+  UnauthorizedResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -70,6 +81,478 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetCurrentAuthUserUrl = () => {
+
+
+
+
+  return `/api/auth/user`
+}
+
+/**
+ * Returns the signed-in identity together with the resolved Enterprise authorization (role and workspace scope). `auth` is null when the request is unauthenticated.
+ * @summary Get the currently authenticated user
+ */
+export const getCurrentAuthUser = async ( options?: RequestInit): Promise<AuthUserEnvelope> => {
+
+  return customFetch<AuthUserEnvelope>(getGetCurrentAuthUserUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCurrentAuthUserQueryKey = () => {
+    return [
+    `/api/auth/user`
+    ] as const;
+    }
+
+
+export const getGetCurrentAuthUserQueryOptions = <TData = Awaited<ReturnType<typeof getCurrentAuthUser>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCurrentAuthUser>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCurrentAuthUserQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCurrentAuthUser>>> = ({ signal }) => getCurrentAuthUser({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCurrentAuthUser>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCurrentAuthUserQueryResult = NonNullable<Awaited<ReturnType<typeof getCurrentAuthUser>>>
+export type GetCurrentAuthUserQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the currently authenticated user
+ */
+
+export function useGetCurrentAuthUser<TData = Awaited<ReturnType<typeof getCurrentAuthUser>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCurrentAuthUser>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCurrentAuthUserQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getBeginBrowserLoginUrl = (params?: BeginBrowserLoginParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/login?${stringifiedParams}` : `/api/login`
+}
+
+/**
+ * @summary Start the browser OIDC login flow
+ */
+export const beginBrowserLogin = async (params?: BeginBrowserLoginParams, options?: RequestInit): Promise<unknown> => {
+
+  return customFetch<unknown>(getBeginBrowserLoginUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getBeginBrowserLoginQueryKey = (params?: BeginBrowserLoginParams,) => {
+    return [
+    `/api/login`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getBeginBrowserLoginQueryOptions = <TData = Awaited<ReturnType<typeof beginBrowserLogin>>, TError = ErrorType<void>>(params?: BeginBrowserLoginParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof beginBrowserLogin>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getBeginBrowserLoginQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof beginBrowserLogin>>> = ({ signal }) => beginBrowserLogin(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof beginBrowserLogin>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type BeginBrowserLoginQueryResult = NonNullable<Awaited<ReturnType<typeof beginBrowserLogin>>>
+export type BeginBrowserLoginQueryError = ErrorType<void>
+
+
+/**
+ * @summary Start the browser OIDC login flow
+ */
+
+export function useBeginBrowserLogin<TData = Awaited<ReturnType<typeof beginBrowserLogin>>, TError = ErrorType<void>>(
+ params?: BeginBrowserLoginParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof beginBrowserLogin>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getBeginBrowserLoginQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getHandleBrowserLoginCallbackUrl = (params?: HandleBrowserLoginCallbackParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/callback?${stringifiedParams}` : `/api/callback`
+}
+
+/**
+ * @summary Complete the browser OIDC login flow
+ */
+export const handleBrowserLoginCallback = async (params?: HandleBrowserLoginCallbackParams, options?: RequestInit): Promise<unknown> => {
+
+  return customFetch<unknown>(getHandleBrowserLoginCallbackUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getHandleBrowserLoginCallbackQueryKey = (params?: HandleBrowserLoginCallbackParams,) => {
+    return [
+    `/api/callback`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getHandleBrowserLoginCallbackQueryOptions = <TData = Awaited<ReturnType<typeof handleBrowserLoginCallback>>, TError = ErrorType<void>>(params?: HandleBrowserLoginCallbackParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof handleBrowserLoginCallback>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getHandleBrowserLoginCallbackQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof handleBrowserLoginCallback>>> = ({ signal }) => handleBrowserLoginCallback(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof handleBrowserLoginCallback>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type HandleBrowserLoginCallbackQueryResult = NonNullable<Awaited<ReturnType<typeof handleBrowserLoginCallback>>>
+export type HandleBrowserLoginCallbackQueryError = ErrorType<void>
+
+
+/**
+ * @summary Complete the browser OIDC login flow
+ */
+
+export function useHandleBrowserLoginCallback<TData = Awaited<ReturnType<typeof handleBrowserLoginCallback>>, TError = ErrorType<void>>(
+ params?: HandleBrowserLoginCallbackParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof handleBrowserLoginCallback>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getHandleBrowserLoginCallbackQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getLogoutBrowserSessionUrl = (params?: LogoutBrowserSessionParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/logout?${stringifiedParams}` : `/api/logout`
+}
+
+/**
+ * @summary Clear the session and begin OIDC logout
+ */
+export const logoutBrowserSession = async (params?: LogoutBrowserSessionParams, options?: RequestInit): Promise<unknown> => {
+
+  return customFetch<unknown>(getLogoutBrowserSessionUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getLogoutBrowserSessionQueryKey = (params?: LogoutBrowserSessionParams,) => {
+    return [
+    `/api/logout`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getLogoutBrowserSessionQueryOptions = <TData = Awaited<ReturnType<typeof logoutBrowserSession>>, TError = ErrorType<void>>(params?: LogoutBrowserSessionParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof logoutBrowserSession>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getLogoutBrowserSessionQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof logoutBrowserSession>>> = ({ signal }) => logoutBrowserSession(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof logoutBrowserSession>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type LogoutBrowserSessionQueryResult = NonNullable<Awaited<ReturnType<typeof logoutBrowserSession>>>
+export type LogoutBrowserSessionQueryError = ErrorType<void>
+
+
+/**
+ * @summary Clear the session and begin OIDC logout
+ */
+
+export function useLogoutBrowserSession<TData = Awaited<ReturnType<typeof logoutBrowserSession>>, TError = ErrorType<void>>(
+ params?: LogoutBrowserSessionParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof logoutBrowserSession>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getLogoutBrowserSessionQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExchangeMobileAuthorizationCodeUrl = () => {
+
+
+
+
+  return `/api/mobile-auth/token-exchange`
+}
+
+/**
+ * @summary Exchange a mobile OIDC code for a session token
+ */
+export const exchangeMobileAuthorizationCode = async (mobileTokenExchangeRequest: MobileTokenExchangeRequest, options?: RequestInit): Promise<MobileTokenExchangeSuccess> => {
+
+  return customFetch<MobileTokenExchangeSuccess>(getExchangeMobileAuthorizationCodeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mobileTokenExchangeRequest)
+  }
+);}
+
+
+
+
+
+export const getExchangeMobileAuthorizationCodeMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof exchangeMobileAuthorizationCode>>, TError,{data: BodyType<MobileTokenExchangeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof exchangeMobileAuthorizationCode>>, TError,{data: BodyType<MobileTokenExchangeRequest>}, TContext> => {
+
+const mutationKey = ['exchangeMobileAuthorizationCode'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof exchangeMobileAuthorizationCode>>, {data: BodyType<MobileTokenExchangeRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  exchangeMobileAuthorizationCode(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ExchangeMobileAuthorizationCodeMutationResult = NonNullable<Awaited<ReturnType<typeof exchangeMobileAuthorizationCode>>>
+    export type ExchangeMobileAuthorizationCodeMutationBody = BodyType<MobileTokenExchangeRequest>
+    export type ExchangeMobileAuthorizationCodeMutationError = ErrorType<ErrorEnvelope>
+
+    /**
+ * @summary Exchange a mobile OIDC code for a session token
+ */
+export const useExchangeMobileAuthorizationCode = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof exchangeMobileAuthorizationCode>>, TError,{data: BodyType<MobileTokenExchangeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof exchangeMobileAuthorizationCode>>,
+        TError,
+        {data: BodyType<MobileTokenExchangeRequest>},
+        TContext
+      > => {
+      return useMutation(getExchangeMobileAuthorizationCodeMutationOptions(options));
+    }
+
+export const getLogoutMobileSessionUrl = () => {
+
+
+
+
+  return `/api/mobile-auth/logout`
+}
+
+/**
+ * @summary Delete a mobile session token
+ */
+export const logoutMobileSession = async ( options?: RequestInit): Promise<LogoutSuccess> => {
+
+  return customFetch<LogoutSuccess>(getLogoutMobileSessionUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getLogoutMobileSessionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logoutMobileSession>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof logoutMobileSession>>, TError,void, TContext> => {
+
+const mutationKey = ['logoutMobileSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof logoutMobileSession>>, void> = () => {
+
+
+          return  logoutMobileSession(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LogoutMobileSessionMutationResult = NonNullable<Awaited<ReturnType<typeof logoutMobileSession>>>
+
+    export type LogoutMobileSessionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a mobile session token
+ */
+export const useLogoutMobileSession = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logoutMobileSession>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof logoutMobileSession>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getLogoutMobileSessionMutationOptions(options));
+    }
 
 export const getHealthCheckUrl = () => {
 
@@ -190,7 +673,7 @@ export const getListGroupsQueryKey = (params?: ListGroupsParams,) => {
     }
 
 
-export const getListGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listGroups>>, TError = ErrorType<ApiError>>(params?: ListGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(params?: ListGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -209,14 +692,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof listGroups>>>
-export type ListGroupsQueryError = ErrorType<ApiError>
+export type ListGroupsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
 
 /**
  * @summary List all groups with usage and budget state
  */
 
-export function useListGroups<TData = Awaited<ReturnType<typeof listGroups>>, TError = ErrorType<ApiError>>(
+export function useListGroups<TData = Awaited<ReturnType<typeof listGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
  params?: ListGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -278,7 +761,7 @@ export const getGetGroupDetailQueryKey = (groupId: string,
     }
 
 
-export const getGetGroupDetailQueryOptions = <TData = Awaited<ReturnType<typeof getGroupDetail>>, TError = ErrorType<ApiError>>(groupId: string,
+export const getGetGroupDetailQueryOptions = <TData = Awaited<ReturnType<typeof getGroupDetail>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(groupId: string,
     params?: GetGroupDetailParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupDetail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
@@ -298,14 +781,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetGroupDetailQueryResult = NonNullable<Awaited<ReturnType<typeof getGroupDetail>>>
-export type GetGroupDetailQueryError = ErrorType<ApiError>
+export type GetGroupDetailQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
 
 /**
  * @summary Group drill-down with per-user usage
  */
 
-export function useGetGroupDetail<TData = Awaited<ReturnType<typeof getGroupDetail>>, TError = ErrorType<ApiError>>(
+export function useGetGroupDetail<TData = Awaited<ReturnType<typeof getGroupDetail>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
  groupId: string,
     params?: GetGroupDetailParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupDetail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
@@ -341,8 +824,7 @@ export const getGetGroupProjectsUrl = (groupId: string,
 }
 
 /**
- * Returns project-level spend breakdown for a group in the selected date range.
- * Project usage loads progressively; poll while isComplete is false.
+ * Returns project-level spend breakdown for a group in the selected date range. Project usage loads progressively; poll while isComplete is false.
  * @summary Group project spend drill-down
  */
 export const getGroupProjects = async (groupId: string,
@@ -360,6 +842,7 @@ export const getGroupProjects = async (groupId: string,
 
 
 
+
 export const getGetGroupProjectsQueryKey = (groupId: string,
     params?: GetGroupProjectsParams,) => {
     return [
@@ -368,7 +851,7 @@ export const getGetGroupProjectsQueryKey = (groupId: string,
     }
 
 
-export const getGetGroupProjectsQueryOptions = <TData = Awaited<ReturnType<typeof getGroupProjects>>, TError = ErrorType<ApiError>>(groupId: string,
+export const getGetGroupProjectsQueryOptions = <TData = Awaited<ReturnType<typeof getGroupProjects>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(groupId: string,
     params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
@@ -383,18 +866,19 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
 
 
+
    return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGroupProjects>>, TError, TData> & { queryKey: QueryKey }
 }
 
 export type GetGroupProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof getGroupProjects>>>
-export type GetGroupProjectsQueryError = ErrorType<ApiError>
+export type GetGroupProjectsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
 
 /**
  * @summary Group project spend drill-down
  */
 
-export function useGetGroupProjects<TData = Awaited<ReturnType<typeof getGroupProjects>>, TError = ErrorType<ApiError>>(
+export function useGetGroupProjects<TData = Awaited<ReturnType<typeof getGroupProjects>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
  groupId: string,
     params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
@@ -410,8 +894,11 @@ export function useGetGroupProjects<TData = Awaited<ReturnType<typeof getGroupPr
 
 
 
+
+
+
 export const getGetClusterProjectsUrl = (clusterKey: string,
-    params?: GetGroupProjectsParams,) => {
+    params?: GetClusterProjectsParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -427,12 +914,11 @@ export const getGetClusterProjectsUrl = (clusterKey: string,
 }
 
 /**
- * Returns project-level spend breakdown for a cluster, attributed by project creator membership.
- * Exact per-project figures with no proportional scaling.
- * @summary Cluster project spend drill-down (creator-attributed)
+ * Returns creator-attributed project spend for the requested group cluster. Every group in the cluster must be visible to the current user.
+ * @summary Cluster project spend drill-down
  */
 export const getClusterProjects = async (clusterKey: string,
-    params?: GetGroupProjectsParams, options?: RequestInit): Promise<GroupProjectsResponse> => {
+    params?: GetClusterProjectsParams, options?: RequestInit): Promise<GroupProjectsResponse> => {
 
   return customFetch<GroupProjectsResponse>(getGetClusterProjectsUrl(clusterKey,params),
   {
@@ -446,16 +932,17 @@ export const getClusterProjects = async (clusterKey: string,
 
 
 
+
 export const getGetClusterProjectsQueryKey = (clusterKey: string,
-    params?: GetGroupProjectsParams,) => {
+    params?: GetClusterProjectsParams,) => {
     return [
     `/api/clusters/${clusterKey}/projects`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetClusterProjectsQueryOptions = <TData = Awaited<ReturnType<typeof getClusterProjects>>, TError = ErrorType<ApiError>>(clusterKey: string,
-    params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetClusterProjectsQueryOptions = <TData = Awaited<ReturnType<typeof getClusterProjects>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(clusterKey: string,
+    params?: GetClusterProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -469,20 +956,21 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
 
 
-   return  { queryKey, queryFn, enabled: !!clusterKey, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData> & { queryKey: QueryKey }
+
+   return  { queryKey, queryFn, enabled: clusterKey !== null && clusterKey !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData> & { queryKey: QueryKey }
 }
 
 export type GetClusterProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof getClusterProjects>>>
-export type GetClusterProjectsQueryError = ErrorType<ApiError>
+export type GetClusterProjectsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
 
 /**
- * @summary Cluster project spend drill-down (creator-attributed)
+ * @summary Cluster project spend drill-down
  */
 
-export function useGetClusterProjects<TData = Awaited<ReturnType<typeof getClusterProjects>>, TError = ErrorType<ApiError>>(
+export function useGetClusterProjects<TData = Awaited<ReturnType<typeof getClusterProjects>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
  clusterKey: string,
-    params?: GetGroupProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+    params?: GetClusterProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClusterProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -492,6 +980,9 @@ export function useGetClusterProjects<TData = Awaited<ReturnType<typeof getClust
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
 
 
 
@@ -523,7 +1014,7 @@ export const refreshGroupUsage = async (groupId: string, options?: RequestInit):
 
 
 
-export const getRefreshGroupUsageMutationOptions = <TError = ErrorType<unknown>,
+export const getRefreshGroupUsageMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGroupUsage>>, TError,{groupId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof refreshGroupUsage>>, TError,{groupId: string}, TContext> => {
 
@@ -552,12 +1043,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type RefreshGroupUsageMutationResult = NonNullable<Awaited<ReturnType<typeof refreshGroupUsage>>>
 
-    export type RefreshGroupUsageMutationError = ErrorType<unknown>
+    export type RefreshGroupUsageMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
     /**
  * @summary Force-refresh one group's usage
  */
-export const useRefreshGroupUsage = <TError = ErrorType<unknown>,
+export const useRefreshGroupUsage = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGroupUsage>>, TError,{groupId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof refreshGroupUsage>>,
@@ -609,7 +1100,7 @@ export const getGetSummaryQueryKey = (params?: GetSummaryParams,) => {
     }
 
 
-export const getGetSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getSummary>>, TError = ErrorType<unknown>>(params?: GetSummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getSummary>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: GetSummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -628,14 +1119,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getSummary>>>
-export type GetSummaryQueryError = ErrorType<unknown>
+export type GetSummaryQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
 
 /**
  * @summary Dashboard summary
  */
 
-export function useGetSummary<TData = Awaited<ReturnType<typeof getSummary>>, TError = ErrorType<unknown>>(
+export function useGetSummary<TData = Awaited<ReturnType<typeof getSummary>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
  params?: GetSummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -686,7 +1177,7 @@ export const getListBudgetsQueryKey = () => {
     }
 
 
-export const getListBudgetsQueryOptions = <TData = Awaited<ReturnType<typeof listBudgets>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListBudgetsQueryOptions = <TData = Awaited<ReturnType<typeof listBudgets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -705,14 +1196,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListBudgetsQueryResult = NonNullable<Awaited<ReturnType<typeof listBudgets>>>
-export type ListBudgetsQueryError = ErrorType<unknown>
+export type ListBudgetsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
 
 /**
  * @summary List all configured group budgets
  */
 
-export function useListBudgets<TData = Awaited<ReturnType<typeof listBudgets>>, TError = ErrorType<unknown>>(
+export function useListBudgets<TData = Awaited<ReturnType<typeof listBudgets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -757,7 +1248,7 @@ export const setGroupBudget = async (groupId: string,
 
 
 
-export const getSetGroupBudgetMutationOptions = <TError = ErrorType<ApiError>,
+export const getSetGroupBudgetMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGroupBudget>>, TError,{groupId: string;data: BodyType<GroupBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof setGroupBudget>>, TError,{groupId: string;data: BodyType<GroupBudgetInput>}, TContext> => {
 
@@ -786,12 +1277,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type SetGroupBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof setGroupBudget>>>
     export type SetGroupBudgetMutationBody = BodyType<GroupBudgetInput>
-    export type SetGroupBudgetMutationError = ErrorType<ApiError>
+    export type SetGroupBudgetMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
 
     /**
  * @summary Set or update the budget for a group
  */
-export const useSetGroupBudget = <TError = ErrorType<ApiError>,
+export const useSetGroupBudget = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGroupBudget>>, TError,{groupId: string;data: BodyType<GroupBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof setGroupBudget>>,
@@ -828,7 +1319,7 @@ export const deleteGroupBudget = async (groupId: string, options?: RequestInit):
 
 
 
-export const getDeleteGroupBudgetMutationOptions = <TError = ErrorType<ApiError>,
+export const getDeleteGroupBudgetMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGroupBudget>>, TError,{groupId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteGroupBudget>>, TError,{groupId: string}, TContext> => {
 
@@ -857,12 +1348,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteGroupBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof deleteGroupBudget>>>
 
-    export type DeleteGroupBudgetMutationError = ErrorType<ApiError>
+    export type DeleteGroupBudgetMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
     /**
  * @summary Remove the budget for a group
  */
-export const useDeleteGroupBudget = <TError = ErrorType<ApiError>,
+export const useDeleteGroupBudget = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGroupBudget>>, TError,{groupId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteGroupBudget>>,
@@ -906,7 +1397,7 @@ export const getGetTeamsBudgetsQueryKey = () => {
     }
 
 
-export const getGetTeamsBudgetsQueryOptions = <TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTeamsBudgetsQueryOptions = <TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -925,14 +1416,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetTeamsBudgetsQueryResult = NonNullable<Awaited<ReturnType<typeof getTeamsBudgets>>>
-export type GetTeamsBudgetsQueryError = ErrorType<unknown>
+export type GetTeamsBudgetsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
 
 /**
  * @summary List all team budgets
  */
 
-export function useGetTeamsBudgets<TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<unknown>>(
+export function useGetTeamsBudgets<TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -978,7 +1469,7 @@ export const setTeamBudget = async (teamName: string,
 
 
 
-export const getSetTeamBudgetMutationOptions = <TError = ErrorType<ApiError>,
+export const getSetTeamBudgetMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext> => {
 
@@ -1007,12 +1498,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type SetTeamBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof setTeamBudget>>>
     export type SetTeamBudgetMutationBody = BodyType<TeamBudgetInput>
-    export type SetTeamBudgetMutationError = ErrorType<ApiError>
+    export type SetTeamBudgetMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
 
     /**
  * @summary Set or update the budget for a team
  */
-export const useSetTeamBudget = <TError = ErrorType<ApiError>,
+export const useSetTeamBudget = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof setTeamBudget>>,
@@ -1050,7 +1541,7 @@ export const deleteTeamBudget = async (teamName: string, options?: RequestInit):
 
 
 
-export const getDeleteTeamBudgetMutationOptions = <TError = ErrorType<unknown>,
+export const getDeleteTeamBudgetMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext> => {
 
@@ -1079,12 +1570,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteTeamBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTeamBudget>>>
 
-    export type DeleteTeamBudgetMutationError = ErrorType<unknown>
+    export type DeleteTeamBudgetMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
     /**
  * @summary Remove the budget override for a team
  */
-export const useDeleteTeamBudget = <TError = ErrorType<unknown>,
+export const useDeleteTeamBudget = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteTeamBudget>>,
@@ -1128,7 +1619,7 @@ export const getListAdminsQueryKey = () => {
     }
 
 
-export const getListAdminsQueryOptions = <TData = Awaited<ReturnType<typeof listAdmins>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListAdminsQueryOptions = <TData = Awaited<ReturnType<typeof listAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1147,14 +1638,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListAdminsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdmins>>>
-export type ListAdminsQueryError = ErrorType<unknown>
+export type ListAdminsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
 
 /**
  * @summary List admin notification emails
  */
 
-export function useListAdmins<TData = Awaited<ReturnType<typeof listAdmins>>, TError = ErrorType<unknown>>(
+export function useListAdmins<TData = Awaited<ReturnType<typeof listAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -1198,7 +1689,7 @@ export const addAdmin = async (adminEmailInput: AdminEmailInput, options?: Reque
 
 
 
-export const getAddAdminMutationOptions = <TError = ErrorType<ApiError>,
+export const getAddAdminMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAdmin>>, TError,{data: BodyType<AdminEmailInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof addAdmin>>, TError,{data: BodyType<AdminEmailInput>}, TContext> => {
 
@@ -1227,12 +1718,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type AddAdminMutationResult = NonNullable<Awaited<ReturnType<typeof addAdmin>>>
     export type AddAdminMutationBody = BodyType<AdminEmailInput>
-    export type AddAdminMutationError = ErrorType<ApiError>
+    export type AddAdminMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
 
     /**
  * @summary Add an admin notification email
  */
-export const useAddAdmin = <TError = ErrorType<ApiError>,
+export const useAddAdmin = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAdmin>>, TError,{data: BodyType<AdminEmailInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof addAdmin>>,
@@ -1269,7 +1760,7 @@ export const deleteAdmin = async (adminId: number, options?: RequestInit): Promi
 
 
 
-export const getDeleteAdminMutationOptions = <TError = ErrorType<ApiError>,
+export const getDeleteAdminMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdmin>>, TError,{adminId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteAdmin>>, TError,{adminId: number}, TContext> => {
 
@@ -1298,12 +1789,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteAdminMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdmin>>>
 
-    export type DeleteAdminMutationError = ErrorType<ApiError>
+    export type DeleteAdminMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
     /**
  * @summary Remove an admin notification email
  */
-export const useDeleteAdmin = <TError = ErrorType<ApiError>,
+export const useDeleteAdmin = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdmin>>, TError,{adminId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteAdmin>>,
@@ -1355,7 +1846,7 @@ export const getListAlertsQueryKey = (params?: ListAlertsParams,) => {
     }
 
 
-export const getListAlertsQueryOptions = <TData = Awaited<ReturnType<typeof listAlerts>>, TError = ErrorType<unknown>>(params?: ListAlertsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAlerts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListAlertsQueryOptions = <TData = Awaited<ReturnType<typeof listAlerts>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ListAlertsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAlerts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1374,14 +1865,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListAlertsQueryResult = NonNullable<Awaited<ReturnType<typeof listAlerts>>>
-export type ListAlertsQueryError = ErrorType<unknown>
+export type ListAlertsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
 
 /**
  * @summary Alert history
  */
 
-export function useListAlerts<TData = Awaited<ReturnType<typeof listAlerts>>, TError = ErrorType<unknown>>(
+export function useListAlerts<TData = Awaited<ReturnType<typeof listAlerts>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
  params?: ListAlertsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAlerts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -1426,7 +1917,7 @@ export const runAlertCheck = async ( options?: RequestInit): Promise<CheckResult
 
 
 
-export const getRunAlertCheckMutationOptions = <TError = ErrorType<ApiError>,
+export const getRunAlertCheckMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAlertCheck>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof runAlertCheck>>, TError,void, TContext> => {
 
@@ -1455,12 +1946,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type RunAlertCheckMutationResult = NonNullable<Awaited<ReturnType<typeof runAlertCheck>>>
 
-    export type RunAlertCheckMutationError = ErrorType<ApiError>
+    export type RunAlertCheckMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
     /**
  * @summary Run the budget threshold check now
  */
-export const useRunAlertCheck = <TError = ErrorType<ApiError>,
+export const useRunAlertCheck = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAlertCheck>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof runAlertCheck>>,
@@ -1505,7 +1996,7 @@ export const getGetStatusQueryKey = () => {
     }
 
 
-export const getGetStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStatus>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1524,14 +2015,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getStatus>>>
-export type GetStatusQueryError = ErrorType<unknown>
+export type GetStatusQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
 
 /**
  * @summary System status
  */
 
-export function useGetStatus<TData = Awaited<ReturnType<typeof getStatus>>, TError = ErrorType<unknown>>(
+export function useGetStatus<TData = Awaited<ReturnType<typeof getStatus>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {

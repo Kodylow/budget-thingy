@@ -14,10 +14,12 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
+import { useAuthContext } from '@/components/auth-context';
 
 export default function Settings() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { isAccountAdmin } = useAuthContext();
   const [newEmail, setNewEmail] = useState('');
 
   const { data: admins, isLoading: adminsLoading } = useListAdmins();
@@ -77,6 +79,17 @@ export default function Settings() {
       }
     );
   };
+
+  if (!isAccountAdmin) {
+    return (
+      <div className="p-8" data-testid="settings-forbidden">
+        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+        <p className="text-muted-foreground mt-2">
+          Settings are only available to account administrators.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-6">

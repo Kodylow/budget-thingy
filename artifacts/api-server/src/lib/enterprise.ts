@@ -296,6 +296,8 @@ export interface EnterpriseMember {
   username: string;
   email: string;
   name: string | null;
+  // Whether this member is an account-wide administrator of the Enterprise org.
+  isAccountAdmin: boolean;
   // per-workspace role/disabled state
   workspaces: Map<string, { role: string; isDisabled: boolean }>;
 }
@@ -308,9 +310,25 @@ interface RawMember {
     firstName: string | null;
     lastName: string | null;
   };
+  // Account-wide admin flag. The Enterprise directory may expose this as a
+  // top-level boolean or nested under the user; parse defensively.
+  isAccountAdmin?: boolean;
+  user_is_account_admin?: boolean;
   workspaces: { id: string; role: string; isDisabled: boolean }[];
 }
 
+/** Extract the account-admin flag from a raw directory member, tolerating
+ * a few plausible field placements without weakening the closed-by-default
+ * posture (anything unrecognized resolves to false). */
+export function parseIsAccountAdmin(rm: RawMember): boolean {
+  const user = rm.user as unknown as Record<string, unknown> | undefined;
+  return (
+    rm.isAccountAdmin === true ||
+    rm.user_is_account_admin === true ||
+    (user?.["isAccountAdmin"] === true) ||
+    (user?.["is_account_admin"] === true)
+  );
+}
 export interface PlatformBudgets {
   // workspaceId -> group limits (groupId -> amountUsd)
   groupLimits: Map<string, Map<string, number>>;
@@ -346,6 +364,7 @@ interface SerializedDirectory {
       username: string;
       email: string;
       name: string | null;
+      isAccountAdmin?: boolean;
       workspaces: Record<string, { role: string; isDisabled: boolean }>;
     }
   >;
@@ -367,7 +386,7 @@ function serializeDirectory(d: DirectoryCache): SerializedDirectory {
   for (const [k, v] of d.members) {
     const ws: Record<string, { role: string; isDisabled: boolean }> = {};
     for (const [wk, wv] of v.workspaces) ws[wk] = wv;
-    members[k] = { userId: v.userId, username: v.username, email: v.email, name: v.name, workspaces: ws };
+    members[k] = { userId: v.userId, username: v.username, email: v.email, name: v.name, isAccountAdmin: v.isAccountAdmin, workspaces: ws };
   }
 
   const groupLimits: Record<string, Record<string, number>> = {};
@@ -405,6 +424,7 @@ function deserializeDirectory(s: SerializedDirectory): DirectoryCache {
       username: v.username,
       email: v.email,
       name: v.name,
+      isAccountAdmin: v.isAccountAdmin ?? false,
       workspaces: new Map(Object.entries(v.workspaces)),
     });
   }
@@ -521,6 +541,34 @@ interface DirectoryCache {
 let directoryCache: DirectoryCache | null = null;
 let directoryPromise: Promise<DirectoryCache> | null = null;
 
+/**
+ * Test-only seam: seed the in-memory directory cache with a representative
+ * fixture so authorization/scoping can be exercised without calling the real
+ * Enterprise API. Production never calls this — the cache is populated by the
+ * real paginated fetch in {@link getDirectory}. Passing `null` clears it.
+ */
+export function __setDirectoryCacheForTests(
+  fixture: {
+    workspaces?: Map<string, EnterpriseWorkspace>;
+    groups: EnterpriseGroup[];
+    groupMembers?: Map<string, string[]>;
+    members: Map<string, EnterpriseMember>;
+  } | null,
+): void {
+  if (!fixture) {
+    directoryCache = null;
+    return;
+  }
+  directoryCache = {
+    fetchedAt: Date.now(),
+    workspaces: fixture.workspaces ?? new Map(),
+    groups: fixture.groups,
+    allGroups: fixture.groups,
+    groupMembers: fixture.groupMembers ?? new Map(),
+    members: fixture.members,
+    budgets: { groupLimits: new Map(), userLimits: new Map(), workspaceDefaults: new Map() },
+  };
+}
 export async function getDirectory(force = false): Promise<DirectoryCache> {
   const now = Date.now();
   if (!force && directoryCache && now - directoryCache.fetchedAt < DIRECTORY_TTL_MS) {
@@ -564,6 +612,7 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
           username: rm.user.username,
           email: rm.user.email,
           name,
+          isAccountAdmin: parseIsAccountAdmin(rm),
           workspaces: new Map(
             rm.workspaces.map((w) => [w.id, { role: w.role, isDisabled: w.isDisabled }]),
           ),

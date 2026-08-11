@@ -7,10 +7,12 @@ import { useListAlerts, useRunAlertCheck, getListAlertsQueryKey } from '@workspa
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
+import { useCanWrite } from '@/components/auth-context';
 
 export default function Alerts() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const canWrite = useCanWrite();
   const [runningCheck, setRunningCheck] = useState(false);
 
   const { data: alerts, isLoading } = useListAlerts({ limit: 100 });
@@ -48,14 +50,16 @@ export default function Alerts() {
             Email notifications sent when groups cross budget thresholds
           </p>
         </div>
-        <Button
-          onClick={handleRunCheck}
-          disabled={runningCheck || runCheck.isPending}
-          data-testid="button-run-check"
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${runningCheck || runCheck.isPending ? 'animate-spin' : ''}`} />
-          Run Check Now
-        </Button>
+        {canWrite && (
+          <Button
+            onClick={handleRunCheck}
+            disabled={runningCheck || runCheck.isPending}
+            data-testid="button-run-check"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${runningCheck || runCheck.isPending ? 'animate-spin' : ''}`} />
+            Run Check Now
+          </Button>
+        )}
       </div>
 
       <Card>

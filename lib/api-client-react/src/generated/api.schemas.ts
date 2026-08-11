@@ -13,6 +13,71 @@ export interface ApiError {
   error: string;
 }
 
+export interface ErrorEnvelope {
+  error: string;
+}
+
+export interface AuthUser {
+  id: string;
+  /** @nullable */
+  email: string | null;
+  /** @nullable */
+  firstName: string | null;
+  /** @nullable */
+  lastName: string | null;
+  /** @nullable */
+  profileImageUrl: string | null;
+}
+
+/**
+ * Effective role resolved from the Enterprise directory.
+ */
+export type AuthAuthorizationRole = typeof AuthAuthorizationRole[keyof typeof AuthAuthorizationRole];
+
+
+export const AuthAuthorizationRole = {
+  account_admin: 'account_admin',
+  workspace_admin: 'workspace_admin',
+} as const;
+
+/**
+ * Resolved Enterprise authorization for the signed-in user. account_admin sees the whole account; workspace_admin sees only the listed workspaces.
+ */
+export interface AuthAuthorization {
+  /** Effective role resolved from the Enterprise directory. */
+  role: AuthAuthorizationRole;
+  /** Workspace IDs the user may view. Empty and ignored for account_admin (who sees every workspace); the union of admin workspaces for workspace_admin. */
+  workspaceIds: string[];
+}
+
+export interface AuthUserEnvelope {
+  user: AuthUser | null;
+  /** Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied). */
+  auth: AuthAuthorization | null;
+}
+
+export interface MobileTokenExchangeRequest {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  code_verifier: string;
+  /** @minLength 1 */
+  redirect_uri: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  nonce?: string;
+}
+
+export interface MobileTokenExchangeSuccess {
+  token: string;
+}
+
+export const LogoutSuccessValue = {
+  success: true,
+} as const;
+export type LogoutSuccess = typeof LogoutSuccessValue;
+
 export interface OkResponse {
   ok: boolean;
 }
@@ -130,29 +195,20 @@ export interface GroupMember {
   percentUsed?: number | null;
 }
 
-export interface GroupDetail {
-  group: Group;
-  members: GroupMember[];
-  /** Sum of loaded member spend (reconciles with group spend plus unattributed) */
-  membersSpendUsd: number;
-  /** Group spend not attributable to a listed member (deleted users, shared costs) */
-  unattributedSpendUsd: number;
-  /** False while member usage is still loading; poll every ~8s until true */
-  isComplete: boolean;
-  rangeLabel: string;
-}
-
 export interface ProjectMetric {
   id: string;
   name: string;
-  /** Category: ai, hosting, storage, or other */
+  /** Metric category: ai, hosting, storage, or other */
   category: string;
   costUsd: number;
 }
 
 export interface GroupProject {
   projectId: string;
-  /** @nullable */
+  /**
+     * Project title, or null if untitled
+     * @nullable
+     */
   title: string | null;
   totalCostUsd: number;
   metrics: ProjectMetric[];
@@ -166,10 +222,16 @@ export interface GroupProjectsResponse {
   isComplete: boolean;
 }
 
-export interface GetGroupProjectsParams {
-  rangeType?: 'billing' | 'mtd' | 'ytd' | 'custom';
-  startDate?: string;
-  endDate?: string;
+export interface GroupDetail {
+  group: Group;
+  members: GroupMember[];
+  /** Sum of loaded member spend (reconciles with group spend plus unattributed) */
+  membersSpendUsd: number;
+  /** Group spend not attributable to a listed member (deleted users, shared costs) */
+  unattributedSpendUsd: number;
+  /** False while member usage is still loading; poll every ~8s until true */
+  isComplete: boolean;
+  rangeLabel: string;
 }
 
 export interface Summary {
@@ -266,6 +328,16 @@ export interface SystemStatus {
   lastCheckAt?: string | null;
 }
 
+/**
+ * Authentication required — no valid session.
+ */
+export type UnauthorizedResponse = ApiError;
+
+/**
+ * Authenticated but not authorized (neither account admin nor an enabled workspace admin, or attempting an account-admin-only action).
+ */
+export type ForbiddenResponse = ApiError;
+
 export type RangeTypeParameter = typeof RangeTypeParameter[keyof typeof RangeTypeParameter];
 
 
@@ -286,6 +358,28 @@ export type StartDateParameter = string;
  */
 export type EndDateParameter = string;
 
+/**
+ * Opaque session token — `Bearer <sid>`.
+ */
+export type AuthorizationSessionHeaderParameter = string;
+
+export type BeginBrowserLoginParams = {
+/**
+ * Relative path to redirect to after login (must start with `/`). Defaults to `/`.
+ */
+returnTo?: string;
+};
+
+export type HandleBrowserLoginCallbackParams = {
+code?: string;
+state?: string;
+iss?: string;
+};
+
+export type LogoutBrowserSessionParams = {
+returnTo?: string;
+};
+
 export type ListGroupsParams = {
 /**
  * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
@@ -302,6 +396,36 @@ endDate?: EndDateParameter;
 };
 
 export type GetGroupDetailParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
+export type GetGroupProjectsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
+export type GetClusterProjectsParams = {
 /**
  * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */

@@ -11,17 +11,24 @@ import GroupDetail from '@/pages/group-detail';
 import ClusterDetail from '@/pages/cluster-detail';
 import Trends from '@/pages/trends';
 import { RangeProvider } from '@/components/range-context';
+import { AuthProvider, useAuthContext } from '@/components/auth-context';
+import { AuthGate } from '@/components/auth-gate';
 
 const queryClient = new QueryClient();
 
 function Router() {
+  // Account-only routes (settings) are removed for workspace admins so a
+  // direct URL cannot render the account-admin surface. The server still
+  // enforces authorization on the underlying data.
+  const { isAccountAdmin } = useAuthContext();
+
   return (
     <AppShell>
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/alerts" component={Alerts} />
-        <Route path="/settings" component={Settings} />
         <Route path="/trends" component={Trends} />
+        {isAccountAdmin && <Route path="/settings" component={Settings} />}
         <Route path="/groups/:groupId" component={GroupDetail} />
         <Route path="/clusters" component={ClusterDetail} />
         <Route component={NotFound} />
@@ -34,11 +41,16 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <RangeProvider>
-          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-            <Router />
-          </WouterRouter>
-        </RangeProvider>
+        <AuthProvider>
+          <RangeProvider>
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+              <AuthGate>
+                <Router />
+              </AuthGate>
+            </WouterRouter>
+          </RangeProvider>
+        </AuthProvider>
+        <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
   );

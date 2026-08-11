@@ -9,6 +9,102 @@ import * as zod from 'zod';
 
 
 /**
+ * Returns the signed-in identity together with the resolved Enterprise authorization (role and workspace scope). `auth` is null when the request is unauthenticated.
+ * @summary Get the currently authenticated user
+ */
+export const GetCurrentAuthUserHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+})
+
+export const GetCurrentAuthUserResponse = zod.object({
+  "user": zod.union([zod.object({
+  "id": zod.string(),
+  "email": zod.string().nullable(),
+  "firstName": zod.string().nullable(),
+  "lastName": zod.string().nullable(),
+  "profileImageUrl": zod.string().nullable()
+}),zod.null()]),
+  "auth": zod.union([zod.object({
+  "role": zod.enum(['account_admin', 'workspace_admin']).describe('Effective role resolved from the Enterprise directory.'),
+  "workspaceIds": zod.array(zod.string()).describe('Workspace IDs the user may view. Empty and ignored for account_admin (who sees every workspace); the union of admin workspaces for workspace_admin.\n')
+}).describe('Resolved Enterprise authorization for the signed-in user. account_admin sees the whole account; workspace_admin sees only the listed workspaces.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied).\n')
+})
+
+
+/**
+ * @summary Start the browser OIDC login flow
+ */
+export const BeginBrowserLoginQueryParams = zod.object({
+  "returnTo": zod.coerce.string().optional().describe('Relative path to redirect to after login (must start with `\/`). Defaults to `\/`.')
+})
+
+export const BeginBrowserLoginResponse = zod.void()
+
+
+/**
+ * @summary Complete the browser OIDC login flow
+ */
+export const HandleBrowserLoginCallbackQueryParams = zod.object({
+  "code": zod.coerce.string().optional(),
+  "state": zod.coerce.string().optional(),
+  "iss": zod.coerce.string().optional()
+})
+
+export const HandleBrowserLoginCallbackResponse = zod.void()
+
+
+/**
+ * @summary Clear the session and begin OIDC logout
+ */
+export const logoutBrowserSessionQueryReturnToDefault = `/`;
+
+export const LogoutBrowserSessionQueryParams = zod.object({
+  "returnTo": zod.coerce.string().default(logoutBrowserSessionQueryReturnToDefault)
+})
+
+export const LogoutBrowserSessionHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+})
+
+export const LogoutBrowserSessionResponse = zod.void()
+
+
+/**
+ * @summary Exchange a mobile OIDC code for a session token
+ */
+
+
+
+
+
+
+
+export const ExchangeMobileAuthorizationCodeBody = zod.object({
+  "code": zod.string().min(1),
+  "code_verifier": zod.string().min(1),
+  "redirect_uri": zod.string().min(1),
+  "state": zod.string().min(1),
+  "nonce": zod.string().min(1).optional()
+})
+
+export const ExchangeMobileAuthorizationCodeResponse = zod.object({
+  "token": zod.string()
+})
+
+
+/**
+ * @summary Delete a mobile session token
+ */
+export const LogoutMobileSessionHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+})
+
+export const LogoutMobileSessionResponse = zod.object({
+  "success": zod.boolean()
+})
+
+
+/**
  * Returns server health status
  * @summary Health check
  */
@@ -111,7 +207,7 @@ export const GetGroupDetailResponse = zod.object({
 
 
 /**
- * Returns project-level spend breakdown for a group in the selected date range.
+ * Returns project-level spend breakdown for a group in the selected date range. Project usage loads progressively; poll while isComplete is false.
  * @summary Group project spend drill-down
  */
 export const GetGroupProjectsParams = zod.object({
@@ -119,25 +215,56 @@ export const GetGroupProjectsParams = zod.object({
 })
 
 export const GetGroupProjectsQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional(),
-  "startDate": zod.coerce.string().optional(),
-  "endDate": zod.coerce.string().optional()
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
 export const GetGroupProjectsResponse = zod.object({
   "projects": zod.array(zod.object({
-    "projectId": zod.string(),
-    "title": zod.string().nullable(),
-    "totalCostUsd": zod.number(),
-    "metrics": zod.array(zod.object({
-      "id": zod.string(),
-      "name": zod.string(),
-      "category": zod.string(),
-      "costUsd": zod.number()
-    }))
-  })),
-  "unattributedSpendUsd": zod.number(),
-  "isComplete": zod.boolean()
+  "projectId": zod.string(),
+  "title": zod.string().nullable().describe('Project title, or null if untitled'),
+  "totalCostUsd": zod.number(),
+  "metrics": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "category": zod.string().describe('Metric category: ai, hosting, storage, or other'),
+  "costUsd": zod.number()
+}))
+})),
+  "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
+  "isComplete": zod.boolean().describe('False while project usage is still loading; poll every ~8s until true')
+})
+
+
+/**
+ * Returns creator-attributed project spend for the requested group cluster. Every group in the cluster must be visible to the current user.
+ * @summary Cluster project spend drill-down
+ */
+export const GetClusterProjectsParams = zod.object({
+  "clusterKey": zod.coerce.string()
+})
+
+export const GetClusterProjectsQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const GetClusterProjectsResponse = zod.object({
+  "projects": zod.array(zod.object({
+  "projectId": zod.string(),
+  "title": zod.string().nullable().describe('Project title, or null if untitled'),
+  "totalCostUsd": zod.number(),
+  "metrics": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "category": zod.string().describe('Metric category: ai, hosting, storage, or other'),
+  "costUsd": zod.number()
+}))
+})),
+  "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
+  "isComplete": zod.boolean().describe('False while project usage is still loading; poll every ~8s until true')
 })
 
 

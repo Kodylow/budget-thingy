@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Download } from 'lucide-react';
 
 // Credit pool period: May 20 2026 (spend cutoff) → May 17 2027 (expiry)
+import { useCanWrite } from '@/components/auth-context';
 const PACE_PERIOD_START_MS = new Date('2026-05-20T00:00:00.000Z').getTime();
 const PACE_PERIOD_END_MS   = new Date('2027-05-17T00:00:00.000Z').getTime();
 const PACE_TOTAL_DAYS = (PACE_PERIOD_END_MS - PACE_PERIOD_START_MS) / 86_400_000;
@@ -78,6 +79,7 @@ interface TeamSection {
 export default function Dashboard() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
+  const canWrite = useCanWrite();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
 
@@ -274,7 +276,13 @@ export default function Dashboard() {
       </td>
       <td className="py-3 px-4 text-right">
         <div className="flex flex-col items-end gap-1">
-          <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
+          {canWrite ? (
+            <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
+          ) : (
+            <span className="text-sm font-mono tabular-nums" data-testid={`text-budget-${group.groupId}`}>
+              {group.budgetUsd !== null && group.budgetUsd !== undefined ? `$${group.budgetUsd.toFixed(2)}` : '—'}
+            </span>
+          )}
           {group.budgetSource && (
             <Badge variant="secondary" className="text-[9px] h-4 px-1 py-0 uppercase bg-muted/50" title={`Budget source: ${group.budgetSource}`}>
               {group.budgetSource}
@@ -438,7 +446,13 @@ export default function Dashboard() {
           )}
         </td>
         <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-          <TeamBudgetInput teamName={team.teamName} currentBudget={team.budgetUsd} />
+          {canWrite ? (
+            <TeamBudgetInput teamName={team.teamName} currentBudget={team.budgetUsd} />
+          ) : (
+            <span className="text-sm font-mono tabular-nums font-semibold" data-testid={`text-team-budget-${team.teamName}`}>
+              {team.budgetUsd !== null && team.budgetUsd !== undefined ? `$${team.budgetUsd.toFixed(2)}` : '—'}
+            </span>
+          )}
         </td>
         <td className="py-3 px-4 text-right">
           {!team.spendLoaded || !hasBudget ? (
@@ -660,8 +674,8 @@ export default function Dashboard() {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <span className={`text-sm font-mono tabular-nums ${summary && summary.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
-                          {summary ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—'}
+                        <span className={`text-sm font-mono tabular-nums ${summary && summary.totalRemainingUsd !== undefined && summary.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
+                          {summary && summary.totalRemainingUsd !== undefined ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">

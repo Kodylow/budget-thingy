@@ -4,3 +4,6 @@ export * from "./generated/types";
 // schemas (generated/api) and the query-params types (generated/types).
 export { GetGroupDetailParams } from "./generated/api";
 export { GetGroupProjectsParams } from "./generated/api";
+export { GetClusterProjectsParams } from "./generated/api";
+export * from './generated/api';
+export * from './generated/types';
