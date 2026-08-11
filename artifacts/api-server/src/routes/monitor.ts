@@ -1015,9 +1015,9 @@ router.get("/trends", async (req, res): Promise<void> => {
 });
 
 // ── GET /export/users.csv ─────────────────────────────────────────────────────
-// Returns a CSV of users with confirmed agent spend > 0 over the billing period.
-// Each user appears once (first custom group wins). Groups whose per-member
-// usage hasn't loaded yet are skipped; they are queued so a retry will include them.
+// Returns a CSV of all users across all groups.
+// Each user appears once (first custom group wins). Spend is shown where cached;
+// groups whose per-member usage has not loaded yet are included with spend=0 and queued.
 router.get("/export/users.csv", async (req, res) => {
   let dir: Awaited<ReturnType<typeof getDirectory>>;
   try {
@@ -1042,18 +1042,18 @@ router.get("/export/users.csv", async (req, res) => {
   for (const group of dir.groups) {
     const memberUsage = getMemberUsage(group.id, billingRange.key);
     if (!memberUsage) {
-      // Queue fetch for next time; skip this group now (can't confirm activity)
+      // Queue fetch so spend populates on next export; include members with spend=0 now
       queueMemberUsageFetch(group, billingRange, 1);
-      continue;
+    } else {
+      groupsLoaded++;
     }
-    groupsLoaded++;
+    const spendMap = memberUsage?.byUser ?? new Map<string, number>();
 
     const memberIds = dir.groupMembers.get(group.id) ?? [];
     const teamName = teamNameMap.get(group.name) ?? "";
 
     for (const userId of memberIds) {
-      const spendUsd = memberUsage.byUser.get(userId) ?? 0;
-      if (spendUsd <= 0) continue; // not active this period
+      const spendUsd = spendMap.get(userId) ?? 0;
 
       if (seen.has(userId)) continue;
       seen.add(userId);
@@ -1088,7 +1088,7 @@ router.get("/export/users.csv", async (req, res) => {
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="active-users-${new Date().toISOString().slice(0, 10)}.csv"`,
+    `attachment; filename="all-users-${new Date().toISOString().slice(0, 10)}.csv"`,
   );
   res.setHeader("X-Groups-Loaded", String(groupsLoaded));
   res.setHeader("X-Groups-Total", String(totalGroups));
