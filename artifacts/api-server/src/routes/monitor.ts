@@ -1035,41 +1035,42 @@ router.get("/export/users.csv", async (req, res) => {
   let groupsLoaded = 0;
   const totalGroups = dir.groups.length;
 
-  // Deduplicate: each user attributed to their first group (same rule as dashboard)
-  const seen = new Set<string>();
-  const rows: { email: string; name: string; username: string; group: string; team: string; spendUsd: number }[] = [];
-
+  // Pass 1: build userId → { group, spend } from custom groups (first-group attribution rule)
+  const userGroupAttr = new Map<string, { groupName: string; teamName: string; spendUsd: number }>();
   for (const group of dir.groups) {
     const memberUsage = getMemberUsage(group.id, billingRange.key);
     if (!memberUsage) {
-      // Queue fetch so spend populates on next export; include members with spend=0 now
+      // Queue fetch so spend populates on next export
       queueMemberUsageFetch(group, billingRange, 1);
     } else {
       groupsLoaded++;
     }
     const spendMap = memberUsage?.byUser ?? new Map<string, number>();
-
-    const memberIds = dir.groupMembers.get(group.id) ?? [];
     const teamName = teamNameMap.get(group.name) ?? "";
-
-    for (const userId of memberIds) {
-      const spendUsd = spendMap.get(userId) ?? 0;
-
-      if (seen.has(userId)) continue;
-      seen.add(userId);
-
-      const m = dir.members.get(userId);
-      if (!m) continue;
-
-      rows.push({
-        email: m.email,
-        name: m.name ?? "",
-        username: m.username,
-        group: group.name,
-        team: teamName,
-        spendUsd,
-      });
+    for (const userId of dir.groupMembers.get(group.id) ?? []) {
+      if (!userGroupAttr.has(userId)) {
+        userGroupAttr.set(userId, { groupName: group.name, teamName, spendUsd: spendMap.get(userId) ?? 0 });
+      }
     }
+  }
+
+  // Pass 2: emit one row per enterprise member (covers users not in any custom group)
+  const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; spendUsd: number }[] = [];
+  for (const [userId, m] of dir.members) {
+    const attr = userGroupAttr.get(userId);
+    const wsNames = [...m.workspaces.keys()]
+      .map((wsId) => dir.workspaces.get(wsId)?.name ?? wsId)
+      .filter(Boolean)
+      .join("; ");
+    rows.push({
+      email: m.email,
+      name: m.name ?? "",
+      username: m.username,
+      group: attr?.groupName ?? "",
+      team: attr?.teamName ?? "",
+      workspaces: wsNames,
+      spendUsd: attr?.spendUsd ?? 0,
+    });
   }
 
   // Sort by spend descending
@@ -1077,9 +1078,9 @@ router.get("/export/users.csv", async (req, res) => {
 
   // Build CSV
   const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-  const header = ["Email", "Name", "Username", "Group", "Team", "Spend (USD)"].map(escape).join(",");
+  const header = ["Email", "Name", "Username", "Workspace(s)", "Group", "Team", "Spend (USD)"].map(escape).join(",");
   const lines = rows.map((r) =>
-    [r.email, r.name, r.username, r.group, r.team, r.spendUsd.toFixed(2)].map(escape).join(","),
+    [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.spendUsd.toFixed(2)].map(escape).join(","),
   );
 
   const isComplete = groupsLoaded === totalGroups;
