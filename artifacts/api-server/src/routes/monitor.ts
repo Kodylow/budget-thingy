@@ -101,6 +101,94 @@ function effectiveGroupBudget(appBudget: number | undefined): EffectiveBudget {
   return { amountUsd: null, source: null };
 }
 
+/**
+ * When the same group name exists in multiple workspaces (e.g. after a workspace
+ * migration where "AZ-Replit – Comcast Advertising" was created in the Comcast
+ * Advertising workspace while the old copy in the Comcast workspace still carries
+ * the billing data), the dashboard would show two rows for the same logical group.
+ *
+ * This function detects those duplicates and builds a merge plan:
+ *   • `mergeMap`      — primaryGroupId → [primaryId, ...aliasIds]
+ *   • `hiddenGroupIds` — set of non-primary IDs to exclude from responses
+ *
+ * Primary selection: prefer the workspace whose name equals the group's suffix
+ * (the part after "AZ-Replit – "). For "AZ-Replit – Comcast Advertising" the
+ * Comcast Advertising workspace wins. Falls back to alphabetical workspace name.
+ *
+ * Spend from ALL same-name source groups is summed on the primary so that no
+ * spend is lost during the transition period when billing data has not yet
+ * migrated to the new workspace.
+ */
+interface GroupMergePlan {
+  /** primary group ID → all source IDs (primary + aliases) */
+  mergeMap: Map<string, string[]>;
+  /** non-primary group IDs to hide from dashboard/detail responses */
+  hiddenGroupIds: Set<string>;
+}
+
+function buildGroupMergePlan(
+  groups: EnterpriseGroup[],
+  workspaces: ReadonlyMap<string, { name: string }>,
+): GroupMergePlan {
+  const byName = new Map<string, EnterpriseGroup[]>();
+  for (const g of groups) {
+    const key = g.name.trim().toLowerCase();
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key)!.push(g);
+  }
+
+  const mergeMap = new Map<string, string[]>();
+  const hiddenGroupIds = new Set<string>();
+
+  for (const [, nameGroups] of byName) {
+    if (nameGroups.length <= 1) continue;
+
+    // Extract suffix (e.g. "AZ-Replit – Comcast Advertising" → "Comcast Advertising")
+    const suffix = nameGroups[0].name
+      .replace(/^az-replit\s*[-–]\s*/i, "")
+      .trim()
+      .toLowerCase();
+
+    const primary =
+      // Prefer workspace whose name matches the group suffix
+      nameGroups.find((g) => {
+        const wsName = (workspaces.get(g.workspaceId)?.name ?? "").trim().toLowerCase();
+        return wsName === suffix;
+      }) ??
+      // Fallback: alphabetical workspace name (deterministic)
+      nameGroups.slice().sort((a, b) => {
+        const aN = workspaces.get(a.workspaceId)?.name ?? "";
+        const bN = workspaces.get(b.workspaceId)?.name ?? "";
+        return aN.localeCompare(bN);
+      })[0];
+
+    mergeMap.set(primary.id, nameGroups.map((g) => g.id));
+    for (const g of nameGroups) {
+      if (g.id !== primary.id) hiddenGroupIds.add(g.id);
+    }
+  }
+
+  return { mergeMap, hiddenGroupIds };
+}
+
+/**
+ * Given a set of source group IDs (a merged group's aliases), return the union of
+ * their directory members (deduped) in stable insertion order.
+ */
+function mergedGroupMemberIds(
+  sourceIds: string[],
+  groupMembers: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of sourceIds) {
+    for (const uid of groupMembers.get(id) ?? []) {
+      if (!seen.has(uid)) { seen.add(uid); result.push(uid); }
+    }
+  }
+  return result;
+}
+
 function alertToJson(a: typeof alertsTable.$inferSelect) {
   return {
     id: a.id,
@@ -134,6 +222,12 @@ router.get("/groups", async (req, res): Promise<void> => {
     // see, so workspace admins never receive records or totals from other
     // workspaces (dedup/rollup are recomputed over the visible scope).
     const scoped = visibleGroups(req.authz!, dir.groups);
+
+    // Detect same-name groups across workspaces (e.g. after a workspace migration)
+    // so only the preferred workspace version shows as a single merged row.
+    const mergePlan = buildGroupMergePlan(scoped, dir.workspaces);
+    const displayGroups = scoped.filter((g) => !mergePlan.hiddenGroupIds.has(g.id));
+
     void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
     for (const group of scoped) queueMemberUsageFetch(group, range, 1);
     const isAccountAdmin = req.authz!.role === "account_admin";
@@ -149,31 +243,54 @@ router.get("/groups", async (req, res): Promise<void> => {
     const extraSpend = isAccountAdmin
       ? getExtraWorkspaceSpend(dir, range.key)
       : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
+    // Pass ALL scoped groups (including aliases) so the dedup rollup correctly
+    // attributes shared users across both the old and new workspace versions.
     const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
 
+    // Include source group IDs (alias groups) in the history query so merged
+    // primaries can show the complete spend history across both workspace versions.
+    const allHistoryGroupIds = [
+      ...new Set(scoped.flatMap((g) => mergePlan.mergeMap.get(g.id) ?? [g.id])),
+    ];
     const historyMap = billing.start
-      ? await getHistoryForGroups(
-          scoped.map((g) => g.id),
-          billing.start,
-        )
+      ? await getHistoryForGroups(allHistoryGroupIds, billing.start)
       : new Map<string, { date: string; spendUsd: number }[]>();
 
     let pendingCount = 0;
     const groups = await Promise.all(
-      scoped.map(async (g) => {
-        // Keep raw API spend for period start/end (needed for projected spend).
-        const spend = getSpend(g.id, range.key);
-        // Combined spend = deduped Comcast group spend + extra workspace spend.
-        const memberUsageLoaded = !!getMemberUsage(g.id, range.key);
+      displayGroups.map(async (g) => {
+        // Source group IDs: the primary itself plus any same-name aliases.
+        const sourceIds = mergePlan.mergeMap.get(g.id) ?? [g.id];
+
+        // ALL source groups must have member usage loaded for spend to be reliable.
+        const memberUsageLoaded = sourceIds.every((id) => !!getMemberUsage(id, range.key));
         if (!memberUsageLoaded) pendingCount += 1;
+
         // Spend is only "loaded" when this group's member usage, the full rollup, AND
         // all extra-workspace fetches are complete. Until all groups' member usage loads,
-        // shared users can be temporarily attributed to the wrong group and their spend
-        // can shift between groups — showing a partial rollup as final would mislead.
+        // shared users can be temporarily attributed to the wrong group.
         const fullyLoaded = memberUsageLoaded && rollup.isComplete && extraSpend.isComplete;
-        const attributed = rollup.byGroup.get(g.id);
-        const combinedSpend = attributed?.spendUsd ?? 0;
+
+        // Sum spend across all same-name source groups. The rollup already deduplicates
+        // users so summing byGroup values produces the correct combined total without
+        // double-counting: each user's spend appears in exactly one source group.
+        const combinedSpend = sourceIds.reduce(
+          (sum, id) => sum + (rollup.byGroup.get(id)?.spendUsd ?? 0),
+          0,
+        );
+
+        // Keep raw spend for the primary (for period timestamps / projection).
+        const spend = getSpend(g.id, range.key);
+
+        // Merged member count: union of directory members across all source groups.
+        const rawMemberCount = mergedGroupMemberIds(sourceIds, dir.groupMembers).length;
+        // Rollup member count: sum of deduped counts across all source groups.
+        const mergedRollupMemberCount = sourceIds.reduce(
+          (sum, id) => sum + (rollupMemberCounts.get(id) ?? 0),
+          0,
+        );
+
         const budget = effectiveGroupBudget(budgetMap.get(g.id));
         // Threshold state is always tracked against the cutoff-anchored billing period.
         const billingSpend = getSpend(g.id, "billing:from-cutoff");
@@ -182,6 +299,18 @@ router.get("/groups", async (req, res): Promise<void> => {
             ? await getFiredThresholds(g.id, billingSpend.periodStart)
             : [];
         const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
+
+        // Merge history entries from all source groups by date (sum same-date spend).
+        const histByDate = new Map<string, number>();
+        for (const id of sourceIds) {
+          for (const entry of historyMap.get(id) ?? []) {
+            histByDate.set(entry.date, (histByDate.get(entry.date) ?? 0) + entry.spendUsd);
+          }
+        }
+        const mergedHistory = [...histByDate.entries()]
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([date, spendUsd]) => ({ date, spendUsd }));
+
         return {
           groupId: g.id,
           workspaceId: g.workspaceId,
@@ -189,8 +318,8 @@ router.get("/groups", async (req, res): Promise<void> => {
           name: g.name,
           teamName: groupTeamMap.get(g.name) ?? null,
           type: g.type,
-          memberCount: dir.groupMembers.get(g.id)?.length ?? null,
-          rollupMemberCount: rollupMemberCounts.get(g.id) ?? 0,
+          memberCount: rawMemberCount || (dir.groupMembers.get(g.id)?.length ?? null),
+          rollupMemberCount: mergedRollupMemberCount,
           spendLoaded: fullyLoaded,
           spendUsd: fullyLoaded ? combinedSpend : null,
           rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
@@ -198,15 +327,15 @@ router.get("/groups", async (req, res): Promise<void> => {
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
-          remainingUsd:
-            fullyLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
+          remainingUsd: fullyLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
           percentUsed:
             fullyLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
-          history: historyMap.get(g.id) ?? [],
-          projectedSpendUsd: fullyLoaded && spend
-            ? projectEndOfPeriod(combinedSpend, spend.periodStart, spend.periodEnd)
-            : null,
+          history: mergedHistory,
+          projectedSpendUsd:
+            fullyLoaded && spend
+              ? projectEndOfPeriod(combinedSpend, spend.periodStart, spend.periodEnd)
+              : null,
         };
       }),
     );
@@ -248,18 +377,60 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     }
     const scoped = visibleGroups(req.authz!, dir.groups);
 
+    // Build merge plan so alias (hidden) groups redirect and primaries aggregate
+    // member usage and spend from all same-name workspace variants.
+    const mergePlan = buildGroupMergePlan(scoped, dir.workspaces);
+
+    // If this group is a hidden alias, treat it as not found (the primary carries
+    // all the data; direct navigation to an alias would show misleading $0 spend).
+    if (mergePlan.hiddenGroupIds.has(group.id)) {
+      res.status(404).json({ error: "Group not found" });
+      return;
+    }
+
+    // Source group IDs: this primary plus any same-name aliases.
+    const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+
     // Queue the selected group's data at high priority (priority 0) so it loads first.
-    // Also queue member usage for all other visible groups at lower priority so the
-    // deduped rollup can complete — rollup.isComplete requires every visible group's
-    // usage to be loaded before shared-user attribution is considered final.
-    queueGroupSpendFetch(group, 0, false, undefined, range);
-    queueMemberUsageFetch(group, range, 0);
-    queueProjectUsageFetch(group, range, 0);
-    queueProjectTitlesFetch(group.workspaceId, 0);
-    for (const g of scoped) if (g.id !== group.id) queueMemberUsageFetch(g, range, 1);
+    // Also queue member usage for ALL source groups and all other visible groups at lower
+    // priority so the deduped rollup can complete.
+    for (const srcId of sourceIds) {
+      const srcGroup = dir.groups.find((g) => g.id === srcId);
+      if (srcGroup) {
+        queueGroupSpendFetch(srcGroup, 0, false, undefined, range);
+        queueMemberUsageFetch(srcGroup, range, 0);
+        queueProjectUsageFetch(srcGroup, range, 0);
+        queueProjectTitlesFetch(srcGroup.workspaceId, 0);
+      }
+    }
+    for (const g of scoped) {
+      if (!sourceIds.includes(g.id)) queueMemberUsageFetch(g, range, 1);
+    }
 
     const spend = getSpend(group.id, range.key);
-    const memberUsage = getMemberUsage(group.id, range.key);
+
+    // Aggregate member usage across all source groups (primary + aliases).
+    // This ensures the detail view shows the full combined spend even when
+    // billing data has not yet migrated to the new workspace's group.
+    const aggregatedMemberUsage = (() => {
+      const byUser = new Map<string, number>();
+      let totalCostUsd = 0;
+      let anyLoaded = false;
+      for (const id of sourceIds) {
+        const usage = getMemberUsage(id, range.key);
+        if (!usage) continue;
+        anyLoaded = true;
+        for (const [uid, s] of usage.byUser) {
+          byUser.set(uid, (byUser.get(uid) ?? 0) + s);
+          totalCostUsd += s;
+        }
+      }
+      return anyLoaded ? { byUser, totalCostUsd } : undefined;
+    })();
+    const memberUsage = aggregatedMemberUsage;
+    // All source groups must be loaded for spend to be considered complete.
+    const allSourcesLoaded = sourceIds.every((id) => !!getMemberUsage(id, range.key));
+
     const isAccountAdmin = req.authz!.role === "account_admin";
     if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 0);
     const extraSpend = isAccountAdmin
@@ -267,7 +438,21 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
     const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
-    const attributed = rollup.byGroup.get(group.id);
+
+    // Aggregate attributed spend across all source groups (mirrors dashboard logic).
+    const attributed = {
+      spendUsd: sourceIds.reduce((sum, id) => sum + (rollup.byGroup.get(id)?.spendUsd ?? 0), 0),
+      byUser: (() => {
+        const m = new Map<string, number>();
+        for (const id of sourceIds) {
+          for (const [uid, s] of rollup.byGroup.get(id)?.byUser ?? []) {
+            m.set(uid, (m.get(uid) ?? 0) + s);
+          }
+        }
+        return m;
+      })(),
+    };
+
     const [budgets, groupTeamsRows] = await Promise.all([
       db.select().from(groupBudgetsTable),
       db.select().from(groupTeamsTable),
@@ -281,31 +466,47 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       billingSpend && budget.amountUsd != null
         ? await getFiredThresholds(group.id, billingSpend.periodStart)
         : [];
-    const detailHistory = billingSpend
-      ? ((await getHistoryForGroups([group.id], billingSpend.periodStart)).get(group.id) ?? [])
-      : [];
 
-    const userIds = dir.groupMembers.get(group.id) ?? [];
+    // Merge history from all source groups by date.
+    const detailHistoryArr: { date: string; spendUsd: number }[] = [];
+    if (billingSpend) {
+      const histResult = await getHistoryForGroups(
+        [...new Set(sourceIds)],
+        billingSpend.periodStart,
+      );
+      const byDate = new Map<string, number>();
+      for (const id of sourceIds) {
+        for (const entry of histResult.get(id) ?? []) {
+          byDate.set(entry.date, (byDate.get(entry.date) ?? 0) + entry.spendUsd);
+        }
+      }
+      for (const [date, spendUsd] of [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        detailHistoryArr.push({ date, spendUsd });
+      }
+    }
+
+    // Union of directory members across all source groups.
+    const userIds = mergedGroupMemberIds(sourceIds, dir.groupMembers);
 
     const members = userIds.map((userId) => {
       const m = dir.members.get(userId);
-      const ws = m?.workspaces.get(group.workspaceId);
-      // spendLoaded only becomes true when all groups' member usage is loaded (so
+      // Use the primary group's workspace for role/isDisabled (the user's workspace membership).
+      const ws = m?.workspaces.get(group.workspaceId) ??
+        sourceIds.map((id) => {
+          const srcGroup = dir.groups.find((g) => g.id === id);
+          return srcGroup ? m?.workspaces.get(srcGroup.workspaceId) : undefined;
+        }).find(Boolean);
+      // spendLoaded only becomes true when all source groups' member usage is loaded (so
       // shared-user dedup attribution is final) AND extra-workspace data is complete.
-      const spendLoaded = !!memberUsage && rollup.isComplete && extraSpend.isComplete;
-      // Use the rollup's per-user attributed spend when this is the user's first group.
-      // For members attributed to a different group, fall back to their Comcast-only
-      // spend as informational context (their combined spend is counted in that group).
-      const attributedUserSpend = attributed?.byUser.get(userId);
-      // When the rollup is final (spendLoaded=true requires rollup.isComplete), a member
-      // without an attributedUserSpend entry has their combined spend counted in another
-      // group. Show $0 here so the row clearly does not contribute to this group's total.
-      // Showing Comcast-only spend would be misleading (it's not part of this group's total).
+      const spendLoaded = allSourcesLoaded && rollup.isComplete && extraSpend.isComplete;
+      const attributedUserSpend = attributed.byUser.get(userId);
+      // When the rollup is final, a member without an attributedUserSpend entry has their
+      // combined spend counted in another group. Show $0 so the row is not misleading.
       const spendUsd = !spendLoaded
         ? null
         : attributedUserSpend !== undefined
-          ? attributedUserSpend  // correct combined spend for members attributed to this group
-          : 0; // attributed to a different group; spend counted there, $0 contribution here
+          ? attributedUserSpend
+          : 0;
       return {
         userId,
         username: m?.username ?? null,
@@ -322,30 +523,23 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       };
     });
 
-    // Reconciliation: members listed in usage but no longer in the group
-    // (removed users) still count toward group spend — fold them into
-    // unattributed so member rows + unattributed = group total.
-    //
-    // combinedSpend = deduped attributed spend for this group (Comcast + extra ws).
-    // listedMembersSpend = sum of attributed spend for current members only.
-    // unattributed = spend from members removed from the group since last sync.
+    // Reconciliation: members removed from the group since last sync still count toward
+    // group spend — fold them into unattributed so member rows + unattributed = group total.
     // Invariant: combinedSpend === listedMembersSpend + unattributedSpendUsd.
-    //
-    // Non-attributed members (those whose spend belongs to a different group) show
-    // their Comcast-only spend in the row as informational context, but that spend
-    // is NOT counted here (it's in their first group's total instead).
-    const combinedSpend = attributed?.spendUsd ?? 0;
-    // combinedLoaded requires all group member usage (rollup must be complete so shared
-    // users are definitively attributed) AND extra-workspace data, so card fields
-    // (remaining, percent, projected) are never shown as partial totals.
-    const combinedLoaded = !!memberUsage && rollup.isComplete && extraSpend.isComplete;
+    const combinedSpend = attributed.spendUsd;
+    const combinedLoaded = allSourcesLoaded && rollup.isComplete && extraSpend.isComplete;
     let listedMembersSpend = 0;
     if (memberUsage) {
       for (const userId of userIds) {
-        listedMembersSpend += attributed?.byUser.get(userId) ?? 0;
+        listedMembersSpend += attributed.byUser.get(userId) ?? 0;
       }
     }
     const unattributed = combinedLoaded ? Math.max(0, combinedSpend - listedMembersSpend) : 0;
+
+    const mergedRollupMemberCount = sourceIds.reduce(
+      (sum, id) => sum + (rollupMemberCounts.get(id) ?? 0),
+      0,
+    );
 
     res.json(
       GetGroupDetailResponse.parse({
@@ -357,7 +551,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           teamName: groupTeamMap.get(group.name) ?? null,
           type: group.type,
           memberCount: userIds.length,
-          rollupMemberCount: rollupMemberCounts.get(group.id) ?? 0,
+          rollupMemberCount: mergedRollupMemberCount,
           spendLoaded: combinedLoaded,
           spendUsd: combinedLoaded ? combinedSpend : null,
           rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
@@ -368,7 +562,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           remainingUsd: combinedLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
           percentUsed: combinedLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
-          history: detailHistory,
+          history: detailHistoryArr,
           projectedSpendUsd: combinedLoaded && billingSpend
             ? projectEndOfPeriod(combinedSpend, billingSpend.periodStart, billingSpend.periodEnd)
             : null,
