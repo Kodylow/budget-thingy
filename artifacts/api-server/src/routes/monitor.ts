@@ -145,19 +145,32 @@ function buildGroupMergePlan(
   for (const [, nameGroups] of byName) {
     if (nameGroups.length <= 1) continue;
 
-    // Extract suffix (e.g. "AZ-Replit – Comcast Advertising" → "Comcast Advertising")
-    const suffix = nameGroups[0].name
+    // Extract the body of the group name after "az-replit -" (handles both " - " and " – ").
+    // e.g. "AZ-Replit - NBCU - Viewer" → "nbcu - viewer"
+    //      "AZ-Replit - Finance - Member" → "finance - member"
+    //      "AZ-Replit - PrepProd-Admins" → "prepprod-admins"
+    const body = nameGroups[0].name
       .replace(/^az-replit\s*[-–]\s*/i, "")
-      .trim()
-      .toLowerCase();
+      .toLowerCase()
+      .trim();
+
+    // Try to find the workspace whose name "owns" this group:
+    // Match the first dash/space-delimited token of the workspace name against the
+    // start of the body.  "NBCU" → token "nbcu", matches body "nbcu - viewer".
+    // "Finance-Community" → token "finance", matches body "finance - member".
+    // "Global Product" → token "global", does NOT match body "gpo connected living".
+    const matchedGroup = nameGroups.find((g) => {
+      const wsName = (workspaces.get(g.workspaceId)?.name ?? "").trim().toLowerCase();
+      const firstToken = wsName.split(/[-\s]+/)[0] ?? "";
+      return firstToken.length >= 2 && body.startsWith(firstToken);
+    });
 
     const primary =
-      // Prefer workspace whose name matches the group suffix
-      nameGroups.find((g) => {
-        const wsName = (workspaces.get(g.workspaceId)?.name ?? "").trim().toLowerCase();
-        return wsName === suffix;
-      }) ??
-      // Fallback: alphabetical workspace name (deterministic)
+      matchedGroup ??
+      // No workspace-name prefix match (e.g. cross-workspace groups like "preprod-admins"):
+      // fall back to alphabetical workspace name so the result is deterministic.
+      // "Comcast" (the main account workspace) sorts early and naturally becomes the
+      // primary for these shared/cross-workspace groups.
       nameGroups.slice().sort((a, b) => {
         const aN = workspaces.get(a.workspaceId)?.name ?? "";
         const bN = workspaces.get(b.workspaceId)?.name ?? "";
