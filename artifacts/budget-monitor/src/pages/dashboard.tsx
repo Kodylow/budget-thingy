@@ -538,9 +538,14 @@ export default function Dashboard() {
           </a>
           <RangeFilter />
           {!isComplete && (
-            <Badge variant="outline" className="flex items-center gap-2" data-testid="badge-loading-status">
+            <Badge
+              variant="outline"
+              className="flex items-center gap-2"
+              data-testid="badge-loading-status"
+              title="Stored usage is available as each group finishes its one-time member-level history sync."
+            >
               <RefreshCw className="h-3 w-3 animate-spin" />
-              Loading {pendingCount} groups...
+              Syncing history · {pendingCount} remaining
             </Badge>
           )}
         </div>
