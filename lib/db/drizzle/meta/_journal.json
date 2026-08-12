@@ -15,6 +15,13 @@
       "when": 1786471410992,
       "tag": "0001_thankful_mercury",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786563323136,
+      "tag": "0002_big_payback",
+      "breakpoints": true
     }
   ]
 }

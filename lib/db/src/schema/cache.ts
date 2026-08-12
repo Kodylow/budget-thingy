@@ -1,4 +1,4 @@
-import { pgTable, text, doublePrecision, timestamp, jsonb, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, doublePrecision, timestamp, jsonb, primaryKey, boolean, index } from "drizzle-orm/pg-core";
 
 // One row — stores the full serialised directory as JSON + when it was fetched.
 export const apiDirectoryCacheTable = pgTable("api_directory_cache", {
@@ -24,3 +24,46 @@ export const apiSpendCacheTable = pgTable(
 );
 
 export type ApiSpendCache = typeof apiSpendCacheTable.$inferSelect;
+
+/**
+ * Durable, successfully committed pieces of a /usage synchronization.
+ *
+ * `scopeKey` is an opaque stable API scope (workspace/group IDs, never names).
+ * `payloadJson` contains the aggregate returned for exactly [chunkStart, chunkEnd).
+ * A synchronization replaces all mutable chunks in one transaction, so retries
+ * and reconciliation overlap cannot double count.
+ */
+export const usageSyncChunksTable = pgTable(
+  "usage_sync_chunks",
+  {
+    mode: text("mode").notNull(),
+    rangeKey: text("range_key").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    chunkStart: timestamp("chunk_start", { withTimezone: true }).notNull(),
+    chunkEnd: timestamp("chunk_end", { withTimezone: true }).notNull(),
+    payloadJson: jsonb("payload_json").notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.mode, t.rangeKey, t.scopeKey, t.chunkStart] }),
+    index("usage_sync_chunks_scope_idx").on(t.mode, t.rangeKey, t.scopeKey),
+  ],
+);
+
+/** Watermark for the last complete transaction for a mode/range/scope. */
+export const usageSyncStateTable = pgTable(
+  "usage_sync_state",
+  {
+    mode: text("mode").notNull(),
+    rangeKey: text("range_key").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    rangeStart: timestamp("range_start", { withTimezone: true }).notNull(),
+    syncedThrough: timestamp("synced_through", { withTimezone: true }).notNull(),
+    isClosed: boolean("is_closed").notNull().default(false),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.mode, t.rangeKey, t.scopeKey] })],
+);
+
+export type UsageSyncChunk = typeof usageSyncChunksTable.$inferSelect;
+export type UsageSyncState = typeof usageSyncStateTable.$inferSelect;

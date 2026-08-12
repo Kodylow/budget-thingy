@@ -18,6 +18,11 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+// Durable usage/directory caches must be available before the server accepts a
+// dashboard request; otherwise an early request can race hydration and trigger
+// an unnecessary full bootstrap.
+await initCache();
+
 const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -25,10 +30,8 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-  void initCache().then(() => {
-    startChecker();
-    startSnapshotJob();
-  });
+  startChecker();
+  startSnapshotJob();
 });
 
 function shutdown(signal: string) {

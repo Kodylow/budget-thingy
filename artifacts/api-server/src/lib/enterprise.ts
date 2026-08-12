@@ -1,7 +1,13 @@
 import { logger } from "./logger";
 import { db } from "@workspace/db";
-import { apiDirectoryCacheTable, apiSpendCacheTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import {
+  apiDirectoryCacheTable,
+  apiSpendCacheTable,
+  usageSyncChunksTable,
+  usageSyncStateTable,
+  type UsageSyncChunk,
+} from "@workspace/db/schema";
+import { and, eq, gte, sql } from "drizzle-orm";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
@@ -254,6 +260,319 @@ async function usageFetch(
   }
 }
 
+// ---------- Durable incremental /usage synchronization ----------
+
+type UsageSyncMode = "group_total" | "group_member" | "workspace_member" | "group_project";
+
+interface StoredUsagePayload {
+  totalCostUsd: number;
+  attributableTotalCostUsd: number;
+  unattributableTotalCostUsd: number;
+  groups: UsageGroupEntry[];
+}
+
+interface SyncMetadata {
+  syncedThrough: number;
+  completedAt: number;
+  isClosed: boolean;
+}
+
+const RECONCILIATION_OVERLAP_MS = 48 * 60 * 60 * 1000;
+const MAX_USAGE_PAGES = 200;
+const syncMetadata = new Map<string, SyncMetadata>();
+
+function syncId(mode: UsageSyncMode, rangeKey: string, scopeKey: string): string {
+  return `${mode}|${rangeKey}|${scopeKey}`;
+}
+
+function rangeBounds(range: UsageRange): { start: Date; end: Date; isClosed: boolean } {
+  const start = new Date(range.params.startTime);
+  const end = new Date(range.params.endTime);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+    throw new EnterpriseApiError(400, "Usage range must have valid startTime/endTime boundaries");
+  }
+  // MTD/YTD/default ranges expand while their key remains stable. Custom ranges
+  // whose exclusive end has passed are immutable after one complete sync.
+  const isClosed = range.key.startsWith("custom:") && end.getTime() <= Date.now();
+  return { start, end, isClosed };
+}
+
+function utcDayStart(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function planSyncChunks(
+  range: UsageRange,
+  previous: SyncMetadata | undefined,
+): { replacementStart: Date; chunks: Array<{ start: Date; end: Date }>; isClosed: boolean } {
+  const { start, end, isClosed } = rangeBounds(range);
+  if (previous?.isClosed || (previous && previous.syncedThrough >= end.getTime() &&
+      Date.now() - previous.completedAt < USAGE_TTL_MS)) {
+    return { replacementStart: end, chunks: [], isClosed: previous.isClosed };
+  }
+
+  if (isClosed) {
+    return { replacementStart: start, chunks: [{ start, end }], isClosed: true };
+  }
+
+  const overlapAnchor = previous
+    ? previous.syncedThrough - RECONCILIATION_OVERLAP_MS
+    : end.getTime() - RECONCILIATION_OVERLAP_MS;
+  const recentStartMs = Math.max(start.getTime(), utcDayStart(overlapAnchor));
+  const chunks: Array<{ start: Date; end: Date }> = [];
+
+  // Bootstrap old history in one request, while recent mutable days are kept
+  // separately so later reconciliation can replace them without a full pull.
+  if (!previous && start.getTime() < recentStartMs) {
+    chunks.push({ start, end: new Date(recentStartMs) });
+  }
+  let cursor = recentStartMs;
+  while (cursor < end.getTime()) {
+    const next = Math.min(cursor + 24 * 60 * 60 * 1000, end.getTime());
+    chunks.push({ start: new Date(cursor), end: new Date(next) });
+    cursor = next;
+  }
+  return { replacementStart: new Date(recentStartMs), chunks, isClosed: false };
+}
+
+async function fetchUsageChunk(
+  mode: UsageSyncMode,
+  baseParams: Record<string, string | undefined>,
+  start: Date,
+  end: Date,
+): Promise<StoredUsagePayload> {
+  const groups: UsageGroupEntry[] = [];
+  let first: UsageData | undefined;
+  let cursor: string | undefined;
+  const groupBy =
+    mode === "group_member" || mode === "workspace_member"
+      ? "member"
+      : mode === "group_project"
+        ? "project"
+        : undefined;
+
+  for (let page = 0; page < MAX_USAGE_PAGES; page++) {
+    const data = await usageFetch({
+      ...baseParams,
+      groupBy,
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      limit: groupBy ? "100" : undefined,
+      cursor,
+    });
+    first ??= data;
+    groups.push(...(data.groups ?? []));
+    if (!groupBy || !data.pagination?.hasMore) {
+      return {
+        totalCostUsd: first.totalCostUsd,
+        attributableTotalCostUsd: first.attributableTotalCostUsd ?? 0,
+        unattributableTotalCostUsd: first.unattributableTotalCostUsd ?? 0,
+        groups,
+      };
+    }
+    if (!data.pagination.cursor) {
+      throw new Error("Usage pagination reported more pages without a cursor");
+    }
+    cursor = data.pagination.cursor;
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  throw new Error(`Usage pagination exceeded ${MAX_USAGE_PAGES} pages`);
+}
+
+async function synchronizeUsage(
+  mode: UsageSyncMode,
+  range: UsageRange,
+  scopeKey: string,
+  baseParams: Record<string, string | undefined>,
+  force = false,
+): Promise<UsageSyncChunk[]> {
+  const id = syncId(mode, range.key, scopeKey);
+  const result = await db.transaction(async (tx) => {
+    // The in-process queue serializes API calls for one server. This lock extends
+    // the same guarantee across replicas and is held through planning, fetching,
+    // and commit so a second writer re-plans from the first writer's watermark.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${id}))`);
+    const [storedState] = await tx
+      .select()
+      .from(usageSyncStateTable)
+      .where(and(
+        eq(usageSyncStateTable.mode, mode),
+        eq(usageSyncStateTable.rangeKey, range.key),
+        eq(usageSyncStateTable.scopeKey, scopeKey),
+      ));
+    const storedPrevious = storedState
+      ? {
+          syncedThrough: storedState.syncedThrough.getTime(),
+          completedAt: storedState.completedAt.getTime(),
+          isClosed: storedState.isClosed,
+        }
+      : undefined;
+    const previous = force && storedPrevious && !storedPrevious.isClosed
+      ? { ...storedPrevious, completedAt: 0 }
+      : storedPrevious;
+    const plan = planSyncChunks(range, previous);
+    if (plan.chunks.length === 0) {
+      const rows = await tx
+        .select()
+        .from(usageSyncChunksTable)
+        .where(and(
+          eq(usageSyncChunksTable.mode, mode),
+          eq(usageSyncChunksTable.rangeKey, range.key),
+          eq(usageSyncChunksTable.scopeKey, scopeKey),
+        ));
+      return { rows, metadata: storedPrevious! };
+    }
+
+    // Every chunk/page is fetched before any DELETE/INSERT. A network failure
+    // rolls back the transaction and preserves the prior snapshot + watermark.
+    const fetched: Array<{ start: Date; end: Date; payload: StoredUsagePayload }> = [];
+    for (const chunk of plan.chunks) {
+      if (fetched.length > 0) {
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      fetched.push({
+        ...chunk,
+        payload: await fetchUsageChunk(mode, baseParams, chunk.start, chunk.end),
+      });
+    }
+
+    const completedAt = new Date();
+    const { start: rangeStart, end: syncedThrough } = rangeBounds(range);
+    await tx
+      .delete(usageSyncChunksTable)
+      .where(and(
+        eq(usageSyncChunksTable.mode, mode),
+        eq(usageSyncChunksTable.rangeKey, range.key),
+        eq(usageSyncChunksTable.scopeKey, scopeKey),
+        gte(usageSyncChunksTable.chunkStart, plan.replacementStart),
+      ));
+    if (fetched.length > 0) {
+      await tx.insert(usageSyncChunksTable).values(fetched.map((chunk) => ({
+        mode,
+        rangeKey: range.key,
+        scopeKey,
+        chunkStart: chunk.start,
+        chunkEnd: chunk.end,
+        payloadJson: chunk.payload,
+        completedAt,
+      })));
+    }
+    await tx.insert(usageSyncStateTable).values({
+      mode,
+      rangeKey: range.key,
+      scopeKey,
+      rangeStart,
+      syncedThrough,
+      isClosed: plan.isClosed,
+      completedAt,
+    }).onConflictDoUpdate({
+      target: [usageSyncStateTable.mode, usageSyncStateTable.rangeKey, usageSyncStateTable.scopeKey],
+      set: { rangeStart, syncedThrough, isClosed: plan.isClosed, completedAt },
+    });
+    const rows = await tx
+      .select()
+      .from(usageSyncChunksTable)
+      .where(and(
+        eq(usageSyncChunksTable.mode, mode),
+        eq(usageSyncChunksTable.rangeKey, range.key),
+        eq(usageSyncChunksTable.scopeKey, scopeKey),
+      ));
+    return {
+      rows,
+      metadata: {
+        syncedThrough: syncedThrough.getTime(),
+        completedAt: completedAt.getTime(),
+        isClosed: plan.isClosed,
+      },
+    };
+  });
+  syncMetadata.set(id, result.metadata);
+  return result.rows;
+}
+
+function storedPayload(row: UsageSyncChunk): StoredUsagePayload {
+  return row.payloadJson as StoredUsagePayload;
+}
+
+function aggregateGroupSpend(rows: UsageSyncChunk[]): GroupSpend {
+  return {
+    spendUsd: rows.reduce((sum, row) => sum + storedPayload(row).totalCostUsd, 0),
+    fetchedAt: Math.max(...rows.map((row) => row.completedAt.getTime())),
+    periodStart: new Date(Math.min(...rows.map((row) => row.chunkStart.getTime()))).toISOString(),
+    periodEnd: new Date(Math.max(...rows.map((row) => row.chunkEnd.getTime()))).toISOString(),
+  };
+}
+
+function aggregateMemberUsage(rows: UsageSyncChunk[]): MemberUsage {
+  const byUser = new Map<string, number>();
+  let attributableTotalCostUsd = 0;
+  let unattributableTotalCostUsd = 0;
+  let totalCostUsd = 0;
+  for (const row of rows) {
+    const payload = storedPayload(row);
+    attributableTotalCostUsd += payload.attributableTotalCostUsd;
+    unattributableTotalCostUsd += payload.unattributableTotalCostUsd;
+    totalCostUsd += payload.totalCostUsd;
+    for (const entry of payload.groups) {
+      if (entry.key.userId) {
+        byUser.set(entry.key.userId, (byUser.get(entry.key.userId) ?? 0) + entry.totalCostUsd);
+      }
+    }
+  }
+  return {
+    fetchedAt: Math.max(...rows.map((row) => row.completedAt.getTime())),
+    byUser,
+    attributableTotalCostUsd,
+    unattributableTotalCostUsd,
+    totalCostUsd,
+  };
+}
+
+function aggregateWorkspaceMemberUsage(rows: UsageSyncChunk[]): Map<string, number> {
+  return aggregateMemberUsage(rows).byUser;
+}
+
+function aggregateProjectUsage(rows: UsageSyncChunk[]): ProjectUsage {
+  const byProject = new Map<string, ProjectUsageEntry>();
+  let totalCostUsd = 0;
+  for (const row of rows) {
+    const payload = storedPayload(row);
+    totalCostUsd += payload.totalCostUsd;
+    for (const entry of payload.groups) {
+      if (!entry.key.projectId) continue;
+      let project = byProject.get(entry.key.projectId);
+      if (!project) {
+        project = { projectId: entry.key.projectId, totalCostUsd: 0, metrics: [] };
+        byProject.set(entry.key.projectId, project);
+      }
+      project.totalCostUsd += entry.totalCostUsd;
+      for (const metric of entry.metrics ?? []) {
+        const existing = project.metrics.find((candidate) => candidate.id === metric.id);
+        if (existing) existing.costUsd += metric.costUsd;
+        else project.metrics.push({ ...metric });
+      }
+    }
+  }
+  return {
+    fetchedAt: Math.max(...rows.map((row) => row.completedAt.getTime())),
+    byProject,
+    totalCostUsd,
+  };
+}
+
+function isDurablyFresh(
+  mode: UsageSyncMode,
+  rangeKey: string,
+  scopeKey: string,
+  fetchedAt: number | undefined,
+  force: boolean,
+): boolean {
+  const metadata = syncMetadata.get(syncId(mode, rangeKey, scopeKey));
+  if (metadata?.isClosed) return true;
+  return !force && fetchedAt !== undefined && Date.now() - fetchedAt < USAGE_TTL_MS;
+}
+
 // ---------- Directory (workspaces, groups, members, platform budgets) ----------
 
 interface Pagination {
@@ -501,10 +820,17 @@ function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend):
 
 export async function initCache(): Promise<void> {
   try {
-    const [dirRow, spendRows] = await Promise.all([
+    const [dirRow, spendRows, durable] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
       db.select().from(apiSpendCacheTable),
+      db.transaction(async (tx) => {
+        await tx.execute(sql`set transaction isolation level repeatable read read only`);
+        const states = await tx.select().from(usageSyncStateTable);
+        const chunks = await tx.select().from(usageSyncChunksTable);
+        return { states, chunks };
+      }),
     ]);
+    const { states, chunks } = durable;
 
     if (dirRow) {
       try {
@@ -532,6 +858,22 @@ export async function initCache(): Promise<void> {
     }
     if (spendRows.length > 0) {
       logger.info({ count: spendRows.length }, "Spend cache hydrated from DB");
+    }
+
+    for (const state of states) {
+      syncMetadata.set(syncId(
+        state.mode as UsageSyncMode,
+        state.rangeKey,
+        state.scopeKey,
+      ), {
+        syncedThrough: state.syncedThrough.getTime(),
+        completedAt: state.completedAt.getTime(),
+        isClosed: state.isClosed,
+      });
+    }
+    hydrateDurableUsage(chunks);
+    if (chunks.length > 0) {
+      logger.info({ chunks: chunks.length, scopes: states.length }, "Incremental usage cache hydrated from DB");
     }
   } catch (err) {
     logger.warn({ err }, "Failed to hydrate caches from DB — will fetch fresh on first request");
@@ -800,23 +1142,17 @@ export function queueGroupSpendFetch(
 ): QueueSpendResult {
   const cacheKey = `${range.key}|${group.id}`;
   const cached = spendCache.get(cacheKey);
-  if (!force && cached && Date.now() - cached.fetchedAt < USAGE_TTL_MS) {
+  if (isDurablyFresh("group_total", range.key, group.id, cached?.fetchedAt, force)) {
     return "fresh_cache";
   }
   if (onDone) registerSpendCallback(cacheKey, onDone);
   const queued = enqueueUsage(`usage:${cacheKey}`, priority, async () => {
     try {
-      const data = await usageFetch({
+      const rows = await synchronizeUsage("group_total", range, group.id, {
         workspaceId: group.workspaceId,
         groupId: group.id,
-        ...range.params,
-      });
-      const spend: GroupSpend = {
-        spendUsd: data.totalCostUsd,
-        fetchedAt: Date.now(),
-        periodStart: data.interval.startTime,
-        periodEnd: data.interval.endTime,
-      };
+      }, force);
+      const spend = aggregateGroupSpend(rows);
       spendCache.set(cacheKey, spend);
       persistSpendToDb(range.key, group.id, spend);
       // The network request has landed and cache is current. Release the queue
@@ -868,42 +1204,16 @@ export function queueMemberUsageFetch(
 ): boolean {
   const cacheKey = `${range.key}|${group.id}`;
   const cached = memberUsageCache.get(cacheKey);
-  if (!force && cached && Date.now() - cached.fetchedAt < USAGE_TTL_MS) {
+  if (isDurablyFresh("group_member", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
   return enqueueUsage(`member-usage:${cacheKey}`, priority, async () => {
     try {
-      const byUser = new Map<string, number>();
-      let cursor: string | undefined;
-      let first: UsageData | null = null;
-      for (let page = 0; page < 50; page++) {
-        const data = await usageFetch({
-          workspaceId: group.workspaceId,
-          groupId: group.id,
-          groupBy: "member",
-          limit: "100",
-          cursor,
-          ...range.params,
-        });
-        if (!first) first = data;
-        for (const entry of data.groups) {
-          if (entry.key.userId) {
-            byUser.set(entry.key.userId, (byUser.get(entry.key.userId) ?? 0) + entry.totalCostUsd);
-          }
-        }
-        if (!data.pagination?.hasMore || !data.pagination.cursor) break;
-        cursor = data.pagination.cursor;
-        // Pace intra-task pagination the same as the queue so a multi-page
-        // member fetch can't burst past the /usage rate budget.
-        await new Promise((r) => setTimeout(r, 700));
-      }
-      memberUsageCache.set(cacheKey, {
-        fetchedAt: Date.now(),
-        byUser,
-        attributableTotalCostUsd: first?.attributableTotalCostUsd ?? 0,
-        unattributableTotalCostUsd: first?.unattributableTotalCostUsd ?? 0,
-        totalCostUsd: first?.totalCostUsd ?? 0,
-      });
+      const rows = await synchronizeUsage("group_member", range, group.id, {
+        workspaceId: group.workspaceId,
+        groupId: group.id,
+      }, force);
+      memberUsageCache.set(cacheKey, aggregateMemberUsage(rows));
     } catch (err) {
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
     }
@@ -935,32 +1245,19 @@ export function queueWsSpendFetch(
   const cachedAt = wsSpendCachedAt.get(cacheKey);
   // Apply the same TTL as per-group member usage so cross-workspace totals refresh
   // at the same cadence (rather than freezing for the lifetime of the server process).
-  if (!force && cached && cachedAt && Date.now() - cachedAt < USAGE_TTL_MS) return false;
+  if (cached && isDurablyFresh("workspace_member", range.key, wsId, cachedAt, force)) return false;
   if (wsSpendFetching.has(cacheKey)) return false;
   wsSpendFetching.add(cacheKey);
   return enqueueUsage(`ws-spend:${cacheKey}`, priority, async () => {
     try {
-      const byUser = new Map<string, number>();
-      let cursor: string | undefined;
-      for (let page = 0; page < 50; page++) {
-        const data = await usageFetch({
-          workspaceId: wsId,
-          groupBy: "member",
-          limit: "100",
-          cursor,
-          ...range.params,
-        });
-        for (const entry of data.groups) {
-          if (entry.key.userId) {
-            byUser.set(entry.key.userId, (byUser.get(entry.key.userId) ?? 0) + entry.totalCostUsd);
-          }
-        }
-        if (!data.pagination?.hasMore || !data.pagination.cursor) break;
-        cursor = data.pagination.cursor;
-        await new Promise((r) => setTimeout(r, 700));
-      }
-      wsSpendCache.set(cacheKey, byUser);
-      wsSpendCachedAt.set(cacheKey, Date.now());
+      const rows = await synchronizeUsage("workspace_member", range, wsId, {
+        workspaceId: wsId,
+      }, force);
+      wsSpendCache.set(cacheKey, aggregateWorkspaceMemberUsage(rows));
+      wsSpendCachedAt.set(
+        cacheKey,
+        Math.max(...rows.map((row) => row.completedAt.getTime())),
+      );
     } catch (err) {
       logger.error({ err, wsId, range: range.key }, "Failed to fetch workspace member spend");
     } finally {
@@ -1042,66 +1339,47 @@ export function queueProjectUsageFetch(
 ): boolean {
   const cacheKey = `${range.key}|${group.id}`;
   const cached = projectUsageCache.get(cacheKey);
-  if (!force && cached && Date.now() - cached.fetchedAt < USAGE_TTL_MS) {
+  if (isDurablyFresh("group_project", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
   return enqueueUsage(`project-usage:${cacheKey}`, priority, async () => {
     try {
-      const byProject = new Map<string, ProjectUsageEntry>();
-      let cursor: string | undefined;
-      let firstTotal = 0;
-      for (let page = 0; page < 50; page++) {
-        const data = await usageFetch({
-          workspaceId: group.workspaceId,
-          groupId: group.id,
-          groupBy: "project",
-          limit: "100",
-          cursor,
-          ...range.params,
-        });
-        if (page === 0) firstTotal = data.totalCostUsd;
-        for (const entry of data.groups) {
-          if (entry.key.projectId) {
-            const metrics: ProjectUsageMetric[] = (entry.metrics ?? []).map((m) => ({
-              id: m.id,
-              name: m.name,
-              category: m.category,
-              costUsd: m.costUsd,
-            }));
-            const existing = byProject.get(entry.key.projectId);
-            if (existing) {
-              existing.totalCostUsd += entry.totalCostUsd;
-              // Merge metrics by id
-              for (const m of metrics) {
-                const em = existing.metrics.find((x) => x.id === m.id);
-                if (em) {
-                  em.costUsd += m.costUsd;
-                } else {
-                  existing.metrics.push({ ...m });
-                }
-              }
-            } else {
-              byProject.set(entry.key.projectId, {
-                projectId: entry.key.projectId,
-                totalCostUsd: entry.totalCostUsd,
-                metrics,
-              });
-            }
-          }
-        }
-        if (!data.pagination?.hasMore || !data.pagination.cursor) break;
-        cursor = data.pagination.cursor;
-        await new Promise((r) => setTimeout(r, 700));
-      }
-      projectUsageCache.set(cacheKey, {
-        fetchedAt: Date.now(),
-        byProject,
-        totalCostUsd: firstTotal,
-      });
+      const rows = await synchronizeUsage("group_project", range, group.id, {
+        workspaceId: group.workspaceId,
+        groupId: group.id,
+      }, force);
+      projectUsageCache.set(cacheKey, aggregateProjectUsage(rows));
     } catch (err) {
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch project usage");
     }
   });
+}
+
+function hydrateDurableUsage(rows: UsageSyncChunk[]): void {
+  const grouped = new Map<string, UsageSyncChunk[]>();
+  for (const row of rows) {
+    const id = syncId(row.mode as UsageSyncMode, row.rangeKey, row.scopeKey);
+    const list = grouped.get(id) ?? [];
+    list.push(row);
+    grouped.set(id, list);
+  }
+  for (const [id, scopeRows] of grouped) {
+    const [mode, rangeKey, scopeKey] = id.split("|") as [UsageSyncMode, string, string];
+    const cacheKey = `${rangeKey}|${scopeKey}`;
+    if (mode === "group_total") {
+      spendCache.set(cacheKey, aggregateGroupSpend(scopeRows));
+    } else if (mode === "group_member") {
+      memberUsageCache.set(cacheKey, aggregateMemberUsage(scopeRows));
+    } else if (mode === "workspace_member") {
+      wsSpendCache.set(cacheKey, aggregateWorkspaceMemberUsage(scopeRows));
+      wsSpendCachedAt.set(
+        cacheKey,
+        Math.max(...scopeRows.map((row) => row.completedAt.getTime())),
+      );
+    } else if (mode === "group_project") {
+      projectUsageCache.set(cacheKey, aggregateProjectUsage(scopeRows));
+    }
+  }
 }
 
 // ---------- Project titles (per workspace) ----------
@@ -1270,4 +1548,14 @@ export function getDedupedMemberCounts(
   membersByGroup: ReadonlyMap<string, readonly string[]>,
 ): Map<string, number> {
   return computeDedupedMemberCounts(groups, membersByGroup);
+}
+
+/** Test-only seam for simulating a process restart before calling initCache(). */
+export function __resetDurableUsageCachesForTests(): void {
+  spendCache.clear();
+  memberUsageCache.clear();
+  wsSpendCache.clear();
+  wsSpendCachedAt.clear();
+  projectUsageCache.clear();
+  syncMetadata.clear();
 }

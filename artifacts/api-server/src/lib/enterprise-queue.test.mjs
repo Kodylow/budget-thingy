@@ -12,11 +12,20 @@ process.env["REPLIT_ENTERPRISE_API_KEY"] = "test-key";
 
 // Mock the Enterprise API before importing the module under test.
 let fetchCount = 0;
-let nextSpend = 10;
-globalThis.fetch = async () => {
+let pendingSpend = 10;
+let failAtFetch = null;
+const requestedStarts = [];
+globalThis.fetch = async (input) => {
   fetchCount += 1;
-  const spend = nextSpend;
+  if (fetchCount === failAtFetch) throw new Error("simulated incremental failure");
+  // Incremental synchronization splits the initial history into one stable
+  // chunk plus recent UTC-day chunks. Attribute this fixture's change to only
+  // one chunk so the aggregate remains deterministic.
+  const spend = pendingSpend ?? 0;
+  pendingSpend = null;
   await new Promise((r) => setTimeout(r, 50));
+  const url = new URL(String(input));
+  requestedStarts.push(url.searchParams.get("startTime"));
   return {
     ok: true,
     status: 200,
@@ -24,8 +33,8 @@ globalThis.fetch = async () => {
     json: async () => ({
       data: {
         interval: {
-          startTime: "2026-05-20T00:00:00Z",
-          endTime: "2026-08-11T00:00:00Z",
+          startTime: url.searchParams.get("startTime"),
+          endTime: url.searchParams.get("endTime"),
         },
         totalCostUsd: spend,
       },
@@ -33,10 +42,16 @@ globalThis.fetch = async () => {
   };
 };
 
-const { queueGroupSpendFetch, getSpend } = await import("./enterprise.ts");
+const {
+  queueGroupSpendFetch,
+  getSpend,
+  pendingUsageCount,
+  initCache,
+  __resetDurableUsageCachesForTests,
+} = await import("./enterprise.ts");
 
 const group = {
-  id: "test-queue-g1",
+  id: `test-queue-${crypto.randomUUID()}`,
   workspaceId: "test-queue-w1",
   name: "Test Group",
   type: "custom",
@@ -44,20 +59,40 @@ const group = {
 
 test("duplicate-queued callbacks fan out with the fetched (not stale) value", async () => {
   // First fetch populates the cache with spend=10.
-  nextSpend = 10;
+  pendingSpend = 10;
   await new Promise((resolve) => {
     const r = queueGroupSpendFetch(group, 0, true, () => resolve());
     assert.equal(r, "queued");
   });
   assert.equal(getSpend(group.id)?.spendUsd, 10);
-  assert.equal(fetchCount, 1);
+  const bootstrapFetchCount = fetchCount;
+  assert.ok(bootstrapFetchCount >= 1);
+  assert.equal(requestedStarts[0], "2026-05-20T00:00:00.000Z");
+
+  // Simulate a server restart: in-memory state disappears, then initCache
+  // immediately reconstructs the same complete aggregate from PostgreSQL.
+  __resetDurableUsageCachesForTests();
+  assert.equal(getSpend(group.id), undefined);
+  await initCache();
+  assert.equal(getSpend(group.id)?.spendUsd, 10);
 
   // Fresh cache: no fetch, no callback registration.
   assert.equal(queueGroupSpendFetch(group, 0, false), "fresh_cache");
 
-  // Force a refresh (spend is now 20). While it is in flight/queued, a second
+  // A failure after one incremental chunk must not publish that partial chunk
+  // or advance the durable watermark.
+  pendingSpend = 20;
+  failAtFetch = fetchCount + 2;
+  queueGroupSpendFetch(group, 0, true);
+  while (pendingUsageCount() > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  failAtFetch = null;
+  assert.equal(getSpend(group.id)?.spendUsd, 10);
+
+  // Force a successful refresh. While it is in flight/queued, a second
   // caller (e.g. the snapshot job racing /groups) attaches to the same fetch.
-  nextSpend = 20;
+  pendingSpend = 20;
   const results = [];
   const first = new Promise((resolve) => {
     const r = queueGroupSpendFetch(group, 0, true, (s) => {
@@ -77,9 +112,14 @@ test("duplicate-queued callbacks fan out with the fetched (not stale) value", as
 
   await Promise.all([first, second]);
 
-  // One fetch served both callers, and both saw the NEW value, never the
-  // stale cached 10.
-  assert.equal(fetchCount, 2);
-  assert.deepEqual(results, [20, 20]);
-  assert.equal(getSpend(group.id)?.spendUsd, 20);
+  // One incremental synchronization served both callers, and both saw the
+  // newly committed aggregate, never the stale cached 10.
+  assert.ok(fetchCount > bootstrapFetchCount);
+  const incrementalStarts = requestedStarts.slice(bootstrapFetchCount);
+  assert.ok(
+    incrementalStarts.every((start) => start !== "2026-05-20T00:00:00.000Z"),
+    "refreshes must reconcile only recent chunks, not restart at the cutoff",
+  );
+  assert.deepEqual(results, [30, 30]);
+  assert.equal(getSpend(group.id)?.spendUsd, 30);
 });
