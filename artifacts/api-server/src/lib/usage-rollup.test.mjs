@@ -21,8 +21,16 @@ test("counts overlapping members once using deterministic first-group attributio
 
   assert.equal(result.totalSpendUsd, 25);
   assert.equal(result.totalMemberCount, 3);
-  assert.deepEqual(result.byGroup.get("a-group"), { spendUsd: 17, memberCount: 2 });
-  assert.deepEqual(result.byGroup.get("z-group"), { spendUsd: 8, memberCount: 1 });
+  assert.deepEqual(result.byGroup.get("a-group"), {
+    spendUsd: 17,
+    memberCount: 2,
+    byUser: new Map([["shared", 12], ["a-only", 5]]),
+  });
+  assert.deepEqual(result.byGroup.get("z-group"), {
+    spendUsd: 8,
+    memberCount: 1,
+    byUser: new Map([["z-only", 8]]),
+  });
   assert.equal(result.isComplete, true);
 });
 
@@ -47,7 +55,7 @@ test("reports incomplete member usage without treating missing groups as loaded"
 
   assert.equal(result.pendingCount, 1);
   assert.equal(result.isComplete, false);
-  assert.deepEqual(result.byGroup.get("z-group"), { spendUsd: 0, memberCount: 0 });
+  assert.deepEqual(result.byGroup.get("z-group"), { spendUsd: 0, memberCount: 0, byUser: new Map() });
 });
 
 test("counts directory members once even when they have no usage", () => {

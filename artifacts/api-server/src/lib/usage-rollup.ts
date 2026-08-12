@@ -11,6 +11,9 @@ export interface RollupMemberUsage {
 export interface DedupedGroupRollup {
   spendUsd: number;
   memberCount: number;
+  /** Per-user attributed spend for this group (combined Comcast + extra-workspace spend,
+   *  deduped: a user only appears here if this is their first group in stable sort order). */
+  byUser: ReadonlyMap<string, number>;
 }
 
 export interface DedupedUsageRollup {
@@ -66,7 +69,8 @@ export function computeDedupedUsageRollup(
   let pendingCount = 0;
 
   for (const group of ordered) {
-    const rollup: DedupedGroupRollup = { spendUsd: 0, memberCount: 0 };
+    const rollupByUser = new Map<string, number>();
+    const rollup: DedupedGroupRollup = { spendUsd: 0, memberCount: 0, byUser: rollupByUser };
     byGroup.set(group.id, rollup);
     const usage = usageByGroup.get(group.id);
     if (!usage) {
@@ -78,6 +82,7 @@ export function computeDedupedUsageRollup(
       seenUsers.add(userId);
       rollup.spendUsd += spendUsd;
       rollup.memberCount += 1;
+      rollupByUser.set(userId, spendUsd);
       totalSpendUsd += spendUsd;
     }
   }

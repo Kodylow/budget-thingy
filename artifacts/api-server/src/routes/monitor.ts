@@ -40,6 +40,8 @@ import {
   refreshAllGroupSpends,
   queueMemberUsageFetch,
   getMemberUsage,
+  queueExtraWorkspacesFetch,
+  getExtraWorkspaceSpend,
   queueProjectUsageFetch,
   getProjectUsage,
   queueProjectTitlesFetch,
@@ -134,6 +136,8 @@ router.get("/groups", async (req, res): Promise<void> => {
     const scoped = visibleGroups(req.authz!, dir.groups);
     void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
     for (const group of scoped) queueMemberUsageFetch(group, range, 1);
+    const isAccountAdmin = req.authz!.role === "account_admin";
+    if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 1);
 
     const [budgets, groupTeams] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -142,7 +146,10 @@ router.get("/groups", async (req, res): Promise<void> => {
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
     const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const billing = getBillingPeriod();
-    const rollup = getDedupedUsageRollup(scoped, range.key);
+    const extraSpend = isAccountAdmin
+      ? getExtraWorkspaceSpend(dir, range.key)
+      : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
+    const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
 
     const historyMap = billing.start
@@ -155,9 +162,18 @@ router.get("/groups", async (req, res): Promise<void> => {
     let pendingCount = 0;
     const groups = await Promise.all(
       scoped.map(async (g) => {
+        // Keep raw API spend for period start/end (needed for projected spend).
         const spend = getSpend(g.id, range.key);
-        if (!spend) pendingCount += 1;
+        // Combined spend = deduped Comcast group spend + extra workspace spend.
+        const memberUsageLoaded = !!getMemberUsage(g.id, range.key);
+        if (!memberUsageLoaded) pendingCount += 1;
+        // Spend is only "loaded" when this group's member usage, the full rollup, AND
+        // all extra-workspace fetches are complete. Until all groups' member usage loads,
+        // shared users can be temporarily attributed to the wrong group and their spend
+        // can shift between groups — showing a partial rollup as final would mislead.
+        const fullyLoaded = memberUsageLoaded && rollup.isComplete && extraSpend.isComplete;
         const attributed = rollup.byGroup.get(g.id);
+        const combinedSpend = attributed?.spendUsd ?? 0;
         const budget = effectiveGroupBudget(budgetMap.get(g.id));
         // Threshold state is always tracked against the cutoff-anchored billing period.
         const billingSpend = getSpend(g.id, "billing:from-cutoff");
@@ -175,21 +191,21 @@ router.get("/groups", async (req, res): Promise<void> => {
           type: g.type,
           memberCount: dir.groupMembers.get(g.id)?.length ?? null,
           rollupMemberCount: rollupMemberCounts.get(g.id) ?? 0,
-          spendLoaded: !!spend,
-          spendUsd: spend?.spendUsd ?? null,
-          rollupSpendLoaded: rollup.isComplete,
-          rollupSpendUsd: attributed?.spendUsd ?? 0,
+          spendLoaded: fullyLoaded,
+          spendUsd: fullyLoaded ? combinedSpend : null,
+          rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
+          rollupSpendUsd: combinedSpend,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
           remainingUsd:
-            spend && hasBudget ? budget.amountUsd! - spend.spendUsd : null,
+            fullyLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
           percentUsed:
-            spend && hasBudget ? (spend.spendUsd / budget.amountUsd!) * 100 : null,
+            fullyLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
           history: historyMap.get(g.id) ?? [],
-          projectedSpendUsd: spend
-            ? projectEndOfPeriod(spend.spendUsd, spend.periodStart, spend.periodEnd)
+          projectedSpendUsd: fullyLoaded && spend
+            ? projectEndOfPeriod(combinedSpend, spend.periodStart, spend.periodEnd)
             : null,
         };
       }),
@@ -198,7 +214,7 @@ router.get("/groups", async (req, res): Promise<void> => {
     res.json(
       ListGroupsResponse.parse({
         groups,
-        isComplete: pendingCount === 0 && rollup.isComplete,
+        isComplete: pendingCount === 0 && rollup.isComplete && extraSpend.isComplete,
         pendingCount: pendingCount + rollup.pendingCount,
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
       }),
@@ -232,15 +248,24 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     }
     const scoped = visibleGroups(req.authz!, dir.groups);
 
-    // Ensure group total, per-member usage, and per-project usage are queued (high priority).
+    // Queue the selected group's data at high priority (priority 0) so it loads first.
+    // Also queue member usage for all other visible groups at lower priority so the
+    // deduped rollup can complete — rollup.isComplete requires every visible group's
+    // usage to be loaded before shared-user attribution is considered final.
     queueGroupSpendFetch(group, 0, false, undefined, range);
     queueMemberUsageFetch(group, range, 0);
     queueProjectUsageFetch(group, range, 0);
     queueProjectTitlesFetch(group.workspaceId, 0);
+    for (const g of scoped) if (g.id !== group.id) queueMemberUsageFetch(g, range, 1);
 
     const spend = getSpend(group.id, range.key);
     const memberUsage = getMemberUsage(group.id, range.key);
-    const rollup = getDedupedUsageRollup(scoped, range.key);
+    const isAccountAdmin = req.authz!.role === "account_admin";
+    if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 0);
+    const extraSpend = isAccountAdmin
+      ? getExtraWorkspaceSpend(dir, range.key)
+      : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
+    const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
     const attributed = rollup.byGroup.get(group.id);
     const [budgets, groupTeamsRows] = await Promise.all([
@@ -265,8 +290,22 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const members = userIds.map((userId) => {
       const m = dir.members.get(userId);
       const ws = m?.workspaces.get(group.workspaceId);
-      const spendLoaded = !!memberUsage;
-      const spendUsd = memberUsage ? (memberUsage.byUser.get(userId) ?? 0) : null;
+      // spendLoaded only becomes true when all groups' member usage is loaded (so
+      // shared-user dedup attribution is final) AND extra-workspace data is complete.
+      const spendLoaded = !!memberUsage && rollup.isComplete && extraSpend.isComplete;
+      // Use the rollup's per-user attributed spend when this is the user's first group.
+      // For members attributed to a different group, fall back to their Comcast-only
+      // spend as informational context (their combined spend is counted in that group).
+      const attributedUserSpend = attributed?.byUser.get(userId);
+      // When the rollup is final (spendLoaded=true requires rollup.isComplete), a member
+      // without an attributedUserSpend entry has their combined spend counted in another
+      // group. Show $0 here so the row clearly does not contribute to this group's total.
+      // Showing Comcast-only spend would be misleading (it's not part of this group's total).
+      const spendUsd = !spendLoaded
+        ? null
+        : attributedUserSpend !== undefined
+          ? attributedUserSpend  // correct combined spend for members attributed to this group
+          : 0; // attributed to a different group; spend counted there, $0 contribution here
       return {
         userId,
         username: m?.username ?? null,
@@ -286,14 +325,27 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // Reconciliation: members listed in usage but no longer in the group
     // (removed users) still count toward group spend — fold them into
     // unattributed so member rows + unattributed = group total.
+    //
+    // combinedSpend = deduped attributed spend for this group (Comcast + extra ws).
+    // listedMembersSpend = sum of attributed spend for current members only.
+    // unattributed = spend from members removed from the group since last sync.
+    // Invariant: combinedSpend === listedMembersSpend + unattributedSpendUsd.
+    //
+    // Non-attributed members (those whose spend belongs to a different group) show
+    // their Comcast-only spend in the row as informational context, but that spend
+    // is NOT counted here (it's in their first group's total instead).
+    const combinedSpend = attributed?.spendUsd ?? 0;
+    // combinedLoaded requires all group member usage (rollup must be complete so shared
+    // users are definitively attributed) AND extra-workspace data, so card fields
+    // (remaining, percent, projected) are never shown as partial totals.
+    const combinedLoaded = !!memberUsage && rollup.isComplete && extraSpend.isComplete;
     let listedMembersSpend = 0;
     if (memberUsage) {
       for (const userId of userIds) {
-        listedMembersSpend += memberUsage.byUser.get(userId) ?? 0;
+        listedMembersSpend += attributed?.byUser.get(userId) ?? 0;
       }
     }
-    const groupTotal = memberUsage?.totalCostUsd ?? spend?.spendUsd ?? 0;
-    const unattributed = memberUsage ? Math.max(0, groupTotal - listedMembersSpend) : 0;
+    const unattributed = combinedLoaded ? Math.max(0, combinedSpend - listedMembersSpend) : 0;
 
     res.json(
       GetGroupDetailResponse.parse({
@@ -306,25 +358,25 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           type: group.type,
           memberCount: userIds.length,
           rollupMemberCount: rollupMemberCounts.get(group.id) ?? 0,
-          spendLoaded: !!spend,
-          spendUsd: spend?.spendUsd ?? null,
-          rollupSpendLoaded: rollup.isComplete,
-          rollupSpendUsd: attributed?.spendUsd ?? 0,
+          spendLoaded: combinedLoaded,
+          spendUsd: combinedLoaded ? combinedSpend : null,
+          rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
+          rollupSpendUsd: combinedSpend,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
-          remainingUsd: spend && hasBudget ? budget.amountUsd! - spend.spendUsd : null,
-          percentUsed: spend && hasBudget ? (spend.spendUsd / budget.amountUsd!) * 100 : null,
+          remainingUsd: combinedLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
+          percentUsed: combinedLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
           history: detailHistory,
-          projectedSpendUsd: billingSpend
-            ? projectEndOfPeriod(billingSpend.spendUsd, billingSpend.periodStart, billingSpend.periodEnd)
+          projectedSpendUsd: combinedLoaded && billingSpend
+            ? projectEndOfPeriod(combinedSpend, billingSpend.periodStart, billingSpend.periodEnd)
             : null,
         },
         members,
         membersSpendUsd: listedMembersSpend,
         unattributedSpendUsd: unattributed,
-        isComplete: !!spend && !!memberUsage,
+        isComplete: combinedLoaded && extraSpend.isComplete,
         rangeLabel: range.label,
       }),
     );
@@ -560,6 +612,7 @@ router.get("/summary", async (req, res): Promise<void> => {
   let totalBudgetUsd = 0;
   let budgetedGroups = 0;
   let pending = 0;
+  let summaryExtraComplete = true; // tracks extra-workspace load state for isComplete
   let over50 = 0;
   let over75 = 0;
   let over90 = 0;
@@ -579,13 +632,37 @@ router.get("/summary", async (req, res): Promise<void> => {
         if (budget.amountUsd != null && budget.amountUsd > 0) {
           budgetedGroups += 1;
         }
-        const spend = getSpend(g.id, range.key);
-        if (!spend) {
-          pending += 1;
-        } else {
-          totalSpendUsd += spend.spendUsd;
+      }
+      // Use deduped, cross-workspace rollup for total spend so the summary
+      // matches the group rows (which also show combined spend).
+      //
+      // Extra-workspace spend only applies to account admins; workspace admins
+      // are scoped to their own workspace's groups and must not see spend from others.
+      //
+      // Queue per-group member usage so /summary can independently populate
+      // the rollup from a cold cache (not depending on /groups being visited first).
+      for (const group of scoped) queueMemberUsageFetch(group, range, 1);
+      if (isAccount) queueExtraWorkspacesFetch(dir, range, 1);
+      const summaryExtraSpend = isAccount
+        ? getExtraWorkspaceSpend(dir, range.key)
+        : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
+      const summaryRollup = getDedupedUsageRollup(scoped, range.key, summaryExtraSpend.byUser, dir.groupMembers);
+      // Also sum extra-workspace spend for enterprise members not in ANY custom group.
+      // These users are excluded from the per-group rollup (no group to attribute to)
+      // but ARE counted in the CSV — including them here keeps the two totals consistent.
+      let ungroupedExtraSpend = 0;
+      if (isAccount && summaryExtraSpend.isComplete) {
+        const allGroupedIds = new Set<string>();
+        for (const g of scoped) {
+          for (const uid of dir.groupMembers.get(g.id) ?? []) allGroupedIds.add(uid);
+        }
+        for (const [uid, spend] of summaryExtraSpend.byUser) {
+          if (!allGroupedIds.has(uid)) ungroupedExtraSpend += spend;
         }
       }
+      totalSpendUsd = summaryRollup.totalSpendUsd + ungroupedExtraSpend;
+      pending = summaryRollup.pendingCount;
+      summaryExtraComplete = summaryExtraSpend.isComplete;
     } catch (err) {
       req.log.error({ err }, "summary directory fetch failed");
     }
@@ -628,7 +705,7 @@ router.get("/summary", async (req, res): Promise<void> => {
       groupsOver100: over100,
       alertsSentThisPeriod,
       billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
-      isComplete: pending === 0,
+      isComplete: pending === 0 && summaryExtraComplete,
     }),
   );
 });
@@ -1018,7 +1095,7 @@ router.get("/trends", async (req, res): Promise<void> => {
 // Returns a CSV of all users across all groups.
 // Each user appears once (first custom group wins). Spend is shown where cached;
 // groups whose per-member usage has not loaded yet are included with spend=0 and queued.
-router.get("/export/users.csv", async (req, res) => {
+router.get("/export/users.csv", requireAccountAdmin, async (req, res) => {
   let dir: Awaited<ReturnType<typeof getDirectory>>;
   try {
     dir = await getDirectory();
@@ -1032,29 +1109,49 @@ router.get("/export/users.csv", async (req, res) => {
   const groupTeams = await db.select().from(groupTeamsTable);
   const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
-  let groupsLoaded = 0;
+  // Route is account-admin-only (requireAccountAdmin middleware enforces this).
+  // Queue member usage + extra workspace fetches so combined spend is populated.
+  for (const group of dir.groups) queueMemberUsageFetch(group, billingRange, 1);
+  queueExtraWorkspacesFetch(dir, billingRange, 1);
+  const exportExtraSpend = getExtraWorkspaceSpend(dir, billingRange.key);
+
+  // Compute the rollup using the SAME stable ordering (workspaceId/name/id) as the
+  // dashboard so that CSV attribution is always consistent with per-group totals.
+  // A user with spend in multiple groups is attributed to their first group in that
+  // order, matching exactly what /groups and /summary display.
+  const exportRollup = getDedupedUsageRollup(
+    dir.groups, billingRange.key, exportExtraSpend.byUser, dir.groupMembers,
+  );
+  const groupsLoaded = dir.groups.filter((g) => !!getMemberUsage(g.id, billingRange.key)).length;
   const totalGroups = dir.groups.length;
 
-  // Pass 1: build userId → { group, spend } from custom groups (first-group attribution rule)
+  // Pass 1: build userId → { group, team, combined spend } using the SAME stable sort
+  // order (workspaceId → name → id) as getDedupedUsageRollup.
+  // Attribution is driven by directory group membership (not usage data), so every
+  // member gets a group/team even with $0 spend or on a cold cache. Spend is read
+  // from the rollup's byUser map (combined Comcast + extra-workspace, deduped) and
+  // defaults to $0 if the group's member usage hasn't loaded yet.
+  const sortedGroupsForCsv = [...dir.groups].sort(
+    (a, b) =>
+      a.workspaceId.localeCompare(b.workspaceId) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+      a.id.localeCompare(b.id),
+  );
   const userGroupAttr = new Map<string, { groupName: string; teamName: string; spendUsd: number }>();
-  for (const group of dir.groups) {
-    const memberUsage = getMemberUsage(group.id, billingRange.key);
-    if (!memberUsage) {
-      // Queue fetch so spend populates on next export
-      queueMemberUsageFetch(group, billingRange, 1);
-    } else {
-      groupsLoaded++;
-    }
-    const spendMap = memberUsage?.byUser ?? new Map<string, number>();
+  for (const group of sortedGroupsForCsv) {
     const teamName = teamNameMap.get(group.name) ?? "";
+    const groupRollup = exportRollup.byGroup.get(group.id);
     for (const userId of dir.groupMembers.get(group.id) ?? []) {
       if (!userGroupAttr.has(userId)) {
-        userGroupAttr.set(userId, { groupName: group.name, teamName, spendUsd: spendMap.get(userId) ?? 0 });
+        // Spend from rollup (combined + deduped); $0 if usage not loaded or not attributed here.
+        const spendUsd = groupRollup?.byUser.get(userId) ?? 0;
+        userGroupAttr.set(userId, { groupName: group.name, teamName, spendUsd });
       }
     }
   }
 
-  // Pass 2: emit one row per enterprise member (covers users not in any custom group)
+  // Pass 2: emit one row per enterprise member (covers users not in any custom group).
+  // Combined spend comes from the rollup (Comcast + extra-workspace, deduped).
   const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; spendUsd: number }[] = [];
   for (const [userId, m] of dir.members) {
     const attr = userGroupAttr.get(userId);
@@ -1062,6 +1159,11 @@ router.get("/export/users.csv", async (req, res) => {
       .map((wsId) => dir.workspaces.get(wsId)?.name ?? wsId)
       .filter(Boolean)
       .join("; ");
+    // For grouped users: spendUsd comes from the rollup (already includes extra-workspace).
+    // For ungrouped users: add any extra-workspace spend directly (they have no custom group).
+    const spendUsd = attr
+      ? attr.spendUsd
+      : (exportExtraSpend.byUser.get(userId) ?? 0);
     rows.push({
       email: m.email,
       name: m.name ?? "",
@@ -1069,7 +1171,7 @@ router.get("/export/users.csv", async (req, res) => {
       group: attr?.groupName ?? "",
       team: attr?.teamName ?? "",
       workspaces: wsNames,
-      spendUsd: attr?.spendUsd ?? 0,
+      spendUsd,
     });
   }
 
@@ -1083,7 +1185,7 @@ router.get("/export/users.csv", async (req, res) => {
     [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.spendUsd.toFixed(2)].map(escape).join(","),
   );
 
-  const isComplete = groupsLoaded === totalGroups;
+  const isComplete = exportRollup.isComplete && exportExtraSpend.isComplete;
   const csv = [header, ...lines].join("\r\n");
 
   res.setHeader("Content-Type", "text/csv");

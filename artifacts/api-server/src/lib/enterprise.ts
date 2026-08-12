@@ -547,6 +547,46 @@ let directoryPromise: Promise<DirectoryCache> | null = null;
  * Enterprise API. Production never calls this — the cache is populated by the
  * real paginated fetch in {@link getDirectory}. Passing `null` clears it.
  */
+/** Test-only: seed the member usage cache directly so route tests can exercise
+ *  spend-dependent behaviour without hitting the real Replit API.
+ *  Passing `null` for byUser clears the entry; a Map seeds a complete MemberUsage. */
+export function __setMemberUsageForTests(
+  groupId: string,
+  rangeKey: string,
+  byUser: Map<string, number> | null,
+): void {
+  const key = `${rangeKey}|${groupId}`;
+  if (byUser === null) {
+    memberUsageCache.delete(key);
+    return;
+  }
+  const totalCostUsd = [...byUser.values()].reduce((a, b) => a + b, 0);
+  memberUsageCache.set(key, {
+    fetchedAt: Date.now(),
+    byUser,
+    attributableTotalCostUsd: totalCostUsd,
+    unattributableTotalCostUsd: 0,
+    totalCostUsd,
+  });
+}
+
+/** Test-only: seed the per-workspace spend cache (used for extra-workspace rollup).
+ *  Passing `null` for byUser clears the entry. */
+export function __setWsSpendForTests(
+  wsId: string,
+  rangeKey: string,
+  byUser: Map<string, number> | null,
+): void {
+  const key = `${rangeKey}|${wsId}`;
+  if (byUser === null) {
+    wsSpendCache.delete(key);
+    wsSpendCachedAt.delete(key);
+  } else {
+    wsSpendCache.set(key, byUser);
+    wsSpendCachedAt.set(key, Date.now());
+  }
+}
+
 export function __setDirectoryCacheForTests(
   fixture: {
     workspaces?: Map<string, EnterpriseWorkspace>;
@@ -840,6 +880,103 @@ export function queueMemberUsageFetch(
   });
 }
 
+// ---------- Per-workspace member spend (workspaces without custom groups) ----------
+// Users often belong to both the main Comcast workspace (where all AZ-Replit groups
+// live) AND a dedicated team workspace (e.g. Strategic Development). Their spend in
+// the dedicated workspace is not captured by the per-group Comcast fetches, so we
+// fetch each extra workspace's member-level totals and merge them in.
+
+const wsSpendCache = new Map<string, Map<string, number>>(); // `${rangeKey}|${wsId}` → userId → spend
+const wsSpendCachedAt = new Map<string, number>(); // `${rangeKey}|${wsId}` → fetchedAt timestamp
+const wsSpendFetching = new Set<string>(); // in-flight cache keys
+
+export function getWsSpendByUser(wsId: string, rangeKey: string): Map<string, number> | undefined {
+  return wsSpendCache.get(`${rangeKey}|${wsId}`);
+}
+
+export function queueWsSpendFetch(
+  wsId: string,
+  range: UsageRange,
+  priority = 1,
+  force = false,
+): boolean {
+  const cacheKey = `${range.key}|${wsId}`;
+  const cached = wsSpendCache.get(cacheKey);
+  const cachedAt = wsSpendCachedAt.get(cacheKey);
+  // Apply the same TTL as per-group member usage so cross-workspace totals refresh
+  // at the same cadence (rather than freezing for the lifetime of the server process).
+  if (!force && cached && cachedAt && Date.now() - cachedAt < USAGE_TTL_MS) return false;
+  if (wsSpendFetching.has(cacheKey)) return false;
+  wsSpendFetching.add(cacheKey);
+  return enqueueUsage(`ws-spend:${cacheKey}`, priority, async () => {
+    try {
+      const byUser = new Map<string, number>();
+      let cursor: string | undefined;
+      for (let page = 0; page < 50; page++) {
+        const data = await usageFetch({
+          workspaceId: wsId,
+          groupBy: "member",
+          limit: "100",
+          cursor,
+          ...range.params,
+        });
+        for (const entry of data.groups) {
+          if (entry.key.userId) {
+            byUser.set(entry.key.userId, (byUser.get(entry.key.userId) ?? 0) + entry.totalCostUsd);
+          }
+        }
+        if (!data.pagination?.hasMore || !data.pagination.cursor) break;
+        cursor = data.pagination.cursor;
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      wsSpendCache.set(cacheKey, byUser);
+      wsSpendCachedAt.set(cacheKey, Date.now());
+    } catch (err) {
+      logger.error({ err, wsId, range: range.key }, "Failed to fetch workspace member spend");
+    } finally {
+      wsSpendFetching.delete(cacheKey);
+    }
+  });
+}
+
+/** Queue per-member spend fetches for every workspace that owns no custom groups.
+ *  These are the "extra" workspaces where users accumulate spend beyond their
+ *  Comcast workspace group membership. */
+export function queueExtraWorkspacesFetch(
+  dir: DirectoryCache,
+  range: UsageRange,
+  priority = 1,
+): void {
+  const groupWorkspaceIds = new Set(dir.groups.map((g) => g.workspaceId));
+  for (const [wsId] of dir.workspaces) {
+    if (!groupWorkspaceIds.has(wsId)) {
+      queueWsSpendFetch(wsId, range, priority);
+    }
+  }
+}
+
+/** Returns the summed extra-workspace spend per user and whether all fetches have landed. */
+export function getExtraWorkspaceSpend(
+  dir: DirectoryCache,
+  rangeKey: string,
+): { byUser: Map<string, number>; isComplete: boolean; loadedCount: number; totalCount: number } {
+  const groupWorkspaceIds = new Set(dir.groups.map((g) => g.workspaceId));
+  const byUser = new Map<string, number>();
+  let loadedCount = 0;
+  let totalCount = 0;
+  for (const [wsId] of dir.workspaces) {
+    if (groupWorkspaceIds.has(wsId)) continue;
+    totalCount += 1;
+    const wsData = wsSpendCache.get(`${rangeKey}|${wsId}`);
+    if (!wsData) continue;
+    loadedCount += 1;
+    for (const [userId, spend] of wsData) {
+      byUser.set(userId, (byUser.get(userId) ?? 0) + spend);
+    }
+  }
+  return { byUser, isComplete: loadedCount === totalCount, loadedCount, totalCount };
+}
+
 // ---------- Per-project group usage (groupBy=project, one call per group+range) ----------
 
 export interface ProjectUsageMetric {
@@ -998,16 +1135,88 @@ export function queueProjectTitlesFetch(workspaceId: string, priority = 0): bool
   });
 }
 
+/**
+ * Two-phase deduped rollup combining Comcast + extra-workspace spend.
+ *
+ * Phase 1 – Comcast aggregation:
+ *   Sum each user's per-group-project Comcast spend across ALL groups they appear in.
+ *   Do NOT inject extra-workspace spend here. A user with $0 Comcast spend in Alpha
+ *   (their first group) but $10 in Beta must not lose their $10 Beta spend because
+ *   it was discarded when Alpha claimed the user in Phase 2.
+ *
+ * Phase 2 – Attribution + extra-workspace:
+ *   Iterate groups in stable sort order. Attribute each user to their FIRST group
+ *   (by directory membership when available, otherwise by API response membership).
+ *   Add extra-workspace spend to that user's attributed group only — never injected
+ *   into every group map before dedup.
+ */
 export function getDedupedUsageRollup(
   groups: EnterpriseGroup[],
   rangeKey: string,
+  extraSpendByUser?: ReadonlyMap<string, number>,
+  groupMembers?: ReadonlyMap<string, readonly string[]>,
 ): DedupedUsageRollup {
-  const usageByGroup = new Map<string, MemberUsage>();
-  for (const group of groups) {
+  const ordered: EnterpriseGroup[] = [...groups].sort(
+    (a, b) =>
+      a.workspaceId.localeCompare(b.workspaceId) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+      a.id.localeCompare(b.id),
+  );
+
+  // Phase 1: sum Comcast spend per user across all groups (not just the first one).
+  let pendingCount = 0;
+  const comcastSpendByUser = new Map<string, number>();
+  for (const group of ordered) {
     const usage = getMemberUsage(group.id, rangeKey);
-    if (usage) usageByGroup.set(group.id, usage);
+    if (!usage) {
+      pendingCount++;
+      continue;
+    }
+    for (const [userId, spend] of usage.byUser) {
+      comcastSpendByUser.set(userId, (comcastSpendByUser.get(userId) ?? 0) + spend);
+    }
   }
-  return computeDedupedUsageRollup(groups, usageByGroup);
+
+  // Phase 2: attribute each user to their first group, then compute combined spend.
+  // Extra-workspace spend is added once here, after attribution is determined.
+  const byGroup = new Map<string, DedupedGroupRollup>();
+  for (const group of ordered) byGroup.set(group.id, { spendUsd: 0, memberCount: 0, byUser: new Map() });
+
+  const seenUsers = new Set<string>();
+  let totalSpendUsd = 0;
+
+  for (const group of ordered) {
+    const groupRollup = byGroup.get(group.id)!;
+    const rollupByUser = groupRollup.byUser as Map<string, number>;
+
+    // Candidate members: directory membership (authoritative for $0-spend members)
+    // unioned with API usage response (catches users missing from directory).
+    const dirMembers: readonly string[] = groupMembers?.get(group.id) ?? [];
+    const apiMembers: Iterable<string> = getMemberUsage(group.id, rangeKey)?.byUser.keys() ?? [];
+    const allCandidates = new Set<string>([...dirMembers, ...apiMembers]);
+
+    for (const userId of allCandidates) {
+      if (seenUsers.has(userId)) continue;
+      seenUsers.add(userId);
+
+      const comcastSpend = comcastSpendByUser.get(userId) ?? 0;
+      const extraSpend = extraSpendByUser?.get(userId) ?? 0;
+      const combined = comcastSpend + extraSpend;
+
+      rollupByUser.set(userId, combined);
+      (groupRollup as { spendUsd: number }).spendUsd += combined;
+      (groupRollup as { memberCount: number }).memberCount += 1;
+      totalSpendUsd += combined;
+    }
+  }
+
+  return {
+    byGroup,
+    totalSpendUsd,
+    totalMemberCount: seenUsers.size,
+    pendingCount,
+    isComplete: pendingCount === 0,
+  };
 }
 
 export function getDedupedMemberCounts(
