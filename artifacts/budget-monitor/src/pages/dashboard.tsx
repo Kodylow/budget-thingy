@@ -63,9 +63,9 @@ import { TeamBudgetInput } from '@/components/team-budget-input';
 import { useLocation } from 'wouter';
 import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
-import { buildGroupClusters, roleBadgeClass, type GroupCluster } from '@/lib/group-clusters';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import TrendsTab from './trends-tab';
+import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
 
 interface TeamSection {
   teamName: string;
@@ -155,17 +155,7 @@ export default function Dashboard() {
 
     const teamSections: TeamSection[] = [];
     for (const [teamName, teamGroups] of teamMap) {
-      let memberCount = 0;
-      let spendUsd = 0;
-      let spendLoaded = true;
-      for (const g of teamGroups) {
-        memberCount += g.memberCount ?? 0;
-        if (!g.spendLoaded) {
-          spendLoaded = false;
-        } else {
-          spendUsd += g.spendUsd ?? 0;
-        }
-      }
+      const { memberCount, spendUsd, spendLoaded } = sumAttributedRollup(teamGroups);
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
@@ -218,7 +208,7 @@ export default function Dashboard() {
       value: summary && summary.totalRemainingUsd !== undefined ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
       description: 'Across budgeted groups',
       icon: Wallet,
-      loading: summaryLoading,
+      loading: summaryLoading || !summary?.isComplete,
       valueClassName: summary && summary.totalRemainingUsd !== undefined && summary.totalRemainingUsd < 0 ? 'text-destructive' : '',
     },
     {
@@ -533,6 +523,9 @@ export default function Dashboard() {
           <p className="text-muted-foreground mt-1" data-testid="text-billing-period">
             {groupsData?.billingPeriodLabel || 'Loading...'}
           </p>
+          <p className="text-xs text-muted-foreground mt-1" data-testid="text-reconciliation-scope">
+            All workspaces you can access · Custom dates use inclusive UTC days
+          </p>
         </div>
         <div className="flex items-center gap-4">
           <a
@@ -663,12 +656,16 @@ export default function Dashboard() {
                       </td>
                       <td className="py-3 px-4" />
                       <td className="py-3 px-4 text-right">
-                        <span className="text-sm font-mono tabular-nums">
-                          {groups.reduce((s, g) => s + (g.memberCount ?? 0), 0)}
-                        </span>
+                        {isComplete ? (
+                          <span className="text-sm font-mono tabular-nums">
+                            {groups.reduce((s, g) => s + g.rollupMemberCount, 0)}
+                          </span>
+                        ) : (
+                          <div className="flex justify-end"><LoadingCell /></div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {summary ? (
+                        {summary?.isComplete ? (
                           <span className="text-sm font-mono tabular-nums">
                             ${summary.totalSpendUsd.toFixed(2)}
                           </span>
@@ -682,12 +679,16 @@ export default function Dashboard() {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <span className={`text-sm font-mono tabular-nums ${summary && summary.totalRemainingUsd !== undefined && summary.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
-                          {summary && summary.totalRemainingUsd !== undefined ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—'}
-                        </span>
+                        {summary?.isComplete && summary.totalRemainingUsd !== undefined ? (
+                          <span className={`text-sm font-mono tabular-nums ${summary.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
+                            ${summary.totalRemainingUsd.toFixed(2)}
+                          </span>
+                        ) : (
+                          <div className="flex justify-end"><LoadingCell /></div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {summary && summary.totalBudgetUsd > 0 ? (
+                        {summary?.isComplete && summary.totalBudgetUsd > 0 ? (
                           <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
                             <span className={`text-xs font-mono tabular-nums ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? 'text-destructive' : ''}`}>
                               {((summary.totalSpendUsd / summary.totalBudgetUsd) * 100).toFixed(1)}%
@@ -704,7 +705,7 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {summary && summary.totalBudgetUsd > 0 ? (
+                        {summary?.isComplete && summary.totalBudgetUsd > 0 ? (
                           <PaceCell
                             spendUsd={summary.totalSpendUsd}
                             budgetUsd={summary.totalBudgetUsd}

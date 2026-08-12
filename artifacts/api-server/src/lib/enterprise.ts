@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
+  type DedupedGroupRollup,
   type DedupedUsageRollup,
 } from "./usage-rollup";
 
@@ -549,36 +550,53 @@ interface DirectoryCache {
 
 let directoryCache: DirectoryCache | null = null;
 let directoryPromise: Promise<DirectoryCache> | null = null;
+export function __setMemberUsageForTests(
+  first: string,
+  second: string | ReadonlyMap<string, ReadonlyMap<string, number>> | null,
+  third?: Map<string, number> | null | ReadonlyMap<string, number>,
+): void {
+  if (typeof second === "string") {
+    const key = `${second}|${first}`;
+    const byUser = third as Map<string, number> | null;
+    if (byUser === null) {
+      memberUsageCache.delete(key);
+      return;
+    }
+    const totalCostUsd = [...byUser.values()].reduce((sum, spend) => sum + spend, 0);
+    memberUsageCache.set(key, {
+      fetchedAt: Date.now(),
+      byUser: new Map(byUser),
+      attributableTotalCostUsd: totalCostUsd,
+      unattributableTotalCostUsd: 0,
+      totalCostUsd,
+    });
+    return;
+  }
 
+  const rangeKey = first;
+  const usageByGroup = second;
+  const unattributableByGroup = (third as ReadonlyMap<string, number> | undefined) ?? new Map();
+  for (const key of memberUsageCache.keys()) {
+    if (key.startsWith(`${rangeKey}|`)) memberUsageCache.delete(key);
+  }
+  if (!usageByGroup) return;
+  for (const [groupId, byUser] of usageByGroup) {
+    const totalCostUsd = [...byUser.values()].reduce((sum, spend) => sum + spend, 0);
+    memberUsageCache.set(`${rangeKey}|${groupId}`, {
+      fetchedAt: Date.now(),
+      byUser: new Map(byUser),
+      attributableTotalCostUsd: totalCostUsd,
+      unattributableTotalCostUsd: unattributableByGroup.get(groupId) ?? 0,
+      totalCostUsd: totalCostUsd + (unattributableByGroup.get(groupId) ?? 0),
+    });
+  }
+}
 /**
  * Test-only seam: seed the in-memory directory cache with a representative
  * fixture so authorization/scoping can be exercised without calling the real
  * Enterprise API. Production never calls this — the cache is populated by the
  * real paginated fetch in {@link getDirectory}. Passing `null` clears it.
  */
-/** Test-only: seed the member usage cache directly so route tests can exercise
- *  spend-dependent behaviour without hitting the real Replit API.
- *  Passing `null` for byUser clears the entry; a Map seeds a complete MemberUsage. */
-export function __setMemberUsageForTests(
-  groupId: string,
-  rangeKey: string,
-  byUser: Map<string, number> | null,
-): void {
-  const key = `${rangeKey}|${groupId}`;
-  if (byUser === null) {
-    memberUsageCache.delete(key);
-    return;
-  }
-  const totalCostUsd = [...byUser.values()].reduce((a, b) => a + b, 0);
-  memberUsageCache.set(key, {
-    fetchedAt: Date.now(),
-    byUser,
-    attributableTotalCostUsd: totalCostUsd,
-    unattributableTotalCostUsd: 0,
-    totalCostUsd,
-  });
-}
-
 /** Test-only: seed the per-workspace spend cache (used for extra-workspace rollup).
  *  Passing `null` for byUser clears the entry. */
 export function __setWsSpendForTests(
@@ -842,7 +860,6 @@ const memberUsageCache = new Map<string, MemberUsage>(); // `${rangeKey}|${group
 export function getMemberUsage(groupId: string, rangeKey: string): MemberUsage | undefined {
   return memberUsageCache.get(`${rangeKey}|${groupId}`);
 }
-
 export function queueMemberUsageFetch(
   group: EnterpriseGroup,
   range: UsageRange,
@@ -1176,16 +1193,29 @@ export function getDedupedUsageRollup(
       a.id.localeCompare(b.id),
   );
 
-  // Phase 1: sum Comcast spend per user across all groups (not just the first one).
+  // Phase 1: combine distinct member-spend observations across groups. Identical
+  // observations are the same account-level usage exposed through overlapping
+  // group filters and must only count once; differing observations represent
+  // separate group/project spend and are combined before stable attribution.
   let pendingCount = 0;
   const comcastSpendByUser = new Map<string, number>();
+  const observedSpendByUser = new Map<string, Set<number>>();
+  const usageByGroup = new Map<string, MemberUsage>();
   for (const group of ordered) {
     const usage = getMemberUsage(group.id, rangeKey);
     if (!usage) {
       pendingCount++;
       continue;
     }
+    usageByGroup.set(group.id, usage);
     for (const [userId, spend] of usage.byUser) {
+      let observations = observedSpendByUser.get(userId);
+      if (!observations) {
+        observations = new Set();
+        observedSpendByUser.set(userId, observations);
+      }
+      if (observations.has(spend)) continue;
+      observations.add(spend);
       comcastSpendByUser.set(userId, (comcastSpendByUser.get(userId) ?? 0) + spend);
     }
   }
@@ -1201,11 +1231,14 @@ export function getDedupedUsageRollup(
   for (const group of ordered) {
     const groupRollup = byGroup.get(group.id)!;
     const rollupByUser = groupRollup.byUser as Map<string, number>;
+    const unattributableSpend = usageByGroup.get(group.id)?.unattributableTotalCostUsd ?? 0;
+    (groupRollup as { spendUsd: number }).spendUsd += unattributableSpend;
+    totalSpendUsd += unattributableSpend;
 
     // Candidate members: directory membership (authoritative for $0-spend members)
     // unioned with API usage response (catches users missing from directory).
     const dirMembers: readonly string[] = groupMembers?.get(group.id) ?? [];
-    const apiMembers: Iterable<string> = getMemberUsage(group.id, rangeKey)?.byUser.keys() ?? [];
+    const apiMembers: Iterable<string> = usageByGroup.get(group.id)?.byUser.keys() ?? [];
     const allCandidates = new Set<string>([...dirMembers, ...apiMembers]);
 
     for (const userId of allCandidates) {

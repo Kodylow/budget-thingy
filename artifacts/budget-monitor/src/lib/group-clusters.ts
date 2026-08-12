@@ -46,7 +46,7 @@ export function higherRole(a: string, b: string): string {
 export interface GroupLike {
   groupId: string;
   workspaceId: string;
-  workspaceName: string | null;
+  workspaceName?: string | null;
   name: string;
   teamName: string | null;
   memberCount: number | null;
@@ -68,13 +68,13 @@ export interface GroupCluster {
   clusterKey: string;
   baseName: string;
   workspaceId: string;
-  workspaceName: string | null;
+  workspaceName: string | null | undefined;
   teamName: string | null;
   /** IDs of constituent sub-groups */
   groupIds: string[];
   /** groupId → sub-group role (Admin / Member / Viewer / Guest) */
   groupRoles: Record<string, string>;
-  /** Sum of raw member counts across sub-groups (approximate; use drill-down for exact) */
+  /** Deduplicated members attributed across sub-groups. */
   memberCount: number;
   spendUsd: number;
   spendLoaded: boolean;
@@ -82,6 +82,29 @@ export interface GroupCluster {
   isSingleGroup: boolean;
   /** Populated only when isSingleGroup = true */
   singleGroup?: GroupLike;
+}
+
+export function sumAttributedRollup(groups: Array<{
+  rollupMemberCount?: number;
+  rollupSpendLoaded?: boolean;
+  rollupSpendUsd?: number;
+}>): {
+  memberCount: number;
+  spendUsd: number;
+  spendLoaded: boolean;
+} {
+  let memberCount = 0;
+  let spendUsd = 0;
+  let spendLoaded = true;
+  for (const group of groups) {
+    memberCount += group.rollupMemberCount ?? 0;
+    if (!group.rollupSpendLoaded) {
+      spendLoaded = false;
+    } else {
+      spendUsd += group.rollupSpendUsd ?? 0;
+    }
+  }
+  return { memberCount, spendUsd, spendLoaded };
 }
 
 /**
@@ -149,17 +172,7 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
     const baseName = clusterBaseNames.get(key)!;
     const roles = clusterRoles.get(key)!;
 
-    let memberCount = 0;
-    let spendUsd = 0;
-    let spendLoaded = true;
-    for (const g of groupList) {
-      memberCount += g.memberCount ?? 0;
-      if (!g.spendLoaded) {
-        spendLoaded = false;
-      } else {
-        spendUsd += g.spendUsd ?? 0;
-      }
-    }
+    const { memberCount, spendUsd, spendLoaded } = sumAttributedRollup(groupList);
 
     const first = groupList[0]!;
     result.push({

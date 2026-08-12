@@ -6,7 +6,11 @@ import { alertsTable, db, groupBudgetsTable } from "@workspace/db";
 
 import monitorRouter from "./monitor.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
-import { __setDirectoryCacheForTests } from "../lib/enterprise.ts";
+import {
+  __setDirectoryCacheForTests,
+  __setMemberUsageForTests,
+  resolveRange,
+} from "../lib/enterprise.ts";
 
 // ---------------------------------------------------------------------------
 // Route-level authorization tests. A minimal Express app stands in for the
@@ -44,6 +48,17 @@ let baseUrl;
 test.before(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key"; // marks isConfigured()
   __setDirectoryCacheForTests({ groups, members });
+  __setMemberUsageForTests(
+    "custom:2026-05-20:2026-08-11",
+    new Map([
+      ["g-ws1-a", new Map([["shared", 40], ["ws1-only", 10]])],
+      ["g-ws2-a", new Map([["shared", 40], ["ws2-only", 20]])],
+    ]),
+    new Map([
+      ["g-ws1-a", 3],
+      ["g-ws2-a", 4],
+    ]),
+  );
 
   // Inject the real resolution logic but against the seeded directory. Using
   // the actual resolver keeps the test faithful to production behavior.
@@ -97,6 +112,7 @@ test.after(async () => {
   await db.delete(alertsTable).where(inArray(alertsTable.groupId, fixtureIds));
   await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, fixtureIds));
   __setDirectoryCacheForTests(null);
+  __setMemberUsageForTests("custom:2026-05-20:2026-08-11", null);
   setAuthorizationResolver(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
   server?.close();
@@ -149,6 +165,29 @@ test("summary totalGroups reflects the scoped group set", async () => {
   assert.equal(acct.json.totalGroups, 2);
   const ws1 = await req("/summary", { user: "ws1admin" });
   assert.equal(ws1.json.totalGroups, 1);
+});
+
+test("custom range uses inclusive UTC days and all visible workspaces without overlap inflation", async () => {
+  const range = resolveRange("custom", "2026-05-20", "2026-08-11");
+  assert.deepEqual(range.params, {
+    startTime: "2026-05-20T00:00:00.000Z",
+    endTime: "2026-08-12T00:00:00.000Z",
+  });
+
+  const acct = await req(
+    "/summary?rangeType=custom&startDate=2026-05-20&endDate=2026-08-11",
+    { user: "acct" },
+  );
+  assert.equal(acct.status, 200);
+  assert.equal(acct.json.totalSpendUsd, 77);
+  assert.equal(acct.json.isComplete, true);
+
+  const ws1 = await req(
+    "/summary?rangeType=custom&startDate=2026-05-20&endDate=2026-08-11",
+    { user: "ws1admin" },
+  );
+  assert.equal(ws1.json.totalSpendUsd, 53);
+  assert.equal(ws1.json.isComplete, true);
 });
 
 test("cross-scope group detail returns non-disclosing 404", async () => {

@@ -6,6 +6,11 @@ export interface RollupGroup {
 
 export interface RollupMemberUsage {
   byUser: ReadonlyMap<string, number>;
+  /**
+   * Cost within this group's API filter that could not be assigned to a member.
+   * It cannot participate in member deduplication, so it remains with the group.
+   */
+  unattributableTotalCostUsd?: number;
 }
 
 export interface DedupedGroupRollup {
@@ -77,6 +82,9 @@ export function computeDedupedUsageRollup(
       pendingCount += 1;
       continue;
     }
+    const unattributableSpendUsd = usage.unattributableTotalCostUsd ?? 0;
+    rollup.spendUsd += unattributableSpendUsd;
+    totalSpendUsd += unattributableSpendUsd;
     for (const [userId, spendUsd] of usage.byUser) {
       if (seenUsers.has(userId)) continue;
       seenUsers.add(userId);
