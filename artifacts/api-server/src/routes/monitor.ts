@@ -1427,4 +1427,122 @@ router.get("/export/users.csv", requireAccountAdmin, async (req, res) => {
   res.send(csv);
 });
 
+// ── GET /users/activity ───────────────────────────────────────────────────────
+// Returns workspace members with first-custom-group attribution, team, and
+// total billing-period spend. Scoped to the caller's visible groups:
+// account admins see all members; workspace admins see only members in their
+// visible groups. Groups are processed in deterministic order (workspaceId →
+// name → id) so first-group attribution is stable regardless of API page order.
+// Responds immediately with cached data; isComplete=false while member usage is
+// still loading for some groups.
+router.get("/users/activity", async (req, res): Promise<void> => {
+  if (!isConfigured()) {
+    res.json({ isComplete: true, loadedCount: 0, totalCount: 0, users: [] });
+    return;
+  }
+
+  let dir: Awaited<ReturnType<typeof getDirectory>>;
+  try {
+    dir = await getDirectory();
+  } catch (err) {
+    req.log.error({ err }, "users/activity directory fetch failed");
+    res.status(503).json({ error: "Directory unavailable" });
+    return;
+  }
+
+  // Scope groups to what the caller can see, then apply deterministic ordering
+  // (matches the orderGroups() logic in usage-rollup.ts)
+  const scopedGroups = visibleGroups(req.authz!, dir.groups);
+  const orderedGroups = [...scopedGroups].sort(
+    (a, b) =>
+      a.workspaceId.localeCompare(b.workspaceId) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+      a.id.localeCompare(b.id),
+  );
+
+  const billingRange = resolveRange("billing");
+  const groupTeams = await db.select().from(groupTeamsTable);
+  const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+
+  let groupsLoaded = 0;
+  const totalGroups = orderedGroups.length;
+
+  // Pass 1: attribute each user to their first visible group (deterministic ordering)
+  // Also track every user appearing in at least one visible group, for scoping the member list.
+  const userGroupAttr = new Map<
+    string,
+    { groupId: string; groupName: string; teamName: string; spendUsd: number; workspaceId: string }
+  >();
+  const visibleUserIds = new Set<string>();
+
+  for (const group of orderedGroups) {
+    const memberUsage = getMemberUsage(group.id, billingRange.key);
+    if (!memberUsage) {
+      queueMemberUsageFetch(group, billingRange, 1);
+    } else {
+      groupsLoaded++;
+    }
+    const spendMap = memberUsage?.byUser ?? new Map<string, number>();
+    const teamName = teamNameMap.get(group.name) ?? "";
+    for (const userId of dir.groupMembers.get(group.id) ?? []) {
+      visibleUserIds.add(userId);
+      if (!userGroupAttr.has(userId)) {
+        userGroupAttr.set(userId, {
+          groupId: group.id,
+          groupName: group.name,
+          teamName,
+          spendUsd: spendMap.get(userId) ?? 0,
+          workspaceId: group.workspaceId,
+        });
+      }
+    }
+  }
+
+  const callerIsAccountAdmin = req.authz?.role === "account_admin";
+
+  // Pass 2: emit one entry per relevant member.
+  // Workspace admins see only members in their visible groups.
+  const users: {
+    userId: string;
+    username: string;
+    email: string;
+    teamName: string;
+    groupName: string;
+    spendUsd: number;
+    workspaceRole: string;
+  }[] = [];
+
+  for (const [userId, m] of dir.members) {
+    if (!callerIsAccountAdmin && !visibleUserIds.has(userId)) continue;
+
+    const attr = userGroupAttr.get(userId);
+    let workspaceRole = "member";
+    if (m.isAccountAdmin) {
+      workspaceRole = "account_admin";
+    } else if (attr) {
+      const ws = m.workspaces.get(attr.workspaceId);
+      if (ws) workspaceRole = ws.role;
+    } else {
+      const first = m.workspaces.values().next().value;
+      if (first) workspaceRole = (first as { role: string }).role;
+    }
+
+    users.push({
+      userId,
+      username: m.username,
+      email: m.email,
+      teamName: attr?.teamName ?? "",
+      groupName: attr?.groupName ?? "",
+      spendUsd: attr?.spendUsd ?? 0,
+      workspaceRole,
+    });
+  }
+
+  // Sort spend descending
+  users.sort((a, b) => b.spendUsd - a.spendUsd);
+
+  const isComplete = groupsLoaded === totalGroups;
+  res.json({ isComplete, loadedCount: groupsLoaded, totalCount: totalGroups, users });
+});
+
 export default router;

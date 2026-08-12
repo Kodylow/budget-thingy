@@ -40,6 +40,13 @@ const members = new Map([
   ["acct", m("acct", true, {})],
   ["ws1admin", m("ws1admin", false, { "ws-1": { role: "admin", isDisabled: false } })],
   ["plain", m("plain", false, { "ws-1": { role: "member", isDisabled: false } })],
+  ["ws2user", m("ws2user", false, { "ws-2": { role: "member", isDisabled: false } })],
+]);
+
+// ws1admin and plain are in g-ws1-a; ws2user is in g-ws2-a (out of ws1admin's scope)
+const groupMembers = new Map([
+  ["g-ws1-a", ["ws1admin", "plain"]],
+  ["g-ws2-a", ["ws2user"]],
 ]);
 
 let server;
@@ -47,7 +54,7 @@ let baseUrl;
 
 test.before(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key"; // marks isConfigured()
-  __setDirectoryCacheForTests({ groups, members });
+  __setDirectoryCacheForTests({ groups, members, groupMembers });
   __setMemberUsageForTests(
     "custom:2026-05-20:2026-08-11",
     new Map([
@@ -283,4 +290,33 @@ test("account admin can read account-only endpoints", async () => {
   assert.equal(admins.status, 200);
   const status = await req("/status", { user: "acct" });
   assert.equal(status.status, 200);
+});
+
+// ── /users/activity authorization tests ──────────────────────────────────────
+
+test("workspace admin cannot receive out-of-scope users from /users/activity", async () => {
+  const { status, json } = await req("/users/activity", { user: "ws1admin" });
+  assert.equal(status, 200);
+  const usernames = json.users.map((u) => u.username).sort();
+  // ws2user is in ws-2 (g-ws2-a) — must not appear for a ws-1 admin
+  assert.ok(!usernames.includes("ws2user"), `ws2user must not be visible to ws1admin; got: ${usernames}`);
+  // ws1admin and plain are in ws-1 (g-ws1-a) and must be present
+  assert.ok(usernames.includes("ws1admin"), "ws1admin must see themselves");
+  assert.ok(usernames.includes("plain"), "plain (ws-1 member) must be visible to ws1admin");
+});
+
+test("workspace admin user activity response contains no out-of-scope emails", async () => {
+  const { status, json } = await req("/users/activity", { user: "ws1admin" });
+  assert.equal(status, 200);
+  const emails = json.users.map((u) => u.email);
+  assert.ok(!emails.includes("ws2user@example.com"), "ws2user email must not be visible to ws1admin");
+});
+
+test("account admin sees all members in /users/activity", async () => {
+  const { status, json } = await req("/users/activity", { user: "acct" });
+  assert.equal(status, 200);
+  const usernames = json.users.map((u) => u.username).sort();
+  assert.ok(usernames.includes("ws2user"), "account admin must see ws2user");
+  assert.ok(usernames.includes("ws1admin"), "account admin must see ws1admin");
+  assert.ok(usernames.includes("plain"), "account admin must see plain");
 });
