@@ -1164,12 +1164,13 @@ router.post("/alerts/check", requireAccountAdmin, async (req, res): Promise<void
 // System status is account-only configuration; not exposed to workspace admins.
 router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
   const health = getApiHealth();
+  const emailConfigured = await isEmailConfigured();
   res.json(
     GetStatusResponse.parse({
       enterpriseApiConfigured: isConfigured(),
       enterpriseApiOk: health.ok,
       enterpriseApiError: health.error,
-      emailConfigured: isEmailConfigured(),
+      emailConfigured,
       checkerIntervalMinutes: CHECK_INTERVAL_MINUTES,
       lastCheckAt: getLastCheckAt()?.toISOString() ?? null,
     }),

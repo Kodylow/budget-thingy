@@ -22,6 +22,8 @@ export const THRESHOLDS = [50, 75, 90, 100];
 export const CHECK_INTERVAL_MINUTES = 10;
 
 let lastCheckAt: Date | null = null;
+
+const evaluationsInFlight = new Map<string, Promise<Alert[]>>();
 export function getLastCheckAt(): Date | null {
   return lastCheckAt;
 }
@@ -46,7 +48,7 @@ export async function getFiredThresholds(
  * Evaluate thresholds for one group and send any due alerts.
  * Idempotent per (group, billing period, threshold).
  */
-export async function evaluateGroup(group: EnterpriseGroup): Promise<Alert[]> {
+async function evaluateGroupOnce(group: EnterpriseGroup): Promise<Alert[]> {
   const spend = getSpend(group.id);
   if (!spend) return [];
 
@@ -66,7 +68,7 @@ export async function evaluateGroup(group: EnterpriseGroup): Promise<Alert[]> {
     logger.warn({ groupId: group.id }, "Threshold crossed but no admin emails configured; will retry");
     return [];
   }
-  if (!isEmailConfigured()) {
+  if (!(await isEmailConfigured())) {
     logger.warn({ groupId: group.id }, "Threshold crossed but email is not connected; will retry once connected");
     return [];
   }
@@ -118,6 +120,18 @@ export async function evaluateGroup(group: EnterpriseGroup): Promise<Alert[]> {
     "Budget alert processed",
   );
   return created;
+}
+export function evaluateGroup(group: EnterpriseGroup): Promise<Alert[]> {
+  const existing = evaluationsInFlight.get(group.id);
+  if (existing) return existing;
+
+  const evaluation = evaluateGroupOnce(group).finally(() => {
+    if (evaluationsInFlight.get(group.id) === evaluation) {
+      evaluationsInFlight.delete(group.id);
+    }
+  });
+  evaluationsInFlight.set(group.id, evaluation);
+  return evaluation;
 }
 
 /**

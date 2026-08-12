@@ -166,6 +166,35 @@ export interface GroupsResponse {
 }
 
 export type TrendSeriesType = typeof TrendSeriesType[keyof typeof TrendSeriesType];
+
+
+export const TrendSeriesType = {
+  team: 'team',
+  group: 'group',
+} as const;
+
+export interface TrendSeries {
+  name: string;
+  type: TrendSeriesType;
+  /** Spend in USD for each corresponding bucket; null while loading */
+  data: (number | null)[];
+}
+
+export interface TrendBucketRange {
+  start: string;
+  end: string;
+}
+
+export interface TrendsResponse {
+  /** ISO date for the start of each bucket */
+  buckets: string[];
+  bucketRanges: TrendBucketRange[];
+  series: TrendSeries[];
+  isComplete: boolean;
+  loadedCount: number;
+  totalCount: number;
+}
+
 export interface GroupMember {
   userId: string;
   /** @nullable */
@@ -474,6 +503,15 @@ granularity: GetTrendsGranularity;
 teamNames?: string[];
 groupIds?: string[];
 };
+
+export type GetTrendsGranularity = typeof GetTrendsGranularity[keyof typeof GetTrendsGranularity];
+
+
+export const GetTrendsGranularity = {
+  week: 'week',
+  month: 'month',
+} as const;
+
 export type ListAlertsParams = {
 /**
  * @minimum 1
@@ -481,38 +519,3 @@ export type ListAlertsParams = {
  */
 limit?: number;
 };
-
-
-export const TrendSeriesType = {
-  team: 'team',
-  group: 'group',
-} as const;
-
-export const GetTrendsGranularity = {
-  week: 'week',
-  month: 'month',
-} as const;
-
-export interface TrendBucketRange {
-  start: string;
-  end: string;
-}
-
-export interface TrendsResponse {
-  /** ISO date for the start of each bucket */
-  buckets: string[];
-  bucketRanges: TrendBucketRange[];
-  series: TrendSeries[];
-  isComplete: boolean;
-  loadedCount: number;
-  totalCount: number;
-}
-
-export interface TrendSeries {
-  name: string;
-  type: TrendSeriesType;
-  /** Spend in USD for each corresponding bucket; null while loading */
-  data: (number | null)[];
-}
-
-export type GetTrendsGranularity = typeof GetTrendsGranularity[keyof typeof GetTrendsGranularity];

@@ -311,6 +311,7 @@ export const GetSummaryResponse = zod.object({
   "isComplete": zod.boolean()
 })
 
+
 /**
  * Returns weekly or monthly spend buckets from the May 20, 2026 data cutoff through today. Usage loads progressively; poll while isComplete is false.
  * @summary Group and team spending trends
@@ -320,6 +321,24 @@ export const GetTrendsQueryParams = zod.object({
   "teamNames": zod.array(zod.coerce.string()).optional(),
   "groupIds": zod.array(zod.coerce.string()).optional()
 })
+
+export const GetTrendsResponse = zod.object({
+  "buckets": zod.array(zod.string()).describe('ISO date for the start of each bucket'),
+  "bucketRanges": zod.array(zod.object({
+  "start": zod.string(),
+  "end": zod.string()
+})),
+  "series": zod.array(zod.object({
+  "name": zod.string(),
+  "type": zod.enum(['team', 'group']),
+  "data": zod.array(zod.number().nullable()).describe('Spend in USD for each corresponding bucket; null while loading')
+})),
+  "isComplete": zod.boolean(),
+  "loadedCount": zod.number(),
+  "totalCount": zod.number()
+})
+
+
 /**
  * @summary List all configured group budgets
  */
@@ -508,19 +527,3 @@ export const GetStatusResponse = zod.object({
   "lastCheckAt": zod.string().nullish()
 })
 
-
-export const GetTrendsResponse = zod.object({
-  "buckets": zod.array(zod.string()).describe('ISO date for the start of each bucket'),
-  "bucketRanges": zod.array(zod.object({
-  "start": zod.string(),
-  "end": zod.string()
-})),
-  "series": zod.array(zod.object({
-  "name": zod.string(),
-  "type": zod.enum(['team', 'group']),
-  "data": zod.array(zod.number().nullable()).describe('Spend in USD for each corresponding bucket; null while loading')
-})),
-  "isComplete": zod.boolean(),
-  "loadedCount": zod.number(),
-  "totalCount": zod.number()
-})
