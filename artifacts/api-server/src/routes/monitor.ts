@@ -29,6 +29,8 @@ import {
   GetStatusResponse,
   GetGroupDetailResponse,
   GetGroupProjectsResponse,
+  GetTrendsQueryParams,
+  GetTrendsResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -1164,8 +1166,6 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
 // ---------- Trends: bucketed spend over time ----------
 
 interface TrendBucket {
-  key: string;
-  label: string;
   startDate: string;
   endDate: string;
 }
@@ -1187,11 +1187,7 @@ function generateMonthlyBuckets(): TrendBucket[] {
     const startDate = new Date(bucketStartMs).toISOString().slice(0, 10);
     const endDate = new Date(bucketEndMs).toISOString().slice(0, 10);
 
-    if (startDate < endDate) {
-      const mo = monthStart.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
-      const yr = String(y).slice(2);
-      buckets.push({ key: `custom:${startDate}:${endDate}`, label: `${mo} '${yr}`, startDate, endDate });
-    }
+    buckets.push({ startDate, endDate });
 
     monthStart = new Date(Date.UTC(y, m + 1, 1));
   }
@@ -1209,11 +1205,7 @@ function generateWeeklyBuckets(): TrendBucket[] {
     const startDate = weekStart.toISOString().slice(0, 10);
     const endDate = new Date(weekEndMs).toISOString().slice(0, 10);
 
-    if (startDate < endDate) {
-      const mo = String(weekStart.getUTCMonth() + 1).padStart(2, "0");
-      const d = String(weekStart.getUTCDate()).padStart(2, "0");
-      buckets.push({ key: `custom:${startDate}:${endDate}`, label: `${mo}/${d}`, startDate, endDate });
-    }
+    buckets.push({ startDate, endDate });
 
     weekStart = new Date(weekStart.getTime() + 7 * 86_400_000);
   }
@@ -1221,68 +1213,110 @@ function generateWeeklyBuckets(): TrendBucket[] {
 }
 
 router.get("/trends", async (req, res): Promise<void> => {
-  const granularity =
-    typeof req.query["granularity"] === "string" && req.query["granularity"] === "week"
-      ? "week"
-      : "month";
+  const normalizeArrayQuery = (value: unknown): unknown[] | undefined =>
+    value == null ? undefined : Array.isArray(value) ? value : [value];
+  const parsed = GetTrendsQueryParams.safeParse({
+    ...req.query,
+    teamNames: normalizeArrayQuery(req.query["teamNames"]),
+    groupIds: normalizeArrayQuery(req.query["groupIds"]),
+  });
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const { granularity, teamNames, groupIds } = parsed.data;
 
   const buckets = granularity === "week" ? generateWeeklyBuckets() : generateMonthlyBuckets();
 
   if (!isConfigured()) {
-    res.json({ granularity, buckets, groups: [], isComplete: true, loadedCount: 0, totalCount: 0 });
+    res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
   }
 
-  let dir;
   try {
-    dir = await getDirectory();
+    const dir = await getDirectory();
+    const visible = visibleGroups(req.authz!, dir.groups);
+    const groupTeams = await db.select().from(groupTeamsTable);
+    const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+    const requestedTeams = teamNames ? new Set(teamNames) : null;
+    const requestedGroups = groupIds ? new Set(groupIds) : null;
+    const groups = visible.filter((group) => {
+      if (requestedGroups && !requestedGroups.has(group.id)) return false;
+      const teamName = teamNameMap.get(group.name) ?? null;
+      return !requestedTeams || (teamName !== null && requestedTeams.has(teamName));
+    });
+
+    const ranges = buckets.map((bucket) =>
+      resolveRange("custom", bucket.startDate, bucket.endDate),
+    );
+    let loadedCount = 0;
+    const totalCount = groups.length * ranges.length;
+
+    for (const group of groups) {
+      for (const range of ranges) {
+        if (getSpend(group.id, range.key)) {
+          loadedCount += 1;
+        } else {
+          // Every missing request enters the shared rate-limited usage queue at
+          // once. The queue serializes and paces the Enterprise API calls.
+          queueGroupSpendFetch(group, 1, false, undefined, range);
+        }
+      }
+    }
+
+    const duplicateGroupNames = new Set(
+      groups
+        .filter((group, index) =>
+          groups.findIndex((candidate) => candidate.name === group.name) !== index,
+        )
+        .map((group) => group.name),
+    );
+    const groupSeries = groups.map((group) => ({
+      name: duplicateGroupNames.has(group.name)
+        ? `${group.name} (${dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId})`
+        : group.name,
+      type: "group" as const,
+      data: ranges.map((range) => getSpend(group.id, range.key)?.spendUsd ?? null),
+    }));
+
+    const teams = new Map<string, typeof groups>();
+    for (const group of groups) {
+      const teamName = teamNameMap.get(group.name);
+      if (!teamName) continue;
+      const teamGroups = teams.get(teamName) ?? [];
+      teamGroups.push(group);
+      teams.set(teamName, teamGroups);
+    }
+    const teamSeries = [...teams.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, teamGroups]) => ({
+        name,
+        type: "team" as const,
+        data: ranges.map((range) => {
+          const spends = teamGroups.map((group) => getSpend(group.id, range.key));
+          return spends.every(Boolean)
+            ? spends.reduce((sum, spend) => sum + (spend?.spendUsd ?? 0), 0)
+            : null;
+        }),
+      }));
+
+    res.json(
+      GetTrendsResponse.parse({
+        buckets: buckets.map((bucket) => bucket.startDate),
+        bucketRanges: buckets.map((bucket) => ({
+          start: bucket.startDate,
+          end: bucket.endDate,
+        })),
+        series: [...teamSeries, ...groupSeries],
+        isComplete: loadedCount === totalCount,
+        loadedCount,
+        totalCount,
+      }),
+    );
   } catch (err) {
-    req.log.error({ err }, "trends directory fetch failed");
-    res.status(503).json({ error: "Directory unavailable" });
-    return;
+    req.log.error({ err }, "getTrends failed");
+    res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
   }
-
-  const groupTeams = await db.select().from(groupTeamsTable);
-  const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
-
-  let loadedCount = 0;
-  const totalCount = dir.groups.length * buckets.length;
-
-  for (const group of dir.groups) {
-    for (const bucket of buckets) {
-      let range: UsageRange;
-      try {
-        range = resolveRange("custom", bucket.startDate, bucket.endDate);
-      } catch {
-        continue;
-      }
-      const cached = getSpend(group.id, range.key);
-      if (cached) {
-        loadedCount++;
-      } else {
-        queueGroupSpendFetch(group, 1, false, undefined, range);
-      }
-    }
-  }
-
-  const groups = dir.groups.map((g) => {
-    const teamName = teamNameMap.get(g.name) ?? null;
-    const spendByBucket: Record<string, number | null> = {};
-    for (const bucket of buckets) {
-      let range: UsageRange;
-      try {
-        range = resolveRange("custom", bucket.startDate, bucket.endDate);
-      } catch {
-        spendByBucket[bucket.key] = null;
-        continue;
-      }
-      const spend = getSpend(g.id, range.key);
-      spendByBucket[bucket.key] = spend != null ? spend.spendUsd : null;
-    }
-    return { groupId: g.id, name: g.name, teamName, spendByBucket };
-  });
-
-  res.json({ granularity, buckets, groups, isComplete: loadedCount >= totalCount, loadedCount, totalCount });
 });
 
 // ── GET /export/users.csv ─────────────────────────────────────────────────────

@@ -64,6 +64,8 @@ import { useLocation } from 'wouter';
 import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
 import { buildGroupClusters, roleBadgeClass, type GroupCluster } from '@/lib/group-clusters';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import TrendsTab from './trends-tab';
 
 interface TeamSection {
   teamName: string;
@@ -577,6 +579,12 @@ export default function Dashboard() {
         })}
       </div>
 
+      <Tabs defaultValue="groups" className="space-y-4">
+        <TabsList aria-label="Dashboard views">
+          <TabsTrigger value="groups">Groups</TabsTrigger>
+          <TabsTrigger value="trends">Trends</TabsTrigger>
+        </TabsList>
+        <TabsContent value="groups">
       <Card>
         <CardHeader>
           <CardTitle>Groups</CardTitle>
@@ -720,6 +728,18 @@ export default function Dashboard() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+        <TabsContent value="trends">
+          <TrendsTab
+            teamNames={teamSections.map((team) => team.teamName)}
+            groups={groups.map((group) => ({
+              groupId: group.groupId,
+              name: group.name,
+              teamName: group.teamName ?? null,
+            }))}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

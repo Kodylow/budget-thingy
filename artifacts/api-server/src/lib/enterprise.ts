@@ -169,8 +169,13 @@ function pumpQueue(): void {
       usageQueue.sort((a, b) => a.priority - b.priority);
       const task = usageQueue.shift();
       if (!task) break;
-      queuedKeys.delete(task.key);
-      await task.run();
+      try {
+        await task.run();
+      } finally {
+        // Keep the key registered while the task is active so polling cannot
+        // enqueue the same Enterprise API request again.
+        queuedKeys.delete(task.key);
+      }
       // Gentle pacing: keeps well under 100/min with headroom.
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -225,7 +230,11 @@ async function usageFetch(
       const remaining = Number(headers.get("X-RateLimit-Remaining") ?? "10");
       if (remaining <= 3) {
         const reset = Number(headers.get("X-RateLimit-Reset") ?? "10");
-        pauseUntil = Date.now() + Math.max(2000, reset * 1000);
+        // The API may return either seconds-until-reset or a Unix timestamp.
+        const resetDelayMs = reset > 1_000_000_000
+          ? reset * 1000 - Date.now()
+          : reset * 1000;
+        pauseUntil = Date.now() + Math.max(2000, resetDelayMs);
         logger.warn({ remaining }, "Usage rate budget low; pausing queue");
       }
       return (body as { data: UsageData }).data;
@@ -792,6 +801,10 @@ export function queueGroupSpendFetch(
       };
       spendCache.set(cacheKey, spend);
       persistSpendToDb(range.key, group.id, spend);
+      // The network request has landed and cache is current. Release the queue
+      // key before callbacks run so a callback-triggered forced refresh is a
+      // new request rather than being reported as a duplicate of the finished one.
+      queuedKeys.delete(`usage:${cacheKey}`);
       fireSpendCallbacks(cacheKey, spend);
     } catch (err) {
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch group usage");

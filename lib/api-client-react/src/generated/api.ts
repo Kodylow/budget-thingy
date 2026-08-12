@@ -33,6 +33,7 @@ import type {
   GetGroupDetailParams,
   GetGroupProjectsParams,
   GetSummaryParams,
+  GetTrendsParams,
   GroupBudget,
   GroupBudgetInput,
   GroupDetail,
@@ -52,6 +53,7 @@ import type {
   TeamBudget,
   TeamBudgetInput,
   TeamBudgetsResponse,
+  TrendsResponse,
   UnauthorizedResponse
 } from './api.schemas';
 
@@ -1132,6 +1134,99 @@ export function useGetSummary<TData = Awaited<ReturnType<typeof getSummary>>, TE
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetSummaryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTrendsUrl = (params: GetTrendsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = ["teamNames","groupIds"];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? 'null' : String(v));
+      });
+      return;
+    }
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/trends?${stringifiedParams}` : `/api/trends`
+}
+
+/**
+ * Returns weekly or monthly spend buckets from the May 20, 2026 data cutoff through today. Usage loads progressively; poll while isComplete is false.
+ * @summary Group and team spending trends
+ */
+export const getTrends = async (params: GetTrendsParams, options?: RequestInit): Promise<TrendsResponse> => {
+
+  return customFetch<TrendsResponse>(getGetTrendsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTrendsQueryKey = (params?: GetTrendsParams,) => {
+    return [
+    `/api/trends`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetTrendsQueryOptions = <TData = Awaited<ReturnType<typeof getTrends>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params: GetTrendsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrends>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTrendsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTrends>>> = ({ signal }) => getTrends(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTrends>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTrendsQueryResult = NonNullable<Awaited<ReturnType<typeof getTrends>>>
+export type GetTrendsQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Group and team spending trends
+ */
+
+export function useGetTrends<TData = Awaited<ReturnType<typeof getTrends>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ params: GetTrendsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrends>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTrendsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

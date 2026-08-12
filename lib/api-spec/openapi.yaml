@@ -354,6 +354,62 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /trends:
+    get:
+      operationId: getTrends
+      tags: [groups]
+      summary: Group and team spending trends
+      description: >
+        Returns weekly or monthly spend buckets from the May 20, 2026 data cutoff
+        through today. Usage loads progressively; poll while isComplete is false.
+      parameters:
+        - name: granularity
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [week, month]
+        - name: teamNames
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: groupIds
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: Progressive trend series
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrendsResponse"
+        "400":
+          description: Invalid trend filters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /budgets:
     get:
       operationId: listBudgets
@@ -893,6 +949,51 @@ components:
         billingPeriodLabel:
           type: string
           description: Human label of the selected range, e.g. "Jul 2026" or "Year to date"
+    TrendSeries:
+      type: object
+      required: [name, type, data]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [team, group]
+        data:
+          type: array
+          items:
+            type: ["number", "null"]
+          description: Spend in USD for each corresponding bucket; null while loading
+    TrendBucketRange:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: string
+        end:
+          type: string
+    TrendsResponse:
+      type: object
+      required: [buckets, bucketRanges, series, isComplete, loadedCount, totalCount]
+      properties:
+        buckets:
+          type: array
+          items:
+            type: string
+          description: ISO date for the start of each bucket
+        bucketRanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrendBucketRange"
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrendSeries"
+        isComplete:
+          type: boolean
+        loadedCount:
+          type: integer
+        totalCount:
+          type: integer
     GroupMember:
       type: object
       required: [userId, spendLoaded]

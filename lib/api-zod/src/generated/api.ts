@@ -74,11 +74,6 @@ export const LogoutBrowserSessionResponse = zod.void()
  */
 
 
-
-
-
-
-
 export const ExchangeMobileAuthorizationCodeBody = zod.object({
   "code": zod.string().min(1),
   "code_verifier": zod.string().min(1),
@@ -316,7 +311,15 @@ export const GetSummaryResponse = zod.object({
   "isComplete": zod.boolean()
 })
 
-
+/**
+ * Returns weekly or monthly spend buckets from the May 20, 2026 data cutoff through today. Usage loads progressively; poll while isComplete is false.
+ * @summary Group and team spending trends
+ */
+export const GetTrendsQueryParams = zod.object({
+  "granularity": zod.enum(['week', 'month']),
+  "teamNames": zod.array(zod.coerce.string()).optional(),
+  "groupIds": zod.array(zod.coerce.string()).optional()
+})
 /**
  * @summary List all configured group budgets
  */
@@ -336,7 +339,6 @@ export const SetGroupBudgetParams = zod.object({
 })
 
 export const setGroupBudgetBodyAmountUsdExclusiveMin = 0;
-
 
 
 export const SetGroupBudgetBody = zod.object({
@@ -384,7 +386,6 @@ export const SetTeamBudgetParams = zod.object({
 export const setTeamBudgetBodyAmountUsdMin = 0;
 
 
-
 export const SetTeamBudgetBody = zod.object({
   "amountUsd": zod.number().min(setTeamBudgetBodyAmountUsdMin)
 })
@@ -423,7 +424,6 @@ export const ListAdminsResponse = zod.array(ListAdminsResponseItem)
 export const addAdminBodyEmailMin = 3;
 
 
-
 export const AddAdminBody = zod.object({
   "email": zod.string().min(addAdminBodyEmailMin)
 })
@@ -452,7 +452,6 @@ export const DeleteAdminResponse = zod.object({
  * @summary Alert history
  */
 export const listAlertsQueryLimitMax = 200;
-
 
 
 export const ListAlertsQueryParams = zod.object({
@@ -510,3 +509,18 @@ export const GetStatusResponse = zod.object({
 })
 
 
+export const GetTrendsResponse = zod.object({
+  "buckets": zod.array(zod.string()).describe('ISO date for the start of each bucket'),
+  "bucketRanges": zod.array(zod.object({
+  "start": zod.string(),
+  "end": zod.string()
+})),
+  "series": zod.array(zod.object({
+  "name": zod.string(),
+  "type": zod.enum(['team', 'group']),
+  "data": zod.array(zod.number().nullable()).describe('Spend in USD for each corresponding bucket; null while loading')
+})),
+  "isComplete": zod.boolean(),
+  "loadedCount": zod.number(),
+  "totalCount": zod.number()
+})
