@@ -62,7 +62,10 @@ export const usageSyncStateTable = pgTable(
     isClosed: boolean("is_closed").notNull().default(false),
     completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
   },
-  (t) => [primaryKey({ columns: [t.mode, t.rangeKey, t.scopeKey] })],
+  (t) => [
+    primaryKey({ columns: [t.mode, t.rangeKey, t.scopeKey] }),
+    index("usage_sync_state_retention_idx").on(t.isClosed, t.completedAt),
+  ],
 );
 
 export type UsageSyncChunk = typeof usageSyncChunksTable.$inferSelect;

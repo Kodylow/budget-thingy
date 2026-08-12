@@ -7,7 +7,7 @@ import {
   usageSyncStateTable,
   type UsageSyncChunk,
 } from "@workspace/db/schema";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, like, lt, sql } from "drizzle-orm";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
@@ -279,10 +279,81 @@ interface SyncMetadata {
 
 const RECONCILIATION_OVERLAP_MS = 48 * 60 * 60 * 1000;
 const MAX_USAGE_PAGES = 200;
+/** Closed custom snapshots are retained long enough for normal reporting needs. */
+export const CUSTOM_RANGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const syncMetadata = new Map<string, SyncMetadata>();
+let lastCleanupAt = 0;
 
 function syncId(mode: UsageSyncMode, rangeKey: string, scopeKey: string): string {
   return `${mode}|${rangeKey}|${scopeKey}`;
+}
+
+/**
+ * Remove only expired, closed custom snapshots. Each candidate uses the same
+ * transaction advisory lock as synchronizeUsage, and eligibility is checked
+ * again after locking so cleanup cannot race an active sync.
+ */
+export async function pruneExpiredCustomUsage(): Promise<number> {
+  const cutoff = new Date(Date.now() - CUSTOM_RANGE_RETENTION_MS);
+  return db.transaction(async (tx) => {
+    const candidates = await tx
+      .select({
+        mode: usageSyncStateTable.mode,
+        rangeKey: usageSyncStateTable.rangeKey,
+        scopeKey: usageSyncStateTable.scopeKey,
+      })
+      .from(usageSyncStateTable)
+      .where(and(
+        eq(usageSyncStateTable.isClosed, true),
+        like(usageSyncStateTable.rangeKey, "custom:%"),
+        lt(usageSyncStateTable.completedAt, cutoff),
+      ));
+    let removed = 0;
+    for (const candidate of candidates) {
+      const id = syncId(
+        candidate.mode as UsageSyncMode,
+        candidate.rangeKey,
+        candidate.scopeKey,
+      );
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${id}))`);
+      const [state] = await tx
+        .select({ completedAt: usageSyncStateTable.completedAt })
+        .from(usageSyncStateTable)
+        .where(and(
+          eq(usageSyncStateTable.mode, candidate.mode),
+          eq(usageSyncStateTable.rangeKey, candidate.rangeKey),
+          eq(usageSyncStateTable.scopeKey, candidate.scopeKey),
+          eq(usageSyncStateTable.isClosed, true),
+          lt(usageSyncStateTable.completedAt, cutoff),
+        ));
+      if (!state) continue;
+      await tx.delete(usageSyncChunksTable).where(and(
+        eq(usageSyncChunksTable.mode, candidate.mode),
+        eq(usageSyncChunksTable.rangeKey, candidate.rangeKey),
+        eq(usageSyncChunksTable.scopeKey, candidate.scopeKey),
+      ));
+      await tx.delete(usageSyncStateTable).where(and(
+        eq(usageSyncStateTable.mode, candidate.mode),
+        eq(usageSyncStateTable.rangeKey, candidate.rangeKey),
+        eq(usageSyncStateTable.scopeKey, candidate.scopeKey),
+      ));
+      syncMetadata.delete(id);
+      removed++;
+    }
+    return removed;
+  });
+}
+
+async function maybePruneExpiredCustomUsage(): Promise<void> {
+  if (Date.now() - lastCleanupAt < CLEANUP_INTERVAL_MS) return;
+  lastCleanupAt = Date.now();
+  try {
+    const removed = await pruneExpiredCustomUsage();
+    if (removed > 0) logger.info({ removed }, "Pruned expired custom usage snapshots");
+  } catch (err) {
+    logger.warn({ err }, "Failed to prune expired custom usage snapshots");
+  }
 }
 
 function rangeBounds(range: UsageRange): { start: Date; end: Date; isClosed: boolean } {
@@ -387,6 +458,7 @@ async function synchronizeUsage(
   baseParams: Record<string, string | undefined>,
   force = false,
 ): Promise<UsageSyncChunk[]> {
+  await maybePruneExpiredCustomUsage();
   const id = syncId(mode, range.key, scopeKey);
   const result = await db.transaction(async (tx) => {
     // The in-process queue serializes API calls for one server. This lock extends
@@ -820,6 +892,7 @@ function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend):
 
 export async function initCache(): Promise<void> {
   try {
+    await maybePruneExpiredCustomUsage();
     const [dirRow, spendRows, durable] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
       db.select().from(apiSpendCacheTable),

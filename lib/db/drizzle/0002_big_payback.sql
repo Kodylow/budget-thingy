@@ -21,3 +21,5 @@ CREATE TABLE "usage_sync_state" (
 );
 --> statement-breakpoint
 CREATE INDEX "usage_sync_chunks_scope_idx" ON "usage_sync_chunks" USING btree ("mode","range_key","scope_key");
+--> statement-breakpoint
+CREATE INDEX "usage_sync_state_retention_idx" ON "usage_sync_state" USING btree ("is_closed","completed_at");
