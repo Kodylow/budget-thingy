@@ -243,10 +243,16 @@ router.get("/groups", async (req, res): Promise<void> => {
     const mergePlan = buildGroupMergePlan(scoped, dir.workspaces);
     const displayGroups = scoped.filter((g) => !mergePlan.hiddenGroupIds.has(g.id));
 
-    void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
-    for (const group of scoped) queueMemberUsageFetch(group, range, 1);
+    // Member-level usage is the dashboard's critical path: the deduped rollup
+    // cannot render until every visible group has it. Queue it interactively so
+    // it preempts checker/snapshot group-total work already waiting at startup.
+    // Once synchronized, these entries are durable and hydrate before listen.
+    for (const group of scoped) queueMemberUsageFetch(group, range, 0);
     const isAccountAdmin = req.authz!.role === "account_admin";
-    if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 1);
+    if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 0);
+    // Raw group totals support alerting/history metadata but are not required to
+    // construct the member-deduped dashboard, so keep them in the background.
+    void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
 
     const [budgets, groupTeams] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -272,7 +278,6 @@ router.get("/groups", async (req, res): Promise<void> => {
       ? await getHistoryForGroups(allHistoryGroupIds, billing.start)
       : new Map<string, { date: string; spendUsd: number }[]>();
 
-    let pendingCount = 0;
     const groups = await Promise.all(
       displayGroups.map(async (g) => {
         // Source group IDs: the primary itself plus any same-name aliases.
@@ -280,7 +285,6 @@ router.get("/groups", async (req, res): Promise<void> => {
 
         // ALL source groups must have member usage loaded for spend to be reliable.
         const memberUsageLoaded = sourceIds.every((id) => !!getMemberUsage(id, range.key));
-        if (!memberUsageLoaded) pendingCount += 1;
 
         // Spend is only "loaded" when this group's member usage, the full rollup, AND
         // all extra-workspace fetches are complete. Until all groups' member usage loads,
@@ -358,8 +362,11 @@ router.get("/groups", async (req, res): Promise<void> => {
     res.json(
       ListGroupsResponse.parse({
         groups,
-        isComplete: pendingCount === 0 && rollup.isComplete && extraSpend.isComplete,
-        pendingCount: pendingCount + rollup.pendingCount,
+        isComplete: rollup.isComplete && extraSpend.isComplete,
+        // rollup.pendingCount already counts every missing source group. Adding
+        // missing display rows counted the same work twice (e.g. 126 became 252).
+        pendingCount:
+          rollup.pendingCount + (extraSpend.totalCount - extraSpend.loadedCount),
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
       }),
     );

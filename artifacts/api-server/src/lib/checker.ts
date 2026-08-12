@@ -14,6 +14,8 @@ import {
   getBillingPeriod,
   isConfigured,
   queueGroupSpendFetch,
+  queueMemberUsageFetch,
+  resolveRange,
   type EnterpriseGroup,
 } from "./enterprise";
 import { sendEmail, buildAlertEmail, isEmailConfigured } from "./email";
@@ -190,6 +192,13 @@ export function startChecker(): void {
       const ordered = [...dir.groups].sort(
         (a, b) => Number(budgeted.has(b.id)) - Number(budgeted.has(a.id)),
       );
+      // Bootstrap the dashboard's durable member-level rollup before background
+      // raw totals. On later boots, hydrated rows make this an incremental recent
+      // overlap refresh while the dashboard can render the stored snapshot at once.
+      const dashboardRange = resolveRange("billing");
+      for (const g of ordered) {
+        queueMemberUsageFetch(g, dashboardRange, 1);
+      }
       for (const g of ordered) {
         const result = queueGroupSpendFetch(g, 1, false, () => {
           if (budgeted.has(g.id)) void evaluateGroup(g).catch((err) => logger.error({ err }, "evaluateGroup failed"));
@@ -198,7 +207,7 @@ export function startChecker(): void {
           void evaluateGroup(g).catch((err) => logger.error({ err }, "evaluateGroup failed"));
         }
       }
-      logger.info({ groups: dir.groups.length }, "Warm-up: queued spend fetches");
+      logger.info({ groups: dir.groups.length }, "Warm-up: queued member and spend fetches");
     } catch (err) {
       logger.error({ err }, "Warm-up failed");
     }

@@ -317,6 +317,11 @@ test("/groups: spendLoaded stays false while earlier-group member usage is missi
     "Beta.spendLoaded must be false: Alpha's member usage missing so alice's dedup attribution is provisional");
   assert.equal(beta.spendUsd, null, "spendUsd must be null while rollup is incomplete");
   assert.equal(json.isComplete, false, "top-level isComplete must be false");
+  assert.equal(
+    json.pendingCount,
+    1,
+    "the one missing source group must be counted once, not again as a missing display row",
+  );
 });
 
 test("/groups: correct combined spend once all group caches warm", async () => {
