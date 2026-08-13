@@ -153,6 +153,12 @@ export async function sendEmail(
 }
 
 export function buildAlertEmail(args: {
+  // Which allocated pool crossed a threshold: a raw Enterprise group or a
+  // cross-workspace team. Defaults to "group" for backward compatibility.
+  entityType?: "group" | "team";
+  entityName?: string;
+  // Legacy field: for group alerts this is the group name. Kept so existing
+  // callers/tests continue to work; entityName takes precedence when provided.
   groupName: string;
   workspaceName: string | null;
   threshold: number;
@@ -160,22 +166,32 @@ export function buildAlertEmail(args: {
   budgetUsd: number;
   billingPeriodLabel: string;
 }): { subject: string; html: string } {
+  const entityType = args.entityType ?? "group";
+  const name = args.entityName ?? args.groupName;
+  const kindLabel = entityType === "team" ? "team" : "group";
   const pct = ((args.spendUsd / args.budgetUsd) * 100).toFixed(1);
   const fmt = (n: number) =>
     n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-  const severity = args.threshold >= 100 ? "Budget exceeded" : `${args.threshold}% budget alert`;
-  const subject = `[Replit Budget Alert] ${args.groupName}: ${severity} (${args.billingPeriodLabel})`;
+  const severity =
+    args.threshold >= 100
+      ? "Allocated pool exceeded"
+      : `${args.threshold}% allocated pool alert`;
+  const subject = `[Replit Budget Alert] ${name}: ${severity} (${args.billingPeriodLabel})`;
+  // Only surface a specific workspace for group alerts — teams may span several
+  // workspaces, so a single-workspace note would be misleading.
+  const workspaceNote =
+    entityType === "group" && args.workspaceName
+      ? ` (workspace: ${args.workspaceName})`
+      : "";
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: 0 auto;">
       <h2 style="color: ${args.threshold >= 100 ? "#b91c1c" : args.threshold >= 90 ? "#c2410c" : "#a16207"};">
-        ${severity}: ${args.groupName}
+        ${severity}: ${name}
       </h2>
-      <p>The Replit Enterprise group <strong>${args.groupName}</strong>${
-        args.workspaceName ? ` (workspace: ${args.workspaceName})` : ""
-      } has used <strong>${pct}%</strong> of its ${args.billingPeriodLabel} budget.</p>
+      <p>The Replit Enterprise ${kindLabel} <strong>${name}</strong>${workspaceNote} has used <strong>${pct}%</strong> of its allocated pool for ${args.billingPeriodLabel}.</p>
       <table style="border-collapse: collapse; width: 100%;">
         <tr><td style="padding: 6px 0; color: #555;">Current spend</td><td style="text-align: right; font-weight: 600;">${fmt(args.spendUsd)}</td></tr>
-        <tr><td style="padding: 6px 0; color: #555;">Budget</td><td style="text-align: right; font-weight: 600;">${fmt(args.budgetUsd)}</td></tr>
+        <tr><td style="padding: 6px 0; color: #555;">Allocated pool</td><td style="text-align: right; font-weight: 600;">${fmt(args.budgetUsd)}</td></tr>
         <tr><td style="padding: 6px 0; color: #555;">Threshold crossed</td><td style="text-align: right; font-weight: 600;">${args.threshold}%</td></tr>
       </table>
       <p style="color: #777; font-size: 12px; margin-top: 24px;">Sent automatically by Group Budget Monitor.</p>

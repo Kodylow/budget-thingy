@@ -5,11 +5,14 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AlertEntityType } from './alertEntityType';
 
 export interface Alert {
   id: number;
-  groupId: string;
-  groupName: string;
+  entityType: AlertEntityType;
+  entityId: string;
+  entityName: string;
+  workspaceIds: string[];
   /** Threshold percent crossed (50, 75, 90, 100) */
   threshold: number;
   spendUsd: number;

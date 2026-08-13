@@ -7,6 +7,9 @@ import {
   teamBudgetsTable,
   adminEmailsTable,
   alertsTable,
+  editorAllowlistTable,
+  editorBootstrapStateTable,
+  usersTable,
 } from "@workspace/db";
 import {
   ListGroupsResponse,
@@ -31,6 +34,10 @@ import {
   GetGroupProjectsResponse,
   GetTrendsQueryParams,
   GetTrendsResponse,
+  ListEditorsResponse,
+  AddEditorBody,
+  AddEditorResponse,
+  DeleteEditorResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -66,8 +73,17 @@ import {
   getLastCheckAt,
   CHECK_INTERVAL_MINUTES,
 } from "../lib/checker";
-import { requireAuth, requireAccountAdmin } from "../middlewares/requireAuth";
-import { canSeeGroup, scopeGroups, type Authorization } from "../lib/authz";
+import {
+  requireAuth,
+  requireAccountAdmin,
+  requireAccountOperator,
+} from "../middlewares/requireAuth";
+import {
+  canSeeGroup,
+  isAccountWide,
+  scopeGroups,
+  type Authorization,
+} from "../lib/authz";
 import { getHistoryForGroups, projectEndOfPeriod } from "../lib/history";
 
 const router: IRouter = Router();
@@ -207,8 +223,10 @@ function mergedGroupMemberIds(
 function alertToJson(a: typeof alertsTable.$inferSelect) {
   return {
     id: a.id,
-    groupId: a.groupId,
-    groupName: a.groupName,
+    entityType: a.entityType,
+    entityId: a.entityId || a.groupId,
+    entityName: a.entityName || a.groupName,
+    workspaceIds: a.workspaceIds,
     threshold: a.threshold,
     spendUsd: a.spendUsd,
     budgetUsd: a.budgetUsd,
@@ -248,7 +266,7 @@ router.get("/groups", async (req, res): Promise<void> => {
     // it preempts checker/snapshot group-total work already waiting at startup.
     // Once synchronized, these entries are durable and hydrate before listen.
     for (const group of scoped) queueMemberUsageFetch(group, range, 0);
-    const isAccountAdmin = req.authz!.role === "account_admin";
+    const isAccountAdmin = isAccountWide(req.authz);
     if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 0);
     // Raw group totals support alerting/history metadata but are not required to
     // construct the member-deduped dashboard, so keep them in the background.
@@ -453,7 +471,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // All source groups must be loaded for spend to be considered complete.
     const allSourcesLoaded = sourceIds.every((id) => !!getMemberUsage(id, range.key));
 
-    const isAccountAdmin = req.authz!.role === "account_admin";
+    const isAccountAdmin = isAccountWide(req.authz);
     if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 0);
     const extraSpend = isAccountAdmin
       ? getExtraWorkspaceSpend(dir, range.key)
@@ -794,7 +812,7 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
   }
 });
 
-router.post("/groups/:groupId/refresh", requireAccountAdmin, async (req, res): Promise<void> => {
+router.post("/groups/:groupId/refresh", requireAccountOperator, async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const dir = await getDirectory();
   const group = dir.groups.find((g) => g.id === groupId);
@@ -815,7 +833,7 @@ router.get("/summary", async (req, res): Promise<void> => {
     return;
   }
   const authz = req.authz!;
-  const isAccount = authz.role === "account_admin";
+  const isAccount = isAccountWide(authz);
   const [budgets, teamBudgets] = await Promise.all([
     db.select().from(groupBudgetsTable),
     db.select().from(teamBudgetsTable),
@@ -904,7 +922,11 @@ router.get("/summary", async (req, res): Promise<void> => {
   const alertsSentThisPeriod = allAlerts.filter(
     (a) =>
       a.status === "sent" &&
-      (isAccount || visibleGroupIds.has(a.groupId)) &&
+      (isAccount ||
+        (a.entityType === "team"
+          ? a.workspaceIds.length > 0 &&
+            a.workspaceIds.every((workspaceId) => authz.workspaceIds.includes(workspaceId))
+          : visibleGroupIds.has(a.entityId || a.groupId))) &&
       (!periodStart || a.sentAt >= periodStart),
   ).length;
 
@@ -926,21 +948,56 @@ router.get("/summary", async (req, res): Promise<void> => {
   );
 });
 
-// Team budgets are account-wide configuration (not workspace-scoped), so they
-// are only exposed to account admins.
-router.get("/teams/budgets", requireAccountAdmin, async (_req, res): Promise<void> => {
+// Account-wide roles see every team pool. Workspace admins get read-only pool
+// values only for teams containing a group in one of their administered workspaces.
+router.get("/teams/budgets", async (req, res): Promise<void> => {
   const budgets = await db.select().from(teamBudgetsTable);
+  const [dir, assignments] = await Promise.all([
+    getDirectory(),
+    db.select().from(groupTeamsTable),
+  ]);
+  const scopedGroups = visibleGroups(req.authz!, dir.groups);
+  const visibleGroupNames = new Set(scopedGroups.map((group) => group.name));
+  const visibleTeams = new Set(
+    assignments
+      .filter((assignment) => visibleGroupNames.has(assignment.groupName))
+      .map((assignment) => assignment.teamName),
+  );
+  const allWorkspaceIdsByTeam = new Map<string, Set<string>>();
+  for (const group of dir.groups) {
+    const teamName = assignments.find((assignment) => assignment.groupName === group.name)?.teamName;
+    if (!teamName) continue;
+    const ids = allWorkspaceIdsByTeam.get(teamName) ?? new Set<string>();
+    ids.add(group.workspaceId);
+    allWorkspaceIdsByTeam.set(teamName, ids);
+  }
+  const workspaceIdsByTeam = new Map<string, Set<string>>();
+  for (const group of scopedGroups) {
+    const teamName = assignments.find((assignment) => assignment.groupName === group.name)?.teamName;
+    if (!teamName) continue;
+    const ids = workspaceIdsByTeam.get(teamName) ?? new Set<string>();
+    ids.add(group.workspaceId);
+    workspaceIdsByTeam.set(teamName, ids);
+  }
+  const visibleBudgets = isAccountWide(req.authz)
+    ? budgets
+    : budgets.filter((budget) => visibleTeams.has(budget.teamName));
   res.json(
     GetTeamsBudgetsResponse.parse({
-      budgets: budgets.map((b) => ({
+      budgets: visibleBudgets.map((b) => ({
         teamName: b.teamName,
         amountUsd: b.amountUsd,
+        workspaceIds: [
+          ...(isAccountWide(req.authz)
+            ? allWorkspaceIdsByTeam.get(b.teamName) ?? []
+            : workspaceIdsByTeam.get(b.teamName) ?? []),
+        ].sort(),
       })),
     }),
   );
 });
 
-router.put("/teams/:teamName/budget", requireAccountAdmin, async (req, res): Promise<void> => {
+router.put("/teams/:teamName/budget", requireAccountOperator, async (req, res): Promise<void> => {
   const teamName = decodeURIComponent(String(req.params["teamName"]));
   const parsed = SetTeamBudgetBody.safeParse(req.body);
   if (!parsed.success) {
@@ -963,11 +1020,12 @@ router.put("/teams/:teamName/budget", requireAccountAdmin, async (req, res): Pro
     SetTeamBudgetResponse.parse({
       teamName: row.teamName,
       amountUsd: row.amountUsd,
+      workspaceIds: [],
     }),
   );
 });
 
-router.delete("/teams/:teamName/budget", requireAccountAdmin, async (req, res): Promise<void> => {
+router.delete("/teams/:teamName/budget", requireAccountOperator, async (req, res): Promise<void> => {
   const teamName = decodeURIComponent(String(req.params["teamName"]));
   await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, teamName));
   res.status(204).send();
@@ -977,7 +1035,7 @@ router.get("/budgets", async (req, res): Promise<void> => {
   const authz = req.authz!;
   const budgets = await db.select().from(groupBudgetsTable);
   let visible = budgets;
-  if (authz.role !== "account_admin") {
+  if (!isAccountWide(authz)) {
     // Scope budgets to the groups this workspace admin can see.
     try {
       const dir = await getDirectory();
@@ -999,7 +1057,7 @@ router.get("/budgets", async (req, res): Promise<void> => {
   );
 });
 
-router.put("/groups/:groupId/budget", requireAccountAdmin, async (req, res): Promise<void> => {
+router.put("/groups/:groupId/budget", requireAccountOperator, async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const parsed = SetGroupBudgetBody.safeParse(req.body);
   if (!parsed.success) {
@@ -1027,7 +1085,7 @@ router.put("/groups/:groupId/budget", requireAccountAdmin, async (req, res): Pro
   );
 });
 
-router.delete("/groups/:groupId/budget", requireAccountAdmin, async (req, res): Promise<void> => {
+router.delete("/groups/:groupId/budget", requireAccountOperator, async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const deleted = await db
     .delete(groupBudgetsTable)
@@ -1110,19 +1168,102 @@ router.delete("/admins/:adminId", requireAccountAdmin, async (req, res): Promise
   res.json(DeleteAdminResponse.parse({ ok: true }));
 });
 
+router.get("/editors", requireAccountAdmin, async (_req, res): Promise<void> => {
+  const editors = await db
+    .select()
+    .from(editorAllowlistTable)
+    .orderBy(editorAllowlistTable.createdAt);
+  res.json(
+    ListEditorsResponse.parse(
+      editors.map((editor) => ({
+        userId: editor.userId,
+        email: editor.email,
+        createdBy: editor.createdBy,
+        createdAt: editor.createdAt.toISOString(),
+      })),
+    ),
+  );
+});
+
+router.post("/editors", requireAccountAdmin, async (req, res): Promise<void> => {
+  const parsed = AddEditorBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const userId = parsed.data.userId.trim();
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  if (!user) {
+    res.status(404).json({ error: "This Replit user has not signed in to the app" });
+    return;
+  }
+  const [row] = await db
+    .insert(editorAllowlistTable)
+    .values({
+      userId,
+      email: user.email ?? "",
+      createdBy: req.user!.id,
+    })
+    .onConflictDoNothing({ target: editorAllowlistTable.userId })
+    .returning();
+  if (!row) {
+    res.status(400).json({ error: "This user is already an editor" });
+    return;
+  }
+  res.status(201).json(
+    AddEditorResponse.parse({
+      userId: row.userId,
+      email: row.email,
+      createdBy: row.createdBy,
+      createdAt: row.createdAt.toISOString(),
+    }),
+  );
+});
+
+router.delete("/editors/:userId", requireAccountAdmin, async (req, res): Promise<void> => {
+  const userId = decodeURIComponent(String(req.params["userId"]));
+  const deleted = await db.transaction(async (tx) => {
+    const removed = await tx
+      .delete(editorAllowlistTable)
+      .where(eq(editorAllowlistTable.userId, userId))
+      .returning();
+    const row = removed[0];
+    if (row) {
+      await tx
+        .insert(editorBootstrapStateTable)
+        .values({
+          userId: row.userId,
+          email: row.email,
+          completedBy: req.user!.id,
+        })
+        .onConflictDoNothing({ target: editorBootstrapStateTable.userId });
+    }
+    return removed;
+  });
+  if (deleted.length === 0) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(DeleteEditorResponse.parse({ ok: true }));
+});
+
 router.get("/alerts", async (req, res): Promise<void> => {
   const authz = req.authz!;
-  const isAccount = authz.role === "account_admin";
+  const accountWide = isAccountWide(authz);
+  const canSeeRecipients = authz.role === "account_admin";
   const parsed = ListAlertsQueryParams.safeParse(req.query);
   const limit = parsed.success && parsed.data.limit ? parsed.data.limit : 100;
 
-  if (isAccount) {
+  if (accountWide) {
     const alerts = await db
       .select()
       .from(alertsTable)
       .orderBy(desc(alertsTable.sentAt))
       .limit(limit);
-    res.json(ListAlertsResponse.parse(alerts.map(alertToJson)));
+    const visible = alerts.map(alertToJson).map((alert) =>
+      canSeeRecipients ? alert : { ...alert, recipients: [] },
+    );
+    res.json(ListAlertsResponse.parse(visible));
     return;
   }
 
@@ -1141,14 +1282,20 @@ router.get("/alerts", async (req, res): Promise<void> => {
     .select()
     .from(alertsTable)
     .orderBy(desc(alertsTable.sentAt));
+  const allowedWorkspaceIds = new Set(authz.workspaceIds);
   const scoped = allAlerts
-    .filter((a) => allowedIds.has(a.groupId))
+    .filter((a) =>
+      a.entityType === "team"
+        ? a.workspaceIds.length > 0 &&
+          a.workspaceIds.every((workspaceId) => allowedWorkspaceIds.has(workspaceId))
+        : allowedIds.has(a.entityId || a.groupId),
+    )
     .slice(0, limit)
     .map((a) => ({ ...alertToJson(a), recipients: [] }));
   res.json(ListAlertsResponse.parse(scoped));
 });
 
-router.post("/alerts/check", requireAccountAdmin, async (req, res): Promise<void> => {
+router.post("/alerts/check", requireAccountOperator, async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
@@ -1158,6 +1305,7 @@ router.post("/alerts/check", requireAccountAdmin, async (req, res): Promise<void
     res.json(
       RunAlertCheckResponse.parse({
         checkedGroups: result.checkedGroups,
+        checkedTeams: result.checkedTeams,
         alertsSent: result.alerts.filter((a) => a.status === "sent").length,
         alerts: result.alerts.map(alertToJson),
       }),
@@ -1344,7 +1492,7 @@ router.get("/trends", async (req, res): Promise<void> => {
 // Returns a CSV of all users across all groups.
 // Each user appears once (first custom group wins). Spend is shown where cached;
 // groups whose per-member usage has not loaded yet are included with spend=0 and queued.
-router.get("/export/users.csv", requireAccountAdmin, async (req, res) => {
+router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
   let dir: Awaited<ReturnType<typeof getDirectory>>;
   try {
     dir = await getDirectory();
@@ -1358,7 +1506,7 @@ router.get("/export/users.csv", requireAccountAdmin, async (req, res) => {
   const groupTeams = await db.select().from(groupTeamsTable);
   const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
-  // Route is account-admin-only (requireAccountAdmin middleware enforces this).
+  // Route is account-wide (true account admins and managed editors).
   // Queue member usage + extra workspace fetches so combined spend is populated.
   for (const group of dir.groups) queueMemberUsageFetch(group, billingRange, 1);
   queueExtraWorkspacesFetch(dir, billingRange, 1);
@@ -1519,7 +1667,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     }
   }
 
-  const callerIsAccountAdmin = req.authz?.role === "account_admin";
+  const callerIsAccountAdmin = isAccountWide(req.authz);
 
   // Pass 2: emit one entry per relevant member.
   // Workspace admins see only members in their visible groups.

@@ -30,23 +30,24 @@ export interface AuthUser {
 }
 
 /**
- * Effective role resolved from the Enterprise directory.
+ * Effective role resolved from the Enterprise directory and managed editor allowlist.
  */
 export type AuthAuthorizationRole = typeof AuthAuthorizationRole[keyof typeof AuthAuthorizationRole];
 
 
 export const AuthAuthorizationRole = {
   account_admin: 'account_admin',
+  account_editor: 'account_editor',
   workspace_admin: 'workspace_admin',
 } as const;
 
 /**
- * Resolved Enterprise authorization for the signed-in user. account_admin sees the whole account; workspace_admin sees only the listed workspaces.
+ * Resolved authorization for the signed-in user. account_admin and account_editor see the whole account; workspace_admin sees only the listed workspaces. Only account_admin can manage editor access and settings.
  */
 export interface AuthAuthorization {
-  /** Effective role resolved from the Enterprise directory. */
+  /** Effective role resolved from the Enterprise directory and managed editor allowlist. */
   role: AuthAuthorizationRole;
-  /** Workspace IDs the user may view. Empty and ignored for account_admin (who sees every workspace); the union of admin workspaces for workspace_admin. */
+  /** Workspace IDs the user may view. Empty and ignored for account_admin and account_editor; the union of admin workspaces for workspace_admin. */
   workspaceIds: string[];
 }
 
@@ -310,6 +311,8 @@ export interface TeamBudget {
   teamName: string;
   /** @nullable */
   amountUsd: number | null;
+  /** Visible workspaces containing groups assigned to this team. */
+  workspaceIds: string[];
 }
 
 export interface TeamBudgetsResponse {
@@ -332,10 +335,34 @@ export interface AdminEmailInput {
   email: string;
 }
 
+export interface AccountEditor {
+  userId: string;
+  /** @nullable */
+  email: string | null;
+  createdAt: string;
+  /** @nullable */
+  createdBy?: string | null;
+}
+
+export interface AccountEditorInput {
+  /** @minLength 1 */
+  userId: string;
+}
+
+export type AlertEntityType = typeof AlertEntityType[keyof typeof AlertEntityType];
+
+
+export const AlertEntityType = {
+  group: 'group',
+  team: 'team',
+} as const;
+
 export interface Alert {
   id: number;
-  groupId: string;
-  groupName: string;
+  entityType: AlertEntityType;
+  entityId: string;
+  entityName: string;
+  workspaceIds: string[];
   /** Threshold percent crossed (50, 75, 90, 100) */
   threshold: number;
   spendUsd: number;
@@ -350,6 +377,7 @@ export interface Alert {
 
 export interface CheckResult {
   checkedGroups: number;
+  checkedTeams: number;
   alertsSent: number;
   alerts?: Alert[];
 }

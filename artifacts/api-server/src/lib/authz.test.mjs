@@ -6,6 +6,11 @@ import {
   canSeeGroup,
   canSeeWorkspace,
   isAccountAdmin,
+  isAccountEditor,
+  isAccountWide,
+  normalizeEmail,
+  BOOTSTRAP_EDITOR_EMAIL,
+  setEditorAllowlistLookup,
 } from "./authz.ts";
 import { __setDirectoryCacheForTests } from "./enterprise.ts";
 
@@ -54,12 +59,21 @@ const members = new Map([
   })],
 ]);
 
+// In-memory editor allowlist injected in place of the DB-backed lookup so
+// authorization logic can be exercised without a database.
+let editorIds = new Set();
+
 function seed() {
+  editorIds = new Set();
   __setDirectoryCacheForTests({ groups, members });
+  setEditorAllowlistLookup((userId) => Promise.resolve(editorIds.has(userId)));
 }
 
 test.beforeEach(seed);
-test.after(() => __setDirectoryCacheForTests(null));
+test.after(() => {
+  __setDirectoryCacheForTests(null);
+  setEditorAllowlistLookup(null);
+});
 
 test("unknown user is denied (fail closed)", async () => {
   assert.equal(await resolveAuthorization("nobody"), null);
@@ -116,4 +130,71 @@ test("canSeeGroup / canSeeWorkspace enforce scope", () => {
   assert.equal(canSeeGroup(authz, groups[0]), false); // g-ws1-a
   const acct = { role: "account_admin", workspaceIds: [] };
   assert.equal(canSeeWorkspace(acct, "any"), true);
+});
+
+// ---------------------------------------------------------------------------
+// Managed account_editor allowlist resolution.
+// ---------------------------------------------------------------------------
+
+test("persisted editor resolves to account_editor with account-wide access", async () => {
+  editorIds.add("plain");
+  const authz = await resolveAuthorization("plain");
+  assert.deepEqual(authz, { role: "account_editor", workspaceIds: [] });
+  assert.equal(isAccountEditor(authz), true);
+  assert.equal(isAccountWide(authz), true);
+  assert.equal(isAccountAdmin(authz), false);
+  // Account-wide visibility: every workspace/group is visible.
+  assert.equal(canSeeWorkspace(authz, "ws-1"), true);
+  assert.equal(canSeeWorkspace(authz, "ws-unknown"), true);
+  assert.equal(scopeGroups(authz, groups).length, groups.length);
+});
+
+test("persisted editor not in the directory still gets account-wide access", async () => {
+  editorIds.add("external-editor");
+  const authz = await resolveAuthorization("external-editor");
+  assert.deepEqual(authz, { role: "account_editor", workspaceIds: [] });
+  assert.equal(isAccountWide(authz), true);
+});
+
+test("workspace admin who is also a persisted editor is upgraded to editor", async () => {
+  editorIds.add("ws1admin");
+  const authz = await resolveAuthorization("ws1admin");
+  assert.equal(authz.role, "account_editor");
+  assert.deepEqual(authz.workspaceIds, []);
+});
+
+test("true account admin takes precedence over the editor allowlist", async () => {
+  editorIds.add("acct");
+  const authz = await resolveAuthorization("acct");
+  assert.equal(authz.role, "account_admin");
+  assert.equal(isAccountAdmin(authz), true);
+  assert.equal(isAccountEditor(authz), false);
+});
+
+test("non-editor ordinary member is still denied (fail closed)", async () => {
+  // "plain" is a non-admin member and not on the allowlist.
+  assert.equal(await resolveAuthorization("plain"), null);
+});
+
+test("workspace admin who is not an editor retains scoped workspace_admin", async () => {
+  const authz = await resolveAuthorization("ws12admin");
+  assert.equal(authz.role, "workspace_admin");
+  assert.deepEqual([...authz.workspaceIds].sort(), ["ws-1", "ws-2"]);
+  // Scoping still applies: not account-wide.
+  assert.equal(isAccountWide(authz), false);
+  assert.equal(canSeeWorkspace(authz, "ws-3"), false);
+});
+
+test("isAccountWide / isAccountEditor handle null authz", () => {
+  assert.equal(isAccountWide(null), false);
+  assert.equal(isAccountEditor(undefined), false);
+  assert.equal(isAccountWide({ role: "workspace_admin", workspaceIds: [] }), false);
+});
+
+// ---------------------------------------------------------------------------
+// Bootstrap helper: verified-email-only, exact normalized match.
+// ---------------------------------------------------------------------------
+
+test("normalizeEmail trims and lowercases", () => {
+  assert.equal(normalizeEmail("  KODY.Low@Repl.it \n"), BOOTSTRAP_EDITOR_EMAIL);
 });

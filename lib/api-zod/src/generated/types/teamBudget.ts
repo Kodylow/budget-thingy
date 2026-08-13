@@ -10,4 +10,6 @@ export interface TeamBudget {
   teamName: string;
   /** @nullable */
   amountUsd: number | null;
+  /** Visible workspaces containing groups assigned to this team. */
+  workspaceIds: string[];
 }

@@ -1,2 +1,3 @@
 - [Replit Enterprise usage API](enterprise-usage-api.md) — /usage needs one serial rate-limited queue; groupId requires workspaceId; period key = resolved interval.startTime; avoid format:email in spec.
 - [Overlapping group rollups](overlapping-group-rollups.md) — dedupe member spend by stable first custom-group attribution; keep raw group totals for budgets, alerts, history, and drill-downs.
+- [Allocated pool access](allocated-pool-access.md) — editors use stable Replit IDs; true admins manage access; shared-team alerts never reveal out-of-scope spend.

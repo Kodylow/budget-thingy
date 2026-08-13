@@ -19,7 +19,7 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const [location] = useLocation();
-  const { user, isAccountAdmin, isWorkspaceAdmin, workspaceIds, logout } =
+  const { user, isAccountAdmin, isAccountEditor, isWorkspaceAdmin, workspaceIds, logout } =
     useAuthContext();
 
   // Workspace admins get a read-only, scoped experience with no settings route.
@@ -38,11 +38,13 @@ export function AppShell({ children }: AppShellProps) {
 
   const roleLabel = isAccountAdmin
     ? 'Account admin'
+    : isAccountEditor
+      ? 'Account editor'
     : isWorkspaceAdmin
       ? 'Workspace admin'
       : 'Member';
 
-  const scopeLabel = isAccountAdmin
+  const scopeLabel = isAccountAdmin || isAccountEditor
     ? 'All workspaces'
     : workspaceIds.length > 0
       ? `${workspaceIds.length} workspace${workspaceIds.length === 1 ? '' : 's'}`
@@ -102,7 +104,7 @@ export function AppShell({ children }: AppShellProps) {
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge
-                  variant={isAccountAdmin ? 'default' : 'secondary'}
+                  variant={isAccountAdmin || isAccountEditor ? 'default' : 'secondary'}
                   className="text-[10px]"
                   data-testid="badge-role"
                 >

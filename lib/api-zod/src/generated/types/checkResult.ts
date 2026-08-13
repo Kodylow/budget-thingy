@@ -9,6 +9,7 @@ import type { Alert } from './alert';
 
 export interface CheckResult {
   checkedGroups: number;
+  checkedTeams: number;
   alertsSent: number;
   alerts?: Alert[];
 }

@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AccountEditor,
+  AccountEditorInput,
   AdminEmail,
   AdminEmailInput,
   Alert,
@@ -1898,6 +1900,228 @@ export const useDeleteAdmin = <TError = ErrorType<UnauthorizedResponse | Forbidd
         TContext
       > => {
       return useMutation(getDeleteAdminMutationOptions(options));
+    }
+
+export const getListEditorsUrl = () => {
+
+
+
+
+  return `/api/editors`
+}
+
+/**
+ * Available only to true Enterprise account administrators.
+ * @summary List account-wide app editors
+ */
+export const listEditors = async ( options?: RequestInit): Promise<AccountEditor[]> => {
+
+  return customFetch<AccountEditor[]>(getListEditorsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListEditorsQueryKey = () => {
+    return [
+    `/api/editors`
+    ] as const;
+    }
+
+
+export const getListEditorsQueryOptions = <TData = Awaited<ReturnType<typeof listEditors>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEditors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListEditorsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEditors>>> = ({ signal }) => listEditors({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEditors>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListEditorsQueryResult = NonNullable<Awaited<ReturnType<typeof listEditors>>>
+export type ListEditorsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List account-wide app editors
+ */
+
+export function useListEditors<TData = Awaited<ReturnType<typeof listEditors>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEditors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListEditorsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAddEditorUrl = () => {
+
+
+
+
+  return `/api/editors`
+}
+
+/**
+ * Available only to true Enterprise account administrators. The stable Replit user ID must already have signed in.
+ * @summary Add an account-wide app editor
+ */
+export const addEditor = async (accountEditorInput: AccountEditorInput, options?: RequestInit): Promise<AccountEditor> => {
+
+  return customFetch<AccountEditor>(getAddEditorUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(accountEditorInput)
+  }
+);}
+
+
+
+
+
+export const getAddEditorMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addEditor>>, TError,{data: BodyType<AccountEditorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addEditor>>, TError,{data: BodyType<AccountEditorInput>}, TContext> => {
+
+const mutationKey = ['addEditor'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addEditor>>, {data: BodyType<AccountEditorInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  addEditor(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddEditorMutationResult = NonNullable<Awaited<ReturnType<typeof addEditor>>>
+    export type AddEditorMutationBody = BodyType<AccountEditorInput>
+    export type AddEditorMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Add an account-wide app editor
+ */
+export const useAddEditor = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addEditor>>, TError,{data: BodyType<AccountEditorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addEditor>>,
+        TError,
+        {data: BodyType<AccountEditorInput>},
+        TContext
+      > => {
+      return useMutation(getAddEditorMutationOptions(options));
+    }
+
+export const getDeleteEditorUrl = (userId: string,) => {
+
+
+
+
+  return `/api/editors/${userId}`
+}
+
+/**
+ * Available only to true Enterprise account administrators.
+ * @summary Remove an account-wide app editor
+ */
+export const deleteEditor = async (userId: string, options?: RequestInit): Promise<OkResponse> => {
+
+  return customFetch<OkResponse>(getDeleteEditorUrl(userId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteEditorMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEditor>>, TError,{userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteEditor>>, TError,{userId: string}, TContext> => {
+
+const mutationKey = ['deleteEditor'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteEditor>>, {userId: string}> = (props) => {
+          const {userId} = props ?? {};
+
+          return  deleteEditor(userId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteEditorMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEditor>>>
+
+    export type DeleteEditorMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+    /**
+ * @summary Remove an account-wide app editor
+ */
+export const useDeleteEditor = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEditor>>, TError,{userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteEditor>>,
+        TError,
+        {userId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteEditorMutationOptions(options));
     }
 
 export const getListAlertsUrl = (params?: ListAlertsParams,) => {

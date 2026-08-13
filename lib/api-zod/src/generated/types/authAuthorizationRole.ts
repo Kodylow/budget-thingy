@@ -7,12 +7,13 @@
  */
 
 /**
- * Effective role resolved from the Enterprise directory.
+ * Effective role resolved from the Enterprise directory and managed editor allowlist.
  */
 export type AuthAuthorizationRole = typeof AuthAuthorizationRole[keyof typeof AuthAuthorizationRole];
 
 
 export const AuthAuthorizationRole = {
   account_admin: 'account_admin',
+  account_editor: 'account_editor',
   workspace_admin: 'workspace_admin',
 } as const;

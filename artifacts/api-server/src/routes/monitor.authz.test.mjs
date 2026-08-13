@@ -1,11 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
-import { inArray } from "drizzle-orm";
-import { alertsTable, db, groupBudgetsTable } from "@workspace/db";
+import { eq, inArray } from "drizzle-orm";
+import {
+  alertsTable,
+  db,
+  editorAllowlistTable,
+  editorBootstrapStateTable,
+  groupBudgetsTable,
+  groupTeamsTable,
+  teamBudgetsTable,
+  usersTable,
+} from "@workspace/db";
 
 import monitorRouter from "./monitor.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
+import {
+  BOOTSTRAP_EDITOR_EMAIL,
+  maybeBootstrapEditor,
+} from "../lib/authz.ts";
 import {
   __setDirectoryCacheForTests,
   __setMemberUsageForTests,
@@ -41,6 +54,7 @@ const members = new Map([
   ["ws1admin", m("ws1admin", false, { "ws-1": { role: "admin", isDisabled: false } })],
   ["plain", m("plain", false, { "ws-1": { role: "member", isDisabled: false } })],
   ["ws2user", m("ws2user", false, { "ws-2": { role: "member", isDisabled: false } })],
+  ["editor", m("editor", false, { "ws-1": { role: "member", isDisabled: false } })],
 ]);
 
 // ws1admin and plain are in g-ws1-a; ws2user is in g-ws2-a (out of ws1admin's scope)
@@ -75,6 +89,30 @@ test.before(async () => {
     { groupId: "g-ws1-a", amountUsd: 100 },
     { groupId: "g-ws2-a", amountUsd: 200 },
   ]).onConflictDoNothing();
+  await db.insert(groupTeamsTable).values([
+    { groupName: "Alpha", teamName: "Team One" },
+    { groupName: "Gamma", teamName: "Team Two" },
+  ]).onConflictDoNothing();
+  await db.insert(teamBudgetsTable).values([
+    { teamName: "Team One", amountUsd: 500 },
+    { teamName: "Team Two", amountUsd: 900 },
+  ]).onConflictDoNothing();
+  await db.insert(usersTable).values({
+    id: "editor",
+    email: "editor@example.com",
+  }).onConflictDoNothing();
+  await db.insert(usersTable).values({
+    id: "candidate-editor",
+    email: "candidate-editor@example.com",
+  }).onConflictDoNothing();
+  await db.insert(usersTable).values({
+    id: "bootstrap-editor",
+    email: BOOTSTRAP_EDITOR_EMAIL,
+  }).onConflictDoNothing();
+  await db.insert(editorAllowlistTable).values({
+    userId: "editor",
+    email: "editor@example.com",
+  }).onConflictDoNothing();
   await db.insert(alertsTable).values([
     {
       groupId: "g-ws1-a",
@@ -118,6 +156,11 @@ test.after(async () => {
   const fixtureIds = ["g-ws1-a", "g-ws2-a"];
   await db.delete(alertsTable).where(inArray(alertsTable.groupId, fixtureIds));
   await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, fixtureIds));
+  await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, ["Team One", "Team Two"]));
+  await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, ["Alpha", "Gamma"]));
+  await db.delete(editorAllowlistTable).where(inArray(editorAllowlistTable.userId, ["editor", "candidate-editor", "bootstrap-editor"]));
+  await db.delete(editorBootstrapStateTable).where(eq(editorBootstrapStateTable.userId, "bootstrap-editor"));
+  await db.delete(usersTable).where(inArray(usersTable.id, ["editor", "candidate-editor", "bootstrap-editor"]));
   __setDirectoryCacheForTests(null);
   __setMemberUsageForTests("custom:2026-05-20:2026-08-11", null);
   setAuthorizationResolver(null);
@@ -241,7 +284,8 @@ test("workspace admin alerts are scoped and recipient addresses are redacted", a
   const { status, json } = await req("/alerts", { user: "ws1admin" });
   assert.equal(status, 200);
   assert.equal(json.length, 1);
-  assert.equal(json[0].groupId, "g-ws1-a");
+  assert.equal(json[0].entityType, "group");
+  assert.equal(json[0].entityId, "g-ws1-a");
   assert.deepEqual(json[0].recipients, []);
 });
 
@@ -255,9 +299,62 @@ test("workspace admin is denied system status (403)", async () => {
   assert.equal(status, 403);
 });
 
-test("workspace admin is denied team budgets (403)", async () => {
-  const { status } = await req("/teams/budgets", { user: "ws1admin" });
-  assert.equal(status, 403);
+test("workspace admin sees only in-scope team pools read-only", async () => {
+  const { status, json } = await req("/teams/budgets", { user: "ws1admin" });
+  assert.equal(status, 200);
+  assert.deepEqual(json.budgets.map((budget) => budget.teamName), ["Team One"]);
+  assert.deepEqual(json.budgets[0].workspaceIds, ["ws-1"]);
+});
+
+test("workspace admin sees a shared team pool but not its account-wide alert aggregate", async () => {
+  await db
+    .update(groupTeamsTable)
+    .set({ teamName: "Shared Team" })
+    .where(inArray(groupTeamsTable.groupName, ["Alpha", "Gamma"]));
+  await db
+    .insert(teamBudgetsTable)
+    .values({ teamName: "Shared Team", amountUsd: 1400 })
+    .onConflictDoNothing();
+  const [teamAlert] = await db
+    .insert(alertsTable)
+    .values({
+      groupId: "Shared Team",
+      groupName: "Shared Team",
+      entityType: "team",
+      entityId: "Shared Team",
+      entityName: "Shared Team",
+      workspaceIds: ["ws-1", "ws-2"],
+      threshold: 50,
+      spendUsd: 700,
+      budgetUsd: 1400,
+      recipients: ["private@example.com"],
+      status: "sent",
+    })
+    .returning();
+  try {
+    const pools = await req("/teams/budgets", { user: "ws1admin" });
+    assert.equal(pools.status, 200);
+    const sharedPool = pools.json.budgets.find((budget) => budget.teamName === "Shared Team");
+    assert.equal(sharedPool.amountUsd, 1400);
+    assert.deepEqual(sharedPool.workspaceIds, ["ws-1"]);
+
+    const alerts = await req("/alerts", { user: "ws1admin" });
+    assert.ok(!alerts.json.some((alert) => alert.entityId === "Shared Team"));
+
+    const accountPools = await req("/teams/budgets", { user: "acct" });
+    assert.ok(accountPools.json.budgets.some((budget) => budget.teamName === "Shared Team"));
+  } finally {
+    if (teamAlert) await db.delete(alertsTable).where(eq(alertsTable.id, teamAlert.id));
+    await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, "Shared Team"));
+    await db
+      .update(groupTeamsTable)
+      .set({ teamName: "Team One" })
+      .where(eq(groupTeamsTable.groupName, "Alpha"));
+    await db
+      .update(groupTeamsTable)
+      .set({ teamName: "Team Two" })
+      .where(eq(groupTeamsTable.groupName, "Gamma"));
+  }
 });
 
 test("workspace admin mutation attempts are rejected (403, read-only)", async () => {
@@ -277,6 +374,13 @@ test("workspace admin mutation attempts are rejected (403, read-only)", async ()
   const check = await req("/alerts/check", { user: "ws1admin", method: "POST" });
   assert.equal(check.status, 403);
 
+  const setTeamBudget = await req("/teams/Team%20One/budget", {
+    user: "ws1admin",
+    method: "PUT",
+    body: { amountUsd: 200 },
+  });
+  assert.equal(setTeamBudget.status, 403);
+
   const addAdmin = await req("/admins", {
     user: "ws1admin",
     method: "POST",
@@ -290,6 +394,71 @@ test("account admin can read account-only endpoints", async () => {
   assert.equal(admins.status, 200);
   const status = await req("/status", { user: "acct" });
   assert.equal(status.status, 200);
+});
+
+test("allowlisted editor has account-wide operational access but no settings or access management", async () => {
+  const groupsResponse = await req("/groups", { user: "editor" });
+  assert.equal(groupsResponse.status, 200);
+  assert.deepEqual(groupsResponse.json.groups.map((group) => group.groupId).sort(), ["g-ws1-a", "g-ws2-a"]);
+
+  const setPool = await req("/groups/g-ws1-a/budget", {
+    user: "editor",
+    method: "PUT",
+    body: { amountUsd: 321 },
+  });
+  assert.equal(setPool.status, 200);
+
+  assert.equal((await req("/admins", { user: "editor" })).status, 403);
+  assert.equal((await req("/status", { user: "editor" })).status, 403);
+  assert.equal((await req("/editors", { user: "editor" })).status, 403);
+  assert.equal(
+    (await req("/editors", {
+      user: "editor",
+      method: "POST",
+      body: { userId: "candidate-editor" },
+    })).status,
+    403,
+  );
+});
+
+test("only a true account admin can add and remove an editor", async () => {
+  const added = await req("/editors", {
+    user: "acct",
+    method: "POST",
+    body: { userId: "candidate-editor" },
+  });
+  assert.equal(added.status, 201);
+  assert.equal(added.json.userId, "candidate-editor");
+
+  const listed = await req("/editors", { user: "acct" });
+  assert.equal(listed.status, 200);
+  assert.ok(listed.json.some((editorEntry) => editorEntry.userId === "candidate-editor"));
+
+  const removed = await req("/editors/candidate-editor", {
+    user: "acct",
+    method: "DELETE",
+  });
+  assert.equal(removed.status, 200);
+});
+
+test("account-admin removal survives the designated editor's next verified login", async () => {
+  const claims = {
+    sub: "bootstrap-editor",
+    email: BOOTSTRAP_EDITOR_EMAIL,
+    email_verified: true,
+  };
+  assert.equal(await maybeBootstrapEditor(claims), true);
+  assert.equal((await req("/groups", { user: "bootstrap-editor" })).status, 200);
+
+  const removed = await req("/editors/bootstrap-editor", {
+    user: "acct",
+    method: "DELETE",
+  });
+  assert.equal(removed.status, 200);
+
+  // Simulate the next successful OIDC callback.
+  assert.equal(await maybeBootstrapEditor(claims), false);
+  assert.equal((await req("/groups", { user: "bootstrap-editor" })).status, 403);
 });
 
 // ── /users/activity authorization tests ──────────────────────────────────────

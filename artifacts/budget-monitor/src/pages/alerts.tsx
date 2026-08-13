@@ -47,7 +47,7 @@ export default function Alerts() {
             Alerts
           </h1>
           <p className="text-muted-foreground mt-1">
-            Email notifications sent when groups cross budget thresholds
+            Email notifications sent when groups or teams cross allocated pool thresholds
           </p>
         </div>
         {canWrite && (
@@ -93,9 +93,12 @@ export default function Alerts() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-sm" data-testid={`text-group-name-${alert.id}`}>
-                        {alert.groupName}
+                      <span className="font-medium text-sm" data-testid={`text-entity-name-${alert.id}`}>
+                        {alert.entityName}
                       </span>
+                      <Badge variant="secondary" className="text-[10px] capitalize">
+                        {alert.entityType}
+                      </Badge>
                       <Badge
                         variant={alert.threshold >= 100 ? 'destructive' : 'outline'}
                         className="font-mono text-xs"
@@ -106,7 +109,7 @@ export default function Alerts() {
                     </div>
                     <div className="text-sm text-muted-foreground space-y-1">
                       <p data-testid={`text-spend-${alert.id}`}>
-                        Spend: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Budget:{' '}
+                        Spend: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Allocated pool:{' '}
                         <span className="font-mono">${alert.budgetUsd.toFixed(2)}</span>
                       </p>
                       <p data-testid={`text-recipients-${alert.id}`}>
@@ -131,7 +134,7 @@ export default function Alerts() {
               <div>
                 <p className="font-medium">No alerts sent yet</p>
                 <p className="text-sm mt-1">
-                  Alerts will appear here when groups cross budget thresholds
+                  Alerts will appear here when groups or teams cross allocated pool thresholds
                 </p>
               </div>
             </div>

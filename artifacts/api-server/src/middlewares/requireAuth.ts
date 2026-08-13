@@ -55,9 +55,10 @@ export async function requireAuth(
 }
 
 /**
- * Require that the authenticated user is an account admin. Must run after
- * `requireAuth` has populated `req.authz`. Workspace admins get a
- * non-disclosing 403.
+ * Require that the authenticated user is a *true* Enterprise account admin.
+ * Must run after `requireAuth` has populated `req.authz`. Reserved for
+ * privilege management (e.g. editing the editor allowlist): persisted editors
+ * and workspace admins get a non-disclosing 403.
  */
 export function requireAccountAdmin(
   req: Request,
@@ -65,6 +66,26 @@ export function requireAccountAdmin(
   next: NextFunction,
 ): void {
   if (req.authz?.role !== "account_admin") {
+    res.status(403).json({ error: "Access denied" });
+    return;
+  }
+  next();
+}
+
+/**
+ * Require that the authenticated user is an account-wide operator: either a
+ * true account admin or a persisted account editor. Must run after
+ * `requireAuth` has populated `req.authz`. Used for account-wide operational
+ * controls (setting/removing pools) that editors may perform. Workspace admins
+ * get a non-disclosing 403.
+ */
+export function requireAccountOperator(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  const role = req.authz?.role;
+  if (role !== "account_admin" && role !== "account_editor") {
     res.status(403).json({ error: "Access denied" });
     return;
   }

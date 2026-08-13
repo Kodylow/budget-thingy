@@ -22,6 +22,20 @@
       "when": 1786563323136,
       "tag": "0002_big_payback",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786584343639,
+      "tag": "0003_supreme_khan",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786585198674,
+      "tag": "0004_curvy_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

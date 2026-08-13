@@ -19,7 +19,7 @@ import {
   SESSION_TTL,
   type SessionData,
 } from '../lib/auth';
-import { resolveCurrentAuthorization } from '../lib/authz';
+import { maybeBootstrapEditor, resolveCurrentAuthorization } from '../lib/authz';
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
@@ -217,7 +217,14 @@ router.get('/callback', async (req: Request, res: Response) => {
     return;
   }
 
-  const dbUser = await upsertUser(claims as unknown as Record<string, unknown>);
+  const claimsRecord = claims as unknown as Record<string, unknown>;
+  const dbUser = await upsertUser(claimsRecord);
+  // Bootstrap the designated account-wide editor from their verified Replit
+  // identity. This is a no-op unless the claims present a verified, exactly
+  // matching email; the row is keyed by the stable `sub` claim.
+  await maybeBootstrapEditor(claimsRecord).catch((err) => {
+    req.log.error({ err }, 'editor bootstrap failed');
+  });
 
   const now = Math.floor(Date.now() / 1000);
   const sessionData: SessionData = {
@@ -287,9 +294,11 @@ router.post(
         return;
       }
 
-      const dbUser = await upsertUser(
-        claims as unknown as Record<string, unknown>,
-      );
+      const claimsRecord = claims as unknown as Record<string, unknown>;
+      const dbUser = await upsertUser(claimsRecord);
+      await maybeBootstrapEditor(claimsRecord).catch((err) => {
+        req.log.error({ err }, 'editor bootstrap failed');
+      });
 
       const now = Math.floor(Date.now() / 1000);
       const sessionData: SessionData = {

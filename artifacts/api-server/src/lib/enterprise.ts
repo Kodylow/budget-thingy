@@ -1346,11 +1346,12 @@ export function queueExtraWorkspacesFetch(
   dir: DirectoryCache,
   range: UsageRange,
   priority = 1,
+  force = false,
 ): void {
   const groupWorkspaceIds = new Set(dir.groups.map((g) => g.workspaceId));
   for (const [wsId] of dir.workspaces) {
     if (!groupWorkspaceIds.has(wsId)) {
-      queueWsSpendFetch(wsId, range, priority);
+      queueWsSpendFetch(wsId, range, priority, force);
     }
   }
 }

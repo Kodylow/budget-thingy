@@ -21,6 +21,8 @@ interface AuthContextValue {
   role: ResolvedRole | null;
   /** Full account-wide access. */
   isAccountAdmin: boolean;
+  /** Managed account-wide operational access without settings/access management. */
+  isAccountEditor: boolean;
   /** Read-only access scoped to one or more workspaces. */
   isWorkspaceAdmin: boolean;
   /** Signed in but neither an account admin nor an enabled workspace admin. */
@@ -41,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(() => {
     // `auth === null` while signed in means access-denied.
     const isAccountAdmin = auth?.role === 'account_admin';
+    const isAccountEditor = auth?.role === 'account_editor';
     const isWorkspaceAdmin = auth?.role === 'workspace_admin';
     const isDenied = isAuthenticated && auth == null;
     const role: ResolvedRole | null = !isAuthenticated
@@ -54,11 +57,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       role,
       isAccountAdmin,
+      isAccountEditor,
       isWorkspaceAdmin,
       isDenied,
-      // Only account admins may mutate (budget/team editors, manual checks,
-      // settings). Workspace admins get a strictly read-only experience.
-      canWrite: isAccountAdmin,
+      // Account editors can operate allocated pools and checks, but only true
+      // account admins can manage settings and editor access.
+      canWrite: isAccountAdmin || isAccountEditor,
       workspaceIds: auth?.workspaceIds ?? [],
       login,
       logout,
@@ -78,8 +82,7 @@ export function useAuthContext(): AuthContextValue {
 
 /**
  * Convenience hook for role-gating controls. Returns `true` only for account
- * admins, who are the sole role permitted to perform mutations (budget/team
- * editors, manual refresh/check, settings).
+ * account admins and managed account editors for operational mutations.
  */
 export function useCanWrite(): boolean {
   return useAuthContext().canWrite;

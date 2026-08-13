@@ -615,6 +615,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /editors:
+    get:
+      operationId: listEditors
+      tags: [admins]
+      summary: List account-wide app editors
+      description: Available only to true Enterprise account administrators.
+      responses:
+        "200":
+          description: Editor allowlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AccountEditor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: addEditor
+      tags: [admins]
+      summary: Add an account-wide app editor
+      description: Available only to true Enterprise account administrators. The stable Replit user ID must already have signed in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountEditorInput"
+      responses:
+        "201":
+          description: Editor added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountEditor"
+        "400":
+          description: Invalid or duplicate editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Replit user has not signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /editors/{userId}:
+    delete:
+      operationId: deleteEditor
+      tags: [admins]
+      summary: Remove an account-wide app editor
+      description: Available only to true Enterprise account administrators.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Editor removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /alerts:
     get:
       operationId: listAlerts
@@ -791,19 +873,20 @@ components:
     AuthAuthorization:
       type: object
       description: >
-        Resolved Enterprise authorization for the signed-in user. account_admin
-        sees the whole account; workspace_admin sees only the listed workspaces.
+        Resolved authorization for the signed-in user. account_admin and
+        account_editor see the whole account; workspace_admin sees only the
+        listed workspaces. Only account_admin can manage editor access and settings.
       required: [role, workspaceIds]
       properties:
         role:
           type: string
-          enum: [account_admin, workspace_admin]
-          description: Effective role resolved from the Enterprise directory.
+          enum: [account_admin, account_editor, workspace_admin]
+          description: Effective role resolved from the Enterprise directory and managed editor allowlist.
         workspaceIds:
           type: array
           description: >
             Workspace IDs the user may view. Empty and ignored for account_admin
-            (who sees every workspace); the union of admin workspaces for workspace_admin.
+            and account_editor; the union of admin workspaces for workspace_admin.
           items:
             type: string
     AuthUserEnvelope:
@@ -1154,12 +1237,17 @@ components:
           exclusiveMinimum: 0
     TeamBudget:
       type: object
-      required: [teamName, amountUsd]
+      required: [teamName, amountUsd, workspaceIds]
       properties:
         teamName:
           type: string
         amountUsd:
           type: ["number", "null"]
+        workspaceIds:
+          type: array
+          description: Visible workspaces containing groups assigned to this team.
+          items:
+            type: string
     TeamBudgetsResponse:
       type: object
       required: [budgets]
@@ -1192,17 +1280,43 @@ components:
         email:
           type: string
           minLength: 3
+    AccountEditor:
+      type: object
+      required: [userId, email, createdAt]
+      properties:
+        userId:
+          type: string
+        email:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        createdBy:
+          type: ["string", "null"]
+    AccountEditorInput:
+      type: object
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          minLength: 1
     Alert:
       type: object
       required:
-        [id, groupId, groupName, threshold, spendUsd, budgetUsd, recipients, sentAt, status]
+        [id, entityType, entityId, entityName, workspaceIds, threshold, spendUsd, budgetUsd, recipients, sentAt, status]
       properties:
         id:
           type: integer
-        groupId:
+        entityType:
           type: string
-        groupName:
+          enum: [group, team]
+        entityId:
           type: string
+        entityName:
+          type: string
+        workspaceIds:
+          type: array
+          items:
+            type: string
         threshold:
           type: integer
           description: Threshold percent crossed (50, 75, 90, 100)
@@ -1223,9 +1337,11 @@ components:
           type: ["string", "null"]
     CheckResult:
       type: object
-      required: [checkedGroups, alertsSent]
+      required: [checkedGroups, checkedTeams, alertsSent]
       properties:
         checkedGroups:
+          type: integer
+        checkedTeams:
           type: integer
         alertsSent:
           type: integer

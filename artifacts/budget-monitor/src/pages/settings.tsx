@@ -10,6 +10,10 @@ import {
   useDeleteAdmin,
   useGetStatus,
   getListAdminsQueryKey,
+  useListEditors,
+  useAddEditor,
+  useDeleteEditor,
+  getListEditorsQueryKey,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
@@ -21,11 +25,50 @@ export default function Settings() {
   const { toast } = useToast();
   const { isAccountAdmin } = useAuthContext();
   const [newEmail, setNewEmail] = useState('');
+  const [newEditorUserId, setNewEditorUserId] = useState('');
 
   const { data: admins, isLoading: adminsLoading } = useListAdmins();
   const { data: status, isLoading: statusLoading } = useGetStatus();
   const addAdmin = useAddAdmin();
   const deleteAdmin = useDeleteAdmin();
+  const { data: editors, isLoading: editorsLoading } = useListEditors();
+  const addEditor = useAddEditor();
+  const deleteEditor = useDeleteEditor();
+
+  const handleAddEditor = () => {
+    const userId = newEditorUserId.trim();
+    if (!userId) return;
+    addEditor.mutate(
+      { data: { userId } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListEditorsQueryKey() });
+          setNewEditorUserId('');
+          toast({ title: 'Editor added', description: 'Account-wide pool access is now enabled.' });
+        },
+        onError: (error: any) => {
+          toast({
+            title: 'Failed to add editor',
+            description: error?.error || 'Confirm the user has signed in to this app.',
+            variant: 'destructive',
+          });
+        },
+      },
+    );
+  };
+
+  const handleDeleteEditor = (userId: string) => {
+    deleteEditor.mutate(
+      { userId },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListEditorsQueryKey() });
+          toast({ title: 'Editor removed' });
+        },
+        onError: () => toast({ title: 'Failed to remove editor', variant: 'destructive' }),
+      },
+    );
+  };
 
   const handleAddEmail = () => {
     if (!newEmail || newEmail.length < 3) {
@@ -190,6 +233,61 @@ export default function Settings() {
             </div>
           ) : (
             <p className="text-muted-foreground text-sm">Unable to load status</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Account-wide Editors</CardTitle>
+          <CardDescription>
+            Replit users who can edit allocated pools and run checks without managing settings or access.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2">
+            <Input
+              placeholder="Stable Replit user ID"
+              value={newEditorUserId}
+              onChange={(event) => setNewEditorUserId(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') handleAddEditor();
+              }}
+              data-testid="input-new-editor"
+            />
+            <Button
+              onClick={handleAddEditor}
+              disabled={addEditor.isPending || !newEditorUserId.trim()}
+              data-testid="button-add-editor"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add
+            </Button>
+          </div>
+          {editorsLoading ? (
+            <div className="h-12 bg-muted animate-pulse-glow rounded" />
+          ) : editors && editors.length > 0 ? (
+            <div className="space-y-2">
+              {editors.map((editor) => (
+                <div key={editor.userId} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                  <div>
+                    <p className="text-sm font-medium">{editor.email || editor.userId}</p>
+                    <p className="text-xs text-muted-foreground font-mono">{editor.userId}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteEditor(editor.userId)}
+                    disabled={deleteEditor.isPending}
+                    data-testid={`button-delete-editor-${editor.userId}`}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No managed editors configured.</p>
           )}
         </CardContent>
       </Card>

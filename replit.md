@@ -1,6 +1,6 @@
 # Group Budget Monitor
 
-Monitors spending by group across the Comcast Replit Enterprise account, lets admins set per-group budgets, and emails a configurable list of admins when a group crosses 50/75/90/100% of its budget.
+Monitors spending by group and team across the Comcast Replit Enterprise account, lets authorized operators set allocated pools, and emails configured recipients when an entity crosses 50/75/90/100% of its pool.
 
 ## Run & Operate
 
@@ -25,7 +25,7 @@ Monitors spending by group across the Comcast Replit Enterprise account, lets ad
 ## Where things live
 
 - `lib/api-spec/openapi.yaml` — API contract (source of truth); codegen → `lib/api-client-react` (hooks) and `lib/api-zod` (validation)
-- `lib/db/src/schema/` — DB tables: `group_budgets`, `admin_emails`, `alerts`, `fired_thresholds`
+- `lib/db/src/schema/` — DB tables for pools, notification recipients/history, editor access, teams, auth, and durable usage caches
 - `artifacts/api-server/src/lib/enterprise.ts` — Replit Enterprise API client, serial rate-limited usage queue, directory + spend caches
 - `artifacts/api-server/src/lib/checker.ts` — background threshold checker (every 10 min) + manual check
 - `artifacts/api-server/src/lib/email.ts` — email sending layer (awaiting an email connector)
@@ -41,14 +41,17 @@ Monitors spending by group across the Comcast Replit Enterprise account, lets ad
 - Billing period = the `interval.startTime` the Enterprise API resolves for `billingPeriod=current`; threshold fire state is keyed by (groupId, periodStart, threshold) in `fired_thresholds` so each threshold emails at most once per period and resets automatically on a new period.
 - If email isn't connected or no admin emails exist, crossed thresholds are NOT marked fired — they retry once email is configured.
 - One email per check per group (highest due threshold) to avoid alert storms when a budget is first set on an already-over group.
+- Managed account editors are keyed by stable Replit user ID. The designated bootstrap editor is added once from an exact, verified OIDC email; a durable consumed marker prevents later logins from undoing admin revocation. Only true Enterprise account admins can manage the allowlist.
+- Team alerts use the same member-deduplicated, cross-workspace attribution as dashboard team totals. Checks defer when required member or extra-workspace data is incomplete.
+- Workspace admins see read-only pools and rollups for teams represented in their scope. Account-wide alerts for teams spanning additional workspaces are omitted from their history to avoid exposing cross-workspace spend.
 
 ## Product
 
 - Dashboard: all Enterprise groups with spend for a selectable range (billing period / MTD / YTD / custom dates), inline budget set/edit/remove, remaining budget, % used with color-coded threshold badges and progress bars, account-wide summary stats, per-group refresh.
 - Group drill-down (`/groups/:groupId`): per-member allocated budget (platform user limit or workspace default), usage, remaining, % used, role; reconciliation footer (member spend + unattributed = group total).
 - Budgets merge two sources: app budgets (set in this tool, used for email alerting) and platform budgets read from the Enterprise `/budgets` API (`workspace_group_limit`); `budgetSource` distinguishes them. Platform budgets are read-only here.
-- Alerts: history of alert emails (sent/failed) plus a "run check now" action.
-- Settings: admin notification email list; system status (Enterprise API, email, background checker).
+- Alerts: group/team history with configured pool and spend, plus an account-operator "run check now" action.
+- Settings: true-admin-only notification recipients, managed editor allowlist, and system status.
 
 ## User preferences
 
