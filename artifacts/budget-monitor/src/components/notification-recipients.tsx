@@ -20,7 +20,10 @@ export function NotificationRecipients() {
   const { isAccountAdmin } = useAuthContext();
   const [newEmail, setNewEmail] = useState('');
   const { data: admins, isLoading } = useListAdmins({
-    query: { enabled: isAccountAdmin },
+    query: {
+      queryKey: getListAdminsQueryKey(),
+      enabled: isAccountAdmin,
+    },
   });
   const addAdmin = useAddAdmin();
   const deleteAdmin = useDeleteAdmin();

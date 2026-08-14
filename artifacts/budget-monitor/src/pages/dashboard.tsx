@@ -111,7 +111,7 @@ export default function Dashboard() {
     },
   });
 
-  const { data: teamBudgetsData } = useGetTeamsBudgets({
+  const { data: teamBudgetsData, isLoading: teamBudgetsLoading } = useGetTeamsBudgets({
     query: { queryKey: getGetTeamsBudgetsQueryKey() },
   });
 
@@ -179,6 +179,47 @@ export default function Dashboard() {
     return { teamSections, unassigned };
   }, [groups, teamBudgetMap]);
 
+  // Financial summary cards and the table footer must reconcile to the same
+  // visible top-level rows: each team pool once, plus each unassigned group.
+  // Nested group budgets are not added on top of their team's pool.
+  const tableTotals = useMemo(() => {
+    let totalSpendUsd = 0;
+    let totalBudgetUsd = 0;
+    let budgetedSpendUsd = 0;
+    let budgetedPools = 0;
+    let poolsOver75 = 0;
+    let poolsOver100 = 0;
+
+    const addRow = (spendUsd: number, budgetUsd: number | null, spendLoaded: boolean) => {
+      totalSpendUsd += spendUsd;
+      if (budgetUsd === null || budgetUsd <= 0) return;
+      totalBudgetUsd += budgetUsd;
+      budgetedPools += 1;
+      if (!spendLoaded) return;
+      budgetedSpendUsd += spendUsd;
+      const percentUsed = (spendUsd / budgetUsd) * 100;
+      if (percentUsed >= 75) poolsOver75 += 1;
+      if (percentUsed >= 100) poolsOver100 += 1;
+    };
+
+    for (const team of teamSections) {
+      addRow(team.spendUsd, team.budgetUsd, team.spendLoaded);
+    }
+    for (const group of unassigned) {
+      addRow(group.spendUsd ?? 0, group.budgetUsd ?? null, group.spendLoaded);
+    }
+
+    return {
+      totalSpendUsd,
+      totalBudgetUsd,
+      budgetedSpendUsd,
+      totalRemainingUsd: totalBudgetUsd - budgetedSpendUsd,
+      budgetedPools,
+      poolsOver75,
+      poolsOver100,
+    };
+  }, [teamSections, unassigned]);
+
   const toggleTeam = (teamName: string) => {
     setExpandedTeams((prev) => {
       const next = new Set(prev);
@@ -191,32 +232,32 @@ export default function Dashboard() {
   const statCards = [
     {
       title: 'Total Spend',
-      value: summary ? `$${summary.totalSpendUsd.toFixed(2)}` : '—',
+      value: `$${tableTotals.totalSpendUsd.toFixed(2)}`,
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
-      loading: summaryLoading || !summary?.isComplete,
+      loading: groupsLoading || !isComplete,
     },
     {
       title: 'Total Budget',
-      value: summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : '—',
-      description: `${summary?.budgetedGroups || 0} groups budgeted`,
+      value: `$${tableTotals.totalBudgetUsd.toFixed(2)}`,
+      description: `${tableTotals.budgetedPools} visible pools budgeted`,
       icon: TrendingUp,
-      loading: summaryLoading,
+      loading: groupsLoading || teamBudgetsLoading,
     },
     {
       title: 'Remaining',
-      value: summary && summary.totalRemainingUsd !== undefined ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
-      description: 'Across budgeted groups',
+      value: `$${tableTotals.totalRemainingUsd.toFixed(2)}`,
+      description: 'Across visible budgeted pools',
       icon: Wallet,
-      loading: summaryLoading || !summary?.isComplete,
-      valueClassName: summary && summary.totalRemainingUsd !== undefined && summary.totalRemainingUsd < 0 ? 'text-destructive' : '',
+      loading: groupsLoading || teamBudgetsLoading || !isComplete,
+      valueClassName: tableTotals.totalRemainingUsd < 0 ? 'text-destructive' : '',
     },
     {
       title: 'Over Threshold',
-      value: summary ? summary.groupsOver75.toString() : '—',
-      description: `${summary?.groupsOver100 || 0} over budget`,
+      value: tableTotals.poolsOver75.toString(),
+      description: `${tableTotals.poolsOver100} over budget`,
       icon: AlertTriangle,
-      loading: summaryLoading,
+      loading: groupsLoading || teamBudgetsLoading || !isComplete,
     },
     {
       title: 'Alerts Sent',
@@ -672,9 +713,9 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {summary?.isComplete ? (
+                        {isComplete ? (
                           <span className="text-sm font-mono tabular-nums">
-                            ${summary.totalSpendUsd.toFixed(2)}
+                            ${tableTotals.totalSpendUsd.toFixed(2)}
                           </span>
                         ) : (
                           <div className="flex justify-end"><LoadingCell /></div>
@@ -682,28 +723,28 @@ export default function Dashboard() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
-                          {summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : '—'}
+                          ${tableTotals.totalBudgetUsd.toFixed(2)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {summary?.isComplete && summary.totalRemainingUsd !== undefined ? (
-                          <span className={`text-sm font-mono tabular-nums ${summary.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
-                            ${summary.totalRemainingUsd.toFixed(2)}
+                        {isComplete ? (
+                          <span className={`text-sm font-mono tabular-nums ${tableTotals.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
+                            ${tableTotals.totalRemainingUsd.toFixed(2)}
                           </span>
                         ) : (
                           <div className="flex justify-end"><LoadingCell /></div>
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {summary?.isComplete && summary.totalBudgetUsd > 0 ? (
+                        {isComplete && tableTotals.totalBudgetUsd > 0 ? (
                           <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-                            <span className={`text-xs font-mono tabular-nums ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? 'text-destructive' : ''}`}>
-                              {((summary.totalSpendUsd / summary.totalBudgetUsd) * 100).toFixed(1)}%
+                            <span className={`text-xs font-mono tabular-nums ${(tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100 >= 100 ? 'text-destructive' : ''}`}>
+                              {((tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100).toFixed(1)}%
                             </span>
                             <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
                               <div
-                                className={`h-full transition-all duration-500 ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? 'bg-destructive' : 'bg-primary'}`}
-                                style={{ width: `${Math.min((summary.totalSpendUsd / summary.totalBudgetUsd) * 100, 100)}%` }}
+                                className={`h-full transition-all duration-500 ${(tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100 >= 100 ? 'bg-destructive' : 'bg-primary'}`}
+                                style={{ width: `${Math.min((tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100, 100)}%` }}
                               />
                             </div>
                           </div>
@@ -712,11 +753,11 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {summary?.isComplete && summary.totalBudgetUsd > 0 ? (
+                        {isComplete && tableTotals.totalBudgetUsd > 0 ? (
                           <PaceCell
-                            spendUsd={summary.totalSpendUsd}
-                            budgetUsd={summary.totalBudgetUsd}
-                            spendLoaded={summary.isComplete}
+                            spendUsd={tableTotals.budgetedSpendUsd}
+                            budgetUsd={tableTotals.totalBudgetUsd}
+                            spendLoaded={isComplete}
                             semibold
                           />
                         ) : (
