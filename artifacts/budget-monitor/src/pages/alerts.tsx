@@ -8,6 +8,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { useCanWrite } from '@/components/auth-context';
+import { NotificationRecipients } from '@/components/notification-recipients';
 
 export default function Alerts() {
   const queryClient = useQueryClient();
@@ -40,14 +41,14 @@ export default function Alerts() {
   };
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight" data-testid="text-alerts-title">
-            Alerts
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight" data-testid="text-alerts-title">
+            Notifications
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Email notifications sent when groups or teams cross allocated pool thresholds
+          <p className="text-muted-foreground mt-1 text-sm md:text-base">
+            Manage recipients and track budget threshold email delivery
           </p>
         </div>
         {canWrite && (
@@ -55,6 +56,7 @@ export default function Alerts() {
             onClick={handleRunCheck}
             disabled={runningCheck || runCheck.isPending}
             data-testid="button-run-check"
+            className="w-full sm:w-auto"
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${runningCheck || runCheck.isPending ? 'animate-spin' : ''}`} />
             Run Check Now
@@ -62,11 +64,13 @@ export default function Alerts() {
         )}
       </div>
 
+      <NotificationRecipients />
+
       <Card>
-        <CardHeader>
-          <CardTitle>Alert History</CardTitle>
+        <CardHeader className="px-4 py-4 md:px-6 md:py-6">
+          <CardTitle>Email Activity</CardTitle>
           <CardDescription>
-            Recent threshold alerts sent to admin emails
+            Delivery history for threshold notifications, including recipients and failures
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -81,7 +85,7 @@ export default function Alerts() {
               {alerts.map((alert) => (
                 <div
                   key={alert.id}
-                  className="flex items-start gap-4 p-4 rounded-lg border border-border hover:bg-muted/50 transition-colors"
+                  className="flex flex-wrap sm:flex-nowrap items-start gap-3 md:gap-4 p-3 md:p-4 rounded-lg border border-border hover:bg-muted/50 transition-colors"
                   data-testid={`alert-${alert.id}`}
                 >
                   <div className="flex-shrink-0 mt-1">
@@ -92,7 +96,7 @@ export default function Alerts() {
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
                       <span className="font-medium text-sm" data-testid={`text-entity-name-${alert.id}`}>
                         {alert.entityName}
                       </span>
@@ -112,7 +116,7 @@ export default function Alerts() {
                         Spend: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Allocated pool:{' '}
                         <span className="font-mono">${alert.budgetUsd.toFixed(2)}</span>
                       </p>
-                      <p data-testid={`text-recipients-${alert.id}`}>
+                      <p className="break-words" data-testid={`text-recipients-${alert.id}`}>
                         Recipients: {alert.recipients.join(', ')}
                       </p>
                       {alert.errorMessage && (
@@ -122,7 +126,7 @@ export default function Alerts() {
                       )}
                     </div>
                   </div>
-                  <div className="flex-shrink-0 text-xs text-muted-foreground" data-testid={`text-time-${alert.id}`}>
+                  <div className="w-full pl-8 sm:w-auto sm:pl-0 flex-shrink-0 text-xs text-muted-foreground" data-testid={`text-time-${alert.id}`}>
                     {formatDistanceToNow(new Date(alert.sentAt), { addSuffix: true })}
                   </div>
                 </div>

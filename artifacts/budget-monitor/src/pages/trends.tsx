@@ -5,10 +5,10 @@ export default function Trends() {
   const { data } = useListGroups({ rangeType: 'billing' });
   const groups = data?.groups ?? [];
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Trends</h1>
-        <p className="text-muted-foreground mt-1">May 2026–present</p>
+        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Trends</h1>
+        <p className="text-muted-foreground mt-1 text-sm md:text-base">May 2026–present</p>
       </div>
       <TrendsTab
         teamNames={[...new Set(groups.flatMap((group) => group.teamName ? [group.teamName] : []))]}

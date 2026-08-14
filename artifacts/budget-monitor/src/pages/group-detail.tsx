@@ -32,14 +32,14 @@ export default function GroupDetail() {
 
   if (isLoading && !data) {
     return (
-      <div className="p-8 space-y-6">
+      <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
         <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
           <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
             <ChevronLeft className="h-4 w-4" /> Back to Dashboard
           </Link>
         </div>
         <div className="h-10 w-64 bg-muted animate-pulse-glow rounded" />
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           {[1,2,3,4].map(i => <div key={i} className="h-28 bg-muted animate-pulse-glow rounded" />)}
         </div>
         <div className="h-64 bg-muted animate-pulse-glow rounded mt-8" />
@@ -49,7 +49,7 @@ export default function GroupDetail() {
 
   if (!data) {
     return (
-      <div className="p-8">
+      <div className="p-4 md:p-8 max-w-[100vw]">
         <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
           <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
             <ChevronLeft className="h-4 w-4" /> Back to Dashboard
@@ -99,7 +99,7 @@ export default function GroupDetail() {
   });
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
       <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
         <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
           <ChevronLeft className="h-4 w-4" /> Back to Dashboard
@@ -108,18 +108,18 @@ export default function GroupDetail() {
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3">
             {group.name}
             <Badge variant="secondary" className="uppercase text-[10px]">{group.type}</Badge>
           </h1>
-          <p className="text-muted-foreground mt-1">
+          <p className="text-muted-foreground mt-1 text-sm md:text-base">
             Workspace: {group.workspaceName || '—'} • {group.memberCount} members • {rangeLabel}
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
           <RangeFilter />
           {!isComplete && (
-            <Badge variant="outline" className="flex items-center gap-2">
+            <Badge variant="outline" className="flex items-center gap-2 shrink-0">
               <RefreshCw className="h-3 w-3 animate-spin" />
               Loading usage...
             </Badge>
@@ -127,7 +127,7 @@ export default function GroupDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (

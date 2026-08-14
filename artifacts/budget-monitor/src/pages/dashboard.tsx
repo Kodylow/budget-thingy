@@ -514,27 +514,28 @@ export default function Dashboard() {
   const hasTeams = teamSections.length > 0;
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight" data-testid="text-dashboard-title">
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight" data-testid="text-dashboard-title">
             Dashboard
           </h1>
           <p className="text-muted-foreground mt-1" data-testid="text-billing-period">
             {groupsData?.billingPeriodLabel || 'Loading...'}
           </p>
-          <p className="text-xs text-muted-foreground mt-1" data-testid="text-reconciliation-scope">
+          <p className="text-[10px] md:text-xs text-muted-foreground mt-1" data-testid="text-reconciliation-scope">
             All workspaces you can access · Custom dates use inclusive UTC days
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
           <a
             href="/api/export/users.csv"
             download
             className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
           >
             <Download className="h-4 w-4" />
-            Export Users
+            <span className="hidden sm:inline">Export Users</span>
+            <span className="sm:hidden">Export</span>
           </a>
           <RangeFilter />
           {!isComplete && (
@@ -545,26 +546,27 @@ export default function Dashboard() {
               title="Stored usage is available as each group finishes its one-time member-level history sync."
             >
               <RefreshCw className="h-3 w-3 animate-spin" />
-              Syncing history · {pendingCount} remaining
+              <span className="hidden sm:inline">Syncing history · {pendingCount} remaining</span>
+              <span className="sm:hidden">Syncing...</span>
             </Badge>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
             <Card key={stat.title} data-testid={`card-stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2 md:p-6 md:pb-2">
                 <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
                 <Icon className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
-              <CardContent>
+                <CardContent className="px-4 pb-4 md:px-6 md:pb-6">
                 {stat.loading ? (
                   <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
                 ) : (
-                  <div className={`text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ''}`} data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                  <div className={`text-xl sm:text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ''}`} data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
                     {stat.value}
                   </div>
                 )}
