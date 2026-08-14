@@ -150,6 +150,7 @@ const PERIOD_AUG = "2026-08-01T00:00:00Z";
 beforeEach(async () => {
   await pglite.exec(`
     DROP TABLE IF EXISTS alerts;
+    DROP TABLE IF EXISTS alert_delivery_claims;
     DROP TABLE IF EXISTS fired_thresholds;
     DROP TABLE IF EXISTS group_budgets;
     DROP TABLE IF EXISTS team_budgets;
@@ -171,6 +172,18 @@ beforeEach(async () => {
       error_message TEXT,
       sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE alert_delivery_claims (
+      id SERIAL PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      billing_period TEXT NOT NULL,
+      threshold INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'claimed',
+      claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE UNIQUE INDEX alert_delivery_claims_unique
+      ON alert_delivery_claims (entity_type, entity_id, billing_period, threshold);
     CREATE TABLE fired_thresholds (
       id SERIAL PRIMARY KEY,
       group_id TEXT NOT NULL,

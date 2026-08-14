@@ -36,6 +36,13 @@
       "when": 1786585198674,
       "tag": "0004_curvy_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786640000000,
+      "tag": "0005_alert_delivery_claims",
+      "breakpoints": true
     }
   ]
 }

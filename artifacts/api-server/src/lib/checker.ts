@@ -7,6 +7,7 @@ import {
   adminEmailsTable,
   alertsTable,
   firedThresholdsTable,
+  alertDeliveryClaimsTable,
   type Alert,
 } from "@workspace/db";
 import { logger } from "./logger";
@@ -123,6 +124,27 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
   // Send only the highest due threshold as one email (avoids 4 emails when a
   // pool is first set on an already-over entity), but mark all due as fired.
   const highest = Math.max(...due);
+  const [insertedClaim] = await db.insert(alertDeliveryClaimsTable).values({
+    entityType: spec.entityType,
+    entityId: spec.entityId,
+    billingPeriod: spec.periodStart,
+    threshold: highest,
+    status: "claimed",
+  }).onConflictDoNothing().returning();
+  let claim = insertedClaim;
+  if (!claim) {
+    const [retryClaim] = await db.update(alertDeliveryClaimsTable)
+      .set({ status: "claimed", updatedAt: new Date() })
+      .where(and(
+        eq(alertDeliveryClaimsTable.entityType, spec.entityType),
+        eq(alertDeliveryClaimsTable.entityId, spec.entityId),
+        eq(alertDeliveryClaimsTable.billingPeriod, spec.periodStart),
+        eq(alertDeliveryClaimsTable.threshold, highest),
+        eq(alertDeliveryClaimsTable.status, "failed"),
+      )).returning();
+    claim = retryClaim;
+  }
+  if (!claim) return [];
   const { subject, html } = buildAlertEmail({
     entityType: spec.entityType,
     entityName: spec.entityName,
@@ -136,6 +158,9 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
   const result = await sendEmail(recipients, subject, html);
 
   if (result.ok) {
+    await db.update(alertDeliveryClaimsTable)
+      .set({ status: "sent", updatedAt: new Date() })
+      .where(eq(alertDeliveryClaimsTable.id, claim.id));
     for (const t of due) {
       await db
         .insert(firedThresholdsTable)
@@ -148,6 +173,10 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
         })
         .onConflictDoNothing();
     }
+  } else {
+    await db.update(alertDeliveryClaimsTable)
+      .set({ status: "failed", updatedAt: new Date() })
+      .where(eq(alertDeliveryClaimsTable.id, claim.id));
   }
 
   const [alert] = await db

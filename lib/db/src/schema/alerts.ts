@@ -72,3 +72,30 @@ export const firedThresholdsTable = pgTable(
 );
 
 export type FiredThreshold = typeof firedThresholdsTable.$inferSelect;
+
+// Durable outbox claim. A claimed threshold is owned by the process that will
+// deliver the email; failed claims are explicitly returned to "failed" so a
+// later check can retry them.
+export const alertDeliveryClaimsTable = pgTable(
+  "alert_delivery_claims",
+  {
+    id: serial("id").primaryKey(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    billingPeriod: text("billing_period").notNull(),
+    threshold: integer("threshold").notNull(),
+    status: text("status").notNull().default("claimed"), // claimed | sent | failed
+    claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("alert_delivery_claims_unique").on(
+      t.entityType,
+      t.entityId,
+      t.billingPeriod,
+      t.threshold,
+    ),
+  ],
+);
+
+export type AlertDeliveryClaim = typeof alertDeliveryClaimsTable.$inferSelect;
