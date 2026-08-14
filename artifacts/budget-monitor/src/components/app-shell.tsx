@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Bell,
   Settings,
-  TrendingUp,
   LogOut,
   ShieldCheck,
   Building2,
@@ -52,7 +51,6 @@ export function AppShell({ children }: AppShellProps) {
       label: 'Overview',
       items: [
         { path: '/', label: 'Dashboard', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
-        { path: '/trends', label: 'Trends', icon: TrendingUp, show: true, testId: 'nav-trends' },
       ],
     },
     {
