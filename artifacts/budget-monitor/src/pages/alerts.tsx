@@ -2,22 +2,30 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Bell, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
-import { useListAlerts, useRunAlertCheck, getListAlertsQueryKey } from '@workspace/api-client-react';
+import { Bell, RefreshCw, CheckCircle, XCircle, Send } from 'lucide-react';
+import {
+  useListAlerts,
+  useRunAlertCheck,
+  useSendTestAlert,
+  getListAlertsQueryKey,
+} from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
-import { useCanWrite } from '@/components/auth-context';
+import { useAuthContext, useCanWrite } from '@/components/auth-context';
 import { NotificationRecipients } from '@/components/notification-recipients';
 
 export default function Alerts() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const canWrite = useCanWrite();
+  const { isAccountAdmin } = useAuthContext();
   const [runningCheck, setRunningCheck] = useState(false);
+  const [testingAlertId, setTestingAlertId] = useState<number | null>(null);
 
   const { data: alerts, isLoading } = useListAlerts({ limit: 100 });
   const runCheck = useRunAlertCheck();
+  const sendTest = useSendTestAlert();
 
   const handleRunCheck = () => {
     setRunningCheck(true);
@@ -38,6 +46,40 @@ export default function Alerts() {
         setRunningCheck(false);
       },
     });
+  };
+
+  const handleSendTest = (alertId: number, entityName: string) => {
+    setTestingAlertId(alertId);
+    sendTest.mutate(
+      { alertId },
+      {
+        onSuccess: (activity) => {
+          queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey({ limit: 100 }) });
+          if (activity.status === 'sent') {
+            toast({
+              title: 'Test email sent',
+              description: `${entityName}: ${activity.recipients.join(', ')}`,
+            });
+          } else {
+            toast({
+              title: 'Test email failed',
+              description: activity.errorMessage || 'The failure was added to Email Activity.',
+              variant: 'destructive',
+            });
+          }
+          setTestingAlertId(null);
+        },
+        onError: () => {
+          queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey({ limit: 100 }) });
+          toast({
+            title: 'Test email failed',
+            description: 'The failed delivery was added to Email Activity.',
+            variant: 'destructive',
+          });
+          setTestingAlertId(null);
+        },
+      },
+    );
   };
 
   return (
@@ -70,7 +112,9 @@ export default function Alerts() {
         <CardHeader className="px-4 py-4 md:px-6 md:py-6">
           <CardTitle>Email Activity</CardTitle>
           <CardDescription>
-            Delivery history for threshold notifications, including recipients and failures
+            Delivery history for threshold notifications, including recipients and failures.
+            Test sends reuse the selected alert without changing threshold state; in development,
+            actual delivery is routed only to kody.low@repl.it.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -126,8 +170,23 @@ export default function Alerts() {
                       )}
                     </div>
                   </div>
-                  <div className="w-full pl-8 sm:w-auto sm:pl-0 flex-shrink-0 text-xs text-muted-foreground" data-testid={`text-time-${alert.id}`}>
-                    {formatDistanceToNow(new Date(alert.sentAt), { addSuffix: true })}
+                  <div className="w-full pl-8 sm:w-auto sm:pl-0 flex-shrink-0 flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                    <span className="text-xs text-muted-foreground" data-testid={`text-time-${alert.id}`}>
+                      {formatDistanceToNow(new Date(alert.sentAt), { addSuffix: true })}
+                    </span>
+                    {isAccountAdmin && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleSendTest(alert.id, alert.entityName)}
+                        disabled={sendTest.isPending}
+                        aria-label={`Send test email for ${alert.entityName}`}
+                        data-testid={`button-send-test-${alert.id}`}
+                      >
+                        <Send className={`h-3.5 w-3.5 mr-1.5 ${testingAlertId === alert.id ? 'animate-pulse' : ''}`} />
+                        {testingAlertId === alert.id ? 'Sending…' : 'Send test'}
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}

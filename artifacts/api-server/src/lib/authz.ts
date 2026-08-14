@@ -39,7 +39,10 @@ export function resolveCurrentAuthorization(
  * fixture via {@link setEditorAllowlistLookup} so pure authorization tests do
  * not require a database. The default always queries the real table.
  */
-export type EditorAllowlistLookup = (userId: string) => Promise<boolean>;
+export type PersistedEditorRole = "account_editor" | "account_delegate";
+export type EditorAllowlistLookup = (
+  userId: string,
+) => Promise<boolean | PersistedEditorRole>;
 
 let injectedEditorLookup: EditorAllowlistLookup | null = null;
 
@@ -54,17 +57,45 @@ export function setEditorAllowlistLookup(
  * Whether the given stable Replit user ID is present in the persisted editor
  * allowlist. This is the production default for {@link EditorAllowlistLookup}.
  */
-export async function isPersistedEditor(userId: string): Promise<boolean> {
+export async function getPersistedEditorRole(
+  userId: string,
+): Promise<PersistedEditorRole | null> {
   const [row] = await db
-    .select({ userId: editorAllowlistTable.userId })
+    .select({
+      userId: editorAllowlistTable.userId,
+      email: editorAllowlistTable.email,
+    })
     .from(editorAllowlistTable)
     .where(eq(editorAllowlistTable.userId, userId))
     .limit(1);
-  return !!row;
+  if (!row) return null;
+
+  const [bootstrap] = await db
+    .select({
+      userId: editorBootstrapStateTable.userId,
+      email: editorBootstrapStateTable.email,
+      revokedAt: editorBootstrapStateTable.revokedAt,
+    })
+    .from(editorBootstrapStateTable)
+    .where(eq(editorBootstrapStateTable.userId, userId))
+    .limit(1);
+  return bootstrap &&
+    bootstrap.revokedAt === null &&
+    normalizeEmail(bootstrap.email) === BOOTSTRAP_EDITOR_EMAIL
+    ? "account_delegate"
+    : "account_editor";
 }
 
-function lookupEditor(userId: string): Promise<boolean> {
-  return (injectedEditorLookup ?? isPersistedEditor)(userId);
+export async function isPersistedEditor(userId: string): Promise<boolean> {
+  return (await getPersistedEditorRole(userId)) !== null;
+}
+
+async function lookupEditor(userId: string): Promise<PersistedEditorRole | null> {
+  if (!injectedEditorLookup) return getPersistedEditorRole(userId);
+  const result = await injectedEditorLookup(userId);
+  if (result === true) return "account_editor";
+  if (result === false) return null;
+  return result;
 }
 
 /**
@@ -73,7 +104,9 @@ function lookupEditor(userId: string): Promise<boolean> {
  * - `account_admin`: full account-wide access derived from the Enterprise
  *   directory. `workspaceIds` is empty and MUST be ignored — an account admin
  *   can see every workspace/group.
- * - `account_editor`: full account-wide access granted by the managed app
+ * - `account_delegate`: full application-admin parity granted only to the
+ *   verified designated bootstrap identity and persisted by stable user ID.
+ * - `account_editor`: full account-wide operational access granted by the managed app
  *   allowlist (keyed by stable Replit identity), independent of the member's
  *   Enterprise role. `workspaceIds` is empty and MUST be ignored.
  * - `workspace_admin`: read-only access limited to the union of workspaces the
@@ -82,7 +115,11 @@ function lookupEditor(userId: string): Promise<boolean> {
  * When the user is neither an account admin, a persisted editor, nor an enabled
  * workspace admin, resolution fails closed and returns `null` (access denied).
  */
-export type AuthzRole = "account_admin" | "account_editor" | "workspace_admin";
+export type AuthzRole =
+  | "account_admin"
+  | "account_delegate"
+  | "account_editor"
+  | "workspace_admin";
 
 export interface Authorization {
   role: AuthzRole;
@@ -93,7 +130,7 @@ export interface Authorization {
 /** A workspace role counts as admin only for these values. */
 const ADMIN_ROLES = new Set(["admin", "owner", "account_admin"]);
 
-function isAdminRole(role: string): boolean {
+export function isAdminRole(role: string): boolean {
   return ADMIN_ROLES.has(role.trim().toLowerCase());
 }
 
@@ -133,8 +170,9 @@ export async function resolveAuthorization(
 
   // (2) Persisted app editors get account-wide access regardless of their
   // Enterprise role (including ordinary members and non-directory users).
-  if (await lookupEditor(userId)) {
-    return { role: "account_editor", workspaceIds: [] };
+  const persistedRole = await lookupEditor(userId);
+  if (persistedRole) {
+    return { role: persistedRole, workspaceIds: [] };
   }
 
   // (3)/(4) All others fall back to Enterprise-derived workspace scope.
@@ -179,6 +217,13 @@ export function isAccountAdmin(authz: Authorization | null | undefined): boolean
   return authz?.role === "account_admin";
 }
 
+/** Whether the role may manage all application settings and access. */
+export function isApplicationAdmin(
+  authz: Authorization | null | undefined,
+): boolean {
+  return authz?.role === "account_admin" || authz?.role === "account_delegate";
+}
+
 /** Whether the authorization is a managed account-wide app editor. */
 export function isAccountEditor(authz: Authorization | null | undefined): boolean {
   return authz?.role === "account_editor";
@@ -189,7 +234,11 @@ export function isAccountEditor(authz: Authorization | null | undefined): boolea
  * admin or a persisted editor). Account-wide roles see every workspace/group.
  */
 export function isAccountWide(authz: Authorization | null | undefined): boolean {
-  return authz?.role === "account_admin" || authz?.role === "account_editor";
+  return (
+    authz?.role === "account_admin" ||
+    authz?.role === "account_delegate" ||
+    authz?.role === "account_editor"
+  );
 }
 
 /**

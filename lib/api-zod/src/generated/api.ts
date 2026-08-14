@@ -25,9 +25,9 @@ export const GetCurrentAuthUserResponse = zod.object({
   "profileImageUrl": zod.string().nullable()
 }),zod.null()]),
   "auth": zod.union([zod.object({
-  "role": zod.enum(['account_admin', 'account_editor', 'workspace_admin']).describe('Effective role resolved from the Enterprise directory and managed editor allowlist.'),
-  "workspaceIds": zod.array(zod.string()).describe('Workspace IDs the user may view. Empty and ignored for account_admin and account_editor; the union of admin workspaces for workspace_admin.\n')
-}).describe('Resolved authorization for the signed-in user. account_admin and account_editor see the whole account; workspace_admin sees only the listed workspaces. Only account_admin can manage editor access and settings.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied).\n')
+  "role": zod.enum(['account_admin', 'account_delegate', 'account_editor', 'workspace_admin']).describe('Effective role resolved from the Enterprise directory and managed editor allowlist.'),
+  "workspaceIds": zod.array(zod.string()).describe('Workspace IDs the user may view. Empty and ignored for account_admin, account_delegate, and account_editor; the union of admin workspaces for workspace_admin.\n')
+}).describe('Resolved authorization for the signed-in user. account_admin, account_delegate, and account_editor see the whole account; workspace_admin sees only the listed workspaces. account_admin and account_delegate can manage editor access and settings.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied).\n')
 })
 
 
@@ -477,7 +477,7 @@ export const DeleteAdminResponse = zod.object({
 
 
 /**
- * Available only to true Enterprise account administrators.
+ * Available only to Enterprise account administrators and the designated account delegate.
  * @summary List account-wide app editors
  */
 export const ListEditorsResponseItem = zod.object({
@@ -490,7 +490,7 @@ export const ListEditorsResponse = zod.array(ListEditorsResponseItem)
 
 
 /**
- * Available only to true Enterprise account administrators. The stable Replit user ID must already have signed in.
+ * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
  * @summary Add an account-wide app editor
  */
 
@@ -509,7 +509,7 @@ export const AddEditorResponse = zod.object({
 
 
 /**
- * Available only to true Enterprise account administrators.
+ * Available only to Enterprise account administrators and the designated account delegate.
  * @summary Remove an account-wide app editor
  */
 export const DeleteEditorParams = zod.object({
@@ -572,6 +572,30 @@ export const RunAlertCheckResponse = zod.object({
   "status": zod.string().describe('sent or failed'),
   "errorMessage": zod.string().nullish()
 })).optional()
+})
+
+
+/**
+ * Re-resolves current RBAC recipients and sends a test copy without changing fired thresholds or delivery claims.
+ * @summary Send a test copy of an email activity entry
+ */
+export const SendTestAlertParams = zod.object({
+  "alertId": zod.coerce.number()
+})
+
+export const SendTestAlertResponse = zod.object({
+  "id": zod.number(),
+  "entityType": zod.enum(['group', 'team']),
+  "entityId": zod.string(),
+  "entityName": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "threshold": zod.number().describe('Threshold percent crossed (50, 75, 90, 100)'),
+  "spendUsd": zod.number(),
+  "budgetUsd": zod.number(),
+  "recipients": zod.array(zod.string()),
+  "sentAt": zod.string(),
+  "status": zod.string().describe('sent or failed'),
+  "errorMessage": zod.string().nullish()
 })
 
 

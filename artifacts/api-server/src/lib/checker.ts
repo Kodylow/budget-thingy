@@ -4,7 +4,6 @@ import {
   groupBudgetsTable,
   teamBudgetsTable,
   groupTeamsTable,
-  adminEmailsTable,
   alertsTable,
   firedThresholdsTable,
   alertDeliveryClaimsTable,
@@ -26,6 +25,7 @@ import {
   type EnterpriseGroup,
 } from "./enterprise";
 import { sendEmail, buildAlertEmail, isEmailConfigured } from "./email";
+import { resolveAlertRecipients } from "./alert-recipients";
 
 export const THRESHOLDS = [50, 75, 90, 100];
 export const CHECK_INTERVAL_MINUTES = 10;
@@ -101,8 +101,8 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
   const due = THRESHOLDS.filter((t) => pct >= t && !fired.includes(t));
   if (due.length === 0) return [];
 
-  const admins = await db.select().from(adminEmailsTable);
-  if (admins.length === 0) {
+  const recipients = await resolveAlertRecipients(spec.workspaceIds);
+  if (recipients.length === 0) {
     logger.warn(
       { entityType: spec.entityType, entityId: spec.entityId },
       "Threshold crossed but no admin emails configured; will retry",
@@ -117,7 +117,6 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
     return [];
   }
 
-  const recipients = admins.map((a) => a.email);
   const { label } = getBillingPeriod();
   const created: Alert[] = [];
 
@@ -191,7 +190,7 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
       threshold: highest,
       spendUsd: spec.spendUsd,
       budgetUsd: spec.budgetUsd,
-      recipients,
+      recipients: result.deliveredTo ?? recipients,
       status: result.ok ? "sent" : "failed",
       errorMessage: result.ok ? null : (result.error ?? "unknown error"),
     })

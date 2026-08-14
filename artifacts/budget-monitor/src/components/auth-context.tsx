@@ -42,7 +42,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthContextValue>(() => {
     // `auth === null` while signed in means access-denied.
-    const isAccountAdmin = auth?.role === 'account_admin';
+    const isAccountAdmin =
+      auth?.role === 'account_admin' || auth?.role === 'account_delegate';
     const isAccountEditor = auth?.role === 'account_editor';
     const isWorkspaceAdmin = auth?.role === 'workspace_admin';
     const isDenied = isAuthenticated && auth == null;

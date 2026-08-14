@@ -7,6 +7,7 @@ import {
   db,
   editorAllowlistTable,
   editorBootstrapStateTable,
+  firedThresholdsTable,
   groupBudgetsTable,
   groupTeamsTable,
   teamBudgetsTable,
@@ -19,6 +20,7 @@ import {
   BOOTSTRAP_EDITOR_EMAIL,
   maybeBootstrapEditor,
 } from "../lib/authz.ts";
+import { setSendEmailOverrideForTests } from "../lib/email.ts";
 import {
   __setDirectoryCacheForTests,
   __setMemberUsageForTests,
@@ -68,6 +70,11 @@ let baseUrl;
 
 test.before(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key"; // marks isConfigured()
+  setSendEmailOverrideForTests(async (to) => ({
+    ok: true,
+    deliveredTo: to,
+    messageId: "test-message",
+  }));
   __setDirectoryCacheForTests({ groups, members, groupMembers });
   __setMemberUsageForTests(
     "custom:2026-05-20:2026-08-11",
@@ -107,7 +114,7 @@ test.before(async () => {
   }).onConflictDoNothing();
   await db.insert(usersTable).values({
     id: "bootstrap-editor",
-    email: BOOTSTRAP_EDITOR_EMAIL,
+    email: "bootstrap-editor@example.com",
   }).onConflictDoNothing();
   await db.insert(editorAllowlistTable).values({
     userId: "editor",
@@ -159,11 +166,14 @@ test.after(async () => {
   await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, ["Team One", "Team Two"]));
   await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, ["Alpha", "Gamma"]));
   await db.delete(editorAllowlistTable).where(inArray(editorAllowlistTable.userId, ["editor", "candidate-editor", "bootstrap-editor"]));
-  await db.delete(editorBootstrapStateTable).where(eq(editorBootstrapStateTable.userId, "bootstrap-editor"));
+  await db.delete(editorBootstrapStateTable).where(
+    inArray(editorBootstrapStateTable.userId, ["bootstrap-editor", "candidate-editor"]),
+  );
   await db.delete(usersTable).where(inArray(usersTable.id, ["editor", "candidate-editor", "bootstrap-editor"]));
   __setDirectoryCacheForTests(null);
   __setMemberUsageForTests("custom:2026-05-20:2026-08-11", null);
   setAuthorizationResolver(null);
+  setSendEmailOverrideForTests(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
   server?.close();
 });
@@ -411,6 +421,14 @@ test("allowlisted editor has account-wide operational access but no settings or 
   assert.equal((await req("/admins", { user: "editor" })).status, 403);
   assert.equal((await req("/status", { user: "editor" })).status, 403);
   assert.equal((await req("/editors", { user: "editor" })).status, 403);
+  const source = (await req("/alerts", { user: "editor" })).json[0];
+  assert.equal(
+    (await req(`/alerts/${source.id}/test`, {
+      user: "editor",
+      method: "POST",
+    })).status,
+    403,
+  );
   assert.equal(
     (await req("/editors", {
       user: "editor",
@@ -421,7 +439,56 @@ test("allowlisted editor has account-wide operational access but no settings or 
   );
 });
 
-test("only a true account admin can add and remove an editor", async () => {
+test("account admin can test an alert without firing threshold state", async () => {
+  const source = (await req("/alerts", { user: "acct" })).json[0];
+  const firedBefore = await db.select().from(firedThresholdsTable);
+  const response = await req(`/alerts/${source.id}/test`, {
+    user: "acct",
+    method: "POST",
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.json.status, "sent");
+  assert.deepEqual(response.json.recipients, [BOOTSTRAP_EDITOR_EMAIL]);
+  const firedAfter = await db.select().from(firedThresholdsTable);
+  assert.equal(firedAfter.length, firedBefore.length);
+});
+
+test("workspace admin cannot send test alerts", async () => {
+  const source = (await req("/alerts", { user: "acct" })).json[0];
+  assert.equal(
+    (await req(`/alerts/${source.id}/test`, {
+      user: "ws1admin",
+      method: "POST",
+    })).status,
+    403,
+  );
+});
+
+test("failed test delivery is recorded in Email Activity", async () => {
+  const source = (await req("/alerts", { user: "acct" })).json[0];
+  setSendEmailOverrideForTests(async (to) => ({
+    ok: false,
+    error: "test transport failure",
+    deliveredTo: to,
+  }));
+  try {
+    const response = await req(`/alerts/${source.id}/test`, {
+      user: "acct",
+      method: "POST",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.json.status, "failed");
+    assert.equal(response.json.errorMessage, "test transport failure");
+  } finally {
+    setSendEmailOverrideForTests(async (to) => ({
+      ok: true,
+      deliveredTo: to,
+      messageId: "test-message",
+    }));
+  }
+});
+
+test("a full application admin can add and remove an editor", async () => {
   const added = await req("/editors", {
     user: "acct",
     method: "POST",
@@ -449,6 +516,28 @@ test("account-admin removal survives the designated editor's next verified login
   };
   assert.equal(await maybeBootstrapEditor(claims), true);
   assert.equal((await req("/groups", { user: "bootstrap-editor" })).status, 200);
+  assert.equal((await req("/admins", { user: "bootstrap-editor" })).status, 200);
+  assert.equal((await req("/editors", { user: "bootstrap-editor" })).status, 200);
+  assert.equal((await req("/status", { user: "bootstrap-editor" })).status, 200);
+  const addedRecipient = await req("/admins", {
+    user: "bootstrap-editor",
+    method: "POST",
+    body: { email: "delegate-managed@example.com" },
+  });
+  assert.equal(addedRecipient.status, 201);
+  assert.equal((await req(`/admins/${addedRecipient.json.id}`, {
+    user: "bootstrap-editor",
+    method: "DELETE",
+  })).status, 200);
+  assert.equal((await req("/editors", {
+    user: "bootstrap-editor",
+    method: "POST",
+    body: { userId: "candidate-editor" },
+  })).status, 201);
+  assert.equal((await req("/editors/candidate-editor", {
+    user: "bootstrap-editor",
+    method: "DELETE",
+  })).status, 200);
 
   const removed = await req("/editors/bootstrap-editor", {
     user: "acct",
@@ -459,6 +548,16 @@ test("account-admin removal survives the designated editor's next verified login
   // Simulate the next successful OIDC callback.
   assert.equal(await maybeBootstrapEditor(claims), false);
   assert.equal((await req("/groups", { user: "bootstrap-editor" })).status, 403);
+
+  // A later ordinary editor grant must not silently restore delegate parity.
+  assert.equal((await req("/editors", {
+    user: "acct",
+    method: "POST",
+    body: { userId: "bootstrap-editor" },
+  })).status, 201);
+  assert.equal((await req("/groups", { user: "bootstrap-editor" })).status, 200);
+  assert.equal((await req("/admins", { user: "bootstrap-editor" })).status, 403);
+  assert.equal((await req("/status", { user: "bootstrap-editor" })).status, 403);
 });
 
 // ── /users/activity authorization tests ──────────────────────────────────────

@@ -12,12 +12,65 @@ vi.mock("@replit/connectors-sdk", () => ({
   ReplitConnectors: connectorMocks.constructor,
 }));
 
-import { isEmailConfigured } from "./email";
+import {
+  isEmailConfigured,
+  sendEmail,
+  setSendEmailOverrideForTests,
+} from "./email";
 
 describe("isEmailConfigured", () => {
   beforeEach(() => {
     connectorMocks.proxy.mockReset();
     connectorMocks.constructor.mockClear();
+    setSendEmailOverrideForTests(null);
+    process.env.NODE_ENV = "test";
+  });
+
+  it("routes non-production delivery only to Kody and marks the subject", async () => {
+    connectorMocks.proxy
+      .mockResolvedValueOnce(Response.json({
+        inboxes: [{
+          inbox_id: "inbox-1",
+          email: "budget-monitor@agentmail.to",
+          client_id: "group-budget-monitor",
+        }],
+      }))
+      .mockResolvedValueOnce(Response.json({ message_id: "message-1" }));
+
+    const result = await sendEmail(
+      ["account@example.com", "workspace@example.com"],
+      "Budget threshold",
+      "<p>Alert</p>",
+    );
+    expect(result.deliveredTo).toEqual(["kody.low@repl.it"]);
+    const sendRequest = connectorMocks.proxy.mock.calls[1]![2] as RequestInit;
+    expect(JSON.parse(String(sendRequest.body))).toMatchObject({
+      to: ["kody.low@repl.it"],
+      subject: "[DEV] Budget threshold",
+    });
+  });
+
+  it("fans out to the deduplicated intended list in production", async () => {
+    process.env.NODE_ENV = "production";
+    connectorMocks.proxy
+      .mockResolvedValueOnce(Response.json({
+        inboxes: [{
+          inbox_id: "inbox-1",
+          email: "budget-monitor@agentmail.to",
+          client_id: "group-budget-monitor",
+        }],
+      }))
+      .mockResolvedValueOnce(Response.json({ message_id: "message-1" }));
+
+    const result = await sendEmail(
+      [" Workspace@example.com ", "account@example.com", "workspace@example.com"],
+      "Budget threshold",
+      "<p>Alert</p>",
+    );
+    expect(result.deliveredTo).toEqual([
+      "account@example.com",
+      "workspace@example.com",
+    ]);
   });
 
   it("returns true when the dedicated AgentMail inbox is usable", async () => {

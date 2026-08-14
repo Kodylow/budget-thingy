@@ -61,6 +61,7 @@ vi.mock("./enterprise", () => ({
   getSpend: (groupId: string) => getSpendMock(groupId),
   getDirectory: async () => ({
     groups: directoryGroups,
+    members: new Map(),
     workspaces: new Map([
       ["ws-1", { id: "ws-1", name: "Acme Workspace" }],
       ["ws-2", { id: "ws-2", name: "Beta Workspace" }],
@@ -369,13 +370,17 @@ describe("retry when email is unavailable", () => {
     expect(await getFiredThresholds("grp-1", PERIOD_JUL)).toEqual([50, 75]);
   });
 
-  it("does not mark thresholds fired when there are no admin recipients", async () => {
+  it("uses the mandatory Kody recipient when no additional recipients exist", async () => {
     await pglite.exec(`DELETE FROM admin_emails`);
     setSpend(800);
     const alerts = await evaluateGroup(GROUP);
-    expect(alerts).toHaveLength(0);
-    expect(sendEmailMock).not.toHaveBeenCalled();
-    expect(await getFiredThresholds("grp-1", PERIOD_JUL)).toEqual([]);
+    expect(alerts).toHaveLength(1);
+    expect(sendEmailMock).toHaveBeenCalledWith(
+      ["kody.low@repl.it"],
+      expect.any(String),
+      expect.any(String),
+    );
+    expect(await getFiredThresholds("grp-1", PERIOD_JUL)).toEqual([50, 75]);
   });
 
   it("records a failed alert but keeps thresholds unfired when sending fails", async () => {

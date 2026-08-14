@@ -66,4 +66,5 @@ export const editorBootstrapStateTable = pgTable('editor_bootstrap_state', {
   completedAt: timestamp('completed_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
 });

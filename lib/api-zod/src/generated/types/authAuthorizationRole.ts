@@ -14,6 +14,7 @@ export type AuthAuthorizationRole = typeof AuthAuthorizationRole[keyof typeof Au
 
 export const AuthAuthorizationRole = {
   account_admin: 'account_admin',
+  account_delegate: 'account_delegate',
   account_editor: 'account_editor',
   workspace_admin: 'workspace_admin',
 } as const;

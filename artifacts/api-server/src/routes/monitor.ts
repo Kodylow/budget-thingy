@@ -29,6 +29,7 @@ import {
   ListAlertsQueryParams,
   ListAlertsResponse,
   RunAlertCheckResponse,
+  SendTestAlertResponse,
   GetStatusResponse,
   GetGroupDetailResponse,
   GetGroupProjectsResponse,
@@ -66,7 +67,8 @@ import {
   type EnterpriseGroup,
   type ProjectUsageMetric,
 } from "../lib/enterprise";
-import { isEmailConfigured } from "../lib/email";
+import { buildAlertEmail, isEmailConfigured, sendEmail } from "../lib/email";
+import { resolveAlertRecipients } from "../lib/alert-recipients";
 import {
   runCheck,
   getFiredThresholds,
@@ -80,6 +82,7 @@ import {
 } from "../middlewares/requireAuth";
 import {
   canSeeGroup,
+  isApplicationAdmin,
   isAccountWide,
   scopeGroups,
   type Authorization,
@@ -1235,8 +1238,14 @@ router.delete("/editors/:userId", requireAccountAdmin, async (req, res): Promise
           userId: row.userId,
           email: row.email,
           completedBy: req.user!.id,
+          revokedAt: new Date(),
         })
-        .onConflictDoNothing({ target: editorBootstrapStateTable.userId });
+        .onConflictDoUpdate({
+          target: editorBootstrapStateTable.userId,
+          set: {
+            revokedAt: new Date(),
+          },
+        });
     }
     return removed;
   });
@@ -1250,7 +1259,7 @@ router.delete("/editors/:userId", requireAccountAdmin, async (req, res): Promise
 router.get("/alerts", async (req, res): Promise<void> => {
   const authz = req.authz!;
   const accountWide = isAccountWide(authz);
-  const canSeeRecipients = authz.role === "account_admin";
+  const canSeeRecipients = isApplicationAdmin(authz);
   const parsed = ListAlertsQueryParams.safeParse(req.query);
   const limit = parsed.success && parsed.data.limit ? parsed.data.limit : 100;
 
@@ -1315,6 +1324,66 @@ router.post("/alerts/check", requireAccountOperator, async (req, res): Promise<v
     res.status(503).json({ error: getApiHealth().error ?? "Check failed" });
   }
 });
+
+router.post(
+  "/alerts/:alertId/test",
+  requireAccountAdmin,
+  async (req, res): Promise<void> => {
+    const alertId = Number(req.params["alertId"]);
+    if (!Number.isInteger(alertId) || alertId <= 0) {
+      res.status(404).json({ error: "Email activity not found" });
+      return;
+    }
+    const [source] = await db
+      .select()
+      .from(alertsTable)
+      .where(eq(alertsTable.id, alertId))
+      .limit(1);
+    if (!source) {
+      res.status(404).json({ error: "Email activity not found" });
+      return;
+    }
+
+    const recipients = await resolveAlertRecipients(source.workspaceIds);
+    const { subject, html } = buildAlertEmail({
+      entityType: source.entityType === "team" ? "team" : "group",
+      entityName: source.entityName || source.groupName,
+      groupName: source.groupName,
+      workspaceName: null,
+      threshold: source.threshold,
+      spendUsd: source.spendUsd,
+      budgetUsd: source.budgetUsd,
+      billingPeriodLabel: getBillingPeriod().label,
+    });
+    const result = await sendEmail(
+      recipients,
+      `[TEST] ${subject}`,
+      `<div style="padding: 12px; margin-bottom: 16px; background: #ecfeff; border: 1px solid #06b6d4;"><strong>Test delivery:</strong> This message does not affect budget threshold state.</div>${html}`,
+    );
+    const [activity] = await db
+      .insert(alertsTable)
+      .values({
+        groupId: source.groupId,
+        groupName: source.groupName,
+        entityType: source.entityType,
+        entityId: source.entityId,
+        entityName: source.entityName,
+        workspaceIds: source.workspaceIds,
+        threshold: source.threshold,
+        spendUsd: source.spendUsd,
+        budgetUsd: source.budgetUsd,
+        recipients: result.deliveredTo ?? recipients,
+        status: result.ok ? "sent" : "failed",
+        errorMessage: result.ok ? null : (result.error ?? "unknown error"),
+      })
+      .returning();
+    if (!activity) {
+      res.status(500).json({ error: "Unable to record test delivery" });
+      return;
+    }
+    res.json(SendTestAlertResponse.parse(alertToJson(activity)));
+  },
+);
 
 // System status is account-only configuration; not exposed to workspace admins.
 router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {

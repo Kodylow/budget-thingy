@@ -7,6 +7,7 @@ import {
   canSeeWorkspace,
   isAccountAdmin,
   isAccountEditor,
+  isApplicationAdmin,
   isAccountWide,
   normalizeEmail,
   BOOTSTRAP_EDITOR_EMAIL,
@@ -147,6 +148,16 @@ test("persisted editor resolves to account_editor with account-wide access", asy
   assert.equal(canSeeWorkspace(authz, "ws-1"), true);
   assert.equal(canSeeWorkspace(authz, "ws-unknown"), true);
   assert.equal(scopeGroups(authz, groups).length, groups.length);
+});
+
+test("designated persisted identity resolves to full application-admin delegate", async () => {
+  setEditorAllowlistLookup((userId) =>
+    Promise.resolve(userId === "plain" ? "account_delegate" : false));
+  const authz = await resolveAuthorization("plain");
+  assert.deepEqual(authz, { role: "account_delegate", workspaceIds: [] });
+  assert.equal(isApplicationAdmin(authz), true);
+  assert.equal(isAccountWide(authz), true);
+  assert.equal(isAccountEditor(authz), false);
 });
 
 test("persisted editor not in the directory still gets account-wide access", async () => {

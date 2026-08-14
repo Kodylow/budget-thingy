@@ -10,6 +10,7 @@ import {
 import {
   BOOTSTRAP_EDITOR_EMAIL,
   isPersistedEditor,
+  getPersistedEditorRole,
   maybeBootstrapEditor,
 } from "./authz.ts";
 
@@ -43,6 +44,7 @@ test("bootstrap persists the designated editor keyed by stable sub", async () =>
   });
   assert.equal(created, true);
   assert.equal(await isPersistedEditor(BOOTSTRAP_SUB), true);
+  assert.equal(await getPersistedEditorRole(BOOTSTRAP_SUB), "account_delegate");
 
   const [row] = await db
     .select()

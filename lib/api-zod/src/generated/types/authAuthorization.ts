@@ -8,11 +8,11 @@
 import type { AuthAuthorizationRole } from './authAuthorizationRole';
 
 /**
- * Resolved authorization for the signed-in user. account_admin and account_editor see the whole account; workspace_admin sees only the listed workspaces. Only account_admin can manage editor access and settings.
+ * Resolved authorization for the signed-in user. account_admin, account_delegate, and account_editor see the whole account; workspace_admin sees only the listed workspaces. account_admin and account_delegate can manage editor access and settings.
  */
 export interface AuthAuthorization {
   /** Effective role resolved from the Enterprise directory and managed editor allowlist. */
   role: AuthAuthorizationRole;
-  /** Workspace IDs the user may view. Empty and ignored for account_admin and account_editor; the union of admin workspaces for workspace_admin. */
+  /** Workspace IDs the user may view. Empty and ignored for account_admin, account_delegate, and account_editor; the union of admin workspaces for workspace_admin. */
   workspaceIds: string[];
 }

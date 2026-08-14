@@ -1,0 +1,1 @@
+ALTER TABLE "editor_bootstrap_state" ADD COLUMN "revoked_at" timestamp with time zone;

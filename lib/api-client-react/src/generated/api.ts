@@ -1911,7 +1911,7 @@ export const getListEditorsUrl = () => {
 }
 
 /**
- * Available only to true Enterprise account administrators.
+ * Available only to Enterprise account administrators and the designated account delegate.
  * @summary List account-wide app editors
  */
 export const listEditors = async ( options?: RequestInit): Promise<AccountEditor[]> => {
@@ -1989,7 +1989,7 @@ export const getAddEditorUrl = () => {
 }
 
 /**
- * Available only to true Enterprise account administrators. The stable Replit user ID must already have signed in.
+ * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
  * @summary Add an account-wide app editor
  */
 export const addEditor = async (accountEditorInput: AccountEditorInput, options?: RequestInit): Promise<AccountEditor> => {
@@ -2061,7 +2061,7 @@ export const getDeleteEditorUrl = (userId: string,) => {
 }
 
 /**
- * Available only to true Enterprise account administrators.
+ * Available only to Enterprise account administrators and the designated account delegate.
  * @summary Remove an account-wide app editor
  */
 export const deleteEditor = async (userId: string, options?: RequestInit): Promise<OkResponse> => {
@@ -2279,6 +2279,78 @@ export const useRunAlertCheck = <TError = ErrorType<UnauthorizedResponse | Forbi
         TContext
       > => {
       return useMutation(getRunAlertCheckMutationOptions(options));
+    }
+
+export const getSendTestAlertUrl = (alertId: number,) => {
+
+
+
+
+  return `/api/alerts/${alertId}/test`
+}
+
+/**
+ * Re-resolves current RBAC recipients and sends a test copy without changing fired thresholds or delivery claims.
+ * @summary Send a test copy of an email activity entry
+ */
+export const sendTestAlert = async (alertId: number, options?: RequestInit): Promise<Alert> => {
+
+  return customFetch<Alert>(getSendTestAlertUrl(alertId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getSendTestAlertMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTestAlert>>, TError,{alertId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendTestAlert>>, TError,{alertId: number}, TContext> => {
+
+const mutationKey = ['sendTestAlert'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendTestAlert>>, {alertId: number}> = (props) => {
+          const {alertId} = props ?? {};
+
+          return  sendTestAlert(alertId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendTestAlertMutationResult = NonNullable<Awaited<ReturnType<typeof sendTestAlert>>>
+
+    export type SendTestAlertMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+    /**
+ * @summary Send a test copy of an email activity entry
+ */
+export const useSendTestAlert = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTestAlert>>, TError,{alertId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendTestAlert>>,
+        TError,
+        {alertId: number},
+        TContext
+      > => {
+      return useMutation(getSendTestAlertMutationOptions(options));
     }
 
 export const getGetStatusUrl = () => {

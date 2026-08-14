@@ -1,5 +1,6 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
 import { logger } from "./logger";
+import { BOOTSTRAP_EDITOR_EMAIL, normalizeEmail } from "./authz";
 
 /**
  * Email sending layer backed by the Replit AgentMail connector.
@@ -13,6 +14,7 @@ export interface SendResult {
   error?: string;
   messageId?: string;
   senderEmail?: string;
+  deliveredTo?: string[];
 }
 
 interface AgentMailInbox {
@@ -31,6 +33,26 @@ interface SendMessageResponse {
 
 const CONNECTOR_NAME = "agentmail";
 const APP_CLIENT_ID = "group-budget-monitor";
+let sendOverride:
+  | ((
+      to: string[],
+      subject: string,
+      htmlBody: string,
+    ) => Promise<SendResult>)
+  | null = null;
+
+/** Test-only seam; production callers must never set this. */
+export function setSendEmailOverrideForTests(
+  override:
+    | ((
+        to: string[],
+        subject: string,
+        htmlBody: string,
+      ) => Promise<SendResult>)
+    | null,
+): void {
+  sendOverride = override;
+}
 
 async function readError(response: Response): Promise<string> {
   const body = await response.text();
@@ -113,8 +135,20 @@ export async function sendEmail(
   subject: string,
   htmlBody: string,
 ): Promise<SendResult> {
-  if (to.length === 0) {
+  const intended = [
+    ...new Set(to.map(normalizeEmail).filter((email) => email.length > 0)),
+  ].sort();
+  if (intended.length === 0) {
     return { ok: false, error: "No email recipients were provided" };
+  }
+  const deliveredTo =
+    process.env.NODE_ENV === "production"
+      ? intended
+      : [BOOTSTRAP_EDITOR_EMAIL];
+  const deliveredSubject =
+    process.env.NODE_ENV === "production" ? subject : `[DEV] ${subject}`;
+  if (sendOverride) {
+    return sendOverride(deliveredTo, deliveredSubject, htmlBody);
   }
 
   try {
@@ -126,29 +160,45 @@ export async function sendEmail(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, subject, html: htmlBody }),
+        body: JSON.stringify({
+          to: deliveredTo,
+          subject: deliveredSubject,
+          html: htmlBody,
+        }),
       },
     );
     if (!response.ok) {
       const error = `AgentMail send failed: ${await readError(response)}`;
-      logger.error({ to, subject, status: response.status }, error);
-      return { ok: false, error };
+      logger.error(
+        { to: deliveredTo, subject: deliveredSubject, status: response.status },
+        error,
+      );
+      return { ok: false, error, deliveredTo };
     }
 
     const sent = (await response.json()) as SendMessageResponse;
     logger.info(
-      { to, subject, messageId: sent.message_id, senderEmail: sender.email },
+      {
+        to: deliveredTo,
+        subject: deliveredSubject,
+        messageId: sent.message_id,
+        senderEmail: sender.email,
+      },
       "Email sent through AgentMail",
     );
     return {
       ok: true,
       messageId: sent.message_id,
       senderEmail: sender.email,
+      deliveredTo,
     };
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown AgentMail error";
-    logger.error({ err, to, subject }, "AgentMail send failed");
-    return { ok: false, error };
+    logger.error(
+      { err, to: deliveredTo, subject: deliveredSubject },
+      "AgentMail send failed",
+    );
+    return { ok: false, error, deliveredTo };
   }
 }
 
