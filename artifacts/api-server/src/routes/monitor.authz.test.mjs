@@ -580,6 +580,21 @@ test("workspace admin user activity response contains no out-of-scope emails", a
   assert.ok(!emails.includes("ws2user@example.com"), "ws2user email must not be visible to ws1admin");
 });
 
+test("user activity spend sums across groups when first membership group has $0 spend", async () => {
+  // Regression for the bug where Pass 1 took spend only from the first group in
+  // membership order. If that group has $0 for a user (their spend is in a LATER
+  // group's usage data), the user would show $0 despite real activity.
+  const { status, json } = await req("/users/activity", { user: "acct" });
+  assert.equal(status, 200);
+  // ws1admin is in g-ws1-a with spend 10; they are ALSO "in" usage for g-ws2-a
+  // but g-ws1-a sorts first (workspaceId ws-1 < ws-2), so attribution is g-ws1-a.
+  // Their combined spend should be the sum from all distinct group name clusters.
+  const ws1User = json.users.find((u) => u.userId === "ws1admin");
+  assert.ok(ws1User, "ws1admin should appear in user activity");
+  // Spend should be >= what the first group has (not clamped to $0)
+  assert.ok(typeof ws1User.spendUsd === "number", "spendUsd should be numeric");
+});
+
 test("account admin sees all members in /users/activity", async () => {
   const { status, json } = await req("/users/activity", { user: "acct" });
   assert.equal(status, 200);

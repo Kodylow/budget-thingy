@@ -1705,8 +1705,11 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   let groupsLoaded = 0;
   const totalGroups = orderedGroups.length;
 
-  // Pass 1: attribute each user to their first visible group (deterministic ordering)
-  // Also track every user appearing in at least one visible group, for scoping the member list.
+  // Pass 1: attribute each user to their first visible group (deterministic ordering).
+  // Group attribution is membership-based (groupName/teamName/workspaceId for display);
+  // spend is accumulated separately in Pass 1.5 to avoid the case where the first
+  // membership group has $0 for a user whose actual spend lives in a later group's
+  // API response (e.g. account admins, or members of cross-workspace group aliases).
   const userGroupAttr = new Map<
     string,
     { groupId: string; groupName: string; teamName: string; spendUsd: number; workspaceId: string }
@@ -1720,7 +1723,6 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     } else {
       groupsLoaded++;
     }
-    const spendMap = memberUsage?.byUser ?? new Map<string, number>();
     const teamName = teamNameMap.get(group.name) ?? "";
     for (const userId of dir.groupMembers.get(group.id) ?? []) {
       visibleUserIds.add(userId);
@@ -1729,10 +1731,32 @@ router.get("/users/activity", async (req, res): Promise<void> => {
           groupId: group.id,
           groupName: group.name,
           teamName,
-          spendUsd: spendMap.get(userId) ?? 0,
+          spendUsd: 0,           // populated in Pass 1.5
           workspaceId: group.workspaceId,
         });
       }
+    }
+  }
+
+  // Pass 1.5: accumulate cross-group spend per attributed user with same-name-cluster
+  // deduplication. Same-name groups across workspaces (e.g. workspace aliases of
+  // "Strategic Dev") report identical user spend from the same underlying API origin;
+  // counting by lowercased group name prevents double-counting while correctly summing
+  // spend from genuinely distinct groups.
+  const clusterSeenByUser = new Map<string, Set<string>>(); // userId → seen cluster keys
+  for (const group of orderedGroups) {
+    const memberUsage = getMemberUsage(group.id, billingRange.key);
+    if (!memberUsage) continue;
+    const clusterKey = group.name.toLowerCase();
+    for (const [userId, spend] of memberUsage.byUser) {
+      if (spend <= 0) continue;
+      const attr = userGroupAttr.get(userId);
+      if (!attr) continue;
+      let seen = clusterSeenByUser.get(userId);
+      if (!seen) { seen = new Set(); clusterSeenByUser.set(userId, seen); }
+      if (seen.has(clusterKey)) continue;
+      seen.add(clusterKey);
+      attr.spendUsd += spend;
     }
   }
 
