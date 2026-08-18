@@ -161,6 +161,22 @@ export default function ClusterDetail() {
       };
     }, [results, groupRoleMap]);
 
+  // Cluster total comes from the sum of each constituent group's dedup-attributed
+  // spend (group.spendUsd), not the sum of member rows.  Member rows show raw
+  // workspace spend so every person's real usage is visible, but that can exceed
+  // the dedup total when a member is also counted in another cluster — the
+  // attributed group total is the authoritative budget-consistent figure.
+  const { clusterAttributedTotal, clusterSpendLoaded } = useMemo(() => {
+    let total = 0;
+    let loaded = true;
+    for (const r of results) {
+      const g = r.data?.group;
+      if (!g?.spendLoaded || g.spendUsd == null) { loaded = false; continue; }
+      total += g.spendUsd;
+    }
+    return { clusterAttributedTotal: total, clusterSpendLoaded: loaded };
+  }, [results]);
+
   const sortedRoleLabels = useMemo(() => {
     const roles = new Set(Object.values(groupRoleMap));
     return [...roles].sort((a, b) => (ROLE_PRIORITY[a] ?? 99) - (ROLE_PRIORITY[b] ?? 99));
@@ -236,11 +252,15 @@ export default function ClusterDetail() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono tabular-nums">
-              ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
-            </div>
+            {!clusterSpendLoaded ? (
+              <div className="h-8 w-32 bg-muted animate-pulse-glow rounded" />
+            ) : (
+              <div className="text-2xl font-bold font-mono tabular-nums">
+                ${clusterAttributedTotal.toFixed(2)}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground mt-1">
-              Each member counted once across all roles
+              Budget-attributed total; member spend shows individual usage
             </p>
           </CardContent>
         </Card>
@@ -350,11 +370,11 @@ export default function ClusterDetail() {
               </tbody>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
-                  <td className="py-3 px-4 text-sm">Combined Total</td>
+                  <td className="py-3 px-4 text-sm">Attributed Total</td>
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
-                      ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
+                      {clusterSpendLoaded ? `$${clusterAttributedTotal.toFixed(2)}` : '—'}
                     </span>
                   </td>
                 </tr>

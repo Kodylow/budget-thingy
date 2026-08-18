@@ -566,9 +566,12 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       };
     });
 
-    // Reconciliation: members removed from the group since last sync still count toward
-    // group spend — fold them into unattributed so member rows + unattributed = group total.
-    // Invariant: combinedSpend === listedMembersSpend + unattributedSpendUsd.
+    // Reconciliation: members removed from the group since the last sync still count
+    // toward group spend (they are captured in the rollup).  unattributedSpendUsd
+    // surfaces that residual so the cluster page can show an accurate attributed total.
+    // Note: member rows show raw workspace spend (listedMembersSpend), which can exceed
+    // combinedSpend for members whose spend is attributed elsewhere; the cluster total
+    // is therefore derived from group.spendUsd (= combinedSpend), not member-row sums.
     const combinedSpend = attributed.spendUsd;
     const combinedLoaded = allSourcesLoaded && rollup.isComplete && extraSpend.isComplete;
     let listedMembersSpend = 0;
@@ -577,10 +580,18 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         listedMembersSpend += memberUsage.byUser.get(userId) ?? 0;
       }
     }
-    // Note: listedMembersSpend uses raw workspace spend per member and may exceed
-    // combinedSpend (the deduped group total) when members belong to multiple groups —
-    // their raw spend appears here but is attributed elsewhere for budget purposes.
-    const unattributed = combinedLoaded ? Math.max(0, combinedSpend - listedMembersSpend) : 0;
+    // Unattributed spend = spend from members removed from the group since the last sync
+    // (still in the rollup total but no longer in the directory member list).
+    // Must be computed from attributed.byUser (not raw member spend) so that members
+    // whose spend is attributed elsewhere don't inflate this figure — raw spend can
+    // exceed the attributed group total for users in multiple groups.
+    let attributedCurrentMembersSpend = 0;
+    for (const userId of userIds) {
+      attributedCurrentMembersSpend += attributed.byUser.get(userId) ?? 0;
+    }
+    const unattributed = combinedLoaded
+      ? Math.max(0, combinedSpend - attributedCurrentMembersSpend)
+      : 0;
 
     const mergedRollupMemberCount = sourceIds.reduce(
       (sum, id) => sum + (rollupMemberCounts.get(id) ?? 0),
