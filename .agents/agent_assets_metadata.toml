@@ -1,0 +1,9 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "PmKMv1aeMwUfutvez0ozG"
+uri = "file://replit-raw-api-spend.xlsx"
+type = "table"
+title = "Replit Raw API Spend — Current Billing Period"
+description = "3 sheets: Summary (totals + gap analysis), Groups (173 groups with raw API spend), Users (355 unique users, spend deduped by max across groups)"
