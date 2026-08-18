@@ -1,11 +1,14 @@
 /**
  * Regression tests for /users/activity cross-group spend totals.
  * Locks in:
- *  - Spend is summed ADDITIVELY across every group the user belongs to,
- *    including same-named groups in different workspaces (no name-based dedup —
- *    each groupId has its own independent usage API data).
- *  - The displayed group/team is the one where the user spent the MOST
- *    (their primary cost center), not the first group in sort order.
+ *  - Spend uses WORKSPACE-LEVEL deduplication: the Replit usage API returns
+ *    workspace-level spend per user — every group in the same workspace reports
+ *    the same dollar amount. We take MAX per (user, workspace), then SUM across
+ *    workspaces. Naive group-level additive summation would multiply-count.
+ *  - Groups in DIFFERENT workspaces are always independent: "Admins" in ws-1
+ *    and "Admins" in ws-2 are separate pools and are always summed.
+ *  - The displayed group/team is the one where the user has the MOST single-group
+ *    spend (their primary cost center), not the first group in sort order.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -106,7 +109,11 @@ async function activity(user = "acct") {
   return res.json();
 }
 
-test("same-named groups in different workspaces are summed additively (no name dedup), plus extra-workspace spend", async () => {
+test("workspace-level dedup: same-workspace groups count once (max), different workspaces sum, extra-workspace included", async () => {
+  // The Replit usage API returns WORKSPACE-level spend: both ws-1 groups report the
+  // same dollar amount for denise in production. Here we seed Admins-ws1=$100 and
+  // Devs-ws1=$50 (same workspace, different values) to prove the MAX is taken, not
+  // the additive sum. In production both would be identical, but max is always safe.
   __setMemberUsageForTests("sg-admins-ws1", RANGE, new Map([["denise", 100]]));
   __setMemberUsageForTests("sg-devs-ws1",   RANGE, new Map([["denise", 50], ["eve", 20]]));
   __setMemberUsageForTests("sg-admins-ws2", RANGE, new Map([["denise", 700]]));
@@ -118,11 +125,13 @@ test("same-named groups in different workspaces are summed additively (no name d
 
   const denise = json.users.find((u) => u.username === "denise");
   assert.ok(denise, "denise must appear");
-  // 100 (Admins ws-1) + 50 (Devs ws-1) + 700 (Admins ws-2) + 25 (extra ws) = 875.
-  // A name-based dedup would have dropped one of the two "Admins" amounts.
-  assert.equal(denise.spendUsd, 875,
-    "spend must sum across ALL groups incl. same-named ones plus extra-workspace spend");
-  // Displayed group = highest-spend group (Admins in ws-2, $700).
+  // ws-1: max(100, 50) = 100 (not 150 — additive would be wrong)
+  // ws-2: 700
+  // extra: 25
+  // Total: 100 + 700 + 25 = 825.
+  assert.equal(denise.spendUsd, 825,
+    "spend = max-per-workspace summed across workspaces: ws-1=100 + ws-2=700 + extra=25");
+  // Displayed group = highest single-group spend (Admins in ws-2, $700).
   assert.equal(denise.groupName, "Admins");
   // workspaceRole reflects the attributed (highest-spend) group's workspace: ws-2 member.
   assert.equal(denise.workspaceRole, "member");

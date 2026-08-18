@@ -245,7 +245,9 @@ test("CSV attribution matches dashboard even when API returns groups in reverse 
     ]),
   });
 
-  // alice: $30 in Alpha, $20 in Beta; she should be attributed to Alpha (sorts first).
+  // alice: $30 in Alpha, $20 in Beta — BOTH in ws-main (same workspace).
+  // With workspace-level dedup: max(30, 20) = $30 from ws-main, + $5 extra = $35.
+  // Alpha ($30) beats Beta ($20) → alice is attributed to Alpha regardless of dir order.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 5]]));
@@ -255,8 +257,9 @@ test("CSV attribution matches dashboard even when API returns groups in reverse 
   assert.ok(alice, "alice must appear in CSV");
   // alice's group must be Alpha (not Beta) regardless of directory order
   assert.equal(alice["Group"], "Alpha", `alice must be attributed to Alpha; got ${alice["Group"]}`);
-  // alice's Comcast: $30 (Alpha) + $20 (Beta) = $50. Extra-ws: $5. Combined: $55.
-  assert.equal(alice["Spend (USD)"], "55.00", `alice spend must be $55; got ${alice["Spend (USD)"]}`);
+  // ws-main: max(30, 20) = 30. Extra-ws: 5. Combined: 35.
+  // (Additive 30+20+5=55 would be wrong — ws-main is one pool.)
+  assert.equal(alice["Spend (USD)"], "35.00", `alice spend must be $35; got ${alice["Spend (USD)"]}`);
 
   restoreDir();
 });

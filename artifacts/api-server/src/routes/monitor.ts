@@ -1605,11 +1605,14 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     }
   }
 
-  // Pass 1.5: sum each attributed user's spend across ALL groups' usage data and
-  // reassign their displayed group/team to the one contributing the most spend.
-  // Each group has its own unique usage API call, so per-group amounts are
-  // independent and additive — mirroring the /users/activity behavior exactly.
-  const csvTopGroupSpend = new Map<string, number>();
+  // Pass 1.5: compute total spend per user with workspace-level deduplication,
+  // mirroring /users/activity exactly.
+  // The Replit usage API returns WORKSPACE-level spend per user — every group
+  // in the same workspace reports the same dollar amount. Take the MAX across
+  // groups within each workspace, then SUM across workspaces.
+  const csvTopGroupSpend = new Map<string, number>(); // userId → highest single-group spend
+  const csvWorkspaceMaxSpend = new Map<string, Map<string, number>>(); // userId → wsId → maxSpend
+
   for (const group of sortedGroupsForCsv) {
     const memberUsage = getMemberUsage(group.id, billingRange.key);
     if (!memberUsage) continue;
@@ -1618,7 +1621,13 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
       if (spend <= 0) continue;
       const attr = userGroupAttr.get(userId);
       if (!attr) continue;
-      attr.spendUsd += spend;
+
+      // Workspace-level dedup: track max spend per (user, workspace)
+      let wsMap = csvWorkspaceMaxSpend.get(userId);
+      if (!wsMap) { wsMap = new Map(); csvWorkspaceMaxSpend.set(userId, wsMap); }
+      wsMap.set(group.workspaceId, Math.max(wsMap.get(group.workspaceId) ?? 0, spend));
+
+      // Track highest-spend group for display attribution
       const prevTop = csvTopGroupSpend.get(userId) ?? 0;
       if (spend > prevTop) {
         csvTopGroupSpend.set(userId, spend);
@@ -1626,6 +1635,12 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
         attr.teamName = teamName;
       }
     }
+  }
+
+  // Sum workspace-level maximums → true cross-workspace total per user
+  for (const [userId, wsMap] of csvWorkspaceMaxSpend) {
+    const attr = userGroupAttr.get(userId);
+    if (attr) attr.spendUsd = [...wsMap.values()].reduce((sum, s) => sum + s, 0);
   }
 
   // Pass 2: emit one row per enterprise member (covers users not in any custom group).
@@ -1676,14 +1691,18 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
 });
 
 // ── GET /users/activity ───────────────────────────────────────────────────────
-// Returns workspace members with their total billing-period spend summed
-// ADDITIVELY across every group they belong to (plus, for account admins,
-// spend in extra workspaces that have no custom groups). The displayed
-// group/team is the user's highest-spend group (primary cost center).
-// NOTE: these per-user totals are additive and can exceed the deduped
-// budget totals in /groups and /summary, which attribute shared users to a
-// single group to avoid double-counting group budgets — different accounting
-// views by design.
+// Returns workspace members with their true total billing-period spend.
+// The Replit usage API returns WORKSPACE-level spend per user, not group-level:
+// every group within the same workspace reports the identical dollar amount.
+// Aggregation uses workspace-level max dedup — MAX per (user, workspaceId)
+// summed across distinct workspaces — to avoid multiply-counting spend when a
+// user belongs to several groups in the same workspace.
+// Groups in DIFFERENT workspaces are independent pools and are always summed.
+// Account admins also see spend from extra workspaces that have no custom groups.
+// The displayed group/team is the user's highest-spend group (primary cost center).
+// NOTE: these per-user totals can exceed the deduped budget totals in /groups
+// and /summary, which attribute shared users to a single group to avoid
+// double-counting group budgets — different accounting views by design.
 // Scoped to the caller's visible groups: account admins see all members;
 // workspace admins see only members in their visible groups. Responds
 // immediately with cached data; isComplete=false while usage is still loading.
@@ -1766,12 +1785,19 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     }
   }
 
-  // Pass 1.5: sum each attributed user's spend across ALL visible groups' usage
-  // data, and reassign their displayed group to the one contributing the most
-  // spend. Each group has its own unique usage API call (unique groupId), so
-  // per-group amounts are independent and additive — including same-named groups
-  // in different workspaces and admin/member role variants of a group.
+  // Pass 1.5: compute total spend per user with workspace-level deduplication.
+  // The Replit usage API returns WORKSPACE-level spend per user, not group-level:
+  // every group in the same workspace reports the same dollar amount for a given user.
+  // Naively summing across all groups in a workspace multiplies spend by the number
+  // of groups the user belongs to in that workspace.
+  // Correct approach: take the MAX across groups within each workspace, then SUM
+  // across workspaces for the true cross-workspace total.
+  // Groups in DIFFERENT workspaces are always independent pools — "Admins" in
+  // workspace A and "Admins" in workspace B represent separate usage and are summed.
+  // The displayed group/team is the one with the highest single-group spend.
   const topGroupSpendByUser = new Map<string, number>(); // userId → highest single-group spend
+  const userWorkspaceMaxSpend = new Map<string, Map<string, number>>(); // userId → wsId → maxSpend
+
   for (const group of orderedGroups) {
     const memberUsage = getMemberUsage(group.id, billingRange.key);
     if (!memberUsage) continue;
@@ -1780,7 +1806,13 @@ router.get("/users/activity", async (req, res): Promise<void> => {
       if (spend <= 0) continue;
       const attr = userGroupAttr.get(userId);
       if (!attr) continue;
-      attr.spendUsd += spend;
+
+      // Workspace-level dedup: track max spend per (user, workspace)
+      let wsMap = userWorkspaceMaxSpend.get(userId);
+      if (!wsMap) { wsMap = new Map(); userWorkspaceMaxSpend.set(userId, wsMap); }
+      wsMap.set(group.workspaceId, Math.max(wsMap.get(group.workspaceId) ?? 0, spend));
+
+      // Track the group with the highest single spend for display attribution
       const prevTop = topGroupSpendByUser.get(userId) ?? 0;
       if (spend > prevTop) {
         topGroupSpendByUser.set(userId, spend);
@@ -1790,6 +1822,12 @@ router.get("/users/activity", async (req, res): Promise<void> => {
         attr.workspaceId = group.workspaceId;
       }
     }
+  }
+
+  // Sum workspace-level maximums → true cross-workspace total per user
+  for (const [userId, wsMap] of userWorkspaceMaxSpend) {
+    const attr = userGroupAttr.get(userId);
+    if (attr) attr.spendUsd = [...wsMap.values()].reduce((sum, s) => sum + s, 0);
   }
 
   const callerIsAccountAdmin = isAccountWide(req.authz);
