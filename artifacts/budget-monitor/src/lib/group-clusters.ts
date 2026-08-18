@@ -60,6 +60,9 @@ export interface GroupLike {
   rollupMemberCount?: number;
   rollupSpendLoaded?: boolean;
   rollupSpendUsd?: number;
+  /** Sum of current members' workspace spend for this group (null while loading). */
+  rawMemberSpendUsd?: number | null;
+  rawMemberSpendLoaded?: boolean;
   spendUpdatedAt?: string | null;
 }
 
@@ -149,8 +152,11 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
 
   const result: GroupCluster[] = [];
 
-  // Single-group (standalone) entries
+  // Single-group (standalone) entries — use rawMemberSpendUsd when available so
+  // the displayed spend equals the sum of the group's actual member workspace
+  // spend rather than the global-attribution rollup figure.
   for (const g of standalone) {
+    const useRaw = g.rawMemberSpendLoaded === true && g.rawMemberSpendUsd != null;
     result.push({
       clusterKey: g.groupId,
       baseName: g.name,
@@ -160,8 +166,8 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
       groupIds: [g.groupId],
       groupRoles: {},
       memberCount: g.memberCount ?? 0,
-      spendUsd: g.spendUsd ?? 0,
-      spendLoaded: g.spendLoaded,
+      spendUsd: useRaw ? g.rawMemberSpendUsd! : (g.spendUsd ?? 0),
+      spendLoaded: useRaw ? true : g.spendLoaded,
       isSingleGroup: true,
       singleGroup: g,
     });

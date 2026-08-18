@@ -137,6 +137,8 @@ export const ListGroupsResponse = zod.object({
   "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
   "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
   "rollupSpendUsd": zod.number().describe('Member-deduplicated spend attributed to this group for team and org rollups'),
+  "rawMemberSpendUsd": zod.number().nullish().describe('Sum of current members\' workspace spend (null while loading). Counts each member once within this group; use teamRawSpend for the within-team deduped total.'),
+  "rawMemberSpendLoaded": zod.boolean().describe('True when all member usage is loaded for this group'),
   "spendUpdatedAt": zod.string().nullish().describe('ISO timestamp when spend was last fetched'),
   "budgetUsd": zod.number().nullish().describe('Effective budget in USD (from app-level group budget if set), null if not set'),
   "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
@@ -151,7 +153,11 @@ export const ListGroupsResponse = zod.object({
 })),
   "isComplete": zod.boolean().describe('False while background usage fetches are still pending; poll every ~8s until true'),
   "pendingCount": zod.number().describe('Number of outstanding raw group-spend and member-usage fetches'),
-  "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"')
+  "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"'),
+  "teamRawSpend": zod.record(zod.string(), zod.object({
+  "spendUsd": zod.number().describe('Within-team sum of each unique member\'s workspace spend (seenUserIds dedup across sub-groups)'),
+  "spendLoaded": zod.boolean().describe('True when all member usage for every group in this team is loaded'),
+})).describe('Per-team raw member spend. Mirrors the cluster-detail page total: each member counted once within the team, raw workspace spend (not global-attribution based).')
 })
 
 

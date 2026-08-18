@@ -324,12 +324,28 @@ router.get("/groups", async (req, res): Promise<void> => {
         const spend = getSpend(g.id, range.key);
 
         // Merged member count: union of directory members across all source groups.
-        const rawMemberCount = mergedGroupMemberIds(sourceIds, dir.groupMembers).length;
+        const memberIds = mergedGroupMemberIds(sourceIds, dir.groupMembers);
+        const rawMemberCount = memberIds.length;
         // Rollup member count: sum of deduped counts across all source groups.
         const mergedRollupMemberCount = sourceIds.reduce(
           (sum, id) => sum + (rollupMemberCounts.get(id) ?? 0),
           0,
         );
+
+        // Raw member spend = sum of each current member's workspace spend across
+        // sourceIds, plus unattributable (ex-member) spend per source group.
+        // This matches what the cluster-detail page shows for each member row sum.
+        let rawMemberSpend = 0;
+        if (memberUsageLoaded) {
+          for (const userId of memberIds) {
+            for (const srcId of sourceIds) {
+              rawMemberSpend += getMemberUsage(srcId, range.key)?.byUser.get(userId) ?? 0;
+            }
+          }
+          for (const srcId of sourceIds) {
+            rawMemberSpend += getMemberUsage(srcId, range.key)?.unattributableTotalCostUsd ?? 0;
+          }
+        }
 
         const budget = effectiveGroupBudget(budgetMap.get(g.id));
         // Threshold state is always tracked against the cutoff-anchored billing period.
@@ -364,6 +380,8 @@ router.get("/groups", async (req, res): Promise<void> => {
           spendUsd: fullyLoaded ? combinedSpend : null,
           rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
           rollupSpendUsd: combinedSpend,
+          rawMemberSpendUsd: memberUsageLoaded ? rawMemberSpend : null,
+          rawMemberSpendLoaded: memberUsageLoaded,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
@@ -380,6 +398,44 @@ router.get("/groups", async (req, res): Promise<void> => {
       }),
     );
 
+    // Per-team raw member spend with within-team seenUserIds dedup.
+    // Mirrors cluster-detail's totalMembersSpend + totalUnattributedSpend:
+    // each member counted once within the team, at their raw workspace spend
+    // (not the global-attribution rollup, so members attributed to other groups
+    // still contribute their spend here).
+    const teamRawSpend: Record<string, { spendUsd: number; spendLoaded: boolean }> = {};
+    const teamGroupsByName = new Map<string, typeof displayGroups>();
+    for (const g of displayGroups) {
+      const teamName = groupTeamMap.get(g.name);
+      if (!teamName) continue;
+      const existing = teamGroupsByName.get(teamName) ?? [];
+      existing.push(g);
+      teamGroupsByName.set(teamName, existing);
+    }
+    for (const [teamName, tGroups] of teamGroupsByName) {
+      const seenUsers = new Set<string>();
+      let teamRaw = 0;
+      let teamLoaded = true;
+      for (const g of tGroups) {
+        const srcIds = mergePlan.mergeMap.get(g.id) ?? [g.id];
+        const loaded = srcIds.every((id) => !!getMemberUsage(id, range.key));
+        if (!loaded) teamLoaded = false;
+        const gMemberIds = mergedGroupMemberIds(srcIds, dir.groupMembers);
+        for (const userId of gMemberIds) {
+          if (seenUsers.has(userId)) continue;
+          seenUsers.add(userId);
+          for (const srcId of srcIds) {
+            teamRaw += getMemberUsage(srcId, range.key)?.byUser.get(userId) ?? 0;
+          }
+        }
+        // Include ex-member (unattributable) spend from each source group.
+        for (const srcId of srcIds) {
+          teamRaw += getMemberUsage(srcId, range.key)?.unattributableTotalCostUsd ?? 0;
+        }
+      }
+      teamRawSpend[teamName] = { spendUsd: teamRaw, spendLoaded: teamLoaded };
+    }
+
     res.json(
       ListGroupsResponse.parse({
         groups,
@@ -389,6 +445,7 @@ router.get("/groups", async (req, res): Promise<void> => {
         pendingCount:
           rollup.pendingCount + (extraSpend.totalCount - extraSpend.loadedCount),
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
+        teamRawSpend,
       }),
     );
   } catch (err) {

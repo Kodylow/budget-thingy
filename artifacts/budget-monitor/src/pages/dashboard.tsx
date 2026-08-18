@@ -138,6 +138,9 @@ export default function Dashboard() {
     return m;
   }, [teamBudgetsData]);
 
+  // Per-team raw spend from the backend (within-team seenUserIds, matches cluster-detail totals).
+  const teamRawSpend = groupsData?.teamRawSpend ?? {};
+
   // Compute team sections
   const { teamSections, unassigned } = useMemo(() => {
     const teamMap = new Map<string, typeof groups>();
@@ -155,7 +158,12 @@ export default function Dashboard() {
 
     const teamSections: TeamSection[] = [];
     for (const [teamName, teamGroups] of teamMap) {
-      const { memberCount, spendUsd, spendLoaded } = sumAttributedRollup(teamGroups);
+      // Prefer the backend-computed within-team seenUserIds total (matches the
+      // cluster-detail page) over the globally-attributed rollup sum.
+      const rawTeam = teamRawSpend[teamName];
+      const { memberCount, spendUsd: rollupSpend, spendLoaded: rollupLoaded } = sumAttributedRollup(teamGroups);
+      const spendUsd = rawTeam?.spendUsd ?? rollupSpend;
+      const spendLoaded = rawTeam != null ? rawTeam.spendLoaded : rollupLoaded;
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
@@ -177,7 +185,7 @@ export default function Dashboard() {
     teamSections.sort((a, b) => a.teamName.localeCompare(b.teamName));
 
     return { teamSections, unassigned };
-  }, [groups, teamBudgetMap]);
+  }, [groups, teamBudgetMap, teamRawSpend]);
 
   // Financial summary cards and the table footer must reconcile to the same
   // visible top-level rows: each team pool once, plus each unassigned group.
