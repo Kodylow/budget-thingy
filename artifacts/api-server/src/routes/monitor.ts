@@ -421,7 +421,16 @@ router.get("/groups", async (req, res): Promise<void> => {
         const loaded = srcIds.every((id) => !!getMemberUsage(id, range.key));
         if (!loaded) teamLoaded = false;
         const gMemberIds = mergedGroupMemberIds(srcIds, dir.groupMembers);
-        for (const userId of gMemberIds) {
+        // Union directory members with users returned by the API who may not yet
+        // be reflected in the directory snapshot (mirrors getDedupedUsageRollup).
+        const apiUserIds = new Set<string>();
+        for (const srcId of srcIds) {
+          for (const userId of (getMemberUsage(srcId, range.key)?.byUser.keys() ?? [])) {
+            apiUserIds.add(userId);
+          }
+        }
+        const allMemberIds = new Set([...gMemberIds, ...apiUserIds]);
+        for (const userId of allMemberIds) {
           if (seenUsers.has(userId)) continue;
           seenUsers.add(userId);
           for (const srcId of srcIds) {
