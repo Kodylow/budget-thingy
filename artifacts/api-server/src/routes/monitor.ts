@@ -1581,22 +1581,14 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
   queueExtraWorkspacesFetch(dir, billingRange, 1);
   const exportExtraSpend = getExtraWorkspaceSpend(dir, billingRange.key);
 
-  // Compute the rollup using the SAME stable ordering (workspaceId/name/id) as the
-  // dashboard so that CSV attribution is always consistent with per-group totals.
-  // A user with spend in multiple groups is attributed to their first group in that
-  // order, matching exactly what /groups and /summary display.
-  const exportRollup = getDedupedUsageRollup(
-    dir.groups, billingRange.key, exportExtraSpend.byUser, dir.groupMembers,
-  );
   const groupsLoaded = dir.groups.filter((g) => !!getMemberUsage(g.id, billingRange.key)).length;
   const totalGroups = dir.groups.length;
+  const exportComplete = groupsLoaded === totalGroups;
 
-  // Pass 1: build userId → { group, team, combined spend } using the SAME stable sort
-  // order (workspaceId → name → id) as getDedupedUsageRollup.
-  // Attribution is driven by directory group membership (not usage data), so every
-  // member gets a group/team even with $0 spend or on a cold cache. Spend is read
-  // from the rollup's byUser map (combined Comcast + extra-workspace, deduped) and
-  // defaults to $0 if the group's member usage hasn't loaded yet.
+  // Pass 1: register every group member with a default (first-membership) group/team,
+  // using the stable sort order (workspaceId → name → id). Attribution is driven by
+  // directory group membership so every member gets a group/team even with $0 spend
+  // or on a cold cache. Spend and the displayed group are finalized in Pass 1.5.
   const sortedGroupsForCsv = [...dir.groups].sort(
     (a, b) =>
       a.workspaceId.localeCompare(b.workspaceId) ||
@@ -1606,18 +1598,39 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
   const userGroupAttr = new Map<string, { groupName: string; teamName: string; spendUsd: number }>();
   for (const group of sortedGroupsForCsv) {
     const teamName = teamNameMap.get(group.name) ?? "";
-    const groupRollup = exportRollup.byGroup.get(group.id);
     for (const userId of dir.groupMembers.get(group.id) ?? []) {
       if (!userGroupAttr.has(userId)) {
-        // Spend from rollup (combined + deduped); $0 if usage not loaded or not attributed here.
-        const spendUsd = groupRollup?.byUser.get(userId) ?? 0;
-        userGroupAttr.set(userId, { groupName: group.name, teamName, spendUsd });
+        userGroupAttr.set(userId, { groupName: group.name, teamName, spendUsd: 0 });
+      }
+    }
+  }
+
+  // Pass 1.5: sum each attributed user's spend across ALL groups' usage data and
+  // reassign their displayed group/team to the one contributing the most spend.
+  // Each group has its own unique usage API call, so per-group amounts are
+  // independent and additive — mirroring the /users/activity behavior exactly.
+  const csvTopGroupSpend = new Map<string, number>();
+  for (const group of sortedGroupsForCsv) {
+    const memberUsage = getMemberUsage(group.id, billingRange.key);
+    if (!memberUsage) continue;
+    const teamName = teamNameMap.get(group.name) ?? "";
+    for (const [userId, spend] of memberUsage.byUser) {
+      if (spend <= 0) continue;
+      const attr = userGroupAttr.get(userId);
+      if (!attr) continue;
+      attr.spendUsd += spend;
+      const prevTop = csvTopGroupSpend.get(userId) ?? 0;
+      if (spend > prevTop) {
+        csvTopGroupSpend.set(userId, spend);
+        attr.groupName = group.name;
+        attr.teamName = teamName;
       }
     }
   }
 
   // Pass 2: emit one row per enterprise member (covers users not in any custom group).
-  // Combined spend comes from the rollup (Comcast + extra-workspace, deduped).
+  // Extra-workspace spend (workspaces without custom groups) is added for every user
+  // so cross-workspace totals stay complete.
   const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; spendUsd: number }[] = [];
   for (const [userId, m] of dir.members) {
     const attr = userGroupAttr.get(userId);
@@ -1625,11 +1638,8 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
       .map((wsId) => dir.workspaces.get(wsId)?.name ?? wsId)
       .filter(Boolean)
       .join("; ");
-    // For grouped users: spendUsd comes from the rollup (already includes extra-workspace).
-    // For ungrouped users: add any extra-workspace spend directly (they have no custom group).
-    const spendUsd = attr
-      ? attr.spendUsd
-      : (exportExtraSpend.byUser.get(userId) ?? 0);
+    const extraSpend = exportExtraSpend.byUser.get(userId) ?? 0;
+    const spendUsd = (attr?.spendUsd ?? 0) + extraSpend;
     rows.push({
       email: m.email,
       name: m.name ?? "",
@@ -1651,7 +1661,7 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.spendUsd.toFixed(2)].map(escape).join(","),
   );
 
-  const isComplete = exportRollup.isComplete && exportExtraSpend.isComplete;
+  const isComplete = exportComplete && exportExtraSpend.isComplete;
   const csv = [header, ...lines].join("\r\n");
 
   res.setHeader("Content-Type", "text/csv");
@@ -1666,13 +1676,17 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
 });
 
 // ── GET /users/activity ───────────────────────────────────────────────────────
-// Returns workspace members with first-custom-group attribution, team, and
-// total billing-period spend. Scoped to the caller's visible groups:
-// account admins see all members; workspace admins see only members in their
-// visible groups. Groups are processed in deterministic order (workspaceId →
-// name → id) so first-group attribution is stable regardless of API page order.
-// Responds immediately with cached data; isComplete=false while member usage is
-// still loading for some groups.
+// Returns workspace members with their total billing-period spend summed
+// ADDITIVELY across every group they belong to (plus, for account admins,
+// spend in extra workspaces that have no custom groups). The displayed
+// group/team is the user's highest-spend group (primary cost center).
+// NOTE: these per-user totals are additive and can exceed the deduped
+// budget totals in /groups and /summary, which attribute shared users to a
+// single group to avoid double-counting group budgets — different accounting
+// views by design.
+// Scoped to the caller's visible groups: account admins see all members;
+// workspace admins see only members in their visible groups. Responds
+// immediately with cached data; isComplete=false while usage is still loading.
 router.get("/users/activity", async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.json({ isComplete: true, loadedCount: 0, totalCount: 0, users: [] });
@@ -1702,14 +1716,28 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   const groupTeams = await db.select().from(groupTeamsTable);
   const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
+  // Extra-workspace spend (workspaces with no custom groups) is account-wide
+  // data, so include it only for account admins — never leak out-of-scope
+  // spend to workspace admins.
+  const includeExtraSpend = isAccountWide(req.authz);
+  let extraSpend: { byUser: Map<string, number>; isComplete: boolean } = {
+    byUser: new Map(),
+    isComplete: true,
+  };
+  if (includeExtraSpend) {
+    queueExtraWorkspacesFetch(dir, billingRange, 1);
+    extraSpend = getExtraWorkspaceSpend(dir, billingRange.key);
+  }
+
   let groupsLoaded = 0;
   const totalGroups = orderedGroups.length;
 
-  // Pass 1: attribute each user to their first visible group (deterministic ordering).
-  // Group attribution is membership-based (groupName/teamName/workspaceId for display);
-  // spend is accumulated separately in Pass 1.5 to avoid the case where the first
-  // membership group has $0 for a user whose actual spend lives in a later group's
-  // API response (e.g. account admins, or members of cross-workspace group aliases).
+  // Pass 1: register every visible group member with a default (first-membership)
+  // attribution, and track visibility scoping. Spend and the displayed group are
+  // finalized in Pass 1.5: total spend is the SUM across every group's usage data
+  // (same-name groups in different workspaces are independent groups with
+  // independent spend — no name-based dedup), and the displayed group/team is the
+  // one where the user spent the most (their primary cost center).
   const userGroupAttr = new Map<
     string,
     { groupId: string; groupName: string; teamName: string; spendUsd: number; workspaceId: string }
@@ -1731,32 +1759,36 @@ router.get("/users/activity", async (req, res): Promise<void> => {
           groupId: group.id,
           groupName: group.name,
           teamName,
-          spendUsd: 0,           // populated in Pass 1.5
+          spendUsd: 0,           // accumulated in Pass 1.5
           workspaceId: group.workspaceId,
         });
       }
     }
   }
 
-  // Pass 1.5: accumulate cross-group spend per attributed user with same-name-cluster
-  // deduplication. Same-name groups across workspaces (e.g. workspace aliases of
-  // "Strategic Dev") report identical user spend from the same underlying API origin;
-  // counting by lowercased group name prevents double-counting while correctly summing
-  // spend from genuinely distinct groups.
-  const clusterSeenByUser = new Map<string, Set<string>>(); // userId → seen cluster keys
+  // Pass 1.5: sum each attributed user's spend across ALL visible groups' usage
+  // data, and reassign their displayed group to the one contributing the most
+  // spend. Each group has its own unique usage API call (unique groupId), so
+  // per-group amounts are independent and additive — including same-named groups
+  // in different workspaces and admin/member role variants of a group.
+  const topGroupSpendByUser = new Map<string, number>(); // userId → highest single-group spend
   for (const group of orderedGroups) {
     const memberUsage = getMemberUsage(group.id, billingRange.key);
     if (!memberUsage) continue;
-    const clusterKey = group.name.toLowerCase();
+    const teamName = teamNameMap.get(group.name) ?? "";
     for (const [userId, spend] of memberUsage.byUser) {
       if (spend <= 0) continue;
       const attr = userGroupAttr.get(userId);
       if (!attr) continue;
-      let seen = clusterSeenByUser.get(userId);
-      if (!seen) { seen = new Set(); clusterSeenByUser.set(userId, seen); }
-      if (seen.has(clusterKey)) continue;
-      seen.add(clusterKey);
       attr.spendUsd += spend;
+      const prevTop = topGroupSpendByUser.get(userId) ?? 0;
+      if (spend > prevTop) {
+        topGroupSpendByUser.set(userId, spend);
+        attr.groupId = group.id;
+        attr.groupName = group.name;
+        attr.teamName = teamName;
+        attr.workspaceId = group.workspaceId;
+      }
     }
   }
 
@@ -1795,7 +1827,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
       email: m.email,
       teamName: attr?.teamName ?? "",
       groupName: attr?.groupName ?? "",
-      spendUsd: attr?.spendUsd ?? 0,
+      spendUsd: (attr?.spendUsd ?? 0) + (extraSpend.byUser.get(userId) ?? 0),
       workspaceRole,
     });
   }
@@ -1803,7 +1835,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   // Sort spend descending
   users.sort((a, b) => b.spendUsd - a.spendUsd);
 
-  const isComplete = groupsLoaded === totalGroups;
+  const isComplete = groupsLoaded === totalGroups && extraSpend.isComplete;
   res.json({ isComplete, loadedCount: groupsLoaded, totalCount: totalGroups, users });
 });
 

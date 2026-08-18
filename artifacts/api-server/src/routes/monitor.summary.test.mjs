@@ -295,7 +295,9 @@ test("CSV: user with $0 in first group gets full combined spend in CSV row for t
   const rows = await getCsv();
   const alice = rows.find((r) => r["Username"] === "alice");
   assert.ok(alice, "alice must appear in CSV");
-  assert.equal(alice["Group"], "Alpha", "alice must be attributed to Alpha (sorts first)");
+  // Group column shows the user's highest-spend group (primary cost center):
+  // alice has $0 in Alpha and $10 in Beta, so Beta wins the display attribution.
+  assert.equal(alice["Group"], "Beta", "alice must display her highest-spend group (Beta)");
   // alice: $0 (Alpha) + $10 (Beta) Comcast + $5 extra = $15
   assert.equal(alice["Spend (USD)"], "15.00", `alice spend must be $15; got ${alice["Spend (USD)"]}`);
 });
