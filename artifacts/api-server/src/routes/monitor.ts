@@ -539,17 +539,17 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           const srcGroup = dir.groups.find((g) => g.id === id);
           return srcGroup ? m?.workspaces.get(srcGroup.workspaceId) : undefined;
         }).find(Boolean);
-      // spendLoaded only becomes true when all source groups' member usage is loaded (so
-      // shared-user dedup attribution is final) AND extra-workspace data is complete.
-      const spendLoaded = allSourcesLoaded && rollup.isComplete && extraSpend.isComplete;
-      const attributedUserSpend = attributed.byUser.get(userId);
-      // When the rollup is final, a member without an attributedUserSpend entry has their
-      // combined spend counted in another group. Show $0 so the row is not misleading.
-      const spendUsd = !spendLoaded
-        ? null
-        : attributedUserSpend !== undefined
-          ? attributedUserSpend
-          : 0;
+      // Member spend shows the user's actual workspace-level spend for this group
+      // (from the Replit usage API), so admins see real usage figures for every member.
+      // This is intentionally different from the deduped budget attribution used for
+      // the group total — a user in multiple groups will show their real spend here
+      // even if their budget attribution is assigned to a different group.
+      // Member spend is available as soon as this group's own usage cache loads;
+      // it does not need the full cross-group rollup to complete.
+      const memberSpendLoaded = allSourcesLoaded;
+      const rawSpend = memberUsage?.byUser.get(userId);
+      const spendUsd = !memberSpendLoaded ? null : (rawSpend ?? 0);
+      const spendLoaded = memberSpendLoaded;
       return {
         userId,
         username: m?.username ?? null,
@@ -574,9 +574,12 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     let listedMembersSpend = 0;
     if (memberUsage) {
       for (const userId of userIds) {
-        listedMembersSpend += attributed.byUser.get(userId) ?? 0;
+        listedMembersSpend += memberUsage.byUser.get(userId) ?? 0;
       }
     }
+    // Note: listedMembersSpend uses raw workspace spend per member and may exceed
+    // combinedSpend (the deduped group total) when members belong to multiple groups —
+    // their raw spend appears here but is attributed elsewhere for budget purposes.
     const unattributed = combinedLoaded ? Math.max(0, combinedSpend - listedMembersSpend) : 0;
 
     const mergedRollupMemberCount = sourceIds.reduce(
