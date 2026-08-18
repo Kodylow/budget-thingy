@@ -18,6 +18,7 @@ import {
   queueGroupSpendFetch,
   queueMemberUsageFetch,
   queueExtraWorkspacesFetch,
+  queueAllWorkspacesFetch,
   getExtraWorkspaceSpend,
   getDedupedUsageRollup,
   getMemberUsage,
@@ -433,6 +434,7 @@ async function runCheckInternal(
     const range = resolveRange("billing");
     for (const g of dir.groups) queueMemberUsageFetch(g, range, force ? 0 : 1, force);
     queueExtraWorkspacesFetch(dir, range, force ? 0 : 1, force);
+    queueAllWorkspacesFetch(dir, range, force ? 0 : 1, force);
     const memberDataComplete = await waitForTeamData(dir.groups, range.key);
     const extraDataComplete = getExtraWorkspaceSpend(dir, range.key).isComplete;
     if (!memberDataComplete || !extraDataComplete) {
@@ -498,6 +500,10 @@ export function startChecker(): void {
       for (const g of ordered) {
         queueMemberUsageFetch(g, dashboardRange, 1);
       }
+      // Queue workspace_member fetches for ALL workspaces so the dashboard can use
+      // MAX(group_member, workspace_member) to capture non-agent spend (compute etc.)
+      // that the group_member API omits.
+      queueAllWorkspacesFetch(dir, dashboardRange, 1);
       for (const g of ordered) {
         const result = queueGroupSpendFetch(g, 1, false, () => {
           if (budgeted.has(g.id)) void evaluateGroup(g).catch((err) => logger.error({ err }, "evaluateGroup failed"));

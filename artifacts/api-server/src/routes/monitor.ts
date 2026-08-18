@@ -52,6 +52,8 @@ import {
   getMemberUsage,
   queueExtraWorkspacesFetch,
   getExtraWorkspaceSpend,
+  queueAllWorkspacesFetch,
+  getWsSpendByUser,
   queueProjectUsageFetch,
   getProjectUsage,
   queueProjectTitlesFetch,
@@ -270,7 +272,12 @@ router.get("/groups", async (req, res): Promise<void> => {
     // Once synchronized, these entries are durable and hydrate before listen.
     for (const group of scoped) queueMemberUsageFetch(group, range, 0);
     const isAccountAdmin = isAccountWide(req.authz);
-    if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 0);
+    if (isAccountAdmin) {
+      queueExtraWorkspacesFetch(dir, range, 0);
+      // Also fetch workspace_member data for grouped workspaces: the group_member API
+      // only returns AI-agent spend; workspace_member captures compute + all other types.
+      queueAllWorkspacesFetch(dir, range, 0);
+    }
     // Raw group totals support alerting/history metadata but are not required to
     // construct the member-deduped dashboard, so keep them in the background.
     void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
@@ -334,13 +341,17 @@ router.get("/groups", async (req, res): Promise<void> => {
 
         // Raw member spend = sum of each current member's workspace spend across
         // sourceIds, plus unattributable (ex-member) spend per source group.
-        // This matches what the cluster-detail page shows for each member row sum.
+        // We use MAX(group_member, workspace_member) per user because the group_member
+        // API only returns AI-agent spend; workspace_member captures all spend types.
         let rawMemberSpend = 0;
         if (memberUsageLoaded) {
+          const wsData = getWsSpendByUser(g.workspaceId, range.key);
           for (const userId of memberIds) {
+            let groupMemberSpend = 0;
             for (const srcId of sourceIds) {
-              rawMemberSpend += getMemberUsage(srcId, range.key)?.byUser.get(userId) ?? 0;
+              groupMemberSpend += getMemberUsage(srcId, range.key)?.byUser.get(userId) ?? 0;
             }
+            rawMemberSpend += Math.max(groupMemberSpend, wsData?.get(userId) ?? 0);
           }
           for (const srcId of sourceIds) {
             rawMemberSpend += getMemberUsage(srcId, range.key)?.unattributableTotalCostUsd ?? 0;
@@ -429,13 +440,22 @@ router.get("/groups", async (req, res): Promise<void> => {
             apiUserIds.add(userId);
           }
         }
+        // Also include users visible only in workspace_member data (non-agent spend).
+        const wsData = getWsSpendByUser(g.workspaceId, range.key);
+        if (wsData) {
+          for (const userId of wsData.keys()) apiUserIds.add(userId);
+        }
         const allMemberIds = new Set([...gMemberIds, ...apiUserIds]);
         for (const userId of allMemberIds) {
           if (seenUsers.has(userId)) continue;
           seenUsers.add(userId);
+          // Sum group_member spend across source groups, then take the higher of that
+          // and workspace_member spend (which captures compute + non-agent metrics).
+          let groupMemberSpend = 0;
           for (const srcId of srcIds) {
-            teamRaw += getMemberUsage(srcId, range.key)?.byUser.get(userId) ?? 0;
+            groupMemberSpend += getMemberUsage(srcId, range.key)?.byUser.get(userId) ?? 0;
           }
+          teamRaw += Math.max(groupMemberSpend, wsData?.get(userId) ?? 0);
         }
         // Include ex-member (unattributable) spend from each source group.
         for (const srcId of srcIds) {
@@ -541,7 +561,10 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const allSourcesLoaded = sourceIds.every((id) => !!getMemberUsage(id, range.key));
 
     const isAccountAdmin = isAccountWide(req.authz);
-    if (isAccountAdmin) queueExtraWorkspacesFetch(dir, range, 0);
+    if (isAccountAdmin) {
+      queueExtraWorkspacesFetch(dir, range, 0);
+      queueAllWorkspacesFetch(dir, range, 0);
+    }
     const extraSpend = isAccountAdmin
       ? getExtraWorkspaceSpend(dir, range.key)
       : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
@@ -959,7 +982,10 @@ router.get("/summary", async (req, res): Promise<void> => {
       // Queue per-group member usage so /summary can independently populate
       // the rollup from a cold cache (not depending on /groups being visited first).
       for (const group of scoped) queueMemberUsageFetch(group, range, 1);
-      if (isAccount) queueExtraWorkspacesFetch(dir, range, 1);
+      if (isAccount) {
+        queueExtraWorkspacesFetch(dir, range, 1);
+        queueAllWorkspacesFetch(dir, range, 1);
+      }
       const summaryExtraSpend = isAccount
         ? getExtraWorkspaceSpend(dir, range.key)
         : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
@@ -1659,6 +1685,7 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
   // Queue member usage + extra workspace fetches so combined spend is populated.
   for (const group of dir.groups) queueMemberUsageFetch(group, billingRange, 1);
   queueExtraWorkspacesFetch(dir, billingRange, 1);
+  queueAllWorkspacesFetch(dir, billingRange, 1);
   const exportExtraSpend = getExtraWorkspaceSpend(dir, billingRange.key);
 
   const groupsLoaded = dir.groups.filter((g) => !!getMemberUsage(g.id, billingRange.key)).length;
@@ -1825,6 +1852,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   };
   if (includeExtraSpend) {
     queueExtraWorkspacesFetch(dir, billingRange, 1);
+    queueAllWorkspacesFetch(dir, billingRange, 1);
     extraSpend = getExtraWorkspaceSpend(dir, billingRange.key);
   }
 

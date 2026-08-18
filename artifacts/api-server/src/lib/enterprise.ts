@@ -1356,6 +1356,21 @@ export function queueExtraWorkspacesFetch(
   }
 }
 
+/** Queue per-member spend fetches for ALL workspaces, including those with custom groups.
+ *  The group_member API only returns users with AI-agent spend; workspace_member fetches
+ *  capture the full per-user total (compute + storage + all metric types) so the dashboard
+ *  can use MAX(group_member, workspace_member) and avoid under-counting non-agent spend. */
+export function queueAllWorkspacesFetch(
+  dir: DirectoryCache,
+  range: UsageRange,
+  priority = 1,
+  force = false,
+): void {
+  for (const [wsId] of dir.workspaces) {
+    queueWsSpendFetch(wsId, range, priority, force);
+  }
+}
+
 /** Returns the summed extra-workspace spend per user and whether all fetches have landed. */
 export function getExtraWorkspaceSpend(
   dir: DirectoryCache,
