@@ -7,3 +7,10 @@ uri = "file://replit-raw-api-spend.xlsx"
 type = "table"
 title = "Replit Raw API Spend — User × Workspace Breakdown"
 description = "4 sheets: User × Workspace (527 rows), User Summary (357 users totalled across workspaces), Groups (173 raw API groups), Summary"
+
+[[outputs]]
+id = "7_Nx1O1yockxQ6nGyI9Oi"
+uri = "file://replit-spend-gap.xlsx"
+type = "table"
+title = "Replit Spend Gap Analysis"
+description = "3 sheets: Summary (gap explanation + workspace breakdown), Gap Users (563 Comcast users whose per-user usage hasn't been loaded), Former Members (removed mid-period)"
