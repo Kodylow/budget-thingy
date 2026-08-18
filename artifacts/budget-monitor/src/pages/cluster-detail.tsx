@@ -252,15 +252,11 @@ export default function ClusterDetail() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {!clusterSpendLoaded ? (
-              <div className="h-8 w-32 bg-muted animate-pulse-glow rounded" />
-            ) : (
-              <div className="text-2xl font-bold font-mono tabular-nums">
-                ${clusterAttributedTotal.toFixed(2)}
-              </div>
-            )}
+            <div className="text-2xl font-bold font-mono tabular-nums">
+              ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Budget-attributed total; member spend shows individual usage
+              Sum of each member's spend within this team
             </p>
           </CardContent>
         </Card>
@@ -370,11 +366,11 @@ export default function ClusterDetail() {
               </tbody>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
-                  <td className="py-3 px-4 text-sm">Attributed Total</td>
+                  <td className="py-3 px-4 text-sm">Combined Total</td>
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
-                      {clusterSpendLoaded ? `$${clusterAttributedTotal.toFixed(2)}` : '—'}
+                      ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
                     </span>
                   </td>
                 </tr>
