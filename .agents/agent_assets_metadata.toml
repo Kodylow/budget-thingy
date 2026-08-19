@@ -28,3 +28,10 @@ uri = "file://attached_assets/dashboard-spend-by-team-export.csv"
 type = "table"
 title = "Dashboard Spend by Team Export"
 description = "359 rows — one per user per team. Multi-team users appear on multiple rows. Total: $89,612.97"
+
+[[outputs]]
+id = "_16LdVSmWA941D73nKaCu"
+uri = "file://attached_assets/spend-per-project.csv"
+type = "table"
+title = "Spend per Project (all 2,039 projects, $99,442)"
+description = "2,039 projects from the Replit billing export. Workspace column populated for 180 projects ($14,230) where the DB has group-project level sync data. Remaining 1,859 projects have no workspace in the DB — see notes below."
