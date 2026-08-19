@@ -440,11 +440,11 @@ router.get("/groups", async (req, res): Promise<void> => {
             apiUserIds.add(userId);
           }
         }
-        // Also include users visible only in workspace_member data (non-agent spend).
+        // wsData is used below only as a spend lookup — do NOT expand allMemberIds
+        // with wsData.keys(). workspace_member covers the whole workspace, not just
+        // this group's members; adding its keys here would count every workspace user
+        // under every group that shares the workspace, causing massive double-counting.
         const wsData = getWsSpendByUser(g.workspaceId, range.key);
-        if (wsData) {
-          for (const userId of wsData.keys()) apiUserIds.add(userId);
-        }
         const allMemberIds = new Set([...gMemberIds, ...apiUserIds]);
         for (const userId of allMemberIds) {
           if (seenUsers.has(userId)) continue;
