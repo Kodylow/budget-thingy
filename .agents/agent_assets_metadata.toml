@@ -14,3 +14,10 @@ uri = "file://replit-spend-gap.xlsx"
 type = "table"
 title = "Replit Spend Gap Analysis"
 description = "3 sheets: Summary (gap explanation + workspace breakdown), Gap Users (563 Comcast users whose per-user usage hasn't been loaded), Former Members (removed mid-period)"
+
+[[outputs]]
+id = "sgloWt0fSX0BIcMPUa9_Z"
+uri = "file://attached_assets/dashboard-spend-export.csv"
+type = "table"
+title = "Dashboard Spend Export"
+description = "357 users with group and team attribution, per-user deduped spend. Total: $80,783.88"
