@@ -21,3 +21,10 @@ uri = "file://attached_assets/dashboard-spend-export.csv"
 type = "table"
 title = "Dashboard Spend Export"
 description = "357 users with group and team attribution, per-user deduped spend. Total: $80,783.88"
+
+[[outputs]]
+id = "jcB4yHh5HhWdvIT3WoBR-"
+uri = "file://attached_assets/dashboard-spend-by-team-export.csv"
+type = "table"
+title = "Dashboard Spend by Team Export"
+description = "359 rows — one per user per team. Multi-team users appear on multiple rows. Total: $89,612.97"
