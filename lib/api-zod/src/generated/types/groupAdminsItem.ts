@@ -12,5 +12,7 @@ export interface GroupAdminsItem {
   groupName: string;
   workspaceId: string;
   workspaceName: string;
+  /** @nullable */
+  teamName?: string | null;
   admins: GroupAdminMember[];
 }

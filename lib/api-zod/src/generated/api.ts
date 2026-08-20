@@ -541,6 +541,7 @@ export const ListWorkspaceAdminsResponseItem = zod.object({
   "groupName": zod.string(),
   "workspaceId": zod.string(),
   "workspaceName": zod.string(),
+  "teamName": zod.string().nullish(),
   "admins": zod.array(zod.object({
   "userId": zod.string(),
   "username": zod.string(),

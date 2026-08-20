@@ -1382,6 +1382,8 @@ components:
           type: string
         workspaceName:
           type: string
+        teamName:
+          type: ["string", "null"]
         admins:
           type: array
           items:

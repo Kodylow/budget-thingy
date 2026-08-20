@@ -3,27 +3,84 @@ import { useListWorkspaceAdmins } from '@workspace/api-client-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Building2, Search, ShieldCheck, Users } from 'lucide-react';
+import { Building2, ChevronDown, ChevronRight, Search, ShieldCheck, Users } from 'lucide-react';
+
+interface GroupItem {
+  groupId: string;
+  groupName: string;
+  workspaceId: string;
+  workspaceName: string;
+  teamName: string | null;
+  admins: Array<{ userId: string; username: string; email: string | null; name: string | null }>;
+}
+
+interface TeamSection {
+  teamName: string;
+  groups: GroupItem[];
+}
 
 export default function GroupAdmins() {
   const { data: groups, isLoading, isError } = useListWorkspaceAdmins();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [collapsedTeams, setCollapsedTeams] = useState<Set<string>>(new Set());
 
-  const filtered = useMemo(() => {
-    if (!groups) return [];
+  const toggleTeam = (teamName: string) => {
+    setCollapsedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamName)) next.delete(teamName);
+      else next.add(teamName);
+      return next;
+    });
+  };
+
+  // Build team sections, filtered by search
+  const { teamSections, unassigned } = useMemo(() => {
+    if (!groups) return { teamSections: [], unassigned: [] };
     const q = search.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter(
-      (g) =>
-        g.groupName.toLowerCase().includes(q) ||
-        g.workspaceName.toLowerCase().includes(q),
-    );
+
+    const filtered = q
+      ? groups.filter(
+          (g) =>
+            g.groupName.toLowerCase().includes(q) ||
+            (g.teamName ?? '').toLowerCase().includes(q) ||
+            g.workspaceName.toLowerCase().includes(q),
+        )
+      : (groups as GroupItem[]);
+
+    const teamMap = new Map<string, GroupItem[]>();
+    const unassigned: GroupItem[] = [];
+
+    for (const g of filtered as GroupItem[]) {
+      if (g.teamName) {
+        const existing = teamMap.get(g.teamName) ?? [];
+        existing.push(g);
+        teamMap.set(g.teamName, existing);
+      } else {
+        unassigned.push(g);
+      }
+    }
+
+    const teamSections: TeamSection[] = Array.from(teamMap.entries())
+      .map(([teamName, groups]) => ({ teamName, groups }))
+      .sort((a, b) => a.teamName.localeCompare(b.teamName));
+
+    return { teamSections, unassigned };
   }, [groups, search]);
 
+  const allVisible = useMemo(
+    () => [...teamSections.flatMap((t) => t.groups), ...unassigned],
+    [teamSections, unassigned],
+  );
+
+  // Default selection: first visible group
   const selected =
-    groups?.find((g) => g.groupId === selectedId) ?? filtered[0] ?? null;
+    (groups?.find((g) => g.groupId === selectedId) as GroupItem | undefined) ??
+    (allVisible[0] as GroupItem | undefined) ??
+    null;
   const activeId = selected?.groupId ?? null;
+
+  const totalCount = allVisible.length;
 
   if (isLoading) {
     return (
@@ -49,17 +106,17 @@ export default function GroupAdmins() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Group Admins</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Workspace administrators for each group
+          Workspace administrators for each group, organized by team
         </p>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4" style={{ minHeight: 'calc(100vh - 220px)' }}>
-        {/* Left panel — group list */}
-        <aside className="md:w-64 lg:w-72 shrink-0 flex flex-col gap-2">
+        {/* Left panel — team + group list */}
+        <aside className="md:w-72 lg:w-80 shrink-0 flex flex-col gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
-              placeholder="Search groups…"
+              placeholder="Search teams or groups…"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -72,43 +129,148 @@ export default function GroupAdmins() {
           <Card className="flex-1 overflow-hidden flex flex-col">
             <CardHeader className="py-2.5 px-4 border-b border-border shrink-0">
               <CardTitle className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {filtered.length} group{filtered.length !== 1 ? 's' : ''}
+                {totalCount} group{totalCount !== 1 ? 's' : ''}
                 {search ? ' found' : ''}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0 overflow-y-auto flex-1">
-              {filtered.length === 0 ? (
+              {totalCount === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-8">No groups match</p>
               ) : (
                 <ul>
-                  {filtered.map((g) => {
-                    const isActive = g.groupId === activeId;
+                  {/* Team sections */}
+                  {teamSections.map((section) => {
+                    const isCollapsed = collapsedTeams.has(section.teamName);
                     return (
-                      <li key={g.groupId}>
+                      <li key={section.teamName}>
+                        {/* Team header row */}
                         <button
-                          onClick={() => setSelectedId(g.groupId)}
-                          className={`w-full flex items-start justify-between gap-2 px-4 py-2.5 text-sm text-left transition-colors border-b border-border last:border-0 ${
-                            isActive
-                              ? 'bg-primary text-primary-foreground font-medium'
-                              : 'hover:bg-muted text-foreground'
-                          }`}
+                          onClick={() => toggleTeam(section.teamName)}
+                          className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left bg-muted/60 border-b border-border hover:bg-muted transition-colors"
                         >
-                          <span className="min-w-0">
-                            <span className="block truncate font-medium">{g.groupName}</span>
-                            <span className={`block text-[11px] truncate mt-0.5 ${isActive ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                              {g.workspaceName}
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            {isCollapsed ? (
+                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            )}
+                            <span className="text-xs font-semibold text-foreground truncate">
+                              {section.teamName}
                             </span>
                           </span>
-                          <Badge
-                            variant={isActive ? 'secondary' : 'outline'}
-                            className="text-[10px] shrink-0 mt-0.5"
-                          >
-                            {g.admins.length}
+                          <Badge variant="outline" className="text-[10px] shrink-0">
+                            {section.groups.length}
                           </Badge>
                         </button>
+
+                        {/* Groups under this team */}
+                        {!isCollapsed && (
+                          <ul>
+                            {section.groups.map((g) => {
+                              const isActive = g.groupId === activeId;
+                              return (
+                                <li key={g.groupId}>
+                                  <button
+                                    onClick={() => setSelectedId(g.groupId)}
+                                    className={`w-full flex items-start justify-between gap-2 pl-7 pr-4 py-2.5 text-sm text-left transition-colors border-b border-border last:border-0 ${
+                                      isActive
+                                        ? 'bg-primary text-primary-foreground font-medium'
+                                        : 'hover:bg-muted text-foreground'
+                                    }`}
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block truncate text-[13px] font-medium">
+                                        {g.groupName}
+                                      </span>
+                                      <span
+                                        className={`block text-[11px] truncate mt-0.5 ${
+                                          isActive
+                                            ? 'text-primary-foreground/70'
+                                            : 'text-muted-foreground'
+                                        }`}
+                                      >
+                                        {g.workspaceName}
+                                      </span>
+                                    </span>
+                                    <Badge
+                                      variant={isActive ? 'secondary' : 'outline'}
+                                      className="text-[10px] shrink-0 mt-0.5"
+                                    >
+                                      {g.admins.length}
+                                    </Badge>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
                       </li>
                     );
                   })}
+
+                  {/* Unassigned groups */}
+                  {unassigned.length > 0 && (
+                    <li>
+                      <button
+                        onClick={() => toggleTeam('__unassigned__')}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left bg-muted/60 border-b border-border hover:bg-muted transition-colors"
+                      >
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          {collapsedTeams.has('__unassigned__') ? (
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          )}
+                          <span className="text-xs font-semibold text-muted-foreground truncate italic">
+                            Unassigned
+                          </span>
+                        </span>
+                        <Badge variant="outline" className="text-[10px] shrink-0">
+                          {unassigned.length}
+                        </Badge>
+                      </button>
+                      {!collapsedTeams.has('__unassigned__') && (
+                        <ul>
+                          {unassigned.map((g) => {
+                            const isActive = g.groupId === activeId;
+                            return (
+                              <li key={g.groupId}>
+                                <button
+                                  onClick={() => setSelectedId(g.groupId)}
+                                  className={`w-full flex items-start justify-between gap-2 pl-7 pr-4 py-2.5 text-sm text-left transition-colors border-b border-border last:border-0 ${
+                                    isActive
+                                      ? 'bg-primary text-primary-foreground font-medium'
+                                      : 'hover:bg-muted text-foreground'
+                                  }`}
+                                >
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-[13px] font-medium">
+                                      {g.groupName}
+                                    </span>
+                                    <span
+                                      className={`block text-[11px] truncate mt-0.5 ${
+                                        isActive
+                                          ? 'text-primary-foreground/70'
+                                          : 'text-muted-foreground'
+                                      }`}
+                                    >
+                                      {g.workspaceName}
+                                    </span>
+                                  </span>
+                                  <Badge
+                                    variant={isActive ? 'secondary' : 'outline'}
+                                    className="text-[10px] shrink-0 mt-0.5"
+                                  >
+                                    {g.admins.length}
+                                  </Badge>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </li>
+                  )}
                 </ul>
               )}
             </CardContent>
@@ -127,9 +289,16 @@ export default function GroupAdmins() {
                     {selected.admins.length} admin{selected.admins.length !== 1 ? 's' : ''}
                   </Badge>
                 </div>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">{selected.workspaceName}</span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1">
+                  {selected.teamName && (
+                    <span className="text-xs text-muted-foreground font-medium">
+                      {selected.teamName}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Building2 className="h-3.5 w-3.5" />
+                    {selected.workspaceName}
+                  </span>
                 </div>
               </CardHeader>
               <CardContent className="p-0">

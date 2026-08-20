@@ -1198,14 +1198,17 @@ router.delete("/groups/:groupId/budget", requireAccountOperator, async (req, res
 });
 
 router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<void> => {
-  const rows = await db
-    .select({ directoryJson: apiDirectoryCacheTable.directoryJson })
-    .from(apiDirectoryCacheTable);
+  const [rows, groupTeams] = await Promise.all([
+    db.select({ directoryJson: apiDirectoryCacheTable.directoryJson }).from(apiDirectoryCacheTable),
+    db.select().from(groupTeamsTable),
+  ]);
 
   if (!rows[0]) {
     res.json(ListWorkspaceAdminsResponse.parse([]));
     return;
   }
+
+  const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
   const raw = rows[0].directoryJson as Record<string, unknown>;
   const rawWorkspaces = (raw["workspaces"] ?? {}) as Record<string, Record<string, unknown>>;
@@ -1240,6 +1243,7 @@ router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<
       groupName: g.name,
       workspaceId: g.workspaceId,
       workspaceName: (rawWorkspaces[g.workspaceId]?.["name"] as string | undefined) ?? g.workspaceId,
+      teamName: groupTeamMap.get(g.name) ?? null,
       admins: wsAdminsCache.get(g.workspaceId) ?? [],
     }))
     .sort((a, b) => a.groupName.localeCompare(b.groupName));
