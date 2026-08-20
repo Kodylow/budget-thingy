@@ -1210,26 +1210,39 @@ router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<
   const raw = rows[0].directoryJson as Record<string, unknown>;
   const rawWorkspaces = (raw["workspaces"] ?? {}) as Record<string, Record<string, unknown>>;
   const rawMembers = (raw["members"] ?? {}) as Record<string, Record<string, unknown>>;
+  const rawGroups = (raw["groups"] ?? []) as Array<{
+    id: string;
+    name: string;
+    type: string;
+    workspaceId: string;
+  }>;
 
-  const result = Object.values(rawWorkspaces)
-    .filter((ws) => ws["id"] && ws["name"])
-    .map((ws) => {
-      const rawAdmins = (ws["admins"] ?? []) as Array<{ userId: string; username: string }>;
+  // Build a map of workspaceId -> resolved admin list (with member details)
+  const wsAdminsCache = new Map<string, Array<{ userId: string; username: string; email: string | null; name: string | null }>>();
+  for (const [wsId, ws] of Object.entries(rawWorkspaces)) {
+    const rawAdmins = (ws["admins"] ?? []) as Array<{ userId: string; username: string }>;
+    wsAdminsCache.set(wsId, rawAdmins.map((a) => {
+      const member = rawMembers[a.userId] as Record<string, unknown> | undefined;
       return {
-        workspaceId: ws["id"] as string,
-        workspaceName: ws["name"] as string,
-        admins: rawAdmins.map((a) => {
-          const member = rawMembers[a.userId] as Record<string, unknown> | undefined;
-          return {
-            userId: a.userId,
-            username: a.username,
-            email: (member?.["email"] as string | null) ?? null,
-            name: (member?.["name"] as string | null) ?? null,
-          };
-        }),
+        userId: a.userId,
+        username: a.username,
+        email: (member?.["email"] as string | null) ?? null,
+        name: (member?.["name"] as string | null) ?? null,
       };
-    })
-    .sort((a, b) => a.workspaceName.localeCompare(b.workspaceName));
+    }));
+  }
+
+  const BUILT_IN = new Set(["admin", "member", "guest"]);
+  const result = rawGroups
+    .filter((g) => !BUILT_IN.has(g.type.toLowerCase()))
+    .map((g) => ({
+      groupId: g.id,
+      groupName: g.name,
+      workspaceId: g.workspaceId,
+      workspaceName: (rawWorkspaces[g.workspaceId]?.["name"] as string | undefined) ?? g.workspaceId,
+      admins: wsAdminsCache.get(g.workspaceId) ?? [],
+    }))
+    .sort((a, b) => a.groupName.localeCompare(b.groupName));
 
   res.json(ListWorkspaceAdminsResponse.parse(result));
 });

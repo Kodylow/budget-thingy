@@ -361,7 +361,7 @@ export interface AdminEmailInput {
   email: string;
 }
 
-export interface WorkspaceAdminMember {
+export interface GroupAdminMember {
   userId: string;
   username: string;
   /** @nullable */
@@ -370,10 +370,12 @@ export interface WorkspaceAdminMember {
   name?: string | null;
 }
 
-export interface WorkspaceAdminsItem {
+export interface GroupAdminsItem {
+  groupId: string;
+  groupName: string;
   workspaceId: string;
   workspaceName: string;
-  admins: WorkspaceAdminMember[];
+  admins: GroupAdminMember[];
 }
 
 export interface AccountEditor {

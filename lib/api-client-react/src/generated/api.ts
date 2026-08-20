@@ -36,6 +36,7 @@ import type {
   GetGroupProjectsParams,
   GetSummaryParams,
   GetTrendsParams,
+  GroupAdminsItem,
   GroupBudget,
   GroupBudgetInput,
   GroupDetail,
@@ -56,8 +57,7 @@ import type {
   TeamBudgetInput,
   TeamBudgetsResponse,
   TrendsResponse,
-  UnauthorizedResponse,
-  WorkspaceAdminsItem
+  UnauthorizedResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -2134,12 +2134,12 @@ export const getListWorkspaceAdminsUrl = () => {
 }
 
 /**
- * Returns every Enterprise workspace with its admin users from the directory. Available only to account administrators.
- * @summary List admins per workspace
+ * Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
+ * @summary List admins per group
  */
-export const listWorkspaceAdmins = async ( options?: RequestInit): Promise<WorkspaceAdminsItem[]> => {
+export const listWorkspaceAdmins = async ( options?: RequestInit): Promise<GroupAdminsItem[]> => {
 
-  return customFetch<WorkspaceAdminsItem[]>(getListWorkspaceAdminsUrl(),
+  return customFetch<GroupAdminsItem[]>(getListWorkspaceAdminsUrl(),
   {
     ...options,
     method: 'GET'
@@ -2182,7 +2182,7 @@ export type ListWorkspaceAdminsQueryError = ErrorType<UnauthorizedResponse | For
 
 
 /**
- * @summary List admins per workspace
+ * @summary List admins per group
  */
 
 export function useListWorkspaceAdmins<TData = Awaited<ReturnType<typeof listWorkspaceAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(

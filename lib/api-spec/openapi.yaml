@@ -699,17 +699,17 @@ paths:
     get:
       operationId: listWorkspaceAdmins
       tags: [admins]
-      summary: List admins per workspace
-      description: Returns every Enterprise workspace with its admin users from the directory. Available only to account administrators.
+      summary: List admins per group
+      description: Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
       responses:
         "200":
-          description: Workspace admin list
+          description: Group admin list
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/WorkspaceAdminsItem"
+                  $ref: "#/components/schemas/GroupAdminsItem"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1358,7 +1358,7 @@ components:
         email:
           type: string
           minLength: 3
-    WorkspaceAdminMember:
+    GroupAdminMember:
       type: object
       required: [userId, username]
       properties:
@@ -1370,10 +1370,14 @@ components:
           type: ["string", "null"]
         name:
           type: ["string", "null"]
-    WorkspaceAdminsItem:
+    GroupAdminsItem:
       type: object
-      required: [workspaceId, workspaceName, admins]
+      required: [groupId, groupName, workspaceId, workspaceName, admins]
       properties:
+        groupId:
+          type: string
+        groupName:
+          type: string
         workspaceId:
           type: string
         workspaceName:
@@ -1381,7 +1385,7 @@ components:
         admins:
           type: array
           items:
-            $ref: "#/components/schemas/WorkspaceAdminMember"
+            $ref: "#/components/schemas/GroupAdminMember"
     AccountEditor:
       type: object
       required: [userId, email, createdAt]

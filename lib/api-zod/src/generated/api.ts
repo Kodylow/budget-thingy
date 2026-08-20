@@ -533,10 +533,12 @@ export const DeleteEditorResponse = zod.object({
 
 
 /**
- * Returns every Enterprise workspace with its admin users from the directory. Available only to account administrators.
- * @summary List admins per workspace
+ * Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
+ * @summary List admins per group
  */
 export const ListWorkspaceAdminsResponseItem = zod.object({
+  "groupId": zod.string(),
+  "groupName": zod.string(),
   "workspaceId": zod.string(),
   "workspaceName": zod.string(),
   "admins": zod.array(zod.object({

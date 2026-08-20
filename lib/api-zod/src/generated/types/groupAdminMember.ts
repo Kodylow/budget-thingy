@@ -6,7 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface WorkspaceAdminMember {
+export interface GroupAdminMember {
   userId: string;
   username: string;
   /** @nullable */

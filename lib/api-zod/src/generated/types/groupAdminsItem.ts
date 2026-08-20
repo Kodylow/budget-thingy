@@ -5,10 +5,12 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { WorkspaceAdminMember } from './workspaceAdminMember';
+import type { GroupAdminMember } from './groupAdminMember';
 
-export interface WorkspaceAdminsItem {
+export interface GroupAdminsItem {
+  groupId: string;
+  groupName: string;
   workspaceId: string;
   workspaceName: string;
-  admins: WorkspaceAdminMember[];
+  admins: GroupAdminMember[];
 }
