@@ -361,6 +361,21 @@ export interface AdminEmailInput {
   email: string;
 }
 
+export interface WorkspaceAdminMember {
+  userId: string;
+  username: string;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  name?: string | null;
+}
+
+export interface WorkspaceAdminsItem {
+  workspaceId: string;
+  workspaceName: string;
+  admins: WorkspaceAdminMember[];
+}
+
 export interface AccountEditor {
   userId: string;
   /** @nullable */
@@ -573,3 +588,4 @@ export type ListAlertsParams = {
  */
 limit?: number;
 };
+

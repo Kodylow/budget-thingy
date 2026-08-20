@@ -61,3 +61,5 @@ export * from './trendSeries';
 export * from './trendSeriesType';
 export * from './trendsResponse';
 export * from './unauthorizedResponse';
+export * from './workspaceAdminMember';
+export * from './workspaceAdminsItem';

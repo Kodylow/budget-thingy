@@ -9,6 +9,7 @@ import {
   Building2,
   Menu,
   X,
+  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +64,7 @@ export function AppShell({ children }: AppShellProps) {
       label: 'Administration',
       items: [
         { path: '/settings', label: 'Settings', icon: Settings, show: isAccountAdmin, testId: 'nav-settings' },
+        { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
       ],
     },
   ].map((section) => ({

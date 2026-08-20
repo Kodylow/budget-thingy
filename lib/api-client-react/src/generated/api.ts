@@ -56,7 +56,8 @@ import type {
   TeamBudgetInput,
   TeamBudgetsResponse,
   TrendsResponse,
-  UnauthorizedResponse
+  UnauthorizedResponse,
+  WorkspaceAdminsItem
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -2123,6 +2124,84 @@ export const useDeleteEditor = <TError = ErrorType<UnauthorizedResponse | Forbid
       > => {
       return useMutation(getDeleteEditorMutationOptions(options));
     }
+
+export const getListWorkspaceAdminsUrl = () => {
+
+
+
+
+  return `/api/workspace-admins`
+}
+
+/**
+ * Returns every Enterprise workspace with its admin users from the directory. Available only to account administrators.
+ * @summary List admins per workspace
+ */
+export const listWorkspaceAdmins = async ( options?: RequestInit): Promise<WorkspaceAdminsItem[]> => {
+
+  return customFetch<WorkspaceAdminsItem[]>(getListWorkspaceAdminsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWorkspaceAdminsQueryKey = () => {
+    return [
+    `/api/workspace-admins`
+    ] as const;
+    }
+
+
+export const getListWorkspaceAdminsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkspaceAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWorkspaceAdminsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkspaceAdmins>>> = ({ signal }) => listWorkspaceAdmins({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceAdmins>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListWorkspaceAdminsQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkspaceAdmins>>>
+export type ListWorkspaceAdminsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List admins per workspace
+ */
+
+export function useListWorkspaceAdmins<TData = Awaited<ReturnType<typeof listWorkspaceAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListWorkspaceAdminsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getListAlertsUrl = (params?: ListAlertsParams,) => {
   const normalizedParams = new URLSearchParams();

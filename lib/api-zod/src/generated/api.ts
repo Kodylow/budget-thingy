@@ -533,6 +533,23 @@ export const DeleteEditorResponse = zod.object({
 
 
 /**
+ * Returns every Enterprise workspace with its admin users from the directory. Available only to account administrators.
+ * @summary List admins per workspace
+ */
+export const ListWorkspaceAdminsResponseItem = zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string(),
+  "admins": zod.array(zod.object({
+  "userId": zod.string(),
+  "username": zod.string(),
+  "email": zod.string().nullish(),
+  "name": zod.string().nullish()
+}))
+})
+export const ListWorkspaceAdminsResponse = zod.array(ListWorkspaceAdminsResponseItem)
+
+
+/**
  * Sent threshold alerts, newest first.
  * @summary Alert history
  */
@@ -622,3 +639,5 @@ export const GetStatusResponse = zod.object({
   "checkerIntervalMinutes": zod.number(),
   "lastCheckAt": zod.string().nullish()
 })
+
+

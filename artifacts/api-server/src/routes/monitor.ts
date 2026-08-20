@@ -10,6 +10,7 @@ import {
   editorAllowlistTable,
   editorBootstrapStateTable,
   usersTable,
+  apiDirectoryCacheTable,
 } from "@workspace/db";
 import {
   ListGroupsResponse,
@@ -26,6 +27,7 @@ import {
   AddAdminBody,
   AddAdminResponse,
   DeleteAdminResponse,
+  ListWorkspaceAdminsResponse,
   ListAlertsQueryParams,
   ListAlertsResponse,
   RunAlertCheckResponse,
@@ -1193,6 +1195,43 @@ router.delete("/groups/:groupId/budget", requireAccountOperator, async (req, res
     return;
   }
   res.json(DeleteGroupBudgetResponse.parse({ ok: true }));
+});
+
+router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<void> => {
+  const rows = await db
+    .select({ directoryJson: apiDirectoryCacheTable.directoryJson })
+    .from(apiDirectoryCacheTable);
+
+  if (!rows[0]) {
+    res.json(ListWorkspaceAdminsResponse.parse([]));
+    return;
+  }
+
+  const raw = rows[0].directoryJson as Record<string, unknown>;
+  const rawWorkspaces = (raw["workspaces"] ?? {}) as Record<string, Record<string, unknown>>;
+  const rawMembers = (raw["members"] ?? {}) as Record<string, Record<string, unknown>>;
+
+  const result = Object.values(rawWorkspaces)
+    .filter((ws) => ws["id"] && ws["name"])
+    .map((ws) => {
+      const rawAdmins = (ws["admins"] ?? []) as Array<{ userId: string; username: string }>;
+      return {
+        workspaceId: ws["id"] as string,
+        workspaceName: ws["name"] as string,
+        admins: rawAdmins.map((a) => {
+          const member = rawMembers[a.userId] as Record<string, unknown> | undefined;
+          return {
+            userId: a.userId,
+            username: a.username,
+            email: (member?.["email"] as string | null) ?? null,
+            name: (member?.["name"] as string | null) ?? null,
+          };
+        }),
+      };
+    })
+    .sort((a, b) => a.workspaceName.localeCompare(b.workspaceName));
+
+  res.json(ListWorkspaceAdminsResponse.parse(result));
 });
 
 // Notification recipients are account-only data; workspace admins can neither

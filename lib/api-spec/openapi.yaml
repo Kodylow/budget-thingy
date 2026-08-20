@@ -695,6 +695,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /workspace-admins:
+    get:
+      operationId: listWorkspaceAdmins
+      tags: [admins]
+      summary: List admins per workspace
+      description: Returns every Enterprise workspace with its admin users from the directory. Available only to account administrators.
+      responses:
+        "200":
+          description: Workspace admin list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkspaceAdminsItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /alerts:
     get:
       operationId: listAlerts
@@ -1339,6 +1358,30 @@ components:
         email:
           type: string
           minLength: 3
+    WorkspaceAdminMember:
+      type: object
+      required: [userId, username]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        email:
+          type: ["string", "null"]
+        name:
+          type: ["string", "null"]
+    WorkspaceAdminsItem:
+      type: object
+      required: [workspaceId, workspaceName, admins]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        admins:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceAdminMember"
     AccountEditor:
       type: object
       required: [userId, email, createdAt]
