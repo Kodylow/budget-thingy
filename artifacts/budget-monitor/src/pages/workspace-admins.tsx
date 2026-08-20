@@ -3,7 +3,7 @@ import { useListWorkspaceAdmins } from '@workspace/api-client-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Building2, ChevronDown, ChevronRight, Search, ShieldCheck, Users } from 'lucide-react';
+import { Search, ShieldCheck, Users } from 'lucide-react';
 
 interface GroupItem {
   groupId: string;
@@ -14,73 +14,93 @@ interface GroupItem {
   admins: Array<{ userId: string; username: string; email: string | null; name: string | null }>;
 }
 
-interface TeamSection {
+type Admin = GroupItem['admins'][0];
+
+interface TeamEntry {
+  key: string;
   teamName: string;
-  groups: GroupItem[];
+  admins: Admin[];
+  groupCount: number;
+}
+
+/**
+ * Returns true if the group name matches the Admin pattern.
+ * Expected format: "{prefix} - {Team Name} - Admin"
+ * The last " - "-delimited segment must be "Admin" (case-insensitive).
+ */
+function isAdminGroup(groupName: string): boolean {
+  const parts = groupName.split(' - ');
+  return parts.length >= 3 && parts[parts.length - 1]!.trim().toLowerCase() === 'admin';
+}
+
+/**
+ * Extracts the team name from an Admin group name.
+ * "AZ-Replit - Comcast Business Marketing - Admin" → "Comcast Business Marketing"
+ */
+function parseTeamName(groupName: string): string {
+  const parts = groupName.split(' - ');
+  // Everything between the first prefix and the trailing "Admin"
+  return parts.slice(1, -1).join(' - ').trim();
 }
 
 export default function GroupAdmins() {
   const { data: groups, isLoading, isError } = useListWorkspaceAdmins();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [collapsedTeams, setCollapsedTeams] = useState<Set<string>>(new Set());
 
-  const toggleTeam = (teamName: string) => {
-    setCollapsedTeams((prev) => {
-      const next = new Set(prev);
-      if (next.has(teamName)) next.delete(teamName);
-      else next.add(teamName);
-      return next;
-    });
-  };
-
-  // Build team sections, filtered by search
-  const { teamSections, unassigned } = useMemo(() => {
-    if (!groups) return { teamSections: [], unassigned: [] };
+  // Filter to Admin groups, parse team names, dedupe admins per team, then apply search
+  const teamEntries = useMemo(() => {
+    if (!groups) return [] as TeamEntry[];
     const q = search.trim().toLowerCase();
 
-    const filtered = q
-      ? groups.filter(
-          (g) =>
-            g.groupName.toLowerCase().includes(q) ||
-            (g.teamName ?? '').toLowerCase().includes(q) ||
-            g.workspaceName.toLowerCase().includes(q),
-        )
-      : (groups as GroupItem[]);
+    // Keep only groups whose name ends with " - Admin"
+    const adminGroups = (groups as GroupItem[]).filter((g) => isAdminGroup(g.groupName));
 
+    // Bucket into teams by the parsed team name
     const teamMap = new Map<string, GroupItem[]>();
-    const unassigned: GroupItem[] = [];
-
-    for (const g of filtered as GroupItem[]) {
-      if (g.teamName) {
-        const existing = teamMap.get(g.teamName) ?? [];
-        existing.push(g);
-        teamMap.set(g.teamName, existing);
-      } else {
-        unassigned.push(g);
-      }
+    for (const g of adminGroups) {
+      const teamName = parseTeamName(g.groupName);
+      const existing = teamMap.get(teamName) ?? [];
+      existing.push(g);
+      teamMap.set(teamName, existing);
     }
 
-    const teamSections: TeamSection[] = Array.from(teamMap.entries())
-      .map(([teamName, groups]) => ({ teamName, groups }))
-      .sort((a, b) => a.teamName.localeCompare(b.teamName));
+    // Build entries with deduped admins (first-seen wins)
+    const entries: TeamEntry[] = [];
+    for (const [teamName, teamGroups] of teamMap) {
+      const seen = new Set<string>();
+      const admins: Admin[] = [];
+      for (const g of teamGroups) {
+        for (const a of g.admins) {
+          if (!seen.has(a.userId)) {
+            seen.add(a.userId);
+            admins.push(a);
+          }
+        }
+      }
+      entries.push({ key: teamName, teamName, admins, groupCount: teamGroups.length });
+    }
+    entries.sort((a, b) => a.teamName.localeCompare(b.teamName));
 
-    return { teamSections, unassigned };
+    // Apply search: match team name or any admin field
+    if (!q) return entries;
+    const adminMatches = (a: Admin) =>
+      (a.name ?? '').toLowerCase().includes(q) ||
+      a.username.toLowerCase().includes(q) ||
+      (a.email ?? '').toLowerCase().includes(q);
+    return entries.filter((t) => t.teamName.toLowerCase().includes(q) || t.admins.some(adminMatches));
   }, [groups, search]);
 
-  const allVisible = useMemo(
-    () => [...teamSections.flatMap((t) => t.groups), ...unassigned],
-    [teamSections, unassigned],
-  );
+  const teamCount = teamEntries.length;
 
-  // Default selection: first visible group
-  const selected =
-    (groups?.find((g) => g.groupId === selectedId) as GroupItem | undefined) ??
-    (allVisible[0] as GroupItem | undefined) ??
-    null;
-  const activeId = selected?.groupId ?? null;
+  // Resolve active selection key, falling back to the first visible team
+  const activeKey = useMemo(() => {
+    const keys = teamEntries.map((t) => t.key);
+    if (selectedKey !== null && keys.includes(selectedKey)) return selectedKey;
+    return keys[0] ?? null;
+  }, [teamEntries, selectedKey]);
 
-  const totalCount = allVisible.length;
+  const selectedTeam = activeKey ? (teamEntries.find((t) => t.key === activeKey) ?? null) : null;
 
   if (isLoading) {
     return (
@@ -106,21 +126,21 @@ export default function GroupAdmins() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Group Admins</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Workspace administrators for each group, organized by team
+          Workspace administrators drawn from Admin groups, organised by team
         </p>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4" style={{ minHeight: 'calc(100vh - 220px)' }}>
-        {/* Left panel — team + group list */}
+        {/* Left panel — team list */}
         <aside className="md:w-72 lg:w-80 shrink-0 flex flex-col gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
-              placeholder="Search teams or groups…"
+              placeholder="Search teams or admins…"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setSelectedId(null);
+                setSelectedKey(null);
               }}
               className="pl-8 h-9 text-sm"
             />
@@ -129,148 +149,42 @@ export default function GroupAdmins() {
           <Card className="flex-1 overflow-hidden flex flex-col">
             <CardHeader className="py-2.5 px-4 border-b border-border shrink-0">
               <CardTitle className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {totalCount} group{totalCount !== 1 ? 's' : ''}
+                {teamCount} team{teamCount !== 1 ? 's' : ''}
                 {search ? ' found' : ''}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0 overflow-y-auto flex-1">
-              {totalCount === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">No groups match</p>
+              {teamCount === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No teams match</p>
               ) : (
                 <ul>
-                  {/* Team sections */}
-                  {teamSections.map((section) => {
-                    const isCollapsed = collapsedTeams.has(section.teamName);
+                  {teamEntries.map((entry) => {
+                    const isActive = entry.key === activeKey;
                     return (
-                      <li key={section.teamName}>
-                        {/* Team header row */}
+                      <li key={entry.key}>
                         <button
-                          onClick={() => toggleTeam(section.teamName)}
-                          className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left bg-muted/60 border-b border-border hover:bg-muted transition-colors"
+                          onClick={() => setSelectedKey(entry.key)}
+                          className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors border-b border-border ${
+                            isActive
+                              ? 'bg-primary text-primary-foreground font-medium'
+                              : 'hover:bg-muted text-foreground'
+                          }`}
                         >
-                          <span className="flex items-center gap-1.5 min-w-0">
-                            {isCollapsed ? (
-                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            ) : (
-                              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            )}
-                            <span className="text-xs font-semibold text-foreground truncate">
-                              {section.teamName}
+                          <span className="min-w-0">
+                            <span className="block text-[13px] font-semibold truncate">
+                              {entry.teamName}
                             </span>
                           </span>
-                          <Badge variant="outline" className="text-[10px] shrink-0">
-                            {section.groups.length}
+                          <Badge
+                            variant={isActive ? 'secondary' : 'outline'}
+                            className="text-[10px] shrink-0"
+                          >
+                            {entry.admins.length}
                           </Badge>
                         </button>
-
-                        {/* Groups under this team */}
-                        {!isCollapsed && (
-                          <ul>
-                            {section.groups.map((g) => {
-                              const isActive = g.groupId === activeId;
-                              return (
-                                <li key={g.groupId}>
-                                  <button
-                                    onClick={() => setSelectedId(g.groupId)}
-                                    className={`w-full flex items-start justify-between gap-2 pl-7 pr-4 py-2.5 text-sm text-left transition-colors border-b border-border last:border-0 ${
-                                      isActive
-                                        ? 'bg-primary text-primary-foreground font-medium'
-                                        : 'hover:bg-muted text-foreground'
-                                    }`}
-                                  >
-                                    <span className="min-w-0">
-                                      <span className="block truncate text-[13px] font-medium">
-                                        {g.groupName}
-                                      </span>
-                                      <span
-                                        className={`block text-[11px] truncate mt-0.5 ${
-                                          isActive
-                                            ? 'text-primary-foreground/70'
-                                            : 'text-muted-foreground'
-                                        }`}
-                                      >
-                                        {g.workspaceName}
-                                      </span>
-                                    </span>
-                                    <Badge
-                                      variant={isActive ? 'secondary' : 'outline'}
-                                      className="text-[10px] shrink-0 mt-0.5"
-                                    >
-                                      {g.admins.length}
-                                    </Badge>
-                                  </button>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
                       </li>
                     );
                   })}
-
-                  {/* Unassigned groups */}
-                  {unassigned.length > 0 && (
-                    <li>
-                      <button
-                        onClick={() => toggleTeam('__unassigned__')}
-                        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left bg-muted/60 border-b border-border hover:bg-muted transition-colors"
-                      >
-                        <span className="flex items-center gap-1.5 min-w-0">
-                          {collapsedTeams.has('__unassigned__') ? (
-                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          ) : (
-                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          )}
-                          <span className="text-xs font-semibold text-muted-foreground truncate italic">
-                            Unassigned
-                          </span>
-                        </span>
-                        <Badge variant="outline" className="text-[10px] shrink-0">
-                          {unassigned.length}
-                        </Badge>
-                      </button>
-                      {!collapsedTeams.has('__unassigned__') && (
-                        <ul>
-                          {unassigned.map((g) => {
-                            const isActive = g.groupId === activeId;
-                            return (
-                              <li key={g.groupId}>
-                                <button
-                                  onClick={() => setSelectedId(g.groupId)}
-                                  className={`w-full flex items-start justify-between gap-2 pl-7 pr-4 py-2.5 text-sm text-left transition-colors border-b border-border last:border-0 ${
-                                    isActive
-                                      ? 'bg-primary text-primary-foreground font-medium'
-                                      : 'hover:bg-muted text-foreground'
-                                  }`}
-                                >
-                                  <span className="min-w-0">
-                                    <span className="block truncate text-[13px] font-medium">
-                                      {g.groupName}
-                                    </span>
-                                    <span
-                                      className={`block text-[11px] truncate mt-0.5 ${
-                                        isActive
-                                          ? 'text-primary-foreground/70'
-                                          : 'text-muted-foreground'
-                                      }`}
-                                    >
-                                      {g.workspaceName}
-                                    </span>
-                                  </span>
-                                  <Badge
-                                    variant={isActive ? 'secondary' : 'outline'}
-                                    className="text-[10px] shrink-0 mt-0.5"
-                                  >
-                                    {g.admins.length}
-                                  </Badge>
-                                </button>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </li>
-                  )}
                 </ul>
               )}
             </CardContent>
@@ -279,33 +193,22 @@ export default function GroupAdmins() {
 
         {/* Right panel — admin table */}
         <div className="flex-1 min-w-0">
-          {selected ? (
+          {selectedTeam ? (
             <Card>
               <CardHeader className="pb-3 border-b border-border">
                 <div className="flex flex-wrap items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <CardTitle className="text-base font-semibold">{selected.groupName}</CardTitle>
+                  <CardTitle className="text-base font-semibold">{selectedTeam.teamName}</CardTitle>
                   <Badge variant="secondary" className="text-xs">
-                    {selected.admins.length} admin{selected.admins.length !== 1 ? 's' : ''}
+                    {selectedTeam.admins.length} admin{selectedTeam.admins.length !== 1 ? 's' : ''}
                   </Badge>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1">
-                  {selected.teamName && (
-                    <span className="text-xs text-muted-foreground font-medium">
-                      {selected.teamName}
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Building2 className="h-3.5 w-3.5" />
-                    {selected.workspaceName}
-                  </span>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                {selected.admins.length === 0 ? (
+                {selectedTeam.admins.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
                     <Users className="h-8 w-8 opacity-30" />
-                    <p className="text-sm">No admins found for this group's workspace</p>
+                    <p className="text-sm">No admins found for this team</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -324,13 +227,15 @@ export default function GroupAdmins() {
                         </tr>
                       </thead>
                       <tbody>
-                        {selected.admins.map((admin) => (
+                        {selectedTeam.admins.map((admin) => (
                           <tr
                             key={admin.userId}
                             className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
                           >
                             <td className="px-4 py-3 font-medium">
-                              {admin.name ?? <span className="text-muted-foreground italic">—</span>}
+                              {admin.name ?? (
+                                <span className="text-muted-foreground italic">—</span>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
                               {admin.username}
@@ -348,7 +253,7 @@ export default function GroupAdmins() {
             </Card>
           ) : (
             <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-              Select a group to view its admins
+              Select a team to view its admins
             </div>
           )}
         </div>

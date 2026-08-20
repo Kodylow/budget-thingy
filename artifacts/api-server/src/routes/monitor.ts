@@ -89,6 +89,7 @@ import {
   canSeeGroup,
   isApplicationAdmin,
   isAccountWide,
+  isAdminRole,
   scopeGroups,
   type Authorization,
 } from "../lib/authz";
@@ -1213,6 +1214,7 @@ router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<
   const raw = rows[0].directoryJson as Record<string, unknown>;
   const rawWorkspaces = (raw["workspaces"] ?? {}) as Record<string, Record<string, unknown>>;
   const rawMembers = (raw["members"] ?? {}) as Record<string, Record<string, unknown>>;
+  const rawGroupMembers = (raw["groupMembers"] ?? {}) as Record<string, string[]>;
   const rawGroups = (raw["groups"] ?? []) as Array<{
     id: string;
     name: string;
@@ -1220,32 +1222,31 @@ router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<
     workspaceId: string;
   }>;
 
-  // Build a map of workspaceId -> resolved admin list (with member details)
-  const wsAdminsCache = new Map<string, Array<{ userId: string; username: string; email: string | null; name: string | null }>>();
-  for (const [wsId, ws] of Object.entries(rawWorkspaces)) {
-    const rawAdmins = (ws["admins"] ?? []) as Array<{ userId: string; username: string }>;
-    wsAdminsCache.set(wsId, rawAdmins.map((a) => {
-      const member = rawMembers[a.userId] as Record<string, unknown> | undefined;
-      return {
-        userId: a.userId,
-        username: a.username,
-        email: (member?.["email"] as string | null) ?? null,
-        name: (member?.["name"] as string | null) ?? null,
-      };
-    }));
-  }
-
   const BUILT_IN = new Set(["admin", "member", "guest"]);
   const result = rawGroups
     .filter((g) => !BUILT_IN.has(g.type.toLowerCase()))
-    .map((g) => ({
-      groupId: g.id,
-      groupName: g.name,
-      workspaceId: g.workspaceId,
-      workspaceName: (rawWorkspaces[g.workspaceId]?.["name"] as string | undefined) ?? g.workspaceId,
-      teamName: groupTeamMap.get(g.name) ?? null,
-      admins: wsAdminsCache.get(g.workspaceId) ?? [],
-    }))
+    .map((g) => {
+      // Resolve the actual members of this group from the directory's groupMembers map.
+      const memberIds = rawGroupMembers[g.id] ?? [];
+      const admins = memberIds.flatMap((userId) => {
+        const m = rawMembers[userId] as Record<string, unknown> | undefined;
+        if (!m) return [];
+        return [{
+          userId,
+          username: m["username"] as string,
+          email: (m["email"] as string | null) ?? null,
+          name: (m["name"] as string | null) ?? null,
+        }];
+      });
+      return {
+        groupId: g.id,
+        groupName: g.name,
+        workspaceId: g.workspaceId,
+        workspaceName: (rawWorkspaces[g.workspaceId]?.["name"] as string | undefined) ?? g.workspaceId,
+        teamName: groupTeamMap.get(g.name) ?? null,
+        admins,
+      };
+    })
     .sort((a, b) => a.groupName.localeCompare(b.groupName));
 
   res.json(ListWorkspaceAdminsResponse.parse(result));
