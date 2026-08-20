@@ -9,8 +9,10 @@
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Member-deduplicated spend across custom groups for the selected range */
+  /** Deduplicated project spend across custom groups plus unattributed project spend */
   totalSpendUsd: number;
+  /** Legacy member-deduplicated spend retained for secondary drill-down comparisons */
+  memberBasedTotalSpendUsd?: number;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
   /** Sum of remaining budget across budgeted groups with loaded spend */

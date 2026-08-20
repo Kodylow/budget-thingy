@@ -152,11 +152,11 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
 
   const result: GroupCluster[] = [];
 
-  // Single-group (standalone) entries — use rawMemberSpendUsd when available so
-  // the displayed spend equals the sum of the group's actual member workspace
-  // spend rather than the global-attribution rollup figure.
+  // Single-group entries preserve the dashboard-selected spend model. The
+  // caller maps this to project-attributed spend (with member spend only as a
+  // loading fallback), so substituting rawMemberSpendUsd here would silently
+  // undo project accounting for ordinary groups inside team sections.
   for (const g of standalone) {
-    const useRaw = g.rawMemberSpendLoaded === true && g.rawMemberSpendUsd != null;
     result.push({
       clusterKey: g.groupId,
       baseName: g.name,
@@ -166,8 +166,8 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
       groupIds: [g.groupId],
       groupRoles: {},
       memberCount: g.memberCount ?? 0,
-      spendUsd: useRaw ? g.rawMemberSpendUsd! : (g.spendUsd ?? 0),
-      spendLoaded: useRaw ? true : g.spendLoaded,
+      spendUsd: g.spendUsd ?? 0,
+      spendLoaded: g.spendLoaded,
       isSingleGroup: true,
       singleGroup: g,
     });

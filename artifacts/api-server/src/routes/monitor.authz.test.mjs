@@ -24,6 +24,7 @@ import { setSendEmailOverrideForTests } from "../lib/email.ts";
 import {
   __setDirectoryCacheForTests,
   __setMemberUsageForTests,
+  __setProjectUsageForTests,
   resolveRange,
 } from "../lib/enterprise.ts";
 
@@ -87,6 +88,17 @@ test.before(async () => {
       ["g-ws2-a", 4],
     ]),
   );
+  for (const [groupId, spend] of [["g-ws1-a", 53], ["g-ws2-a", 64]]) {
+    __setProjectUsageForTests(groupId, "custom:2026-05-20:2026-08-11", {
+      fetchedAt: Date.now(),
+      totalCostUsd: spend,
+      byProject: new Map([[`${groupId}-project`, {
+        projectId: `${groupId}-project`,
+        totalCostUsd: spend,
+        metrics: [],
+      }]]),
+    });
+  }
 
   // Inject the real resolution logic but against the seeded directory. Using
   // the actual resolver keeps the test faithful to production behavior.
@@ -172,6 +184,8 @@ test.after(async () => {
   await db.delete(usersTable).where(inArray(usersTable.id, ["editor", "candidate-editor", "bootstrap-editor"]));
   __setDirectoryCacheForTests(null);
   __setMemberUsageForTests("custom:2026-05-20:2026-08-11", null);
+  __setProjectUsageForTests("g-ws1-a", "custom:2026-05-20:2026-08-11", null);
+  __setProjectUsageForTests("g-ws2-a", "custom:2026-05-20:2026-08-11", null);
   setAuthorizationResolver(null);
   setSendEmailOverrideForTests(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
@@ -239,7 +253,7 @@ test("custom range uses inclusive UTC days and all visible workspaces without ov
     { user: "acct" },
   );
   assert.equal(acct.status, 200);
-  assert.equal(acct.json.totalSpendUsd, 77);
+  assert.equal(acct.json.totalSpendUsd, 117);
   assert.equal(acct.json.isComplete, true);
 
   const ws1 = await req(

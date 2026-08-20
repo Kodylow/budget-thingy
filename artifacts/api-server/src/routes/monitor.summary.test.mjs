@@ -13,6 +13,7 @@ import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
 import {
   __setDirectoryCacheForTests,
   __setMemberUsageForTests,
+  __setProjectUsageForTests,
   __setWsSpendForTests,
 } from "../lib/enterprise.ts";
 
@@ -56,6 +57,31 @@ const wsExtra = new Map([
   ["ws-extra", { id: "ws-extra", name: "Extra", slug: "extra", memberCount: 2 }],
 ]);
 
+function setProjectSpend(alpha, beta, alphaResidual = 0) {
+  const seed = (groupId, spend, residual = 0) => {
+    __setProjectUsageForTests(groupId, RANGE, {
+      fetchedAt: Date.now(),
+      totalCostUsd: spend + residual,
+      byProject: new Map(
+        spend > 0
+          ? [[`${groupId}-project`, {
+              projectId: `${groupId}-project`,
+              totalCostUsd: spend,
+              metrics: [],
+            }]]
+          : [],
+      ),
+    });
+  };
+  seed("sg-alpha", alpha, alphaResidual);
+  seed("sg-beta", beta);
+}
+
+function clearProjectSpend() {
+  __setProjectUsageForTests("sg-alpha", RANGE, null);
+  __setProjectUsageForTests("sg-beta", RANGE, null);
+}
+
 let server;
 let baseUrl;
 
@@ -91,6 +117,7 @@ test.after(async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
+  clearProjectSpend();
   __setDirectoryCacheForTests(null);
   setAuthorizationResolver(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
@@ -110,6 +137,7 @@ test("summary returns isComplete:false and zero spend with empty usage caches", 
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
+  clearProjectSpend();
 
   const json = await req("/summary");
   assert.equal(json.isComplete, false, "should be incomplete while caches are cold");
@@ -124,6 +152,7 @@ test("summary is not complete when extra-workspace data is still pending", async
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, null); // extra ws still loading
+  setProjectSpend(60, 15);
 
   const json = await req("/summary");
   // isComplete must be false while extra ws is pending (ws-extra has no cached data).
@@ -146,6 +175,7 @@ test("summary reflects combined deduped spend once all caches are warm", async (
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
+  setProjectSpend(85, 15, 8);
 
   const json = await req("/summary");
   assert.equal(json.isComplete, true, "should be complete once all caches are warm");
@@ -159,6 +189,7 @@ test("summary deduplication: alice counted only once across groups", async () =>
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
+  setProjectSpend(85, 15, 8);
 
   const json = await req("/summary");
   // If alice were double-counted (alpha+beta+extra twice): (30+20)*2+20+10+5+15+8 = 158. Correct: 108.
@@ -251,6 +282,7 @@ test("CSV attribution matches dashboard even when API returns groups in reverse 
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 5]]));
+  setProjectSpend(40, 15);
 
   const rows = await getCsv();
   const alice = rows.find((r) => r["Username"] === "alice");
@@ -273,6 +305,7 @@ test("/groups and /summary: user with $0 in first group gets full combined spend
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 0], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 5]]));
+  setProjectSpend(25, 15);
 
   const grpJson = await req("/groups");
   const alpha = grpJson.groups.find((g) => g.groupId === "sg-alpha");
@@ -335,6 +368,7 @@ test("/groups: correct combined spend once all group caches warm", async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5]]));
+  setProjectSpend(85, 15);
 
   const json = await req("/groups");
   const alpha = json.groups.find((g) => g.groupId === "sg-alpha");
@@ -350,19 +384,16 @@ test("/groups: correct combined spend once all group caches warm", async () => {
 
 // ── Documented behavior: ungrouped members ─────────────────────────────────────────
 
-test("extra-workspace spend for ungrouped members IS included in summary total (reconciles with CSV)", async () => {
-  // dave has $8 in ws-extra but no custom group.
-  // The summary includes his spend so it reconciles with the CSV export (which always
-  // iterates all enterprise members). carol=$10, bob=$15, dave=$8 → $33.
+test("unmatched project spend is included in the project-based summary total", async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["dave", 8]]));
+  setProjectSpend(10, 15, 8);
 
   const json = await req("/summary");
   assert.equal(json.isComplete, true);
-  // carol=$10 (Alpha) + bob=$15 (Beta) + dave=$8 (ungrouped, extra-ws) = $33.
   assert.equal(json.totalSpendUsd, 33,
-    "dave has no custom group but his extra-workspace spend must be counted in the summary total");
+    "attributed projects plus unmatched project spend must reconcile to the summary total");
 });
 
 test("detail: direct cold-cache request queues all scoped groups so rollup eventually completes", async () => {

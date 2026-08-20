@@ -56,6 +56,7 @@ import {
   getWsSpendByUser,
   queueProjectUsageFetch,
   getProjectUsage,
+  getProjectAttribution,
   queueProjectTitlesFetch,
   getProjectTitles,
   getProjectInfo,
@@ -271,6 +272,7 @@ router.get("/groups", async (req, res): Promise<void> => {
     // it preempts checker/snapshot group-total work already waiting at startup.
     // Once synchronized, these entries are durable and hydrate before listen.
     for (const group of scoped) queueMemberUsageFetch(group, range, 0);
+    for (const group of scoped) queueProjectUsageFetch(group, range, 0);
     const isAccountAdmin = isAccountWide(req.authz);
     if (isAccountAdmin) {
       queueExtraWorkspacesFetch(dir, range, 0);
@@ -296,6 +298,11 @@ router.get("/groups", async (req, res): Promise<void> => {
     // attributes shared users across both the old and new workspace versions.
     const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
+    const projectAttribution = getProjectAttribution(
+      range.key,
+      scoped,
+      dir.workspaces,
+    );
 
     // Include source group IDs (alias groups) in the history query so merged
     // primaries can show the complete spend history across both workspace versions.
@@ -324,6 +331,10 @@ router.get("/groups", async (req, res): Promise<void> => {
         // double-counting: each user's spend appears in exactly one source group.
         const combinedSpend = sourceIds.reduce(
           (sum, id) => sum + (rollup.byGroup.get(id)?.spendUsd ?? 0),
+          0,
+        );
+        const projectSpendUsd = sourceIds.reduce(
+          (sum, id) => sum + (projectAttribution.spendByGroup.get(id) ?? 0),
           0,
         );
 
@@ -389,6 +400,8 @@ router.get("/groups", async (req, res): Promise<void> => {
           rollupMemberCount: mergedRollupMemberCount,
           spendLoaded: fullyLoaded,
           spendUsd: fullyLoaded ? combinedSpend : null,
+          projectSpendLoaded: projectAttribution.isComplete,
+          projectSpendUsd: projectAttribution.isComplete ? projectSpendUsd : null,
           rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
           rollupSpendUsd: combinedSpend,
           rawMemberSpendUsd: memberUsageLoaded ? rawMemberSpend : null,
@@ -409,11 +422,8 @@ router.get("/groups", async (req, res): Promise<void> => {
       }),
     );
 
-    // Per-team raw member spend with within-team seenUserIds dedup.
-    // Mirrors cluster-detail's totalMembersSpend + totalUnattributedSpend:
-    // each member counted once within the team, at their raw workspace spend
-    // (not the global-attribution rollup, so members attributed to other groups
-    // still contribute their spend here).
+    // Project-attributed team spend. Each project has already been assigned to
+    // exactly one source group, so team totals are a direct group sum.
     const teamRawSpend: Record<string, { spendUsd: number; spendLoaded: boolean }> = {};
     const teamGroupsByName = new Map<string, typeof displayGroups>();
     for (const g of displayGroups) {
@@ -424,56 +434,33 @@ router.get("/groups", async (req, res): Promise<void> => {
       teamGroupsByName.set(teamName, existing);
     }
     for (const [teamName, tGroups] of teamGroupsByName) {
-      const seenUsers = new Set<string>();
-      let teamRaw = 0;
-      let teamLoaded = true;
+      let teamProjectSpend = 0;
       for (const g of tGroups) {
         const srcIds = mergePlan.mergeMap.get(g.id) ?? [g.id];
-        const loaded = srcIds.every((id) => !!getMemberUsage(id, range.key));
-        if (!loaded) teamLoaded = false;
-        const gMemberIds = mergedGroupMemberIds(srcIds, dir.groupMembers);
-        // Union directory members with users returned by the API who may not yet
-        // be reflected in the directory snapshot (mirrors getDedupedUsageRollup).
-        const apiUserIds = new Set<string>();
         for (const srcId of srcIds) {
-          for (const userId of (getMemberUsage(srcId, range.key)?.byUser.keys() ?? [])) {
-            apiUserIds.add(userId);
-          }
-        }
-        // wsData is used below only as a spend lookup — do NOT expand allMemberIds
-        // with wsData.keys(). workspace_member covers the whole workspace, not just
-        // this group's members; adding its keys here would count every workspace user
-        // under every group that shares the workspace, causing massive double-counting.
-        const wsData = getWsSpendByUser(g.workspaceId, range.key);
-        const allMemberIds = new Set([...gMemberIds, ...apiUserIds]);
-        for (const userId of allMemberIds) {
-          if (seenUsers.has(userId)) continue;
-          seenUsers.add(userId);
-          // Sum group_member spend across source groups, then take the higher of that
-          // and workspace_member spend (which captures compute + non-agent metrics).
-          let groupMemberSpend = 0;
-          for (const srcId of srcIds) {
-            groupMemberSpend += getMemberUsage(srcId, range.key)?.byUser.get(userId) ?? 0;
-          }
-          teamRaw += Math.max(groupMemberSpend, wsData?.get(userId) ?? 0);
-        }
-        // Include ex-member (unattributable) spend from each source group.
-        for (const srcId of srcIds) {
-          teamRaw += getMemberUsage(srcId, range.key)?.unattributableTotalCostUsd ?? 0;
+          teamProjectSpend += projectAttribution.spendByGroup.get(srcId) ?? 0;
         }
       }
-      teamRawSpend[teamName] = { spendUsd: teamRaw, spendLoaded: teamLoaded };
+      teamRawSpend[teamName] = {
+        spendUsd: teamProjectSpend,
+        spendLoaded: projectAttribution.isComplete,
+      };
     }
 
     res.json(
       ListGroupsResponse.parse({
         groups,
-        isComplete: rollup.isComplete && extraSpend.isComplete,
+        isComplete:
+          rollup.isComplete && extraSpend.isComplete && projectAttribution.isComplete,
         // rollup.pendingCount already counts every missing source group. Adding
         // missing display rows counted the same work twice (e.g. 126 became 252).
         pendingCount:
-          rollup.pendingCount + (extraSpend.totalCount - extraSpend.loadedCount),
+          rollup.pendingCount +
+          (extraSpend.totalCount - extraSpend.loadedCount) +
+          projectAttribution.pendingCount,
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
+        projectSpendLoaded: projectAttribution.isComplete,
+        unattributedProjectSpendUsd: projectAttribution.unattributedSpendUsd,
         teamRawSpend,
       }),
     );
@@ -948,6 +935,7 @@ router.get("/summary", async (req, res): Promise<void> => {
 
   let totalGroups = 0;
   let totalSpendUsd = 0;
+  let memberBasedTotalSpendUsd = 0;
   let totalRemainingUsd = 0;
   let totalBudgetUsd = 0;
   let budgetedGroups = 0;
@@ -973,15 +961,12 @@ router.get("/summary", async (req, res): Promise<void> => {
           budgetedGroups += 1;
         }
       }
-      // Use deduped, cross-workspace rollup for total spend so the summary
-      // matches the group rows (which also show combined spend).
-      //
-      // Extra-workspace spend only applies to account admins; workspace admins
-      // are scoped to their own workspace's groups and must not see spend from others.
-      //
-      // Queue per-group member usage so /summary can independently populate
-      // the rollup from a cold cache (not depending on /groups being visited first).
-      for (const group of scoped) queueMemberUsageFetch(group, range, 1);
+      // Queue both models independently so /summary can populate from a cold
+      // cache without requiring /groups to be visited first.
+      for (const group of scoped) {
+        queueMemberUsageFetch(group, range, 1);
+        queueProjectUsageFetch(group, range, 1);
+      }
       if (isAccount) {
         queueExtraWorkspacesFetch(dir, range, 1);
         queueAllWorkspacesFetch(dir, range, 1);
@@ -1003,8 +988,10 @@ router.get("/summary", async (req, res): Promise<void> => {
           if (!allGroupedIds.has(uid)) ungroupedExtraSpend += spend;
         }
       }
-      totalSpendUsd = summaryRollup.totalSpendUsd + ungroupedExtraSpend;
-      pending = summaryRollup.pendingCount;
+      memberBasedTotalSpendUsd = summaryRollup.totalSpendUsd + ungroupedExtraSpend;
+      const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
+      totalSpendUsd = projectAttribution.totalSpendUsd;
+      pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
       summaryExtraComplete = summaryExtraSpend.isComplete;
     } catch (err) {
       req.log.error({ err }, "summary directory fetch failed");
@@ -1044,6 +1031,7 @@ router.get("/summary", async (req, res): Promise<void> => {
       totalGroups,
       budgetedGroups,
       totalSpendUsd,
+      memberBasedTotalSpendUsd,
       totalBudgetUsd,
       totalRemainingUsd,
       groupsOver50: over50,

@@ -77,6 +77,7 @@ vi.mock("./enterprise", () => ({
     return "fresh_cache";
   },
   queueMemberUsageFetch: () => false,
+  queueProjectUsageFetch: () => false,
   queueAllWorkspacesFetch: () => undefined,
   queueExtraWorkspacesFetch: (
     _dir: unknown,

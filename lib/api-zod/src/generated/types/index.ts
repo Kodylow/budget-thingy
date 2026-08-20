@@ -37,6 +37,7 @@ export * from './groupMember';
 export * from './groupProject';
 export * from './groupProjectsResponse';
 export * from './groupsResponse';
+export * from './groupsResponseTeamRawSpend';
 export * from './handleBrowserLoginCallbackParams';
 export * from './healthStatus';
 export * from './listAlertsParams';

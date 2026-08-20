@@ -34,6 +34,13 @@ export interface Group {
      * @nullable
      */
   spendUsd?: number | null;
+  /** Whether project usage for every visible custom group is loaded */
+  projectSpendLoaded?: boolean;
+  /**
+     * Deduplicated project spend attributed to this group, null while project usage is loading
+     * @nullable
+     */
+  projectSpendUsd?: number | null;
   /** Whether member-level usage for every custom group is loaded */
   rollupSpendLoaded: boolean;
   /** Member-deduplicated spend attributed to this group for team and org rollups */

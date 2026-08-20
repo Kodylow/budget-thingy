@@ -128,3 +128,67 @@ test("all usage modes paginate, persist, hydrate, and reuse closed ranges", asyn
     7,
   );
 });
+
+test("project attribution prefers sub-workspaces, then highest spend, and reports unattributed residual", () => {
+  const attributionRange = `custom:project-attribution-${crypto.randomUUID()}`;
+  const groups = [
+    { id: "comcast-a", workspaceId: "1awqan", name: "Comcast A", type: "custom" },
+    { id: "comcast-b", workspaceId: "1awqan", name: "Comcast B", type: "custom" },
+    { id: "freewheel", workspaceId: "freewheel-ws", name: "Freewheel", type: "custom" },
+  ];
+  const usage = (totalCostUsd, projects) => ({
+    fetchedAt: Date.now(),
+    totalCostUsd,
+    byProject: new Map(
+      projects.map(([projectId, projectSpend]) => [
+        projectId,
+        { projectId, totalCostUsd: projectSpend, metrics: [] },
+      ]),
+    ),
+  });
+
+  enterprise.__setProjectUsageForTests(
+    "comcast-a",
+    attributionRange,
+    usage(17, [["shared", 10], ["primary-only", 5]]),
+  );
+  enterprise.__setProjectUsageForTests(
+    "comcast-b",
+    attributionRange,
+    usage(9, [["primary-only", 8], ["tie", 1]]),
+  );
+  enterprise.__setProjectUsageForTests(
+    "freewheel",
+    attributionRange,
+    usage(4, [["shared", 3], ["tie", 1]]),
+  );
+
+  const result = enterprise.getProjectAttribution(
+    attributionRange,
+    groups,
+    new Map(),
+  );
+
+  assert.equal(result.projectToGroup.get("shared"), "freewheel");
+  assert.equal(result.projectToGroup.get("primary-only"), "comcast-b");
+  assert.equal(result.projectToGroup.get("tie"), "freewheel");
+  assert.equal(result.spendByGroup.get("freewheel"), 4);
+  assert.equal(result.spendByGroup.get("comcast-b"), 8);
+  assert.equal(result.unattributedSpendUsd, 2);
+  assert.equal(result.totalSpendUsd, 14);
+  assert.equal(result.isComplete, true);
+  assert.equal(result.pendingCount, 0);
+
+  enterprise.__setProjectUsageForTests("freewheel", attributionRange, null);
+  const incomplete = enterprise.getProjectAttribution(
+    attributionRange,
+    groups,
+    new Map(),
+  );
+  assert.equal(incomplete.isComplete, false);
+  assert.equal(incomplete.pendingCount, 1);
+
+  for (const group of groups) {
+    enterprise.__setProjectUsageForTests(group.id, attributionRange, null);
+  }
+});

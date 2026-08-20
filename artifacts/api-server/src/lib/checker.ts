@@ -17,6 +17,7 @@ import {
   isConfigured,
   queueGroupSpendFetch,
   queueMemberUsageFetch,
+  queueProjectUsageFetch,
   queueExtraWorkspacesFetch,
   queueAllWorkspacesFetch,
   getExtraWorkspaceSpend,
@@ -386,6 +387,10 @@ async function runCheckInternal(
   if (!isConfigured()) return { checkedGroups: 0, checkedTeams: 0, alerts: [] };
 
   const dir = await getDirectory();
+  const projectRange = resolveRange("billing");
+  for (const group of dir.groups) {
+    queueProjectUsageFetch(group, projectRange, force ? 0 : 1, force);
+  }
   const [budgets, teamBudgets] = await Promise.all([
     db.select().from(groupBudgetsTable),
     db.select().from(teamBudgetsTable),
@@ -499,6 +504,7 @@ export function startChecker(): void {
       const dashboardRange = resolveRange("billing");
       for (const g of ordered) {
         queueMemberUsageFetch(g, dashboardRange, 1);
+        queueProjectUsageFetch(g, dashboardRange, 1);
       }
       // Queue workspace_member fetches for ALL workspaces so the dashboard can use
       // MAX(group_member, workspace_member) to capture non-agent spend (compute etc.)
@@ -512,7 +518,7 @@ export function startChecker(): void {
           void evaluateGroup(g).catch((err) => logger.error({ err }, "evaluateGroup failed"));
         }
       }
-      logger.info({ groups: dir.groups.length }, "Warm-up: queued member and spend fetches");
+      logger.info({ groups: dir.groups.length }, "Warm-up: queued member, project, and spend fetches");
     } catch (err) {
       logger.error({ err }, "Warm-up failed");
     }

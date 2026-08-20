@@ -44,6 +44,21 @@ test("collapsed role cluster agrees with the attributed team/footer rollup", () 
   assert.equal(cluster.spendLoaded, true);
 });
 
+test("standalone team group preserves project spend instead of raw member spend", () => {
+  const [group] = buildGroupClusters([{
+    ...base,
+    groupId: "standalone",
+    name: "Standalone Group",
+    spendUsd: 42,
+    rawMemberSpendUsd: 99,
+    rawMemberSpendLoaded: true,
+  }]);
+
+  assert.equal(group.isSingleGroup, true);
+  assert.equal(group.spendUsd, 42);
+  assert.equal(group.spendLoaded, true);
+});
+
 test("attributed totals remain pending until every member rollup is loaded", () => {
   const total = sumAttributedRollup([
     roleGroups[0],

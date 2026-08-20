@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Group } from './group';
+import type { GroupsResponseTeamRawSpend } from './groupsResponseTeamRawSpend';
 
 export interface GroupsResponse {
   groups: Group[];
@@ -15,4 +16,10 @@ export interface GroupsResponse {
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
+  /** True when project usage for every visible custom group is loaded */
+  projectSpendLoaded: boolean;
+  /** Project-level spend that could not be matched to a project ID and group */
+  unattributedProjectSpendUsd: number;
+  /** Per-team project spend, with each project counted once */
+  teamRawSpend: GroupsResponseTeamRawSpend;
 }

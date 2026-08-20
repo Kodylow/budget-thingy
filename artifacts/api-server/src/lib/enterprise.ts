@@ -1416,8 +1416,95 @@ export interface ProjectUsage {
 
 const projectUsageCache = new Map<string, ProjectUsage>(); // `${rangeKey}|${groupId}`
 
+const PRIMARY_COMCAST_WORKSPACE_ID = "1awqan";
+
+export interface ProjectAttribution {
+  projectToGroup: Map<string, string>;
+  spendByGroup: Map<string, number>;
+  unattributedSpendUsd: number;
+  totalSpendUsd: number;
+  isComplete: boolean;
+  pendingCount: number;
+}
+
 export function getProjectUsage(groupId: string, rangeKey: string): ProjectUsage | undefined {
   return projectUsageCache.get(`${rangeKey}|${groupId}`);
+}
+
+/**
+ * Attribute every project to one custom group.
+ *
+ * Projects reported in both the primary Comcast workspace and a sub-workspace
+ * belong to the sub-workspace. Otherwise the group reporting the highest spend
+ * wins, with a stable group-ID tie break. Spend that the API includes in a
+ * group's total without a project ID cannot be matched and is surfaced as
+ * enterprise-level unattributed project spend.
+ */
+export function getProjectAttribution(
+  rangeKey: string,
+  groups: readonly EnterpriseGroup[],
+  _workspaces: ReadonlyMap<string, EnterpriseWorkspace>,
+): ProjectAttribution {
+  const candidates = new Map<string, Array<{ group: EnterpriseGroup; spendUsd: number }>>();
+  let unattributedSpendUsd = 0;
+  let loadedCount = 0;
+
+  for (const group of groups) {
+    const usage = getProjectUsage(group.id, rangeKey);
+    if (!usage) continue;
+    loadedCount += 1;
+
+    let identifiedSpendUsd = 0;
+    for (const project of usage.byProject.values()) {
+      identifiedSpendUsd += project.totalCostUsd;
+      const projectCandidates = candidates.get(project.projectId) ?? [];
+      projectCandidates.push({ group, spendUsd: project.totalCostUsd });
+      candidates.set(project.projectId, projectCandidates);
+    }
+    unattributedSpendUsd += Math.max(0, usage.totalCostUsd - identifiedSpendUsd);
+  }
+
+  const projectToGroup = new Map<string, string>();
+  const spendByGroup = new Map<string, number>();
+  let attributedSpendUsd = 0;
+
+  for (const [projectId, projectCandidates] of candidates) {
+    const subWorkspaceCandidates = projectCandidates.filter(
+      ({ group }) => group.workspaceId !== PRIMARY_COMCAST_WORKSPACE_ID,
+    );
+    const eligible =
+      subWorkspaceCandidates.length > 0 ? subWorkspaceCandidates : projectCandidates;
+    const winner = eligible.slice().sort(
+      (a, b) => b.spendUsd - a.spendUsd || a.group.id.localeCompare(b.group.id),
+    )[0]!;
+
+    projectToGroup.set(projectId, winner.group.id);
+    spendByGroup.set(
+      winner.group.id,
+      (spendByGroup.get(winner.group.id) ?? 0) + winner.spendUsd,
+    );
+    attributedSpendUsd += winner.spendUsd;
+  }
+
+  return {
+    projectToGroup,
+    spendByGroup,
+    unattributedSpendUsd,
+    totalSpendUsd: attributedSpendUsd + unattributedSpendUsd,
+    isComplete: loadedCount === groups.length,
+    pendingCount: groups.length - loadedCount,
+  };
+}
+
+/** Test-only seam for project attribution fixtures. */
+export function __setProjectUsageForTests(
+  groupId: string,
+  rangeKey: string,
+  usage: ProjectUsage | null,
+): void {
+  const key = `${rangeKey}|${groupId}`;
+  if (usage) projectUsageCache.set(key, usage);
+  else projectUsageCache.delete(key);
 }
 
 export function queueProjectUsageFetch(

@@ -1079,7 +1079,7 @@ export const getGetSummaryUrl = (params?: GetSummaryParams,) => {
 }
 
 /**
- * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is deduplicated at member level: groups are ordered by workspace, case-insensitive group name, then ID, and each member is attributed to the first custom group in which their usage appears.
+ * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is based on project attribution, with each project counted once.
  * @summary Dashboard summary
  */
 export const getSummary = async (params?: GetSummaryParams, options?: RequestInit): Promise<Summary> => {

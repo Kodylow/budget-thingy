@@ -125,9 +125,33 @@ export default function Dashboard() {
     wasComplete.current = complete;
   }, [groupsData?.isComplete, queryClient, queryParams]);
 
-  const groups = groupsData?.groups || [];
+  const groups = useMemo(
+    () =>
+      (groupsData?.groups ?? []).map((group) => {
+        const spendUsd = group.projectSpendLoaded
+          ? (group.projectSpendUsd ?? 0)
+          : (group.spendUsd ?? 0);
+        const spendLoaded = group.projectSpendLoaded || group.spendLoaded;
+        const hasBudget = group.budgetUsd != null && group.budgetUsd > 0;
+        return {
+          ...group,
+          // Dashboard accounting is project-based. While the project sync is
+          // still running, retain the previous member-based value so rows do not
+          // flash to zero; the header badge makes the provisional state explicit.
+          spendUsd,
+          spendLoaded,
+          rollupSpendUsd: spendUsd,
+          rollupSpendLoaded: spendLoaded,
+          remainingUsd: spendLoaded && hasBudget ? group.budgetUsd! - spendUsd : null,
+          percentUsed: spendLoaded && hasBudget ? (spendUsd / group.budgetUsd!) * 100 : null,
+        };
+      }),
+    [groupsData?.groups],
+  );
   const isComplete = groupsData?.isComplete ?? false;
   const pendingCount = groupsData?.pendingCount ?? 0;
+  const projectSpendLoaded = groupsData?.projectSpendLoaded ?? false;
+  const unattributedProjectSpendUsd = groupsData?.unattributedProjectSpendUsd ?? 0;
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
@@ -138,7 +162,7 @@ export default function Dashboard() {
     return m;
   }, [teamBudgetsData]);
 
-  // Per-team raw spend from the backend (within-team seenUserIds, matches cluster-detail totals).
+  // Per-team project spend from the backend.
   const teamRawSpend = groupsData?.teamRawSpend ?? {};
 
   // Compute team sections
@@ -158,12 +182,12 @@ export default function Dashboard() {
 
     const teamSections: TeamSection[] = [];
     for (const [teamName, teamGroups] of teamMap) {
-      // Prefer the backend-computed within-team seenUserIds total (matches the
-      // cluster-detail page) over the globally-attributed rollup sum.
+      // Prefer the backend project total once fully loaded. Until then, the
+      // mapped group rollup above retains the previous member-based fallback.
       const rawTeam = teamRawSpend[teamName];
       const { memberCount, spendUsd: rollupSpend, spendLoaded: rollupLoaded } = sumAttributedRollup(teamGroups);
-      const spendUsd = rawTeam?.spendUsd ?? rollupSpend;
-      const spendLoaded = rawTeam != null ? rawTeam.spendLoaded : rollupLoaded;
+      const spendUsd = rawTeam?.spendLoaded ? rawTeam.spendUsd : rollupSpend;
+      const spendLoaded = rawTeam?.spendLoaded ? true : rollupLoaded;
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
@@ -216,6 +240,9 @@ export default function Dashboard() {
     for (const group of unassigned) {
       addRow(group.spendUsd ?? 0, group.budgetUsd ?? null, group.spendLoaded);
     }
+    if (projectSpendLoaded) {
+      addRow(unattributedProjectSpendUsd, null, true);
+    }
 
     return {
       totalSpendUsd,
@@ -226,7 +253,7 @@ export default function Dashboard() {
       poolsOver75,
       poolsOver100,
     };
-  }, [teamSections, unassigned]);
+  }, [projectSpendLoaded, teamSections, unattributedProjectSpendUsd, unassigned]);
 
   const toggleTeam = (teamName: string) => {
     setExpandedTeams((prev) => {
@@ -240,7 +267,7 @@ export default function Dashboard() {
   const statCards = [
     {
       title: 'Total Spend',
-      value: `$${tableTotals.totalSpendUsd.toFixed(2)}`,
+      value: `$${(summary?.totalSpendUsd ?? tableTotals.totalSpendUsd).toFixed(2)}`,
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
       loading: groupsLoading || !isComplete,
@@ -592,10 +619,16 @@ export default function Dashboard() {
               variant="outline"
               className="flex items-center gap-2"
               data-testid="badge-loading-status"
-              title="Stored usage is available as each group finishes its one-time member-level history sync."
+              title={
+                projectSpendLoaded
+                  ? "Stored usage is available as each group finishes its one-time member-level history sync."
+                  : "Existing member totals remain visible while project-level spend is synchronized."
+              }
             >
               <RefreshCw className="h-3 w-3 animate-spin" />
-              <span className="hidden sm:inline">Syncing history · {pendingCount} remaining</span>
+              <span className="hidden sm:inline">
+                {projectSpendLoaded ? "Syncing history" : "Syncing project spend"} · {pendingCount} remaining
+              </span>
               <span className="sm:hidden">Syncing...</span>
             </Badge>
           )}
@@ -702,6 +735,32 @@ export default function Dashboard() {
                     </>
                   ) : (
                     groups.map((group) => renderGroupRow(group))
+                  )}
+                  {projectSpendLoaded && unattributedProjectSpendUsd > 0 && (
+                    <tr
+                      className="border-b border-border bg-muted/10"
+                      data-testid="row-unattributed-projects"
+                    >
+                      <td className="py-3 px-4">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium italic">Unattributed projects</span>
+                          <span className="text-xs text-muted-foreground">
+                            Project spend with no matching group
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-muted-foreground">—</td>
+                      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+                      <td className="py-3 px-4 text-right">
+                        <span className="text-sm font-mono tabular-nums">
+                          ${unattributedProjectSpendUsd.toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+                      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+                      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+                      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+                    </tr>
                   )}
                 </tbody>
                 {groups.length > 0 && (

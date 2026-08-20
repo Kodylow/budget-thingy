@@ -135,10 +135,10 @@ export const ListGroupsResponse = zod.object({
   "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
   "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
+  "projectSpendLoaded": zod.boolean().optional().describe('Whether project usage for every visible custom group is loaded'),
+  "projectSpendUsd": zod.number().nullish().describe('Deduplicated project spend attributed to this group, null while project usage is loading'),
   "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
   "rollupSpendUsd": zod.number().describe('Member-deduplicated spend attributed to this group for team and org rollups'),
-  "rawMemberSpendUsd": zod.number().nullish().describe('Sum of current members\' workspace spend (null while loading). Counts each member once within this group; use teamRawSpend for the within-team deduped total.'),
-  "rawMemberSpendLoaded": zod.boolean().describe('True when all member usage is loaded for this group'),
   "spendUpdatedAt": zod.string().nullish().describe('ISO timestamp when spend was last fetched'),
   "budgetUsd": zod.number().nullish().describe('Effective budget in USD (from app-level group budget if set), null if not set'),
   "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
@@ -154,10 +154,12 @@ export const ListGroupsResponse = zod.object({
   "isComplete": zod.boolean().describe('False while background usage fetches are still pending; poll every ~8s until true'),
   "pendingCount": zod.number().describe('Number of outstanding raw group-spend and member-usage fetches'),
   "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"'),
+  "projectSpendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded'),
+  "unattributedProjectSpendUsd": zod.number().describe('Project-level spend that could not be matched to a project ID and group'),
   "teamRawSpend": zod.record(zod.string(), zod.object({
-  "spendUsd": zod.number().describe('Within-team sum of each unique member\'s workspace spend (seenUserIds dedup across sub-groups)'),
-  "spendLoaded": zod.boolean().describe('True when all member usage for every group in this team is loaded'),
-})).describe('Per-team raw member spend. Mirrors the cluster-detail page total: each member counted once within the team, raw workspace spend (not global-attribution based).')
+  "spendUsd": zod.number().describe('Deduplicated project spend attributed to groups in this team'),
+  "spendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded')
+})).describe('Per-team project spend, with each project counted once')
 })
 
 
@@ -187,6 +189,8 @@ export const GetGroupDetailResponse = zod.object({
   "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
   "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
+  "projectSpendLoaded": zod.boolean().optional().describe('Whether project usage for every visible custom group is loaded'),
+  "projectSpendUsd": zod.number().nullish().describe('Deduplicated project spend attributed to this group, null while project usage is loading'),
   "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
   "rollupSpendUsd": zod.number().describe('Member-deduplicated spend attributed to this group for team and org rollups'),
   "spendUpdatedAt": zod.string().nullish().describe('ISO timestamp when spend was last fetched'),
@@ -298,7 +302,7 @@ export const RefreshGroupUsageResponse = zod.object({
 
 
 /**
- * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is deduplicated at member level: groups are ordered by workspace, case-insensitive group name, then ID, and each member is attributed to the first custom group in which their usage appears.
+ * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is based on project attribution, with each project counted once.
  * @summary Dashboard summary
  */
 export const GetSummaryQueryParams = zod.object({
@@ -310,7 +314,8 @@ export const GetSummaryQueryParams = zod.object({
 export const GetSummaryResponse = zod.object({
   "totalGroups": zod.number(),
   "budgetedGroups": zod.number(),
-  "totalSpendUsd": zod.number().describe('Member-deduplicated spend across custom groups for the selected range'),
+  "totalSpendUsd": zod.number().describe('Deduplicated project spend across custom groups plus unattributed project spend'),
+  "memberBasedTotalSpendUsd": zod.number().optional().describe('Legacy member-deduplicated spend retained for secondary drill-down comparisons'),
   "totalBudgetUsd": zod.number().describe('Sum of all effective group budgets (app or platform)'),
   "totalRemainingUsd": zod.number().optional().describe('Sum of remaining budget across budgeted groups with loaded spend'),
   "groupsOver50": zod.number(),

@@ -117,6 +117,13 @@ export interface Group {
      * @nullable
      */
   spendUsd?: number | null;
+  /** Whether project usage for every visible custom group is loaded */
+  projectSpendLoaded?: boolean;
+  /**
+     * Deduplicated project spend attributed to this group, null while project usage is loading
+     * @nullable
+     */
+  projectSpendUsd?: number | null;
   /** Whether member-level usage for every custom group is loaded */
   rollupSpendLoaded: boolean;
   /** Member-deduplicated spend attributed to this group for team and org rollups */
@@ -157,6 +164,16 @@ export interface Group {
   projectedSpendUsd?: number | null;
 }
 
+/**
+ * Per-team project spend, with each project counted once
+ */
+export type GroupsResponseTeamRawSpend = {[key: string]: {
+  /** Deduplicated project spend attributed to groups in this team */
+  spendUsd: number;
+  /** True when project usage for every visible custom group is loaded */
+  spendLoaded: boolean;
+}};
+
 export interface GroupsResponse {
   groups: Group[];
   /** False while background usage fetches are still pending; poll every ~8s until true */
@@ -165,6 +182,12 @@ export interface GroupsResponse {
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
+  /** True when project usage for every visible custom group is loaded */
+  projectSpendLoaded: boolean;
+  /** Project-level spend that could not be matched to a project ID and group */
+  unattributedProjectSpendUsd: number;
+  /** Per-team project spend, with each project counted once */
+  teamRawSpend: GroupsResponseTeamRawSpend;
 }
 
 export type TrendSeriesType = typeof TrendSeriesType[keyof typeof TrendSeriesType];
@@ -282,8 +305,10 @@ export interface GroupDetail {
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Member-deduplicated spend across custom groups for the selected range */
+  /** Deduplicated project spend across custom groups plus unattributed project spend */
   totalSpendUsd: number;
+  /** Legacy member-deduplicated spend retained for secondary drill-down comparisons */
+  memberBasedTotalSpendUsd?: number;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
   /** Sum of remaining budget across budgeted groups with loaded spend */
