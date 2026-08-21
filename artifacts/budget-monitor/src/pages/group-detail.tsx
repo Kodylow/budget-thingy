@@ -62,12 +62,18 @@ export default function GroupDetail() {
 
   const { group, members, membersSpendUsd, unattributedSpendUsd, isComplete, rangeLabel } = data;
 
+  // Use project-attributed spend (matches dashboard) when loaded; fall back to member rollup.
+  const displaySpend = group.projectSpendLoaded && group.projectSpendUsd !== undefined && group.projectSpendUsd !== null
+    ? group.projectSpendUsd
+    : (group.spendLoaded && group.spendUsd !== undefined && group.spendUsd !== null ? group.spendUsd : null);
+  const displaySpendLoaded = group.projectSpendLoaded ?? group.spendLoaded;
+
   const statCards = [
     {
       title: 'Spend',
-      value: group.spendLoaded && group.spendUsd !== undefined && group.spendUsd !== null ? `$${group.spendUsd.toFixed(2)}` : '—',
+      value: displaySpendLoaded && displaySpend !== null ? `$${displaySpend.toFixed(2)}` : '—',
       icon: DollarSign,
-      loading: !group.spendLoaded,
+      loading: !displaySpendLoaded,
     },
     {
       title: 'Budget',
@@ -78,17 +84,17 @@ export default function GroupDetail() {
     },
     {
       title: 'Remaining',
-      value: group.spendLoaded && group.remainingUsd !== undefined && group.remainingUsd !== null ? `$${group.remainingUsd.toFixed(2)}` : '—',
+      value: group.remainingUsd !== undefined && group.remainingUsd !== null ? `$${group.remainingUsd.toFixed(2)}` : '—',
       valueClassName: group.remainingUsd !== undefined && group.remainingUsd !== null && group.remainingUsd < 0 ? 'text-destructive' : '',
       icon: Wallet,
-      loading: !group.spendLoaded,
+      loading: !displaySpendLoaded,
     },
     {
       title: 'Usage',
       value: group.percentUsed !== undefined && group.percentUsed !== null ? `${group.percentUsed.toFixed(1)}%` : '—',
       valueClassName: group.percentUsed !== undefined && group.percentUsed !== null && group.percentUsed >= 100 ? 'text-destructive' : '',
       icon: AlertTriangle,
-      loading: !group.spendLoaded,
+      loading: !displaySpendLoaded,
     }
   ];
 
@@ -254,16 +260,16 @@ export default function GroupDetail() {
                   </td>
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
-                      {group.spendLoaded && group.spendUsd !== undefined && group.spendUsd !== null ? `$${group.spendUsd.toFixed(2)}` : '—'}
+                      {displaySpendLoaded && displaySpend !== null ? `$${displaySpend.toFixed(2)}` : '—'}
                     </span>
                   </td>
                   <td className="py-3 px-4 text-right">
                     <span className={`text-sm font-mono tabular-nums ${group.remainingUsd !== undefined && group.remainingUsd !== null && group.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
-                      {group.spendLoaded && group.remainingUsd !== undefined && group.remainingUsd !== null ? `$${group.remainingUsd.toFixed(2)}` : '—'}
+                      {displaySpendLoaded && group.remainingUsd !== undefined && group.remainingUsd !== null ? `$${group.remainingUsd.toFixed(2)}` : '—'}
                     </span>
                   </td>
                   <td className="py-3 px-4 text-right flex justify-end">
-                    {group.spendLoaded && group.budgetUsd !== null && group.budgetUsd !== undefined ? (
+                    {displaySpendLoaded && group.budgetUsd !== null && group.budgetUsd !== undefined ? (
                       <ThresholdBadge percentUsed={group.percentUsed ?? null} thresholdsFired={group.thresholdsFired} />
                     ) : <span className="text-sm text-muted-foreground">—</span>}
                   </td>

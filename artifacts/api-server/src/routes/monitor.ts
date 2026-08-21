@@ -560,6 +560,12 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
     const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
+    const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
+    const projectSpendUsd = sourceIds.reduce(
+      (sum, id) => sum + (projectAttribution.spendByGroup.get(id) ?? 0),
+      0,
+    );
+    const projectSpendLoaded = projectAttribution.isComplete;
 
     // Aggregate attributed spend across all source groups (mirrors dashboard logic).
     const attributed = {
@@ -690,13 +696,15 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           rollupMemberCount: mergedRollupMemberCount,
           spendLoaded: combinedLoaded,
           spendUsd: combinedLoaded ? combinedSpend : null,
+          projectSpendLoaded,
+          projectSpendUsd: projectSpendLoaded ? projectSpendUsd : null,
           rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
           rollupSpendUsd: combinedSpend,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
-          remainingUsd: combinedLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
-          percentUsed: combinedLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
+          remainingUsd: projectSpendLoaded && hasBudget ? budget.amountUsd! - projectSpendUsd : null,
+          percentUsed: projectSpendLoaded && hasBudget ? (projectSpendUsd / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
           history: detailHistoryArr,
           projectedSpendUsd: combinedLoaded && billingSpend
