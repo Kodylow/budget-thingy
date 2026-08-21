@@ -1,5 +1,14 @@
+import { useEffect } from 'react';
 import { useRoute, Link } from 'wouter';
-import { useGetGroupDetail, getGetGroupDetailQueryKey, useGetGroupProjects, getGetGroupProjectsQueryKey } from '@workspace/api-client-react';
+import {
+  useGetGroupDetail,
+  getGetGroupDetailQueryKey,
+  useGetGroupProjects,
+  getGetGroupProjectsQueryKey,
+  getListGroupsQueryKey,
+  getGetSummaryQueryKey,
+} from '@workspace/api-client-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +23,24 @@ export default function GroupDetail() {
 
   const { rangeType, startDate, endDate } = useRange();
   const queryParams = { rangeType, ...(rangeType === 'custom' ? { startDate, endDate } : {}) };
+
+  const queryClient = useQueryClient();
+
+  // When the user navigates away from the group detail page, the in-memory
+  // member-usage cache on the server may have accumulated more data than what
+  // the dashboard last polled (the detail page queues high-priority fetches).
+  // Remove (not just invalidate) the listGroups and summary cache entries so
+  // the dashboard always performs a fresh fetch on its next mount rather than
+  // briefly showing a stale snapshot while a background refetch is in flight.
+  useEffect(() => {
+    return () => {
+      // Remove all listGroups entries regardless of range params so any
+      // pending polls are cleared and the dashboard re-fetches from scratch.
+      queryClient.removeQueries({ queryKey: getListGroupsQueryKey(), exact: false });
+      queryClient.removeQueries({ queryKey: getGetSummaryQueryKey(), exact: false });
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data, isLoading } = useGetGroupDetail(groupId, queryParams, {
     query: {
