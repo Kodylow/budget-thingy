@@ -128,12 +128,12 @@ export default function Dashboard() {
   const groups = useMemo(
     () =>
       (groupsData?.groups ?? []).map((group) => {
-        // Use member-deduped rollup spend as the primary display value.
-        // rollupSpendUsd is always populated (unlike spendUsd which is null until
-        // ALL groups finish loading), so it gives a live value immediately and
-        // matches what the group detail page header shows.
-        const spendUsd = group.rollupSpendUsd ?? 0;
-        const spendLoaded = group.rollupSpendLoaded ?? false;
+        // Prefer group.spendUsd (deduped across overlapping groups) once available.
+        // Fall back to group.rollupSpendUsd while spendUsd is still null (i.e. not
+        // all groups have finished loading), so rows populate immediately with no
+        // blank or $0.00 flash during the loading window.
+        const spendUsd = group.spendUsd ?? group.rollupSpendUsd ?? 0;
+        const spendLoaded = group.spendLoaded ?? group.rollupSpendLoaded ?? false;
         const hasBudget = group.budgetUsd != null && group.budgetUsd > 0;
         return {
           ...group,
