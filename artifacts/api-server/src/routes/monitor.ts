@@ -425,8 +425,9 @@ router.get("/groups", async (req, res): Promise<void> => {
       }),
     );
 
-    // Project-attributed team spend. Each project has already been assigned to
-    // exactly one source group, so team totals are a direct group sum.
+    // Member-deduped team spend. Sum the rollup byGroup values per team so that
+    // team totals stay consistent with the member-deduped spend shown on each
+    // group row and on each group's detail page.
     const teamRawSpend: Record<string, { spendUsd: number; spendLoaded: boolean }> = {};
     const teamGroupsByName = new Map<string, typeof displayGroups>();
     for (const g of displayGroups) {
@@ -437,16 +438,16 @@ router.get("/groups", async (req, res): Promise<void> => {
       teamGroupsByName.set(teamName, existing);
     }
     for (const [teamName, tGroups] of teamGroupsByName) {
-      let teamProjectSpend = 0;
+      let teamRollupSpend = 0;
       for (const g of tGroups) {
         const srcIds = mergePlan.mergeMap.get(g.id) ?? [g.id];
         for (const srcId of srcIds) {
-          teamProjectSpend += projectAttribution.spendByGroup.get(srcId) ?? 0;
+          teamRollupSpend += rollup.byGroup.get(srcId)?.spendUsd ?? 0;
         }
       }
       teamRawSpend[teamName] = {
-        spendUsd: teamProjectSpend,
-        spendLoaded: projectAttribution.isComplete,
+        spendUsd: teamRollupSpend,
+        spendLoaded: rollup.isComplete && extraSpend.isComplete,
       };
     }
 
@@ -523,7 +524,13 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       }
     }
     for (const g of scoped) {
-      if (!sourceIds.includes(g.id)) queueMemberUsageFetch(g, range, 1);
+      if (!sourceIds.includes(g.id)) {
+        queueMemberUsageFetch(g, range, 1);
+        // Queue project usage for other groups at lower priority so that
+        // getProjectAttribution eventually reflects full cross-group data here too,
+        // making projectSpendUsd consistent between the detail page and dashboard.
+        queueProjectUsageFetch(g, range, 2);
+      }
     }
 
     const spend = getSpend(group.id, range.key);
@@ -703,8 +710,8 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
           budgetSource: budget.source,
-          remainingUsd: projectSpendLoaded && hasBudget ? budget.amountUsd! - projectSpendUsd : null,
-          percentUsed: projectSpendLoaded && hasBudget ? (projectSpendUsd / budget.amountUsd!) * 100 : null,
+          remainingUsd: combinedLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
+          percentUsed: combinedLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
           thresholdsFired: fired,
           history: detailHistoryArr,
           projectedSpendUsd: combinedLoaded && billingSpend

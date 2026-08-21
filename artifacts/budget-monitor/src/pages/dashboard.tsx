@@ -128,16 +128,15 @@ export default function Dashboard() {
   const groups = useMemo(
     () =>
       (groupsData?.groups ?? []).map((group) => {
-        const spendUsd = group.projectSpendLoaded
-          ? (group.projectSpendUsd ?? 0)
-          : (group.spendUsd ?? 0);
-        const spendLoaded = group.projectSpendLoaded || group.spendLoaded;
+        // Use member-deduped rollup spend as the primary display value.
+        // rollupSpendUsd is always populated (unlike spendUsd which is null until
+        // ALL groups finish loading), so it gives a live value immediately and
+        // matches what the group detail page header shows.
+        const spendUsd = group.rollupSpendUsd ?? 0;
+        const spendLoaded = group.rollupSpendLoaded ?? false;
         const hasBudget = group.budgetUsd != null && group.budgetUsd > 0;
         return {
           ...group,
-          // Dashboard accounting is project-based. While the project sync is
-          // still running, retain the previous member-based value so rows do not
-          // flash to zero; the header badge makes the provisional state explicit.
           spendUsd,
           spendLoaded,
           rollupSpendUsd: spendUsd,
@@ -162,9 +161,6 @@ export default function Dashboard() {
     return m;
   }, [teamBudgetsData]);
 
-  // Per-team project spend from the backend.
-  const teamRawSpend = groupsData?.teamRawSpend ?? {};
-
   // Compute team sections
   const { teamSections, unassigned } = useMemo(() => {
     const teamMap = new Map<string, typeof groups>();
@@ -182,12 +178,12 @@ export default function Dashboard() {
 
     const teamSections: TeamSection[] = [];
     for (const [teamName, teamGroups] of teamMap) {
-      // Prefer the backend project total once fully loaded. Until then, the
-      // mapped group rollup above retains the previous member-based fallback.
-      const rawTeam = teamRawSpend[teamName];
       const { memberCount, spendUsd: rollupSpend, spendLoaded: rollupLoaded } = sumAttributedRollup(teamGroups);
-      const spendUsd = rawTeam?.spendLoaded ? rawTeam.spendUsd : rollupSpend;
-      const spendLoaded = rawTeam?.spendLoaded ? true : rollupLoaded;
+      // Use the member-deduped rollup sum from the updated group rows, which now
+      // carry spendUsd = member-deduped spend. This keeps team totals consistent
+      // with individual group rows and the group detail page.
+      const spendUsd = rollupSpend;
+      const spendLoaded = rollupLoaded;
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
@@ -209,7 +205,7 @@ export default function Dashboard() {
     teamSections.sort((a, b) => a.teamName.localeCompare(b.teamName));
 
     return { teamSections, unassigned };
-  }, [groups, teamBudgetMap, teamRawSpend]);
+  }, [groups, teamBudgetMap]);
 
   // Financial summary cards and the table footer must reconcile to the same
   // visible top-level rows: each team pool once, plus each unassigned group.

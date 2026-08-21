@@ -62,11 +62,14 @@ export default function GroupDetail() {
 
   const { group, members, membersSpendUsd, unattributedSpendUsd, isComplete, rangeLabel } = data;
 
-  // Use project-attributed spend (matches dashboard) when loaded; fall back to member rollup.
-  const displaySpend = group.projectSpendLoaded && group.projectSpendUsd !== undefined && group.projectSpendUsd !== null
-    ? group.projectSpendUsd
-    : (group.spendLoaded && group.spendUsd !== undefined && group.spendUsd !== null ? group.spendUsd : null);
-  const displaySpendLoaded = group.projectSpendLoaded ?? group.spendLoaded;
+  // Use member-deduped rollup spend as the primary display — matches the dashboard row.
+  // rollupSpendUsd is always populated (unlike spendUsd which is null until all groups
+  // finish loading), so it gives a live value immediately. projectSpendUsd remains on
+  // the object for drill-downs but is not the header figure.
+  const displaySpend = group.rollupSpendUsd !== undefined && group.rollupSpendUsd !== null
+    ? group.rollupSpendUsd
+    : null;
+  const displaySpendLoaded = group.rollupSpendLoaded ?? false;
 
   const statCards = [
     {
