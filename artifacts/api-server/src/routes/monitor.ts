@@ -1258,6 +1258,180 @@ router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<
   res.json(ListWorkspaceAdminsResponse.parse(result));
 });
 
+// ---------------------------------------------------------------------------
+// Project spend CSV export — all groups, one row per project
+// ---------------------------------------------------------------------------
+router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<void> => {
+  if (!isConfigured()) {
+    res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
+    return;
+  }
+
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch {
+    range = rangeFromQuery({});
+  }
+
+  try {
+    const [dir, groupTeams] = await Promise.all([
+      getDirectory(),
+      db.select().from(groupTeamsTable),
+    ]);
+
+    const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+    const groups = visibleGroups(req.authz!, dir.groups);
+
+    // Kick off background fetches so future calls are warmer (low priority —
+    // data may already be in cache from normal dashboard polling).
+    const workspaceIds = new Set(groups.map((g) => g.workspaceId));
+    for (const g of groups) queueProjectUsageFetch(g, range, 10);
+    for (const wsId of workspaceIds) queueProjectTitlesFetch(wsId, 10);
+
+    // Aggregate across all groups: one row per projectId.
+    // Dedup strategy: keep the entry with the highest reported spend to avoid
+    // double-counting when a project appears in multiple groups because its
+    // creator belongs to more than one group.  Track every group that
+    // reported the project for informational columns.
+    const projectMap = new Map<string, {
+      entry: { projectId: string; totalCostUsd: number; metrics: ProjectUsageMetric[] };
+      workspaceId: string;
+      groupNames: Set<string>;
+    }>();
+
+    for (const g of groups) {
+      const usage = getProjectUsage(g.id, range.key);
+      if (!usage) continue;
+      for (const entry of usage.byProject.values()) {
+        const existing = projectMap.get(entry.projectId);
+        if (!existing) {
+          projectMap.set(entry.projectId, {
+            entry,
+            workspaceId: g.workspaceId,
+            groupNames: new Set([g.name]),
+          });
+        } else {
+          existing.groupNames.add(g.name);
+          if (entry.totalCostUsd > existing.entry.totalCostUsd) {
+            existing.entry = entry;
+            existing.workspaceId = g.workspaceId;
+          }
+        }
+      }
+    }
+
+    // Build output rows
+    type ExportRow = {
+      projectId: string;
+      title: string;
+      workspaceName: string;
+      ownerName: string;
+      ownerUsername: string;
+      teams: string;
+      groups: string;
+      aiUsd: number;
+      hostingUsd: number;
+      storageUsd: number;
+      otherUsd: number;
+      totalUsd: number;
+    };
+
+    const rows: ExportRow[] = [];
+
+    for (const { entry, workspaceId, groupNames } of projectMap.values()) {
+      const info = getProjectInfo(workspaceId, entry.projectId);
+      const creatorId = info?.creatorId ?? null;
+      const member = creatorId ? dir.members.get(creatorId) : undefined;
+
+      const groupArr = Array.from(groupNames).sort();
+      const teamSet = new Set<string>();
+      for (const gn of groupArr) {
+        const t = groupTeamMap.get(gn);
+        if (t) teamSet.add(t);
+      }
+
+      const aiUsd = entry.metrics
+        .filter((m) => m.category === "ai")
+        .reduce((s, m) => s + m.costUsd, 0);
+      const hostingUsd = entry.metrics
+        .filter((m) => m.category === "hosting")
+        .reduce((s, m) => s + m.costUsd, 0);
+      const storageUsd = entry.metrics
+        .filter((m) => m.category === "storage")
+        .reduce((s, m) => s + m.costUsd, 0);
+      const otherUsd = entry.metrics
+        .filter((m) => !["ai", "hosting", "storage"].includes(m.category))
+        .reduce((s, m) => s + m.costUsd, 0);
+
+      rows.push({
+        projectId: entry.projectId,
+        title: info?.title ?? "",
+        workspaceName: dir.workspaces.get(workspaceId)?.name ?? workspaceId,
+        ownerName: member?.name ?? "",
+        ownerUsername: member?.username ?? "",
+        teams: Array.from(teamSet).sort().join("; "),
+        groups: groupArr.join("; "),
+        aiUsd,
+        hostingUsd,
+        storageUsd,
+        otherUsd,
+        totalUsd: entry.totalCostUsd,
+      });
+    }
+
+    rows.sort((a, b) => b.totalUsd - a.totalUsd);
+
+    // Emit CSV
+    const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+    const fmt = (n: number) => n.toFixed(4);
+
+    const header = [
+      "Project Title",
+      "Project ID",
+      "Workspace",
+      "Owner Name",
+      "Owner Username",
+      "Team(s)",
+      "Group(s)",
+      "AI ($)",
+      "Hosting ($)",
+      "Storage ($)",
+      "Other ($)",
+      "Total ($)",
+    ];
+
+    const lines: string[] = [header.map(esc).join(",")];
+    for (const r of rows) {
+      lines.push(
+        [
+          esc(r.title),
+          esc(r.projectId),
+          esc(r.workspaceName),
+          esc(r.ownerName),
+          esc(r.ownerUsername),
+          esc(r.teams),
+          esc(r.groups),
+          fmt(r.aiUsd),
+          fmt(r.hostingUsd),
+          fmt(r.storageUsd),
+          fmt(r.otherUsd),
+          fmt(r.totalUsd),
+        ].join(","),
+      );
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = `project-spend-${today}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(lines.join("\r\n"));
+  } catch (err) {
+    req.log.error({ err }, "projectsExport failed");
+    res.status(503).json({ error: "Failed to generate export" });
+  }
+});
+
 // Notification recipients are account-only data; workspace admins can neither
 // view nor modify them.
 router.get("/admins", requireAccountAdmin, async (_req, res): Promise<void> => {
