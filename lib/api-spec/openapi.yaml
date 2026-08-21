@@ -1201,7 +1201,7 @@ components:
           type: number
     GroupProject:
       type: object
-      required: [projectId, title, totalCostUsd, metrics]
+      required: [projectId, title, totalCostUsd, metrics, workspaceId, workspaceName]
       properties:
         projectId:
           type: string
@@ -1214,6 +1214,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMetric"
+        workspaceId:
+          type: ["string", "null"]
+          description: Workspace the project belongs to, null when unknown
+        workspaceName:
+          type: ["string", "null"]
+          description: Human-readable workspace name, null when unknown
     GroupProjectsResponse:
       type: object
       required: [projects, unattributedSpendUsd, isComplete]

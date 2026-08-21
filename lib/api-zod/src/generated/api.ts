@@ -250,7 +250,9 @@ export const GetGroupProjectsResponse = zod.object({
   "name": zod.string(),
   "category": zod.string().describe('Metric category: ai, hosting, storage, or other'),
   "costUsd": zod.number()
-}))
+})),
+  "workspaceId": zod.string().nullable().describe('Workspace the project belongs to, null when unknown'),
+  "workspaceName": zod.string().nullable().describe('Human-readable workspace name, null when unknown')
 })),
   "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
   "isComplete": zod.boolean().describe('False while project usage is still loading; poll every ~8s until true')
@@ -281,7 +283,9 @@ export const GetClusterProjectsResponse = zod.object({
   "name": zod.string(),
   "category": zod.string().describe('Metric category: ai, hosting, storage, or other'),
   "costUsd": zod.number()
-}))
+})),
+  "workspaceId": zod.string().nullable().describe('Workspace the project belongs to, null when unknown'),
+  "workspaceName": zod.string().nullable().describe('Human-readable workspace name, null when unknown')
 })),
   "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
   "isComplete": zod.boolean().describe('False while project usage is still loading; poll every ~8s until true')

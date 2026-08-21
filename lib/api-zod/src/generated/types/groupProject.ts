@@ -16,4 +16,14 @@ export interface GroupProject {
   title: string | null;
   totalCostUsd: number;
   metrics: ProjectMetric[];
+  /**
+     * Workspace the project belongs to, null when unknown
+     * @nullable
+     */
+  workspaceId: string | null;
+  /**
+     * Human-readable workspace name, null when unknown
+     * @nullable
+     */
+  workspaceName: string | null;
 }

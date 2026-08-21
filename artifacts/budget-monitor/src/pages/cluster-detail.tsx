@@ -45,6 +45,8 @@ interface ClusterProject {
   title: string | null;
   totalCostUsd: number;
   metrics: ClusterProjectMetric[];
+  workspaceId: string | null;
+  workspaceName: string | null;
 }
 
 export default function ClusterDetail() {
@@ -437,6 +439,9 @@ export default function ClusterDetail() {
                             <span className="text-sm font-medium">
                               {project.title ?? <span className="italic text-muted-foreground">Untitled</span>}
                             </span>
+                            {project.workspaceName && (
+                              <span className="text-xs text-muted-foreground mt-0.5">{project.workspaceName}</span>
+                            )}
                           </div>
                         </td>
                         {['ai', 'hosting', 'storage'].map((category) => (

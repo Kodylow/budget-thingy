@@ -615,7 +615,7 @@ function aggregateProjectUsage(rows: UsageSyncChunk[]): ProjectUsage {
       if (!entry.key.projectId) continue;
       let project = byProject.get(entry.key.projectId);
       if (!project) {
-        project = { projectId: entry.key.projectId, totalCostUsd: 0, metrics: [] };
+        project = { projectId: entry.key.projectId, workspaceId: entry.key.workspaceId ?? null, totalCostUsd: 0, metrics: [] };
         byProject.set(entry.key.projectId, project);
       }
       project.totalCostUsd += entry.totalCostUsd;
@@ -1404,6 +1404,7 @@ export interface ProjectUsageMetric {
 
 export interface ProjectUsageEntry {
   projectId: string;
+  workspaceId: string | null;
   totalCostUsd: number;
   metrics: ProjectUsageMetric[];
 }

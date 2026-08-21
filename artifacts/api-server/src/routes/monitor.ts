@@ -759,6 +759,8 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
             title: titleMap.get(p.projectId) ?? null,
             totalCostUsd: p.totalCostUsd,
             metrics: p.metrics,
+            workspaceId: p.workspaceId,
+            workspaceName: p.workspaceId ? (dir.workspaces.get(p.workspaceId)?.name ?? null) : null,
           }))
           .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
       : [];
@@ -871,6 +873,8 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
       title: string | null;
       totalCostUsd: number;
       metrics: ProjectUsageMetric[];
+      workspaceId: string | null;
+      workspaceName: string | null;
     }[] = [];
     let unattributedSpendUsd = 0;
 
@@ -883,6 +887,8 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
           title: info?.title ?? null,
           totalCostUsd: entry.totalCostUsd,
           metrics: entry.metrics,
+          workspaceId,
+          workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
         });
       } else {
         unattributedSpendUsd += entry.totalCostUsd;

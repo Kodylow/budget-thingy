@@ -317,6 +317,9 @@ export default function GroupDetail() {
                           <div className="flex flex-col">
                             <span className="text-sm font-medium">{project.title ?? <span className="italic text-muted-foreground">Untitled</span>}</span>
                             <span className="text-xs text-muted-foreground font-mono">{project.projectId}</span>
+                            {project.workspaceName && (
+                              <span className="text-xs text-muted-foreground mt-0.5">{project.workspaceName}</span>
+                            )}
                           </div>
                         </td>
                         <td className="py-3 px-4 text-right">
