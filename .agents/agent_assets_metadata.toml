@@ -35,3 +35,10 @@ uri = "file://attached_assets/spend-per-project.csv"
 type = "table"
 title = "Spend per Project with Workspace (2,039 projects, $99,442)"
 description = "One row per project. Workspace pulled from enterprise member directory — 1,850 projects matched. 189 projects (mostly deleted accounts and kodylow) have no workspace."
+
+[[outputs]]
+id = "MrXbcb8KgXGli4tEOTQH6"
+uri = "file://project-spend-2026-08-21.csv"
+type = "table"
+title = "Project Spend — Current Billing Period"
+description = "1,138 projects across all groups, sorted by total spend descending. Columns: Project ID, Workspace, Group(s), Team(s), AI ($), Hosting ($), Storage ($), Other ($), Total ($)."
