@@ -951,176 +951,197 @@ router.get("/summary", async (req, res): Promise<void> => {
   }
   const authz = req.authz!;
   const isAccount = isAccountWide(authz);
-  const [budgets, teamBudgets, groupTeams] = await Promise.all([
-    db.select().from(groupBudgetsTable),
-    db.select().from(teamBudgetsTable),
-    db.select().from(groupTeamsTable),
-  ]);
-  const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
 
-  let totalGroups = 0;
-  let totalSpendUsd = 0;
-  let memberBasedTotalSpendUsd = 0;
-  let totalRemainingUsd = 0;
-  let totalBudgetUsd = 0;
-  let budgetedGroups = 0;
-  let pending = 0;
-  let summaryExtraComplete = true; // tracks extra-workspace load state for isComplete
-  let over50 = 0;
-  let over75 = 0;
-  let over90 = 0;
-  let over100 = 0;
+  // Defensive timeout: the entire handler must respond within 25 s even if an
+  // upstream call (DB, getDirectory) stalls.  Any unhandled throw in the outer
+  // body is caught here so Express never sees an unanswered request.
+  const SUMMARY_TIMEOUT_MS = 25_000;
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("summary handler timed out")), SUMMARY_TIMEOUT_MS),
+  );
 
-  // Set of visible groups, used both to scope spend and to filter alerts.
-  let visibleGroupIds = new Set<string>();
+  try {
+    await Promise.race([
+      (async () => {
+        const [budgets, teamBudgets, groupTeams] = await Promise.all([
+          db.select().from(groupBudgetsTable),
+          db.select().from(teamBudgetsTable),
+          db.select().from(groupTeamsTable),
+        ]);
+        const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
 
-  if (isConfigured()) {
-    try {
-      const dir = await getDirectory();
-      const scoped = visibleGroups(authz, dir.groups);
-      visibleGroupIds = new Set(scoped.map((g) => g.id));
-      totalGroups = scoped.length;
-      for (const g of scoped) {
-        const budget = effectiveGroupBudget(budgetMap.get(g.id));
-        if (budget.amountUsd != null && budget.amountUsd > 0) {
-          budgetedGroups += 1;
-        }
-      }
-      // Queue both models independently so /summary can populate from a cold
-      // cache without requiring /groups to be visited first.
-      for (const group of scoped) {
-        queueMemberUsageFetch(group, range, 1);
-        queueProjectUsageFetch(group, range, 1);
-      }
-      if (isAccount) {
-        queueExtraWorkspacesFetch(dir, range, 1);
-        queueAllWorkspacesFetch(dir, range, 1);
-      }
-      const summaryExtraSpend = isAccount
-        ? getExtraWorkspaceSpend(dir, range.key)
-        : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
-      const summaryRollup = getDedupedUsageRollup(scoped, range.key, summaryExtraSpend.byUser, dir.groupMembers);
-      // Also sum extra-workspace spend for enterprise members not in ANY custom group.
-      // These users are excluded from the per-group rollup (no group to attribute to)
-      // but ARE counted in the CSV — including them here keeps the two totals consistent.
-      let ungroupedExtraSpend = 0;
-      if (isAccount && summaryExtraSpend.isComplete) {
-        const allGroupedIds = new Set<string>();
-        for (const g of scoped) {
-          for (const uid of dir.groupMembers.get(g.id) ?? []) allGroupedIds.add(uid);
-        }
-        for (const [uid, spend] of summaryExtraSpend.byUser) {
-          if (!allGroupedIds.has(uid)) ungroupedExtraSpend += spend;
-        }
-      }
-      memberBasedTotalSpendUsd = summaryRollup.totalSpendUsd + ungroupedExtraSpend;
-      const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
-      // totalSpendUsd = member-deduped group rollup + unattributed project spend.
-      // This mirrors tableTotals.totalSpendUsd on the dashboard exactly:
-      //   Σ teamRawSpend[team].spendUsd               (member-deduped per team)
-      //   + Σ rollup[unassignedGroup].spendUsd          (member-deduped per unassigned group)
-      //   + projectAttribution.unattributedSpendUsd    (project spend not matched to any group)
-      // so the "Total Spend" stat card and the team-header rows use the same accounting model.
-      totalSpendUsd = summaryRollup.totalSpendUsd + projectAttribution.unattributedSpendUsd;
-      pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
-      summaryExtraComplete = summaryExtraSpend.isComplete;
+        let totalGroups = 0;
+        let totalSpendUsd = 0;
+        let memberBasedTotalSpendUsd = 0;
+        let totalRemainingUsd = 0;
+        let totalBudgetUsd = 0;
+        let budgetedGroups = 0;
+        let pending = 0;
+        let summaryExtraComplete = true; // tracks extra-workspace load state for isComplete
+        let over50 = 0;
+        let over75 = 0;
+        let over90 = 0;
+        let over100 = 0;
 
-      // Compute over-threshold counts using the same top-level pool logic as tableTotals.
-      // Groups assigned to a team: aggregate attributed spend per team and compare against team budget.
-      // Unassigned groups: compare attributed spend against the group's own budget.
-      const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
-      const teamBudgetAmountMap = new Map(teamBudgets.map((tb) => [tb.teamName, tb.amountUsd]));
-      const teamAttributedSpend = new Map<string, number>();
-      for (const group of scoped) {
-        const spend = projectAttribution.spendByGroup.get(group.id) ?? 0;
-        const teamName = groupTeamMap.get(group.name);
-        if (teamName) {
-          teamAttributedSpend.set(teamName, (teamAttributedSpend.get(teamName) ?? 0) + spend);
-        } else {
-          const groupBudget = budgetMap.get(group.id);
-          if (groupBudget != null && groupBudget > 0) {
-            const pct = (spend / groupBudget) * 100;
-            if (pct >= 50) over50++;
-            if (pct >= 75) over75++;
-            if (pct >= 90) over90++;
-            if (pct >= 100) over100++;
-          }
-        }
-      }
-      for (const [teamName, spend] of teamAttributedSpend) {
-        const budget = teamBudgetAmountMap.get(teamName);
-        if (budget != null && budget > 0) {
-          const pct = (spend / budget) * 100;
-          if (pct >= 50) over50++;
-          if (pct >= 75) over75++;
-          if (pct >= 90) over90++;
-          if (pct >= 100) over100++;
-        }
-      }
+        // Set of visible groups, used both to scope spend and to filter alerts.
+        let visibleGroupIds = new Set<string>();
 
-      // Compute totalBudgetUsd and totalRemainingUsd using the same top-level pool model as
-      // tableTotals: one budget entry per team pool, plus each unassigned group's own budget.
-      // Remaining subtracts only the attributed spend from budgeted pools so it reconciles
-      // with the table footer (unattributed / unbudgeted spend does not reduce remaining).
-      const seenTeams = new Set<string>();
-      let budgetedPoolSpend = 0;
-      totalBudgetUsd = 0; // override outer default; set correctly below
-      for (const group of scoped) {
-        const teamName = groupTeamMap.get(group.name);
-        if (teamName) {
-          if (!seenTeams.has(teamName)) {
-            seenTeams.add(teamName);
-            const budget = teamBudgetAmountMap.get(teamName);
-            if (budget != null && budget > 0) {
-              totalBudgetUsd += budget;
-              budgetedPoolSpend += teamAttributedSpend.get(teamName) ?? 0;
+        if (isConfigured()) {
+          try {
+            const dir = await getDirectory();
+            const scoped = visibleGroups(authz, dir.groups);
+            visibleGroupIds = new Set(scoped.map((g) => g.id));
+            totalGroups = scoped.length;
+            for (const g of scoped) {
+              const budget = effectiveGroupBudget(budgetMap.get(g.id));
+              if (budget.amountUsd != null && budget.amountUsd > 0) {
+                budgetedGroups += 1;
+              }
             }
-          }
-        } else {
-          const budget = budgetMap.get(group.id);
-          if (budget != null && budget > 0) {
-            totalBudgetUsd += budget;
-            budgetedPoolSpend += projectAttribution.spendByGroup.get(group.id) ?? 0;
+            // Queue both models independently so /summary can populate from a cold
+            // cache without requiring /groups to be visited first.
+            for (const group of scoped) {
+              queueMemberUsageFetch(group, range, 1);
+              queueProjectUsageFetch(group, range, 1);
+            }
+            if (isAccount) {
+              queueExtraWorkspacesFetch(dir, range, 1);
+              queueAllWorkspacesFetch(dir, range, 1);
+            }
+            const summaryExtraSpend = isAccount
+              ? getExtraWorkspaceSpend(dir, range.key)
+              : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
+            const summaryRollup = getDedupedUsageRollup(scoped, range.key, summaryExtraSpend.byUser, dir.groupMembers);
+            // Also sum extra-workspace spend for enterprise members not in ANY custom group.
+            // These users are excluded from the per-group rollup (no group to attribute to)
+            // but ARE counted in the CSV — including them here keeps the two totals consistent.
+            let ungroupedExtraSpend = 0;
+            if (isAccount && summaryExtraSpend.isComplete) {
+              const allGroupedIds = new Set<string>();
+              for (const g of scoped) {
+                for (const uid of dir.groupMembers.get(g.id) ?? []) allGroupedIds.add(uid);
+              }
+              for (const [uid, spend] of summaryExtraSpend.byUser) {
+                if (!allGroupedIds.has(uid)) ungroupedExtraSpend += spend;
+              }
+            }
+            memberBasedTotalSpendUsd = summaryRollup.totalSpendUsd + ungroupedExtraSpend;
+            const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
+            // totalSpendUsd = member-deduped group rollup + unattributed project spend.
+            // This mirrors tableTotals.totalSpendUsd on the dashboard exactly:
+            //   Σ teamRawSpend[team].spendUsd               (member-deduped per team)
+            //   + Σ rollup[unassignedGroup].spendUsd          (member-deduped per unassigned group)
+            //   + projectAttribution.unattributedSpendUsd    (project spend not matched to any group)
+            // so the "Total Spend" stat card and the team-header rows use the same accounting model.
+            totalSpendUsd = summaryRollup.totalSpendUsd + projectAttribution.unattributedSpendUsd;
+            pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
+            summaryExtraComplete = summaryExtraSpend.isComplete;
+
+            // Compute over-threshold counts using the same top-level pool logic as tableTotals.
+            // Groups assigned to a team: aggregate attributed spend per team and compare against team budget.
+            // Unassigned groups: compare attributed spend against the group's own budget.
+            const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+            const teamBudgetAmountMap = new Map(teamBudgets.map((tb) => [tb.teamName, tb.amountUsd]));
+            const teamAttributedSpend = new Map<string, number>();
+            for (const group of scoped) {
+              const spend = projectAttribution.spendByGroup.get(group.id) ?? 0;
+              const teamName = groupTeamMap.get(group.name);
+              if (teamName) {
+                teamAttributedSpend.set(teamName, (teamAttributedSpend.get(teamName) ?? 0) + spend);
+              } else {
+                const groupBudget = budgetMap.get(group.id);
+                if (groupBudget != null && groupBudget > 0) {
+                  const pct = (spend / groupBudget) * 100;
+                  if (pct >= 50) over50++;
+                  if (pct >= 75) over75++;
+                  if (pct >= 90) over90++;
+                  if (pct >= 100) over100++;
+                }
+              }
+            }
+            for (const [teamName, spend] of teamAttributedSpend) {
+              const budget = teamBudgetAmountMap.get(teamName);
+              if (budget != null && budget > 0) {
+                const pct = (spend / budget) * 100;
+                if (pct >= 50) over50++;
+                if (pct >= 75) over75++;
+                if (pct >= 90) over90++;
+                if (pct >= 100) over100++;
+              }
+            }
+
+            // Compute totalBudgetUsd and totalRemainingUsd using the same top-level pool model as
+            // tableTotals: one budget entry per team pool, plus each unassigned group's own budget.
+            // Remaining subtracts only the attributed spend from budgeted pools so it reconciles
+            // with the table footer (unattributed / unbudgeted spend does not reduce remaining).
+            const seenTeams = new Set<string>();
+            let budgetedPoolSpend = 0;
+            totalBudgetUsd = 0; // override outer default; set correctly below
+            for (const group of scoped) {
+              const teamName = groupTeamMap.get(group.name);
+              if (teamName) {
+                if (!seenTeams.has(teamName)) {
+                  seenTeams.add(teamName);
+                  const budget = teamBudgetAmountMap.get(teamName);
+                  if (budget != null && budget > 0) {
+                    totalBudgetUsd += budget;
+                    budgetedPoolSpend += teamAttributedSpend.get(teamName) ?? 0;
+                  }
+                }
+              } else {
+                const budget = budgetMap.get(group.id);
+                if (budget != null && budget > 0) {
+                  totalBudgetUsd += budget;
+                  budgetedPoolSpend += projectAttribution.spendByGroup.get(group.id) ?? 0;
+                }
+              }
+            }
+            totalRemainingUsd = totalBudgetUsd - budgetedPoolSpend;
+          } catch (err) {
+            req.log.error({ err }, "summary directory fetch failed");
           }
         }
-      }
-      totalRemainingUsd = totalBudgetUsd - budgetedPoolSpend;
-    } catch (err) {
-      req.log.error({ err }, "summary directory fetch failed");
+
+        const billing = getBillingPeriod();
+        const allAlerts = await db.select().from(alertsTable);
+        const periodStart = billing.start ? new Date(billing.start) : null;
+        const alertsSentThisPeriod = allAlerts.filter(
+          (a) =>
+            a.status === "sent" &&
+            (isAccount ||
+              (a.entityType === "team"
+                ? a.workspaceIds.length > 0 &&
+                  a.workspaceIds.every((workspaceId) => authz.workspaceIds.includes(workspaceId))
+                : visibleGroupIds.has(a.entityId || a.groupId))) &&
+            (!periodStart || a.sentAt >= periodStart),
+        ).length;
+
+        res.json(
+          GetSummaryResponse.parse({
+            totalGroups,
+            budgetedGroups,
+            totalSpendUsd,
+            memberBasedTotalSpendUsd,
+            totalBudgetUsd,
+            totalRemainingUsd,
+            groupsOver50: over50,
+            groupsOver75: over75,
+            groupsOver90: over90,
+            groupsOver100: over100,
+            alertsSentThisPeriod,
+            billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
+            isComplete: pending === 0 && summaryExtraComplete,
+          }),
+        );
+      })(),
+      timeoutPromise,
+    ]);
+  } catch (err) {
+    req.log.error({ err }, "summary handler failed or timed out");
+    if (!res.headersSent) {
+      res.status(503).json({ error: "Summary unavailable — please retry" });
     }
   }
-
-  const billing = getBillingPeriod();
-  const allAlerts = await db.select().from(alertsTable);
-  const periodStart = billing.start ? new Date(billing.start) : null;
-  const alertsSentThisPeriod = allAlerts.filter(
-    (a) =>
-      a.status === "sent" &&
-      (isAccount ||
-        (a.entityType === "team"
-          ? a.workspaceIds.length > 0 &&
-            a.workspaceIds.every((workspaceId) => authz.workspaceIds.includes(workspaceId))
-          : visibleGroupIds.has(a.entityId || a.groupId))) &&
-      (!periodStart || a.sentAt >= periodStart),
-  ).length;
-
-  res.json(
-    GetSummaryResponse.parse({
-      totalGroups,
-      budgetedGroups,
-      totalSpendUsd,
-      memberBasedTotalSpendUsd,
-      totalBudgetUsd,
-      totalRemainingUsd,
-      groupsOver50: over50,
-      groupsOver75: over75,
-      groupsOver90: over90,
-      groupsOver100: over100,
-      alertsSentThisPeriod,
-      billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
-      isComplete: pending === 0 && summaryExtraComplete,
-    }),
-  );
 });
 
 // Account-wide roles see every team pool. Workspace admins get read-only pool

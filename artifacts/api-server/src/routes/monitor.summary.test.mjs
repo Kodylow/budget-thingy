@@ -540,6 +540,28 @@ test("summary: team pool over 100% is counted once and unattributed spend exclud
   }
 });
 
+// ── Stat-card loading regression: groupsData available while summary is pending ────
+// Verifies that /summary responds within a bounded time under normal conditions so
+// the frontend tableTotals fallback is not blocked indefinitely.
+
+test("/summary responds within 5 seconds under normal conditions (stat-card loading regression)", async () => {
+  // Warm caches so the handler has data to work with.
+  __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
+  __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
+  setProjectSpend(85, 15, 8);
+
+  const start = Date.now();
+  const json = await req("/summary");
+  const elapsed = Date.now() - start;
+
+  // Must respond (not hang) — stat cards depend on this resolving promptly.
+  assert.ok(elapsed < 5000, `summary took ${elapsed}ms — must respond within 5 s`);
+  // And must return valid data (not an error body).
+  assert.ok(typeof json.totalSpendUsd === "number", "response must include totalSpendUsd");
+  assert.ok(typeof json.isComplete === "boolean",   "response must include isComplete");
+});
+
 test("summary: team pool + unassigned group remaining reconciles with table model", async () => {
   // OT-Alpha assigned to team (budget $200, spend $100 = 50% — NOT over-75).
   // OT-Beta unassigned (budget $100, spend $80 = 80% — over-75).

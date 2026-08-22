@@ -295,7 +295,7 @@ export default function Dashboard() {
       value: `$${(summary?.totalSpendUsd ?? tableTotals.totalSpendUsd).toFixed(2)}`,
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
-      loading: summaryLoading,
+      loading: summaryLoading && groupsLoading,
     },
     {
       title: 'Total Budget',
@@ -309,7 +309,7 @@ export default function Dashboard() {
       value: `$${(summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd).toFixed(2)}`,
       description: 'Across visible budgeted pools',
       icon: Wallet,
-      loading: summaryLoading,
+      loading: summaryLoading && groupsLoading,
       valueClassName: (summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd) < 0 ? 'text-destructive' : '',
     },
     {
@@ -317,7 +317,7 @@ export default function Dashboard() {
       value: (summary?.groupsOver75 ?? tableTotals.poolsOver75).toString(),
       description: `${summary?.groupsOver100 ?? tableTotals.poolsOver100} over budget`,
       icon: AlertTriangle,
-      loading: summaryLoading,
+      loading: summaryLoading && groupsLoading,
     },
     {
       title: 'Alerts Sent',
