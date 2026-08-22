@@ -157,9 +157,9 @@ export const ListGroupsResponse = zod.object({
   "projectSpendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded'),
   "unattributedProjectSpendUsd": zod.number().describe('Project-level spend that could not be matched to a project ID and group'),
   "teamRawSpend": zod.record(zod.string(), zod.object({
-  "spendUsd": zod.number().describe('Deduplicated project spend attributed to groups in this team'),
-  "spendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded')
-})).describe('Per-team project spend, with each project counted once')
+  "spendUsd": zod.number().describe('Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)'),
+  "spendLoaded": zod.boolean().describe('True when member-level usage for every visible custom group is loaded')
+})).describe('Per-team member-deduped rollup spend, with each member counted once across groups')
 })
 
 
@@ -318,8 +318,8 @@ export const GetSummaryQueryParams = zod.object({
 export const GetSummaryResponse = zod.object({
   "totalGroups": zod.number(),
   "budgetedGroups": zod.number(),
-  "totalSpendUsd": zod.number().describe('Deduplicated project spend across custom groups plus unattributed project spend'),
-  "memberBasedTotalSpendUsd": zod.number().optional().describe('Legacy member-deduplicated spend retained for secondary drill-down comparisons'),
+  "totalSpendUsd": zod.number().describe('Member-deduped group rollup spend plus unattributed project spend; matches the dashboard table\'s total spend footer'),
+  "memberBasedTotalSpendUsd": zod.number().optional().describe('Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility'),
   "totalBudgetUsd": zod.number().describe('Sum of all effective group budgets (app or platform)'),
   "totalRemainingUsd": zod.number().optional().describe('Sum of remaining budget across budgeted groups with loaded spend'),
   "groupsOver50": zod.number(),

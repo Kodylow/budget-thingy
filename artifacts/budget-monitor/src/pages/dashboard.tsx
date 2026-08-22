@@ -182,11 +182,12 @@ export default function Dashboard() {
     const teamSections: TeamSection[] = [];
     for (const [teamName, teamGroups] of teamMap) {
       const { memberCount, spendUsd: rollupSpend, spendLoaded: rollupLoaded } = sumAttributedRollup(teamGroups);
-      // Use the member-deduped rollup sum from the updated group rows, which now
-      // carry spendUsd = member-deduped spend. This keeps team totals consistent
-      // with individual group rows and the group detail page.
-      const spendUsd = rollupSpend;
-      const spendLoaded = rollupLoaded;
+      // Prefer teamRawSpend from /groups (the authoritative member-deduped total computed
+      // server-side) so team headers match the summary card. Fall back to client-side
+      // sumAttributedRollup when teamRawSpend is absent (older API versions).
+      const serverTeamSpend = groupsData?.teamRawSpend?.[teamName];
+      const spendUsd = serverTeamSpend != null ? serverTeamSpend.spendUsd : rollupSpend;
+      const spendLoaded = serverTeamSpend != null ? serverTeamSpend.spendLoaded : rollupLoaded;
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
@@ -208,7 +209,7 @@ export default function Dashboard() {
     teamSections.sort((a, b) => a.teamName.localeCompare(b.teamName));
 
     return { teamSections, unassigned };
-  }, [groups, teamBudgetMap]);
+  }, [groups, teamBudgetMap, groupsData]);
 
   // Financial summary cards and the table footer must reconcile to the same
   // visible top-level rows: each team pool once, plus each unassigned group.

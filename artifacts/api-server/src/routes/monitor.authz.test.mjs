@@ -253,13 +253,16 @@ test("custom range uses inclusive UTC days and all visible workspaces without ov
     { user: "acct" },
   );
   assert.equal(acct.status, 200);
-  assert.equal(acct.json.totalSpendUsd, 117);
+  // totalSpendUsd is now member-deduped rollup:
+  // shared(40, once)+ws1-only(10)+ws2-only(20) + unattributable(3+4) = 77
+  assert.equal(acct.json.totalSpendUsd, 77);
   assert.equal(acct.json.isComplete, true);
 
   const ws1 = await req(
     "/summary?rangeType=custom&startDate=2026-05-20&endDate=2026-08-11",
     { user: "ws1admin" },
   );
+  // ws1admin sees only g-ws1-a: shared(40)+ws1-only(10)+unattributable(3)=53
   assert.equal(ws1.json.totalSpendUsd, 53);
   assert.equal(ws1.json.isComplete, true);
 });

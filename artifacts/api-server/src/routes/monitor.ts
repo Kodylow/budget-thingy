@@ -1015,7 +1015,13 @@ router.get("/summary", async (req, res): Promise<void> => {
       }
       memberBasedTotalSpendUsd = summaryRollup.totalSpendUsd + ungroupedExtraSpend;
       const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
-      totalSpendUsd = projectAttribution.totalSpendUsd;
+      // totalSpendUsd = member-deduped group rollup + unattributed project spend.
+      // This mirrors tableTotals.totalSpendUsd on the dashboard exactly:
+      //   Σ teamRawSpend[team].spendUsd               (member-deduped per team)
+      //   + Σ rollup[unassignedGroup].spendUsd          (member-deduped per unassigned group)
+      //   + projectAttribution.unattributedSpendUsd    (project spend not matched to any group)
+      // so the "Total Spend" stat card and the team-header rows use the same accounting model.
+      totalSpendUsd = summaryRollup.totalSpendUsd + projectAttribution.unattributedSpendUsd;
       pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
       summaryExtraComplete = summaryExtraSpend.isComplete;
 

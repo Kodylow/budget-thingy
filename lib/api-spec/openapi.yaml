@@ -336,7 +336,8 @@ paths:
       summary: Dashboard summary
       description: >
         Aggregate account-level stats across custom groups and budgets for the selected
-        range. Spend is based on project attribution, with each project counted once.
+        range. totalSpendUsd equals the member-deduped group rollup plus unattributed
+        project spend, matching the dashboard table's total spend footer exactly.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -1102,11 +1103,11 @@ components:
             properties:
               spendUsd:
                 type: number
-                description: Deduplicated project spend attributed to groups in this team
+                description: Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)
               spendLoaded:
                 type: boolean
-                description: True when project usage for every visible custom group is loaded
-          description: Per-team project spend, with each project counted once
+                description: True when member-level usage for every visible custom group is loaded
+          description: Per-team member-deduped rollup spend, with each member counted once across groups
     TrendSeries:
       type: object
       required: [name, type, data]
@@ -1278,10 +1279,10 @@ components:
           type: integer
         totalSpendUsd:
           type: number
-          description: Deduplicated project spend across custom groups plus unattributed project spend
+          description: Member-deduped group rollup spend plus unattributed project spend; matches the dashboard table's total spend footer
         memberBasedTotalSpendUsd:
           type: number
-          description: Legacy member-deduplicated spend retained for secondary drill-down comparisons
+          description: Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility
         totalBudgetUsd:
           type: number
           description: Sum of all effective group budgets (app or platform)
