@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
+import { eq, inArray } from "drizzle-orm";
 
 import monitorRouter from "./monitor.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
@@ -16,6 +17,12 @@ import {
   __setProjectUsageForTests,
   __setWsSpendForTests,
 } from "../lib/enterprise.ts";
+import {
+  db,
+  groupBudgetsTable,
+  groupTeamsTable,
+  teamBudgetsTable,
+} from "@workspace/db";
 
 function m(userId, isAccountAdmin, workspaces = {}) {
   return {
@@ -420,4 +427,146 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
   assert.equal(warm.group.spendLoaded, true, "group card spendLoaded must be true once complete");
   // Beta's spend: only bob ($15); alice is attributed to Alpha.
   assert.equal(warm.group.spendUsd, 15, "Beta spend = bob $15; alice attributed to Alpha");
+});
+
+// ── Over-threshold counts and totalRemainingUsd reconciliation ─────────────────────
+// These tests use distinct group IDs ("sg-ot-*") and group names ("OT-*") that
+// are not shared with any other test file, avoiding DB conflicts when test files
+// run concurrently in separate worker threads.
+
+// Isolated fixture for over-threshold tests — unique IDs & names
+const OT_G1 = { id: "sg-ot-1", workspaceId: "ws-main", name: "OT-Alpha", type: "custom" };
+const OT_G2 = { id: "sg-ot-2", workspaceId: "ws-main", name: "OT-Beta",  type: "custom" };
+const OT_WS  = new Map([["ws-main", { id: "ws-main", name: "Main", slug: "main", memberCount: 3 }]]);
+const OT_MEMBERS = new Map([
+  ["acct",  m("acct",  true)],
+  ["alice", m("alice", false, { "ws-main": { role: "member", isDisabled: false } })],
+  ["bob",   m("bob",   false, { "ws-main": { role: "member", isDisabled: false } })],
+  ["carol", m("carol", false, { "ws-main": { role: "member", isDisabled: false } })],
+]);
+
+function setOtDir() {
+  __setDirectoryCacheForTests({
+    workspaces: OT_WS,
+    groups:     [OT_G1, OT_G2],
+    members:    OT_MEMBERS,
+    groupMembers: new Map([
+      [OT_G1.id, ["alice", "carol"]],
+      [OT_G2.id, ["alice", "bob"]],
+    ]),
+  });
+}
+
+function restoreOtDir() {
+  __setDirectoryCacheForTests({
+    workspaces: wsExtra,
+    groups,
+    members,
+    groupMembers: new Map([
+      ["sg-alpha", ["alice", "carol"]],
+      ["sg-beta",  ["alice", "bob"]],
+    ]),
+  });
+}
+
+function seedOtProject(groupId, spend, residual = 0) {
+  __setProjectUsageForTests(groupId, RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: spend + residual,
+    byProject: new Map(
+      spend > 0
+        ? [[`${groupId}-proj`, { projectId: `${groupId}-proj`, totalCostUsd: spend, metrics: [] }]]
+        : [],
+    ),
+  });
+}
+function clearOtProject() {
+  __setProjectUsageForTests(OT_G1.id, RANGE, null);
+  __setProjectUsageForTests(OT_G2.id, RANGE, null);
+}
+
+test("summary: unassigned group over 75% shows in groupsOver75 and totalRemainingUsd reconciles", async () => {
+  // OT-Alpha ($100 budget) at 80% utilisation → over-75. OT-Beta has no budget.
+  // $10 residual (unattributed) project spend must NOT reduce remaining.
+  setOtDir();
+  await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
+  await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+  await db.insert(groupBudgetsTable).values({ groupId: OT_G1.id, amountUsd: 100 });
+  seedOtProject(OT_G1.id, 80, 10); // OT-Alpha project $80, $10 unattributed residual
+  seedOtProject(OT_G2.id, 0);       // OT-Beta no spend
+  __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["carol", 80]]));
+  __setMemberUsageForTests(OT_G2.id, RANGE, new Map());
+  try {
+    const json = await req("/summary");
+    assert.equal(json.groupsOver75, 1, "OT-Alpha at 80% must count as over-75");
+    assert.equal(json.groupsOver100, 0, "OT-Alpha at 80% must not count as over-100");
+    assert.equal(json.totalBudgetUsd, 100, "totalBudgetUsd = OT-Alpha group budget only");
+    assert.equal(json.totalRemainingUsd, 20, "remaining = $100 − $80; unattributed $10 excluded");
+  } finally {
+    await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
+    clearOtProject();
+    restoreOtDir();
+  }
+});
+
+test("summary: team pool over 100% is counted once and unattributed spend excluded from remaining", async () => {
+  // OT-Alpha and OT-Beta both assigned to one team with a $100 budget.
+  // Attributed spend $110 (>100% of budget) + $10 unattributed residual.
+  const TEAM = "OT-Test-Team";
+  setOtDir();
+  await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
+  await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+  await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, TEAM));
+  await db.insert(groupTeamsTable).values([
+    { groupName: OT_G1.name, teamName: TEAM },
+    { groupName: OT_G2.name, teamName: TEAM },
+  ]);
+  await db.insert(teamBudgetsTable).values({ teamName: TEAM, amountUsd: 100 });
+  seedOtProject(OT_G1.id, 60, 10); // OT-Alpha $60 + $10 unattributed residual
+  seedOtProject(OT_G2.id, 50);     // OT-Beta $50 → team total $110
+  __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 60], ["carol", 0]]));
+  __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 50], ["bob", 0]]));
+  try {
+    const json = await req("/summary");
+    assert.equal(json.groupsOver75, 1, "team pool at 110% must count as over-75");
+    assert.equal(json.groupsOver100, 1, "team pool at 110% must count as over-100");
+    assert.equal(json.totalBudgetUsd, 100, "team pool counted once, not once per group");
+    assert.equal(json.totalRemainingUsd, -10, "remaining = $100 − $110 = −$10; unattributed $10 excluded");
+  } finally {
+    await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+    await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, TEAM));
+    clearOtProject();
+    restoreOtDir();
+  }
+});
+
+test("summary: team pool + unassigned group remaining reconciles with table model", async () => {
+  // OT-Alpha assigned to team (budget $200, spend $100 = 50% — NOT over-75).
+  // OT-Beta unassigned (budget $100, spend $80 = 80% — over-75).
+  // totalRemainingUsd must equal ($200−$100) + ($100−$80) = $120.
+  const TEAM = "OT-Test-Team";
+  setOtDir();
+  await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
+  await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+  await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, TEAM));
+  await db.insert(groupTeamsTable).values({ groupName: OT_G1.name, teamName: TEAM });
+  await db.insert(teamBudgetsTable).values({ teamName: TEAM, amountUsd: 200 });
+  await db.insert(groupBudgetsTable).values({ groupId: OT_G2.id, amountUsd: 100 });
+  seedOtProject(OT_G1.id, 100); // team pool $100 (50%)
+  seedOtProject(OT_G2.id, 80);  // OT-Beta $80 (80%)
+  __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 100], ["carol", 0]]));
+  __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 80], ["bob", 0]]));
+  try {
+    const json = await req("/summary");
+    assert.equal(json.groupsOver75, 1, "only OT-Beta (80%) is over-75; OT-Alpha team (50%) is not");
+    assert.equal(json.groupsOver100, 0, "no pool exceeds 100%");
+    assert.equal(json.totalBudgetUsd, 300, "totalBudgetUsd = team $200 + OT-Beta group $100");
+    assert.equal(json.totalRemainingUsd, 120, "remaining = ($200−$100) + ($100−$80) = $120");
+  } finally {
+    await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+    await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, TEAM));
+    await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
+    clearOtProject();
+    restoreOtDir();
+  }
 });

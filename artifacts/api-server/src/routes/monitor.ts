@@ -951,9 +951,10 @@ router.get("/summary", async (req, res): Promise<void> => {
   }
   const authz = req.authz!;
   const isAccount = isAccountWide(authz);
-  const [budgets, teamBudgets] = await Promise.all([
+  const [budgets, teamBudgets, groupTeams] = await Promise.all([
     db.select().from(groupBudgetsTable),
     db.select().from(teamBudgetsTable),
+    db.select().from(groupTeamsTable),
   ]);
   const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
 
@@ -1017,24 +1018,71 @@ router.get("/summary", async (req, res): Promise<void> => {
       totalSpendUsd = projectAttribution.totalSpendUsd;
       pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
       summaryExtraComplete = summaryExtraSpend.isComplete;
+
+      // Compute over-threshold counts using the same top-level pool logic as tableTotals.
+      // Groups assigned to a team: aggregate attributed spend per team and compare against team budget.
+      // Unassigned groups: compare attributed spend against the group's own budget.
+      const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+      const teamBudgetAmountMap = new Map(teamBudgets.map((tb) => [tb.teamName, tb.amountUsd]));
+      const teamAttributedSpend = new Map<string, number>();
+      for (const group of scoped) {
+        const spend = projectAttribution.spendByGroup.get(group.id) ?? 0;
+        const teamName = groupTeamMap.get(group.name);
+        if (teamName) {
+          teamAttributedSpend.set(teamName, (teamAttributedSpend.get(teamName) ?? 0) + spend);
+        } else {
+          const groupBudget = budgetMap.get(group.id);
+          if (groupBudget != null && groupBudget > 0) {
+            const pct = (spend / groupBudget) * 100;
+            if (pct >= 50) over50++;
+            if (pct >= 75) over75++;
+            if (pct >= 90) over90++;
+            if (pct >= 100) over100++;
+          }
+        }
+      }
+      for (const [teamName, spend] of teamAttributedSpend) {
+        const budget = teamBudgetAmountMap.get(teamName);
+        if (budget != null && budget > 0) {
+          const pct = (spend / budget) * 100;
+          if (pct >= 50) over50++;
+          if (pct >= 75) over75++;
+          if (pct >= 90) over90++;
+          if (pct >= 100) over100++;
+        }
+      }
+
+      // Compute totalBudgetUsd and totalRemainingUsd using the same top-level pool model as
+      // tableTotals: one budget entry per team pool, plus each unassigned group's own budget.
+      // Remaining subtracts only the attributed spend from budgeted pools so it reconciles
+      // with the table footer (unattributed / unbudgeted spend does not reduce remaining).
+      const seenTeams = new Set<string>();
+      let budgetedPoolSpend = 0;
+      totalBudgetUsd = 0; // override outer default; set correctly below
+      for (const group of scoped) {
+        const teamName = groupTeamMap.get(group.name);
+        if (teamName) {
+          if (!seenTeams.has(teamName)) {
+            seenTeams.add(teamName);
+            const budget = teamBudgetAmountMap.get(teamName);
+            if (budget != null && budget > 0) {
+              totalBudgetUsd += budget;
+              budgetedPoolSpend += teamAttributedSpend.get(teamName) ?? 0;
+            }
+          }
+        } else {
+          const budget = budgetMap.get(group.id);
+          if (budget != null && budget > 0) {
+            totalBudgetUsd += budget;
+            budgetedPoolSpend += projectAttribution.spendByGroup.get(group.id) ?? 0;
+          }
+        }
+      }
+      totalRemainingUsd = totalBudgetUsd - budgetedPoolSpend;
     } catch (err) {
       req.log.error({ err }, "summary directory fetch failed");
     }
   }
-
-  // Team budgets are account-wide configuration and are not workspace-scoped,
-  // so they are exposed only to account admins. Workspace admins get a total
-  // recomputed from the group budgets of the groups they can actually see.
-  if (isAccount) {
-    totalBudgetUsd = teamBudgets.reduce((sum, tb) => sum + tb.amountUsd, 0);
-  } else {
-    for (const b of budgets) {
-      if (visibleGroupIds.has(b.groupId)) totalBudgetUsd += b.amountUsd;
-    }
-  }
-
-  // Remaining is the (scoped) budget total minus loaded spend.
-  totalRemainingUsd = totalBudgetUsd - totalSpendUsd;
 
   const billing = getBillingPeriod();
   const allAlerts = await db.select().from(alertsTable);
