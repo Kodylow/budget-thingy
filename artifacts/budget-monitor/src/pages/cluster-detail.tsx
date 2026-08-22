@@ -247,18 +247,41 @@ export default function ClusterDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Spend</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold font-mono tabular-nums">
-              ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
-            </div>
+            {!clusterSpendLoaded ? (
+              <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
+            ) : (
+              <div className="text-2xl font-bold font-mono tabular-nums">
+                ${clusterAttributedTotal.toFixed(2)}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground mt-1">
-              Sum of each member's spend within this team
+              Attributed spend (matches dashboard total)
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Member Spend</CardTitle>
+            <DollarSign className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {!anyComplete ? (
+              <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
+            ) : (
+              <div className="text-2xl font-bold font-mono tabular-nums">
+                ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              Each member's actual usage within this team (may exceed Total Spend when members are shared across teams)
             </p>
           </CardContent>
         </Card>
