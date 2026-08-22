@@ -1,0 +1,114 @@
+# Debug Dashboard vs. Team Member Spend
+
+Do **not** make another superficial UI change yet.
+
+The Dashboard is still not showing the same **Member Spend** values as the individual Team pages, even though previous tasks were instructed to use the same calculation.
+
+I need you to **debug the discrepancy at the code and data level**.
+
+## Step 1 — Trace the Individual Team Page
+
+Pick one team that currently has spend.
+
+Trace exactly how the **Member Spend** value on that team's individual Team page is generated.
+
+Identify:
+
+* The frontend component displaying the value
+* The API endpoint, query, hook, function, or service providing the value
+* The database table(s) or records being queried
+* Any filters applied
+* Any date restrictions
+* How spend is attributed to the team
+* Whether the calculation is based on users, transactions, imported spend data, or another relationship
+* The exact code/function that calculates the final Member Spend
+
+Report the result of this investigation before changing the calculation.
+
+## Step 2 — Trace the Dashboard
+
+Then trace how the Dashboard currently calculates or retrieves **Member Spend** for the same team.
+
+Identify the same information:
+
+* Component
+* API/query
+* Data source
+* Filters
+* Team attribution logic
+* Spend aggregation logic
+
+## Step 3 — Compare the Two Paths
+
+For the test team, show me:
+
+**Team Page Member Spend:** $X
+**Dashboard Total Spend:** $Y
+
+Then explain **exactly why the two values differ**.
+
+Do not assume they are using the same calculation just because the functions look similar.
+
+Inspect the actual data returned to each page.
+
+If necessary, add temporary logging and compare:
+
+* Team ID
+* Team name
+* Member/user IDs
+* Spend records included
+* Spend records excluded
+* Raw spend amount before formatting
+
+## Step 4 — Fix the Architecture
+
+Once the discrepancy is identified, refactor the Dashboard so that it uses the **same source of truth** as the individual Team page.
+
+Prefer this architecture:
+
+`shared getTeamMemberSpend(teamId)`
+→ used by Team Page
+→ used by Dashboard
+
+OR, if the Team page already receives the correct value from the backend:
+
+Existing team/member-spend endpoint
+→ same backend aggregation logic used by Dashboard
+
+Do **not** recreate the Team Page calculation separately inside the Dashboard.
+
+There should be one authoritative calculation for **Team Member Spend**.
+
+## Step 5 — Validate With Actual Numbers
+
+Test at least **5 teams**.
+
+Create a temporary comparison during testing showing:
+
+| Team   | Dashboard Member Spend | Team Page Member Spend | Match |
+| ------ | ---------------------: | ---------------------: | ----- |
+| Team 1 |                     $X |                     $X | Yes   |
+| Team 2 |                     $X |                     $X | Yes   |
+| Team 3 |                     $X |                     $X | Yes   |
+| Team 4 |                     $X |                     $X | Yes   |
+| Team 5 |                     $X |                     $X | Yes   |
+
+Every value must match exactly.
+
+If any do not match, continue debugging.
+
+## Critical Requirement
+
+**Do not mark this task complete simply because the code was changed.**
+
+You must verify the actual values rendered in the running application.
+
+If you cannot make the values match, stop and tell me:
+
+1. Which team you tested
+2. The Dashboard value
+3. The Team Page value
+4. The exact code path responsible for each
+5. Why you believe they are different
+
+Do not claim the issue is fixed unless the rendered **Member Spend** dollar amounts match.
