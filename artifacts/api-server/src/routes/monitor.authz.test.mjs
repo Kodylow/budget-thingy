@@ -23,6 +23,7 @@ import {
 import { setSendEmailOverrideForTests } from "../lib/email.ts";
 import {
   __setDirectoryCacheForTests,
+  __setAccountUsageForTests,
   __setMemberUsageForTests,
   __setProjectUsageForTests,
   resolveRange,
@@ -99,6 +100,12 @@ test.before(async () => {
       }]]),
     });
   }
+  __setAccountUsageForTests("custom:2026-05-20:2026-08-11", {
+    fetchedAt: Date.now(),
+    totalCostUsd: 77,
+    attributableTotalCostUsd: 70,
+    unattributableTotalCostUsd: 7,
+  });
 
   // Inject the real resolution logic but against the seeded directory. Using
   // the actual resolver keeps the test faithful to production behavior.
@@ -183,6 +190,7 @@ test.after(async () => {
   );
   await db.delete(usersTable).where(inArray(usersTable.id, ["editor", "candidate-editor", "bootstrap-editor"]));
   __setDirectoryCacheForTests(null);
+  __setAccountUsageForTests("custom:2026-05-20:2026-08-11", null);
   __setMemberUsageForTests("custom:2026-05-20:2026-08-11", null);
   __setProjectUsageForTests("g-ws1-a", "custom:2026-05-20:2026-08-11", null);
   __setProjectUsageForTests("g-ws2-a", "custom:2026-05-20:2026-08-11", null);
@@ -256,6 +264,8 @@ test("custom range uses inclusive UTC days and all visible workspaces without ov
   // totalSpendUsd is now member-deduped rollup:
   // shared(40, once)+ws1-only(10)+ws2-only(20) + unattributable(3+4) = 77
   assert.equal(acct.json.totalSpendUsd, 77);
+  assert.equal(acct.json.accountUsageTotalSpendUsd, 77);
+  assert.equal(acct.json.reconciliationSpendUsd, 0);
   assert.equal(acct.json.isComplete, true);
 
   const ws1 = await req(
@@ -264,6 +274,10 @@ test("custom range uses inclusive UTC days and all visible workspaces without ov
   );
   // ws1admin sees only g-ws1-a: shared(40)+ws1-only(10)+unattributable(3)=53
   assert.equal(ws1.json.totalSpendUsd, 53);
+  assert.equal(ws1.json.accountUsageTotalSpendUsd, null);
+  assert.equal(ws1.json.accountUsageAttributableSpendUsd, null);
+  assert.equal(ws1.json.accountUsageUnattributableSpendUsd, null);
+  assert.equal(ws1.json.reconciliationSpendUsd, null);
   assert.equal(ws1.json.isComplete, true);
 });
 

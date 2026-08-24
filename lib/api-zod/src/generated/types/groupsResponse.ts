@@ -20,6 +20,6 @@ export interface GroupsResponse {
   projectSpendLoaded: boolean;
   /** Project-level spend that could not be matched to a project ID and group */
   unattributedProjectSpendUsd: number;
-  /** Per-team project spend, with each project counted once */
+  /** Per-team member-deduped rollup spend, with each member counted once across groups */
   teamRawSpend: GroupsResponseTeamRawSpend;
 }

@@ -7,11 +7,11 @@
  */
 
 /**
- * Per-team project spend, with each project counted once
+ * Per-team member-deduped rollup spend, with each member counted once across groups
  */
 export type GroupsResponseTeamRawSpend = {[key: string]: {
-  /** Deduplicated project spend attributed to groups in this team */
+  /** Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team) */
   spendUsd: number;
-  /** True when project usage for every visible custom group is loaded */
+  /** True when member-level usage for every visible custom group is loaded */
   spendLoaded: boolean;
 }};

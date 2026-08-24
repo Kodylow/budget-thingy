@@ -306,7 +306,7 @@ export const RefreshGroupUsageResponse = zod.object({
 
 
 /**
- * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is based on project attribution, with each project counted once.
+ * Aggregate visible stats across custom groups and budgets for the selected range. For account-wide callers, totalSpendUsd is anchored to an unfiltered Enterprise usage request and reconciliationSpendUsd bridges it to the displayed rollup. Workspace-scoped callers retain scoped totals and never receive account figures.
  * @summary Dashboard summary
  */
 export const GetSummaryQueryParams = zod.object({
@@ -318,8 +318,12 @@ export const GetSummaryQueryParams = zod.object({
 export const GetSummaryResponse = zod.object({
   "totalGroups": zod.number(),
   "budgetedGroups": zod.number(),
-  "totalSpendUsd": zod.number().describe('Member-deduped group rollup spend plus unattributed project spend; matches the dashboard table\'s total spend footer'),
+  "totalSpendUsd": zod.number().describe('Account usage anchor for account-wide callers once available; otherwise the scoped visible rollup total'),
   "memberBasedTotalSpendUsd": zod.number().optional().describe('Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility'),
+  "accountUsageTotalSpendUsd": zod.number().nullable().describe('Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers'),
+  "accountUsageAttributableSpendUsd": zod.number().nullable().describe('Attributable portion of the unfiltered account usage anchor; null outside account-wide scope'),
+  "accountUsageUnattributableSpendUsd": zod.number().nullable().describe('Unattributable portion of the unfiltered account usage anchor; null outside account-wide scope'),
+  "reconciliationSpendUsd": zod.number().nullable().describe('Account anchor minus the exact top-level team and unassigned-group rows displayed by the dashboard; null outside account-wide scope or while loading'),
   "totalBudgetUsd": zod.number().describe('Sum of all effective group budgets (app or platform)'),
   "totalRemainingUsd": zod.number().optional().describe('Sum of remaining budget across budgeted groups with loaded spend'),
   "groupsOver50": zod.number(),

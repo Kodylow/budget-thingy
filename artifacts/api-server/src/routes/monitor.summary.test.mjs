@@ -13,6 +13,7 @@ import monitorRouter from "./monitor.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
 import {
   __setDirectoryCacheForTests,
+  __setAccountUsageForTests,
   __setMemberUsageForTests,
   __setProjectUsageForTests,
   __setWsSpendForTests,
@@ -89,6 +90,15 @@ function clearProjectSpend() {
   __setProjectUsageForTests("sg-beta", RANGE, null);
 }
 
+function setAccountUsage(totalCostUsd, unattributableTotalCostUsd = 0) {
+  __setAccountUsageForTests(RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd,
+    attributableTotalCostUsd: totalCostUsd - unattributableTotalCostUsd,
+    unattributableTotalCostUsd,
+  });
+}
+
 let server;
 let baseUrl;
 
@@ -124,6 +134,7 @@ test.after(async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
+  __setAccountUsageForTests(RANGE, null);
   clearProjectSpend();
   __setDirectoryCacheForTests(null);
   setAuthorizationResolver(null);
@@ -149,6 +160,8 @@ test("summary returns isComplete:false and zero spend with empty usage caches", 
   const json = await req("/summary");
   assert.equal(json.isComplete, false, "should be incomplete while caches are cold");
   assert.equal(json.totalSpendUsd, 0);
+  assert.equal(json.accountUsageTotalSpendUsd, null);
+  assert.equal(json.reconciliationSpendUsd, null);
   assert.equal(json.totalGroups, 2);
 });
 
@@ -160,6 +173,7 @@ test("summary is not complete when extra-workspace data is still pending", async
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, null); // extra ws still loading
   setProjectSpend(60, 15);
+  setAccountUsage(75);
 
   const json = await req("/summary");
   // isComplete must be false while extra ws is pending (ws-extra has no cached data).
@@ -183,11 +197,17 @@ test("summary reflects combined deduped spend once all caches are warm", async (
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
   setProjectSpend(85, 15, 8);
+  setAccountUsage(108, 3);
 
   const json = await req("/summary");
   assert.equal(json.isComplete, true, "should be complete once all caches are warm");
   assert.equal(json.totalSpendUsd, 108,
     "alice=$70 (Alpha) + carol=$15 (Alpha) + bob=$15 (Beta) + dave=$8 (ungrouped) = $108");
+  assert.equal(json.accountUsageTotalSpendUsd, 108);
+  assert.equal(json.accountUsageAttributableSpendUsd, 105);
+  assert.equal(json.accountUsageUnattributableSpendUsd, 3);
+  assert.equal(json.reconciliationSpendUsd, 8,
+    "account anchor minus the $100 displayed group rollup must be explicit");
 });
 
 test("summary deduplication: alice counted only once across groups", async () => {
@@ -197,6 +217,7 @@ test("summary deduplication: alice counted only once across groups", async () =>
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
   setProjectSpend(85, 15, 8);
+  setAccountUsage(108);
 
   const json = await req("/summary");
   // If alice were double-counted (alpha+beta+extra twice): (30+20)*2+20+10+5+15+8 = 158. Correct: 108.
@@ -313,6 +334,7 @@ test("/groups and /summary: user with $0 in first group gets full combined spend
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 5]]));
   setProjectSpend(25, 15);
+  setAccountUsage(40);
 
   const grpJson = await req("/groups");
   const alpha = grpJson.groups.find((g) => g.groupId === "sg-alpha");
@@ -396,6 +418,7 @@ test("unmatched project spend is included in the project-based summary total", a
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["dave", 8]]));
   setProjectSpend(10, 15, 8);
+  setAccountUsage(33);
 
   const json = await req("/summary");
   assert.equal(json.isComplete, true);
@@ -496,6 +519,7 @@ test("summary: unassigned group over 75% shows in groupsOver75 and totalRemainin
   seedOtProject(OT_G2.id, 0);       // OT-Beta no spend
   __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["carol", 80]]));
   __setMemberUsageForTests(OT_G2.id, RANGE, new Map());
+  setAccountUsage(90);
   try {
     const json = await req("/summary");
     assert.equal(json.groupsOver75, 1, "OT-Alpha at 80% must count as over-75");
@@ -526,6 +550,7 @@ test("summary: team pool over 100% is counted once and unattributed spend exclud
   seedOtProject(OT_G2.id, 50);     // OT-Beta $50 → team total $110
   __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 60], ["carol", 0]]));
   __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 50], ["bob", 0]]));
+  setAccountUsage(120);
   try {
     const json = await req("/summary");
     assert.equal(json.groupsOver75, 1, "team pool at 110% must count as over-75");
@@ -550,6 +575,7 @@ test("/summary responds within 5 seconds under normal conditions (stat-card load
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
   setProjectSpend(85, 15, 8);
+  setAccountUsage(108);
 
   const start = Date.now();
   const json = await req("/summary");
@@ -578,6 +604,7 @@ test("summary: team pool + unassigned group remaining reconciles with table mode
   seedOtProject(OT_G2.id, 80);  // OT-Beta $80 (80%)
   __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 100], ["carol", 0]]));
   __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 80], ["bob", 0]]));
+  setAccountUsage(180);
   try {
     const json = await req("/summary");
     assert.equal(json.groupsOver75, 1, "only OT-Beta (80%) is over-75; OT-Alpha team (50%) is not");

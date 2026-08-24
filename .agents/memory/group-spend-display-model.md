@@ -1,20 +1,20 @@
 ---
 name: Group spend display model
-description: Project accounting on the dashboard versus member visibility and legacy alert accounting.
+description: Account anchor and reconciliation rules versus scoped and drill-down accounting.
 ---
 
 # Group spend display model
 
 ## The rule
 
-Dashboard group, team, and enterprise totals use project attribution, with each project counted once. A project seen in the primary Comcast workspace and a sub-workspace belongs to the sub-workspace; otherwise highest reported project spend wins.
+For account-wide callers, the dashboard Total Spend is the durable unfiltered Enterprise usage total. The visible team and unassigned-group rows retain their current rollup accounting, and one explicit residual bridges those rows to the account anchor.
 
 Member and cluster drill-down pages continue to show per-person usage. Existing group/team threshold alerts intentionally continue to use their legacy raw/member accounting until alert behavior is separately migrated.
 
-Project-level spend without a usable project ID is shown as an enterprise-level unattributed line so the dashboard rows reconcile to the enterprise total.
+Workspace-scoped callers must never receive the account anchor or its residual. Their dashboard retains the scoped rollup plus scoped unattributed-project treatment.
 
 **Why:**
-Member totals can double-count people in multiple groups and omit spend from deleted accounts. Project totals provide stable chargeback, while member drill-downs still need complete individual visibility. Changing alerts simultaneously would alter established threshold behavior before the new model is proven.
+No filtered group/member/project model reliably captures ungrouped users, unattributed charges, and former members. Replit Settings uses the unfiltered account total, while scoped admins must remain isolated from enterprise-wide figures.
 
 **How to apply:**
-Use project-attributed values for dashboard spend, remaining budget, usage percentage, team headers, and enterprise summary. Keep member usage for drill-down member rows and historical trends, and do not silently switch alert thresholds to project totals.
+Use the account anchor only for account-wide summary totals. Compute its residual against the exact top-level rows displayed, render loading until the anchor exists, and keep scoped, drill-down, trend, budget, and alert semantics unchanged.

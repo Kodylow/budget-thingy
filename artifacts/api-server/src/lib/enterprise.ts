@@ -262,7 +262,12 @@ async function usageFetch(
 
 // ---------- Durable incremental /usage synchronization ----------
 
-type UsageSyncMode = "group_total" | "group_member" | "workspace_member" | "group_project";
+type UsageSyncMode =
+  | "account_total"
+  | "group_total"
+  | "group_member"
+  | "workspace_member"
+  | "group_project";
 
 interface StoredUsagePayload {
   totalCostUsd: number;
@@ -573,6 +578,31 @@ function aggregateGroupSpend(rows: UsageSyncChunk[]): GroupSpend {
     fetchedAt: Math.max(...rows.map((row) => row.completedAt.getTime())),
     periodStart: new Date(Math.min(...rows.map((row) => row.chunkStart.getTime()))).toISOString(),
     periodEnd: new Date(Math.max(...rows.map((row) => row.chunkEnd.getTime()))).toISOString(),
+  };
+}
+
+export interface AccountUsage {
+  fetchedAt: number;
+  totalCostUsd: number;
+  attributableTotalCostUsd: number;
+  unattributableTotalCostUsd: number;
+}
+
+function aggregateAccountUsage(rows: UsageSyncChunk[]): AccountUsage {
+  let totalCostUsd = 0;
+  let attributableTotalCostUsd = 0;
+  let unattributableTotalCostUsd = 0;
+  for (const row of rows) {
+    const payload = storedPayload(row);
+    totalCostUsd += payload.totalCostUsd;
+    attributableTotalCostUsd += payload.attributableTotalCostUsd;
+    unattributableTotalCostUsd += payload.unattributableTotalCostUsd;
+  }
+  return {
+    fetchedAt: Math.max(...rows.map((row) => row.completedAt.getTime())),
+    totalCostUsd,
+    attributableTotalCostUsd,
+    unattributableTotalCostUsd,
   };
 }
 
@@ -1266,6 +1296,55 @@ export interface MemberUsage {
 
 const memberUsageCache = new Map<string, MemberUsage>(); // `${rangeKey}|${groupId}`
 
+// ---------- Account-wide usage anchor (unfiltered /usage, one call per range) ----------
+
+const ACCOUNT_USAGE_SCOPE = "enterprise";
+const accountUsageCache = new Map<string, AccountUsage>(); // rangeKey
+
+export function getAccountUsage(rangeKey: string): AccountUsage | undefined {
+  return accountUsageCache.get(rangeKey);
+}
+
+export function queueAccountUsageFetch(
+  range: UsageRange,
+  priority = 0,
+  force = false,
+): boolean {
+  const cached = accountUsageCache.get(range.key);
+  if (isDurablyFresh(
+    "account_total",
+    range.key,
+    ACCOUNT_USAGE_SCOPE,
+    cached?.fetchedAt,
+    force,
+  )) {
+    return false;
+  }
+  return enqueueUsage(`account-usage:${range.key}`, priority, async () => {
+    try {
+      const rows = await synchronizeUsage(
+        "account_total",
+        range,
+        ACCOUNT_USAGE_SCOPE,
+        {},
+        force,
+      );
+      accountUsageCache.set(range.key, aggregateAccountUsage(rows));
+    } catch (err) {
+      logger.error({ err, range: range.key }, "Failed to fetch account usage");
+    }
+  });
+}
+
+/** Test-only seam for account summary and authorization fixtures. */
+export function __setAccountUsageForTests(
+  rangeKey: string,
+  usage: AccountUsage | null,
+): void {
+  if (usage) accountUsageCache.set(rangeKey, usage);
+  else accountUsageCache.delete(rangeKey);
+}
+
 export function getMemberUsage(groupId: string, rangeKey: string): MemberUsage | undefined {
   return memberUsageCache.get(`${rangeKey}|${groupId}`);
 }
@@ -1543,7 +1622,9 @@ function hydrateDurableUsage(rows: UsageSyncChunk[]): void {
   for (const [id, scopeRows] of grouped) {
     const [mode, rangeKey, scopeKey] = id.split("|") as [UsageSyncMode, string, string];
     const cacheKey = `${rangeKey}|${scopeKey}`;
-    if (mode === "group_total") {
+    if (mode === "account_total") {
+      accountUsageCache.set(rangeKey, aggregateAccountUsage(scopeRows));
+    } else if (mode === "group_total") {
       spendCache.set(cacheKey, aggregateGroupSpend(scopeRows));
     } else if (mode === "group_member") {
       memberUsageCache.set(cacheKey, aggregateMemberUsage(scopeRows));
@@ -1729,6 +1810,7 @@ export function getDedupedMemberCounts(
 
 /** Test-only seam for simulating a process restart before calling initCache(). */
 export function __resetDurableUsageCachesForTests(): void {
+  accountUsageCache.clear();
   spendCache.clear();
   memberUsageCache.clear();
   wsSpendCache.clear();

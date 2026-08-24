@@ -335,9 +335,10 @@ paths:
       tags: [groups]
       summary: Dashboard summary
       description: >
-        Aggregate account-level stats across custom groups and budgets for the selected
-        range. totalSpendUsd equals the member-deduped group rollup plus unattributed
-        project spend, matching the dashboard table's total spend footer exactly.
+        Aggregate visible stats across custom groups and budgets for the selected range.
+        For account-wide callers, totalSpendUsd is anchored to an unfiltered Enterprise
+        usage request and reconciliationSpendUsd bridges it to the displayed rollup.
+        Workspace-scoped callers retain scoped totals and never receive account figures.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -1263,6 +1264,10 @@ components:
           totalGroups,
           budgetedGroups,
           totalSpendUsd,
+          accountUsageTotalSpendUsd,
+          accountUsageAttributableSpendUsd,
+          accountUsageUnattributableSpendUsd,
+          reconciliationSpendUsd,
           totalBudgetUsd,
           groupsOver50,
           groupsOver75,
@@ -1279,10 +1284,22 @@ components:
           type: integer
         totalSpendUsd:
           type: number
-          description: Member-deduped group rollup spend plus unattributed project spend; matches the dashboard table's total spend footer
+          description: Account usage anchor for account-wide callers once available; otherwise the scoped visible rollup total
         memberBasedTotalSpendUsd:
           type: number
           description: Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility
+        accountUsageTotalSpendUsd:
+          type: [number, "null"]
+          description: Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers
+        accountUsageAttributableSpendUsd:
+          type: [number, "null"]
+          description: Attributable portion of the unfiltered account usage anchor; null outside account-wide scope
+        accountUsageUnattributableSpendUsd:
+          type: [number, "null"]
+          description: Unattributable portion of the unfiltered account usage anchor; null outside account-wide scope
+        reconciliationSpendUsd:
+          type: [number, "null"]
+          description: Account anchor minus the exact top-level team and unassigned-group rows displayed by the dashboard; null outside account-wide scope or while loading
         totalBudgetUsd:
           type: number
           description: Sum of all effective group budgets (app or platform)

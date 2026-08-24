@@ -1080,7 +1080,7 @@ export const getGetSummaryUrl = (params?: GetSummaryParams,) => {
 }
 
 /**
- * Aggregate account-level stats across custom groups and budgets for the selected range. Spend is based on project attribution, with each project counted once.
+ * Aggregate visible stats across custom groups and budgets for the selected range. For account-wide callers, totalSpendUsd is anchored to an unfiltered Enterprise usage request and reconciliationSpendUsd bridges it to the displayed rollup. Workspace-scoped callers retain scoped totals and never receive account figures.
  * @summary Dashboard summary
  */
 export const getSummary = async (params?: GetSummaryParams, options?: RequestInit): Promise<Summary> => {

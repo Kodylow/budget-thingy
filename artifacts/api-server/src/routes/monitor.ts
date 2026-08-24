@@ -52,6 +52,8 @@ import {
   refreshAllGroupSpends,
   queueMemberUsageFetch,
   getMemberUsage,
+  queueAccountUsageFetch,
+  getAccountUsage,
   queueExtraWorkspacesFetch,
   getExtraWorkspaceSpend,
   queueAllWorkspacesFetch,
@@ -973,6 +975,10 @@ router.get("/summary", async (req, res): Promise<void> => {
         let totalGroups = 0;
         let totalSpendUsd = 0;
         let memberBasedTotalSpendUsd = 0;
+        let accountUsageTotalSpendUsd: number | null = null;
+        let accountUsageAttributableSpendUsd: number | null = null;
+        let accountUsageUnattributableSpendUsd: number | null = null;
+        let reconciliationSpendUsd: number | null = null;
         let totalRemainingUsd = 0;
         let totalBudgetUsd = 0;
         let budgetedGroups = 0;
@@ -1005,6 +1011,7 @@ router.get("/summary", async (req, res): Promise<void> => {
               queueProjectUsageFetch(group, range, 1);
             }
             if (isAccount) {
+              queueAccountUsageFetch(range, 0);
               queueExtraWorkspacesFetch(dir, range, 1);
               queueAllWorkspacesFetch(dir, range, 1);
             }
@@ -1033,7 +1040,23 @@ router.get("/summary", async (req, res): Promise<void> => {
             //   + Σ rollup[unassignedGroup].spendUsd          (member-deduped per unassigned group)
             //   + projectAttribution.unattributedSpendUsd    (project spend not matched to any group)
             // so the "Total Spend" stat card and the team-header rows use the same accounting model.
-            totalSpendUsd = summaryRollup.totalSpendUsd + projectAttribution.unattributedSpendUsd;
+            const displayedRollupSpendUsd = summaryRollup.totalSpendUsd;
+            if (isAccount) {
+              const accountUsage = getAccountUsage(range.key);
+              if (accountUsage) {
+                accountUsageTotalSpendUsd = accountUsage.totalCostUsd;
+                accountUsageAttributableSpendUsd = accountUsage.attributableTotalCostUsd;
+                accountUsageUnattributableSpendUsd = accountUsage.unattributableTotalCostUsd;
+                reconciliationSpendUsd = accountUsage.totalCostUsd - displayedRollupSpendUsd;
+                totalSpendUsd = accountUsage.totalCostUsd;
+              } else {
+                // Keep the prior rollup as provisional response data. Account-wide
+                // clients use the nullable anchor field to render loading, never $0.
+                totalSpendUsd = displayedRollupSpendUsd + projectAttribution.unattributedSpendUsd;
+              }
+            } else {
+              totalSpendUsd = displayedRollupSpendUsd + projectAttribution.unattributedSpendUsd;
+            }
             pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
             summaryExtraComplete = summaryExtraSpend.isComplete;
 
@@ -1122,6 +1145,10 @@ router.get("/summary", async (req, res): Promise<void> => {
             budgetedGroups,
             totalSpendUsd,
             memberBasedTotalSpendUsd,
+            accountUsageTotalSpendUsd,
+            accountUsageAttributableSpendUsd,
+            accountUsageUnattributableSpendUsd,
+            reconciliationSpendUsd,
             totalBudgetUsd,
             totalRemainingUsd,
             groupsOver50: over50,
@@ -1130,7 +1157,10 @@ router.get("/summary", async (req, res): Promise<void> => {
             groupsOver100: over100,
             alertsSentThisPeriod,
             billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
-            isComplete: pending === 0 && summaryExtraComplete,
+            isComplete:
+              pending === 0 &&
+              summaryExtraComplete &&
+              (!isAccount || accountUsageTotalSpendUsd !== null),
           }),
         );
       })(),

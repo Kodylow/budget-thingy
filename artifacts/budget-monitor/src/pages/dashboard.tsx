@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Download, Search, ChevronsUpDown, ChevronUp } from 'lucide-react';
 
 // Credit pool period: May 20 2026 (spend cutoff) → May 17 2027 (expiry)
-import { useCanWrite } from '@/components/auth-context';
+import { useAuthContext, useCanWrite } from '@/components/auth-context';
 const PACE_PERIOD_START_MS = new Date('2026-05-20T00:00:00.000Z').getTime();
 const PACE_PERIOD_END_MS   = new Date('2027-05-17T00:00:00.000Z').getTime();
 const PACE_TOTAL_DAYS = (PACE_PERIOD_END_MS - PACE_PERIOD_START_MS) / 86_400_000;
@@ -66,6 +66,7 @@ import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import TrendsTab from './trends-tab';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
+import { reconcileDashboardSpend } from '@/lib/dashboard-reconciliation';
 
 interface TeamSection {
   teamName: string;
@@ -82,6 +83,8 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const canWrite = useCanWrite();
+  const { isAccountAdmin, isAccountEditor } = useAuthContext();
+  const isAccountWide = isAccountAdmin || isAccountEditor;
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [byGroupSearch, setByGroupSearch] = useState('');
@@ -240,10 +243,6 @@ export default function Dashboard() {
     for (const group of unassigned) {
       addRow(group.spendUsd ?? 0, group.budgetUsd ?? null, group.spendLoaded);
     }
-    if (projectSpendLoaded) {
-      addRow(unattributedProjectSpendUsd, null, true);
-    }
-
     return {
       totalSpendUsd,
       totalBudgetUsd,
@@ -253,7 +252,27 @@ export default function Dashboard() {
       poolsOver75,
       poolsOver100,
     };
-  }, [projectSpendLoaded, teamSections, unattributedProjectSpendUsd, unassigned]);
+  }, [teamSections, unassigned]);
+
+  const reconciledSpend = useMemo(
+    () =>
+      reconcileDashboardSpend({
+        isAccountWide,
+        visibleRollupSpendUsd: tableTotals.totalSpendUsd,
+        accountUsageTotalSpendUsd: summary?.accountUsageTotalSpendUsd,
+        accountReconciliationSpendUsd: summary?.reconciliationSpendUsd,
+        projectSpendLoaded,
+        unattributedProjectSpendUsd,
+      }),
+    [
+      isAccountWide,
+      projectSpendLoaded,
+      summary?.accountUsageTotalSpendUsd,
+      summary?.reconciliationSpendUsd,
+      tableTotals.totalSpendUsd,
+      unattributedProjectSpendUsd,
+    ],
+  );
 
   const byGroupRows = useMemo(() => {
     const q = byGroupSearch.trim().toLowerCase();
@@ -292,10 +311,10 @@ export default function Dashboard() {
   const statCards = [
     {
       title: 'Total Spend',
-      value: `$${(summary?.totalSpendUsd ?? tableTotals.totalSpendUsd).toFixed(2)}`,
+      value: `$${reconciledSpend.totalSpendUsd.toFixed(2)}`,
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
-      loading: summaryLoading && groupsLoading,
+      loading: groupsLoading || !reconciledSpend.isTotalLoaded,
     },
     {
       title: 'Total Budget',
@@ -762,16 +781,23 @@ export default function Dashboard() {
                   ) : (
                     groups.map((group) => renderGroupRow(group))
                   )}
-                  {projectSpendLoaded && unattributedProjectSpendUsd > 0 && (
+                  {reconciledSpend.residualSpendUsd !== null &&
+                    (isAccountWide || reconciledSpend.residualSpendUsd > 0) && (
                     <tr
                       className="border-b border-border bg-muted/10"
-                      data-testid="row-unattributed-projects"
+                      data-testid={isAccountWide ? "row-account-reconciliation" : "row-unattributed-projects"}
                     >
                       <td className="py-3 px-4">
                         <div className="flex flex-col">
-                          <span className="text-sm font-medium italic">Unattributed projects</span>
+                          <span className="text-sm font-medium italic">
+                            {isAccountWide
+                              ? 'Not in any group / unattributed / former members'
+                              : 'Unattributed projects'}
+                          </span>
                           <span className="text-xs text-muted-foreground">
-                            Project spend with no matching group
+                            {isAccountWide
+                              ? 'Difference between account usage and the groups shown above'
+                              : 'Project spend with no matching group'}
                           </span>
                         </div>
                       </td>
@@ -779,7 +805,7 @@ export default function Dashboard() {
                       <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
-                          ${unattributedProjectSpendUsd.toFixed(2)}
+                          ${reconciledSpend.residualSpendUsd.toFixed(2)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
@@ -806,9 +832,9 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete ? (
+                        {isComplete && reconciledSpend.isTotalLoaded ? (
                           <span className="text-sm font-mono tabular-nums">
-                            ${tableTotals.totalSpendUsd.toFixed(2)}
+                            ${reconciledSpend.totalSpendUsd.toFixed(2)}
                           </span>
                         ) : (
                           <div className="flex justify-end"><LoadingCell /></div>

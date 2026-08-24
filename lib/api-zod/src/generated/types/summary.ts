@@ -9,10 +9,30 @@
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Deduplicated project spend across custom groups plus unattributed project spend */
+  /** Account usage anchor for account-wide callers once available; otherwise the scoped visible rollup total */
   totalSpendUsd: number;
-  /** Legacy member-deduplicated spend retained for secondary drill-down comparisons */
+  /** Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility */
   memberBasedTotalSpendUsd?: number;
+  /**
+     * Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers
+     * @nullable
+     */
+  accountUsageTotalSpendUsd: number | null;
+  /**
+     * Attributable portion of the unfiltered account usage anchor; null outside account-wide scope
+     * @nullable
+     */
+  accountUsageAttributableSpendUsd: number | null;
+  /**
+     * Unattributable portion of the unfiltered account usage anchor; null outside account-wide scope
+     * @nullable
+     */
+  accountUsageUnattributableSpendUsd: number | null;
+  /**
+     * Account anchor minus the exact top-level team and unassigned-group rows displayed by the dashboard; null outside account-wide scope or while loading
+     * @nullable
+     */
+  reconciliationSpendUsd: number | null;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
   /** Sum of remaining budget across budgeted groups with loaded spend */

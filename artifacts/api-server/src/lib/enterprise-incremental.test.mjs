@@ -11,10 +11,12 @@ const groupId = `incremental-group-${crypto.randomUUID()}`;
 const workspaceId = `incremental-workspace-${crypto.randomUUID()}`;
 const extraWorkspaceId = `incremental-extra-${crypto.randomUUID()}`;
 let fetchCount = 0;
+const usageRequestUrls = [];
 
 globalThis.fetch = async (input) => {
   fetchCount += 1;
   const url = new URL(String(input));
+  usageRequestUrls.push(url);
   const groupBy = url.searchParams.get("groupBy");
   const cursor = url.searchParams.get("cursor");
   const isProject = groupBy === "project";
@@ -48,6 +50,10 @@ globalThis.fetch = async (input) => {
       ? [{ key: { userId: "member-2" }, totalCostUsd: 2 }]
       : [{ key: { userId: "member-1" }, totalCostUsd: 3 }];
     totalCostUsd = 5;
+  } else if (!url.searchParams.has("workspaceId") && !url.searchParams.has("groupId")) {
+    totalCostUsd = 25;
+    pagination.hasMore = false;
+    pagination.cursor = null;
   } else {
     totalCostUsd = 10;
     pagination.hasMore = false;
@@ -65,8 +71,8 @@ globalThis.fetch = async (input) => {
           endTime: url.searchParams.get("endTime"),
         },
         totalCostUsd,
-        attributableTotalCostUsd: totalCostUsd,
-        unattributableTotalCostUsd: 0,
+        attributableTotalCostUsd: totalCostUsd === 25 ? 20 : totalCostUsd,
+        unattributableTotalCostUsd: totalCostUsd === 25 ? 5 : 0,
         groups,
         pagination,
       },
@@ -76,6 +82,10 @@ globalThis.fetch = async (input) => {
 
 const enterprise = await import("./enterprise.ts");
 const range = enterprise.resolveRange("custom", "2026-06-01", "2026-06-01");
+const accountRange = {
+  ...range,
+  key: `custom:account-anchor-${crypto.randomUUID()}`,
+};
 const group = {
   id: groupId,
   workspaceId,
@@ -90,12 +100,27 @@ async function waitForQueue() {
 }
 
 test("all usage modes paginate, persist, hydrate, and reuse closed ranges", async () => {
+  enterprise.queueAccountUsageFetch(accountRange, 0);
   enterprise.queueGroupSpendFetch(group, 0, false, undefined, range);
   enterprise.queueMemberUsageFetch(group, range, 0);
   enterprise.queueWsSpendFetch(extraWorkspaceId, range, 0);
   enterprise.queueProjectUsageFetch(group, range, 0);
   await waitForQueue();
 
+  assert.deepEqual(enterprise.getAccountUsage(accountRange.key), {
+    fetchedAt: enterprise.getAccountUsage(accountRange.key).fetchedAt,
+    totalCostUsd: 25,
+    attributableTotalCostUsd: 20,
+    unattributableTotalCostUsd: 5,
+  });
+  const accountRequest = usageRequestUrls.find(
+    (url) =>
+      url.pathname.endsWith("/usage") &&
+      !url.searchParams.has("workspaceId") &&
+      !url.searchParams.has("groupId"),
+  );
+  assert.ok(accountRequest, "account anchor must issue an unfiltered /usage request");
+  assert.equal(accountRequest.searchParams.has("groupBy"), false);
   assert.equal(enterprise.getSpend(groupId, range.key)?.spendUsd, 10);
   assert.deepEqual(
     enterprise.getMemberUsage(groupId, range.key)?.byUser,
@@ -112,6 +137,7 @@ test("all usage modes paginate, persist, hydrate, and reuse closed ranges", asyn
 
   const completedFetches = fetchCount;
   // Even force does not rewrite a successfully closed historical range.
+  assert.equal(enterprise.queueAccountUsageFetch(accountRange, 0, true), false);
   assert.equal(enterprise.queueGroupSpendFetch(group, 0, true, undefined, range), "fresh_cache");
   assert.equal(enterprise.queueMemberUsageFetch(group, range, 0, true), false);
   assert.equal(enterprise.queueWsSpendFetch(extraWorkspaceId, range, 0, true), false);
@@ -120,6 +146,8 @@ test("all usage modes paginate, persist, hydrate, and reuse closed ranges", asyn
 
   enterprise.__resetDurableUsageCachesForTests();
   await enterprise.initCache();
+  assert.equal(enterprise.getAccountUsage(accountRange.key)?.totalCostUsd, 25);
+  assert.equal(enterprise.getAccountUsage(accountRange.key)?.unattributableTotalCostUsd, 5);
   assert.equal(enterprise.getSpend(groupId, range.key)?.spendUsd, 10);
   assert.equal(enterprise.getMemberUsage(groupId, range.key)?.byUser.get("member-2"), 6);
   assert.equal(enterprise.getWsSpendByUser(extraWorkspaceId, range.key)?.get("member-1"), 3);
