@@ -1,13 +1,13 @@
 ---
-name: Overlapping group rollups
-description: Attribution and deduplication rules for spend across custom groups
+name: Workspace-aware rollups
+description: Attribution and completeness rules for spend across workspaces and custom groups
 ---
 
-Rollup spend must count each member once. Order custom groups by workspace, case-insensitive group name, then stable group ID; attribute an overlapping member to the first group in that order.
+Treat each `(workspace, user)` as the exact identity for dashboard rollups. The complete workspace-member payload is authoritative; group-filter observations are provisional only. Sum distinct workspaces even when their values are equal.
 
-**Why:** Enterprise members can belong to multiple custom groups, so summing raw group totals inflates team and organization spend. A stable rule also prevents totals from shifting when API list order changes.
+**Why:** Enterprise members can belong to multiple custom groups, group-filter observations can drift during serialized fetches, and equal dollar values in separate workspaces are independent charges.
 
-**How to apply:** Use member-level usage only for team and organization rollups. Keep raw per-group usage for group budgets, threshold alerts, history, and drill-down reconciliation.
+**How to apply:** Within each workspace, order custom groups by case-insensitive name then stable ID and attribute a member to the first matching group. Put unmatched directory/usage members and workspace no-user charges in that workspace's synthetic No group row. Workspace-scoped callers may only receive rows from authorized workspaces. Team checks must defer until every authoritative workspace payload is available.
 
 **Exception — per-user views (User Activity page and /export/users.csv):**
 The Replit usage API returns WORKSPACE-level spend per user, not group-level. Every group inside the same workspace reports the EXACT SAME dollar amount for a given user. Summing across all groups in a workspace multiplies that spend by the number of groups the user belongs to.

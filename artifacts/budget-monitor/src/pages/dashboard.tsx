@@ -350,9 +350,12 @@ export default function Dashboard() {
   const renderGroupRow = (group: (typeof groups)[0]) => (
     <tr
       key={group.groupId}
-      className="border-b border-border hover:bg-muted/50 transition-colors group cursor-pointer"
+      className={`border-b border-border transition-colors group ${
+        group.isSynthetic ? 'bg-muted/10' : 'hover:bg-muted/50 cursor-pointer'
+      }`}
       data-testid={`row-group-${group.groupId}`}
       onClick={(e) => {
+        if (group.isSynthetic) return;
         if ((e.target as HTMLElement).closest('button, input, a')) return;
         setLocation(`/groups/${group.groupId}`);
       }}
@@ -973,8 +976,12 @@ export default function Dashboard() {
                       byGroupRows.map((group, idx) => (
                         <tr
                           key={group.groupId}
-                          className="border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer"
-                          onClick={() => setLocation(`/groups/${group.groupId}`)}
+                          className={`border-b border-border/50 transition-colors ${
+                            group.isSynthetic ? 'bg-muted/10' : 'hover:bg-muted/30 cursor-pointer'
+                          }`}
+                          onClick={() => {
+                            if (!group.isSynthetic) setLocation(`/groups/${group.groupId}`);
+                          }}
                         >
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2">

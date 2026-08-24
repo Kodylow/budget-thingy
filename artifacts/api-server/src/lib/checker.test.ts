@@ -94,6 +94,16 @@ vi.mock("./enterprise", () => ({
     const byUser = memberUsageFixture.get(groupId);
     return byUser ? { byUser, unattributableTotalCostUsd: 0, totalCostUsd: 0 } : undefined;
   },
+  getWorkspaceMemberUsage: () =>
+    extraSpendComplete
+      ? {
+          fetchedAt: Date.now(),
+          byUser: extraSpendFixture,
+          attributableTotalCostUsd: 0,
+          unattributableTotalCostUsd: 0,
+          totalCostUsd: 0,
+        }
+      : undefined,
   getExtraWorkspaceSpend: () => ({
     byUser: extraSpendFixture,
     isComplete: extraSpendComplete,
@@ -104,7 +114,7 @@ vi.mock("./enterprise", () => ({
   getDedupedUsageRollup: (
     groups: EnterpriseGroup[],
     _rangeKey: string,
-    extraSpendByUser?: ReadonlyMap<string, number>,
+    _workspaceIds?: ReadonlySet<string>,
     _groupMembers?: ReadonlyMap<string, readonly string[]>,
   ) => {
     // Fold extra-workspace spend into each user's observed member usage before
@@ -118,7 +128,7 @@ vi.mock("./enterprise", () => ({
       if (!base) continue;
       const byUser = new Map<string, number>();
       for (const [uid, s] of base) {
-        byUser.set(uid, s + (extraSpendByUser?.get(uid) ?? 0));
+        byUser.set(uid, s + (extraSpendFixture.get(uid) ?? 0));
       }
       usageByGroup.set(g.id, { byUser, unattributableTotalCostUsd: 0 });
     }

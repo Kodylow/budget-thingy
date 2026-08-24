@@ -23,6 +23,7 @@ import {
   getExtraWorkspaceSpend,
   getDedupedUsageRollup,
   getMemberUsage,
+  getWorkspaceMemberUsage,
   resolveRange,
   type EnterpriseGroup,
 } from "./enterprise";
@@ -286,12 +287,12 @@ async function buildTeamSpecs(): Promise<EntitySpec[]> {
 
   // Deduped rollup across ALL directory groups, including extra-workspace spend,
   // so a team spanning multiple workspaces sees exactly the dashboard total.
-  const extra = getExtraWorkspaceSpend(dir, TEAM_RANGE_KEY);
   const rollup = getDedupedUsageRollup(
     dir.groups,
     TEAM_RANGE_KEY,
-    extra.byUser,
+    new Set(dir.workspaces.keys()),
     dir.groupMembers,
+    dir.members,
   );
 
   // Period start for team thresholds: use the shared cutoff-anchored billing
@@ -334,24 +335,14 @@ async function buildTeamSpecs(): Promise<EntitySpec[]> {
   return specs;
 }
 
-/**
- * Poll until every group's member usage is loaded for the given range, bounded
- * by a timeout so a stuck fetch cannot hang the whole check. Extra-workspace
- * completeness is checked separately by the rollup builder, which degrades to
- * whatever has loaded rather than blocking indefinitely.
- */
-async function waitForTeamData(
-  groups: EnterpriseGroup[],
+/** Return true only when every workspace has an authoritative usage payload. */
+function hasCompleteTeamData(
+  workspaceIds: readonly string[],
   rangeKey: string,
-  timeoutMs = 5 * 60 * 1000,
-  pollMs = 250,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  const allLoaded = () => groups.every((g) => !!getMemberUsage(g.id, rangeKey));
-  while (!allLoaded() && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, pollMs));
-  }
-  return allLoaded();
+): boolean {
+  return workspaceIds.every(
+    (workspaceId) => !!getWorkspaceMemberUsage(workspaceId, rangeKey),
+  );
 }
 
 const teamChecksInFlight = new Map<string, Promise<{ checkedTeams: number; alerts: Alert[] }>>();
@@ -440,12 +431,14 @@ async function runCheckInternal(
     for (const g of dir.groups) queueMemberUsageFetch(g, range, force ? 0 : 1, force);
     queueExtraWorkspacesFetch(dir, range, force ? 0 : 1, force);
     queueAllWorkspacesFetch(dir, range, force ? 0 : 1, force);
-    const memberDataComplete = await waitForTeamData(dir.groups, range.key);
-    const extraDataComplete = getExtraWorkspaceSpend(dir, range.key).isComplete;
-    if (!memberDataComplete || !extraDataComplete) {
+    const workspaceDataComplete = hasCompleteTeamData(
+      [...dir.workspaces.keys()],
+      range.key,
+    );
+    if (!workspaceDataComplete) {
       teamDataReady = false;
       logger.warn(
-        { memberDataComplete, extraDataComplete },
+        { workspaceDataComplete },
         "Team pool check deferred because deduplication data is incomplete",
       );
     }

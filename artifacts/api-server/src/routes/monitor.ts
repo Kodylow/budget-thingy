@@ -57,7 +57,9 @@ import {
   queueExtraWorkspacesFetch,
   getExtraWorkspaceSpend,
   queueAllWorkspacesFetch,
+  queueWsSpendFetch,
   getWsSpendByUser,
+  getWorkspaceMemberUsage,
   queueProjectUsageFetch,
   getProjectUsage,
   getProjectAttribution,
@@ -266,6 +268,11 @@ router.get("/groups", async (req, res): Promise<void> => {
     // see, so workspace admins never receive records or totals from other
     // workspaces (dedup/rollup are recomputed over the visible scope).
     const scoped = visibleGroups(req.authz!, dir.groups);
+    const isAccountAdmin = isAccountWide(req.authz);
+    const groupedWorkspaceIds = scoped.map((group) => group.workspaceId);
+    const scopedWorkspaceIds = isAccountAdmin
+      ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
+      : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
 
     // Detect same-name groups across workspaces (e.g. after a workspace migration)
     // so only the preferred workspace version shows as a single merged row.
@@ -278,12 +285,8 @@ router.get("/groups", async (req, res): Promise<void> => {
     // Once synchronized, these entries are durable and hydrate before listen.
     for (const group of scoped) queueMemberUsageFetch(group, range, 0);
     for (const group of scoped) queueProjectUsageFetch(group, range, 0);
-    const isAccountAdmin = isAccountWide(req.authz);
-    if (isAccountAdmin) {
-      queueExtraWorkspacesFetch(dir, range, 0);
-      // Also fetch workspace_member data for grouped workspaces: the group_member API
-      // only returns AI-agent spend; workspace_member captures compute + all other types.
-      queueAllWorkspacesFetch(dir, range, 0);
+    for (const workspaceId of scopedWorkspaceIds) {
+      queueWsSpendFetch(workspaceId, range, 0);
     }
     // Raw group totals support alerting/history metadata but are not required to
     // construct the member-deduped dashboard, so keep them in the background.
@@ -296,12 +299,15 @@ router.get("/groups", async (req, res): Promise<void> => {
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
     const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const billing = getBillingPeriod();
-    const extraSpend = isAccountAdmin
-      ? getExtraWorkspaceSpend(dir, range.key)
-      : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
     // Pass ALL scoped groups (including aliases) so the dedup rollup correctly
     // attributes shared users across both the old and new workspace versions.
-    const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
+    const rollup = getDedupedUsageRollup(
+      scoped,
+      range.key,
+      scopedWorkspaceIds,
+      dir.groupMembers,
+      dir.members,
+    );
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
     const projectAttribution = getProjectAttribution(
       range.key,
@@ -329,7 +335,7 @@ router.get("/groups", async (req, res): Promise<void> => {
         // Spend is only "loaded" when this group's member usage, the full rollup, AND
         // all extra-workspace fetches are complete. Until all groups' member usage loads,
         // shared users can be temporarily attributed to the wrong group.
-        const fullyLoaded = memberUsageLoaded && rollup.isComplete && extraSpend.isComplete;
+        const fullyLoaded = rollup.isComplete;
 
         // Sum spend across all same-name source groups. The rollup already deduplicates
         // users so summing byGroup values produces the correct combined total without
@@ -401,13 +407,15 @@ router.get("/groups", async (req, res): Promise<void> => {
           name: g.name,
           teamName: groupTeamMap.get(g.name) ?? null,
           type: g.type,
+          isSynthetic: false,
+          syntheticKind: undefined as "no_group" | undefined,
           memberCount: rawMemberCount || (dir.groupMembers.get(g.id)?.length ?? null),
           rollupMemberCount: mergedRollupMemberCount,
           spendLoaded: fullyLoaded,
           spendUsd: fullyLoaded ? combinedSpend : null,
           projectSpendLoaded: projectAttribution.isComplete,
           projectSpendUsd: projectAttribution.isComplete ? projectSpendUsd : null,
-          rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
+          rollupSpendLoaded: rollup.isComplete,
           rollupSpendUsd: combinedSpend,
           rawMemberSpendUsd: memberUsageLoaded ? rawMemberSpend : null,
           rawMemberSpendLoaded: memberUsageLoaded,
@@ -426,6 +434,40 @@ router.get("/groups", async (req, res): Promise<void> => {
         };
       }),
     );
+
+    for (const [workspaceId, ungrouped] of rollup.ungroupedByWorkspace) {
+      const workspaceUsage = getWorkspaceMemberUsage(workspaceId, range.key);
+      groups.push({
+        groupId: `synthetic:no-group:${workspaceId}`,
+        workspaceId,
+        workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
+        name: "No group",
+        teamName: null,
+        type: "synthetic",
+        isSynthetic: true,
+        syntheticKind: "no_group",
+        memberCount: ungrouped.memberCount,
+        rollupMemberCount: ungrouped.memberCount,
+        spendLoaded: rollup.isComplete,
+        spendUsd: rollup.isComplete ? ungrouped.spendUsd : null,
+        projectSpendLoaded: true,
+        projectSpendUsd: null,
+        rollupSpendLoaded: rollup.isComplete,
+        rollupSpendUsd: ungrouped.spendUsd,
+        rawMemberSpendUsd: null,
+        rawMemberSpendLoaded: false,
+        spendUpdatedAt: workspaceUsage
+          ? new Date(workspaceUsage.fetchedAt).toISOString()
+          : null,
+        budgetUsd: null,
+        budgetSource: null,
+        remainingUsd: null,
+        percentUsed: null,
+        thresholdsFired: [],
+        history: [],
+        projectedSpendUsd: null,
+      });
+    }
 
     // Member-deduped team spend. Sum the rollup byGroup values per team so that
     // team totals stay consistent with the member-deduped spend shown on each
@@ -449,7 +491,7 @@ router.get("/groups", async (req, res): Promise<void> => {
       }
       teamRawSpend[teamName] = {
         spendUsd: teamRollupSpend,
-        spendLoaded: rollup.isComplete && extraSpend.isComplete,
+        spendLoaded: rollup.isComplete,
       };
     }
 
@@ -457,13 +499,11 @@ router.get("/groups", async (req, res): Promise<void> => {
       ListGroupsResponse.parse({
         groups,
         isComplete:
-          rollup.isComplete && extraSpend.isComplete && projectAttribution.isComplete,
+          rollup.isComplete && projectAttribution.isComplete,
         // rollup.pendingCount already counts every missing source group. Adding
         // missing display rows counted the same work twice (e.g. 126 became 252).
         pendingCount:
-          rollup.pendingCount +
-          (extraSpend.totalCount - extraSpend.loadedCount) +
-          projectAttribution.pendingCount,
+          rollup.pendingCount + projectAttribution.pendingCount,
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
         projectSpendLoaded: projectAttribution.isComplete,
         unattributedProjectSpendUsd: projectAttribution.unattributedSpendUsd,
@@ -560,14 +600,20 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const allSourcesLoaded = sourceIds.every((id) => !!getMemberUsage(id, range.key));
 
     const isAccountAdmin = isAccountWide(req.authz);
-    if (isAccountAdmin) {
-      queueExtraWorkspacesFetch(dir, range, 0);
-      queueAllWorkspacesFetch(dir, range, 0);
+    const groupedWorkspaceIds = scoped.map((item) => item.workspaceId);
+    const scopedWorkspaceIds = isAccountAdmin
+      ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
+      : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
+    for (const workspaceId of scopedWorkspaceIds) {
+      queueWsSpendFetch(workspaceId, range, 0);
     }
-    const extraSpend = isAccountAdmin
-      ? getExtraWorkspaceSpend(dir, range.key)
-      : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
-    const rollup = getDedupedUsageRollup(scoped, range.key, extraSpend.byUser, dir.groupMembers);
+    const rollup = getDedupedUsageRollup(
+      scoped,
+      range.key,
+      scopedWorkspaceIds,
+      dir.groupMembers,
+      dir.members,
+    );
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
     const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
     const projectSpendUsd = sourceIds.reduce(
@@ -667,7 +713,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // combinedSpend for members whose spend is attributed elsewhere; the cluster total
     // is therefore derived from group.spendUsd (= combinedSpend), not member-row sums.
     const combinedSpend = attributed.spendUsd;
-    const combinedLoaded = allSourcesLoaded && rollup.isComplete && extraSpend.isComplete;
+    const combinedLoaded = allSourcesLoaded && rollup.isComplete;
     let listedMembersSpend = 0;
     if (memberUsage) {
       for (const userId of userIds) {
@@ -707,7 +753,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           spendUsd: combinedLoaded ? combinedSpend : null,
           projectSpendLoaded,
           projectSpendUsd: projectSpendLoaded ? projectSpendUsd : null,
-          rollupSpendLoaded: rollup.isComplete && extraSpend.isComplete,
+          rollupSpendLoaded: rollup.isComplete,
           rollupSpendUsd: combinedSpend,
           spendUpdatedAt: spend ? new Date(spend.fetchedAt).toISOString() : null,
           budgetUsd: budget.amountUsd,
@@ -723,7 +769,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         members,
         membersSpendUsd: listedMembersSpend,
         unattributedSpendUsd: unattributed,
-        isComplete: combinedLoaded && extraSpend.isComplete,
+        isComplete: combinedLoaded,
         rangeLabel: range.label,
       }),
     );
@@ -1004,6 +1050,15 @@ router.get("/summary", async (req, res): Promise<void> => {
                 budgetedGroups += 1;
               }
             }
+            const scopedWorkspaceIds = isAccount
+              ? new Set([
+                  ...dir.workspaces.keys(),
+                  ...scoped.map((group) => group.workspaceId),
+                ])
+              : new Set([
+                  ...authz.workspaceIds,
+                  ...scoped.map((group) => group.workspaceId),
+                ]);
             // Queue both models independently so /summary can populate from a cold
             // cache without requiring /groups to be visited first.
             for (const group of scoped) {
@@ -1012,27 +1067,18 @@ router.get("/summary", async (req, res): Promise<void> => {
             }
             if (isAccount) {
               queueAccountUsageFetch(range, 0);
-              queueExtraWorkspacesFetch(dir, range, 1);
-              queueAllWorkspacesFetch(dir, range, 1);
             }
-            const summaryExtraSpend = isAccount
-              ? getExtraWorkspaceSpend(dir, range.key)
-              : { byUser: new Map<string, number>(), isComplete: true, loadedCount: 0, totalCount: 0 };
-            const summaryRollup = getDedupedUsageRollup(scoped, range.key, summaryExtraSpend.byUser, dir.groupMembers);
-            // Also sum extra-workspace spend for enterprise members not in ANY custom group.
-            // These users are excluded from the per-group rollup (no group to attribute to)
-            // but ARE counted in the CSV — including them here keeps the two totals consistent.
-            let ungroupedExtraSpend = 0;
-            if (isAccount && summaryExtraSpend.isComplete) {
-              const allGroupedIds = new Set<string>();
-              for (const g of scoped) {
-                for (const uid of dir.groupMembers.get(g.id) ?? []) allGroupedIds.add(uid);
-              }
-              for (const [uid, spend] of summaryExtraSpend.byUser) {
-                if (!allGroupedIds.has(uid)) ungroupedExtraSpend += spend;
-              }
+            for (const workspaceId of scopedWorkspaceIds) {
+              queueWsSpendFetch(workspaceId, range, 1);
             }
-            memberBasedTotalSpendUsd = summaryRollup.totalSpendUsd + ungroupedExtraSpend;
+            const summaryRollup = getDedupedUsageRollup(
+              scoped,
+              range.key,
+              scopedWorkspaceIds,
+              dir.groupMembers,
+              dir.members,
+            );
+            memberBasedTotalSpendUsd = summaryRollup.totalSpendUsd;
             const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
             // totalSpendUsd = member-deduped group rollup + unattributed project spend.
             // This mirrors tableTotals.totalSpendUsd on the dashboard exactly:
@@ -1058,7 +1104,7 @@ router.get("/summary", async (req, res): Promise<void> => {
               totalSpendUsd = displayedRollupSpendUsd + projectAttribution.unattributedSpendUsd;
             }
             pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
-            summaryExtraComplete = summaryExtraSpend.isComplete;
+            summaryExtraComplete = summaryRollup.isComplete;
 
             // Compute over-threshold counts using the same top-level pool logic as tableTotals.
             // Groups assigned to a team: aggregate attributed spend per team and compare against team budget.

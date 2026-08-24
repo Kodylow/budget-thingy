@@ -631,8 +631,8 @@ function aggregateMemberUsage(rows: UsageSyncChunk[]): MemberUsage {
   };
 }
 
-function aggregateWorkspaceMemberUsage(rows: UsageSyncChunk[]): Map<string, number> {
-  return aggregateMemberUsage(rows).byUser;
+function aggregateWorkspaceMemberUsage(rows: UsageSyncChunk[]): MemberUsage {
+  return aggregateMemberUsage(rows);
 }
 
 function aggregateProjectUsage(rows: UsageSyncChunk[]): ProjectUsage {
@@ -1048,14 +1048,31 @@ export function __setWsSpendForTests(
   wsId: string,
   rangeKey: string,
   byUser: Map<string, number> | null,
+  totals?: {
+    attributableTotalCostUsd?: number;
+    unattributableTotalCostUsd?: number;
+    totalCostUsd?: number;
+  },
 ): void {
   const key = `${rangeKey}|${wsId}`;
   if (byUser === null) {
     wsSpendCache.delete(key);
     wsSpendCachedAt.delete(key);
   } else {
-    wsSpendCache.set(key, byUser);
-    wsSpendCachedAt.set(key, Date.now());
+    const attributableTotalCostUsd =
+      totals?.attributableTotalCostUsd ??
+      [...byUser.values()].reduce((sum, spend) => sum + spend, 0);
+    const unattributableTotalCostUsd = totals?.unattributableTotalCostUsd ?? 0;
+    const fetchedAt = Date.now();
+    wsSpendCache.set(key, {
+      fetchedAt,
+      byUser: new Map(byUser),
+      attributableTotalCostUsd,
+      unattributableTotalCostUsd,
+      totalCostUsd:
+        totals?.totalCostUsd ?? attributableTotalCostUsd + unattributableTotalCostUsd,
+    });
+    wsSpendCachedAt.set(key, fetchedAt);
   }
 }
 
@@ -1378,11 +1395,18 @@ export function queueMemberUsageFetch(
 // the dedicated workspace is not captured by the per-group Comcast fetches, so we
 // fetch each extra workspace's member-level totals and merge them in.
 
-const wsSpendCache = new Map<string, Map<string, number>>(); // `${rangeKey}|${wsId}` → userId → spend
+const wsSpendCache = new Map<string, MemberUsage>(); // `${rangeKey}|${wsId}` → complete workspace usage
 const wsSpendCachedAt = new Map<string, number>(); // `${rangeKey}|${wsId}` → fetchedAt timestamp
 const wsSpendFetching = new Set<string>(); // in-flight cache keys
 
 export function getWsSpendByUser(wsId: string, rangeKey: string): Map<string, number> | undefined {
+  return wsSpendCache.get(`${rangeKey}|${wsId}`)?.byUser;
+}
+
+export function getWorkspaceMemberUsage(
+  wsId: string,
+  rangeKey: string,
+): MemberUsage | undefined {
   return wsSpendCache.get(`${rangeKey}|${wsId}`);
 }
 
@@ -1465,7 +1489,7 @@ export function getExtraWorkspaceSpend(
     const wsData = wsSpendCache.get(`${rangeKey}|${wsId}`);
     if (!wsData) continue;
     loadedCount += 1;
-    for (const [userId, spend] of wsData) {
+    for (const [userId, spend] of wsData.byUser) {
       byUser.set(userId, (byUser.get(userId) ?? 0) + spend);
     }
   }
@@ -1702,25 +1726,25 @@ export function queueProjectTitlesFetch(workspaceId: string, priority = 0): bool
 }
 
 /**
- * Two-phase deduped rollup combining Comcast + extra-workspace spend.
+ * Workspace-aware dashboard rollup.
  *
- * Phase 1 – Comcast aggregation:
- *   Sum each user's per-group-project Comcast spend across ALL groups they appear in.
- *   Do NOT inject extra-workspace spend here. A user with $0 Comcast spend in Alpha
- *   (their first group) but $10 in Beta must not lose their $10 Beta spend because
- *   it was discarded when Alpha claimed the user in Phase 2.
+ * A workspace_member payload is the authoritative observation for each
+ * (workspace, user) pair. While it is loading, the largest group_member
+ * observation in that workspace is exposed provisionally; different serialized
+ * observations are never added together. Distinct workspaces always remain
+ * distinct observations, even when their dollar values happen to be equal.
  *
- * Phase 2 – Attribution + extra-workspace:
- *   Iterate groups in stable sort order. Attribute each user to their FIRST group
- *   (by directory membership when available, otherwise by API response membership).
- *   Add extra-workspace spend to that user's attributed group only — never injected
- *   into every group map before dedup.
+ * Each pair is attributed to the first custom group in stable order whose
+ * directory or usage membership contains the user. Unmatched workspace members,
+ * usage users, and no-user workspace charges are retained in a synthetic
+ * per-workspace "No group" bucket.
  */
 export function getDedupedUsageRollup(
   groups: EnterpriseGroup[],
   rangeKey: string,
-  extraSpendByUser?: ReadonlyMap<string, number>,
+  workspaceIds?: ReadonlySet<string>,
   groupMembers?: ReadonlyMap<string, readonly string[]>,
+  directoryMembers?: ReadonlyMap<string, EnterpriseMember>,
 ): DedupedUsageRollup {
   const ordered: EnterpriseGroup[] = [...groups].sort(
     (a, b) =>
@@ -1729,73 +1753,96 @@ export function getDedupedUsageRollup(
       a.id.localeCompare(b.id),
   );
 
-  // Phase 1: combine distinct member-spend observations across groups. Identical
-  // observations are the same account-level usage exposed through overlapping
-  // group filters and must only count once; differing observations represent
-  // separate group/project spend and are combined before stable attribution.
   let pendingCount = 0;
-  const comcastSpendByUser = new Map<string, number>();
-  const observedSpendByUser = new Map<string, Set<number>>();
   const usageByGroup = new Map<string, MemberUsage>();
   for (const group of ordered) {
     const usage = getMemberUsage(group.id, rangeKey);
     if (!usage) {
-      pendingCount++;
+      // Workspace payloads are authoritative when a workspace scope is supplied.
+      // Missing group payloads only make the legacy group-only fallback incomplete.
+      if (!workspaceIds) pendingCount++;
       continue;
     }
     usageByGroup.set(group.id, usage);
-    for (const [userId, spend] of usage.byUser) {
-      let observations = observedSpendByUser.get(userId);
-      if (!observations) {
-        observations = new Set();
-        observedSpendByUser.set(userId, observations);
-      }
-      if (observations.has(spend)) continue;
-      observations.add(spend);
-      comcastSpendByUser.set(userId, (comcastSpendByUser.get(userId) ?? 0) + spend);
-    }
   }
 
-  // Phase 2: attribute each user to their first group, then compute combined spend.
-  // Extra-workspace spend is added once here, after attribution is determined.
   const byGroup = new Map<string, DedupedGroupRollup>();
   for (const group of ordered) byGroup.set(group.id, { spendUsd: 0, memberCount: 0, byUser: new Map() });
+  const ungroupedByWorkspace = new Map<string, DedupedGroupRollup>();
+  const scopedWorkspaceIds =
+    workspaceIds ?? new Set(ordered.map((group) => group.workspaceId));
 
-  const seenUsers = new Set<string>();
+  let totalMemberCount = 0;
   let totalSpendUsd = 0;
 
-  for (const group of ordered) {
-    const groupRollup = byGroup.get(group.id)!;
-    const rollupByUser = groupRollup.byUser as Map<string, number>;
-    const unattributableSpend = usageByGroup.get(group.id)?.unattributableTotalCostUsd ?? 0;
-    (groupRollup as { spendUsd: number }).spendUsd += unattributableSpend;
-    totalSpendUsd += unattributableSpend;
+  for (const workspaceId of [...scopedWorkspaceIds].sort()) {
+    const workspaceGroups = ordered.filter((group) => group.workspaceId === workspaceId);
+    const workspaceUsage = wsSpendCache.get(`${rangeKey}|${workspaceId}`);
+    if (!workspaceUsage) pendingCount += 1;
 
-    // Candidate members: directory membership (authoritative for $0-spend members)
-    // unioned with API usage response (catches users missing from directory).
-    const dirMembers: readonly string[] = groupMembers?.get(group.id) ?? [];
-    const apiMembers: Iterable<string> = usageByGroup.get(group.id)?.byUser.keys() ?? [];
-    const allCandidates = new Set<string>([...dirMembers, ...apiMembers]);
+    const candidates = new Set<string>();
+    for (const member of directoryMembers?.values() ?? []) {
+      if (member.workspaces.has(workspaceId)) candidates.add(member.userId);
+    }
+    for (const userId of workspaceUsage?.byUser.keys() ?? []) candidates.add(userId);
+    for (const group of workspaceGroups) {
+      for (const userId of groupMembers?.get(group.id) ?? []) candidates.add(userId);
+      for (const userId of usageByGroup.get(group.id)?.byUser.keys() ?? []) candidates.add(userId);
+    }
 
-    for (const userId of allCandidates) {
-      if (seenUsers.has(userId)) continue;
-      seenUsers.add(userId);
+    const ungrouped: DedupedGroupRollup = {
+      spendUsd: workspaceUsage?.unattributableTotalCostUsd ?? 0,
+      memberCount: 0,
+      byUser: new Map(),
+    };
+    const ungroupedByUser = ungrouped.byUser as Map<string, number>;
+    totalSpendUsd += ungrouped.spendUsd;
 
-      const comcastSpend = comcastSpendByUser.get(userId) ?? 0;
-      const extraSpend = extraSpendByUser?.get(userId) ?? 0;
-      const combined = comcastSpend + extraSpend;
+    for (const userId of [...candidates].sort()) {
+      let spendUsd = workspaceUsage?.byUser.get(userId);
+      if (spendUsd === undefined) {
+        spendUsd = 0;
+        for (const group of workspaceGroups) {
+          spendUsd = Math.max(spendUsd, usageByGroup.get(group.id)?.byUser.get(userId) ?? 0);
+        }
+      }
 
-      rollupByUser.set(userId, combined);
-      (groupRollup as { spendUsd: number }).spendUsd += combined;
-      (groupRollup as { memberCount: number }).memberCount += 1;
-      totalSpendUsd += combined;
+      const owner = workspaceGroups.find(
+        (group) =>
+          (groupMembers?.get(group.id) ?? []).includes(userId) ||
+          usageByGroup.get(group.id)?.byUser.has(userId),
+      );
+      const target = owner ? byGroup.get(owner.id)! : ungrouped;
+      const targetByUser = target.byUser as Map<string, number>;
+      targetByUser.set(userId, spendUsd);
+      (target as { spendUsd: number }).spendUsd += spendUsd;
+      (target as { memberCount: number }).memberCount += 1;
+      totalMemberCount += 1;
+      totalSpendUsd += spendUsd;
+    }
+
+    if (ungrouped.memberCount > 0 || ungrouped.spendUsd !== 0) {
+      ungroupedByWorkspace.set(workspaceId, ungrouped);
+    }
+
+    // Preserve provisional group-filter no-user charges until the authoritative
+    // workspace payload lands. Once loaded, its no-user total replaces them.
+    if (!workspaceUsage) {
+      for (const group of workspaceGroups) {
+        const unattributableSpend =
+          usageByGroup.get(group.id)?.unattributableTotalCostUsd ?? 0;
+        const target = byGroup.get(group.id)!;
+        (target as { spendUsd: number }).spendUsd += unattributableSpend;
+        totalSpendUsd += unattributableSpend;
+      }
     }
   }
 
   return {
     byGroup,
+    ungroupedByWorkspace,
     totalSpendUsd,
-    totalMemberCount: seenUsers.size,
+    totalMemberCount,
     pendingCount,
     isComplete: pendingCount === 0,
   };

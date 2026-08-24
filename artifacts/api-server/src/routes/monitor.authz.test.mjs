@@ -25,6 +25,7 @@ import {
   __setDirectoryCacheForTests,
   __setAccountUsageForTests,
   __setMemberUsageForTests,
+  __setWsSpendForTests,
   __setProjectUsageForTests,
   resolveRange,
 } from "../lib/enterprise.ts";
@@ -102,10 +103,22 @@ test.before(async () => {
   }
   __setAccountUsageForTests("custom:2026-05-20:2026-08-11", {
     fetchedAt: Date.now(),
-    totalCostUsd: 77,
-    attributableTotalCostUsd: 70,
+    totalCostUsd: 117,
+    attributableTotalCostUsd: 110,
     unattributableTotalCostUsd: 7,
   });
+  __setWsSpendForTests(
+    "ws-1",
+    "custom:2026-05-20:2026-08-11",
+    new Map([["shared", 40], ["ws1-only", 10]]),
+    { unattributableTotalCostUsd: 3 },
+  );
+  __setWsSpendForTests(
+    "ws-2",
+    "custom:2026-05-20:2026-08-11",
+    new Map([["shared", 40], ["ws2-only", 20]]),
+    { unattributableTotalCostUsd: 4 },
+  );
 
   // Inject the real resolution logic but against the seeded directory. Using
   // the actual resolver keeps the test faithful to production behavior.
@@ -191,6 +204,8 @@ test.after(async () => {
   await db.delete(usersTable).where(inArray(usersTable.id, ["editor", "candidate-editor", "bootstrap-editor"]));
   __setDirectoryCacheForTests(null);
   __setAccountUsageForTests("custom:2026-05-20:2026-08-11", null);
+  __setWsSpendForTests("ws-1", "custom:2026-05-20:2026-08-11", null);
+  __setWsSpendForTests("ws-2", "custom:2026-05-20:2026-08-11", null);
   __setMemberUsageForTests("custom:2026-05-20:2026-08-11", null);
   __setProjectUsageForTests("g-ws1-a", "custom:2026-05-20:2026-08-11", null);
   __setProjectUsageForTests("g-ws2-a", "custom:2026-05-20:2026-08-11", null);
@@ -231,15 +246,19 @@ test("authenticated but unauthorized user returns 403", async () => {
 test("account admin sees every group", async () => {
   const { status, json } = await req("/groups", { user: "acct" });
   assert.equal(status, 200);
-  const ids = json.groups.map((g) => g.groupId).sort();
+  const ids = json.groups.filter((g) => !g.isSynthetic).map((g) => g.groupId).sort();
   assert.deepEqual(ids, ["g-ws1-a", "g-ws2-a"]);
 });
 
 test("workspace admin only sees in-scope groups", async () => {
   const { status, json } = await req("/groups", { user: "ws1admin" });
   assert.equal(status, 200);
-  const ids = json.groups.map((g) => g.groupId);
+  const ids = json.groups.filter((g) => !g.isSynthetic).map((g) => g.groupId);
   assert.deepEqual(ids, ["g-ws1-a"]);
+  assert.ok(
+    json.groups.filter((g) => g.isSynthetic).every((g) => g.workspaceId === "ws-1"),
+    "workspace admins must never receive synthetic rows from another workspace",
+  );
 });
 
 test("summary totalGroups reflects the scoped group set", async () => {
@@ -261,10 +280,11 @@ test("custom range uses inclusive UTC days and all visible workspaces without ov
     { user: "acct" },
   );
   assert.equal(acct.status, 200);
-  // totalSpendUsd is now member-deduped rollup:
-  // shared(40, once)+ws1-only(10)+ws2-only(20) + unattributable(3+4) = 77
-  assert.equal(acct.json.totalSpendUsd, 77);
-  assert.equal(acct.json.accountUsageTotalSpendUsd, 77);
+  // Equal values in distinct workspaces are distinct observations:
+  // shared(40 in ws-1 + 40 in ws-2)+ws1-only(10)+ws2-only(20)+unattributable(3+4)=117.
+  assert.equal(acct.json.totalSpendUsd, 117);
+  assert.equal(acct.json.memberBasedTotalSpendUsd, 117);
+  assert.equal(acct.json.accountUsageTotalSpendUsd, 117);
   assert.equal(acct.json.reconciliationSpendUsd, 0);
   assert.equal(acct.json.isComplete, true);
 
@@ -440,7 +460,13 @@ test("account admin can read account-only endpoints", async () => {
 test("allowlisted editor has account-wide operational access but no settings or access management", async () => {
   const groupsResponse = await req("/groups", { user: "editor" });
   assert.equal(groupsResponse.status, 200);
-  assert.deepEqual(groupsResponse.json.groups.map((group) => group.groupId).sort(), ["g-ws1-a", "g-ws2-a"]);
+  assert.deepEqual(
+    groupsResponse.json.groups
+      .filter((group) => !group.isSynthetic)
+      .map((group) => group.groupId)
+      .sort(),
+    ["g-ws1-a", "g-ws2-a"],
+  );
 
   const setPool = await req("/groups/g-ws1-a/budget", {
     user: "editor",

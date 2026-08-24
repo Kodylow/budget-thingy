@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { GroupSyntheticKind } from './groupSyntheticKind';
 import type { SpendPoint } from './spendPoint';
 
 export interface Group {
@@ -20,6 +21,10 @@ export interface Group {
   teamName?: string | null;
   /** Group type (custom, admin, member, guest) */
   type: string;
+  /** True for a generated accounting row rather than a real Enterprise group */
+  isSynthetic?: boolean;
+  /** Kind of generated accounting row; present only when isSynthetic is true */
+  syntheticKind?: GroupSyntheticKind;
   /**
      * Number of members in the group, null while loading
      * @nullable

@@ -23,6 +23,8 @@ export interface DedupedGroupRollup {
 
 export interface DedupedUsageRollup {
   byGroup: Map<string, DedupedGroupRollup>;
+  /** Workspace usage that cannot be assigned to a custom group in that workspace. */
+  ungroupedByWorkspace: Map<string, DedupedGroupRollup>;
   totalSpendUsd: number;
   totalMemberCount: number;
   pendingCount: number;
@@ -97,6 +99,7 @@ export function computeDedupedUsageRollup(
 
   return {
     byGroup,
+    ungroupedByWorkspace: new Map(),
     totalSpendUsd,
     totalMemberCount: seenUsers.size,
     pendingCount,

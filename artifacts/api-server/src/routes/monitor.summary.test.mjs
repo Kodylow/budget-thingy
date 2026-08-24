@@ -133,6 +133,7 @@ test.before(async () => {
 test.after(async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
+  __setWsSpendForTests("ws-main", RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
   __setAccountUsageForTests(RANGE, null);
   clearProjectSpend();
@@ -154,6 +155,7 @@ async function req(path, user = "acct") {
 test("summary returns isComplete:false and zero spend with empty usage caches", async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
+  __setWsSpendForTests("ws-main", RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
   clearProjectSpend();
 
@@ -171,6 +173,7 @@ test("summary is not complete when extra-workspace data is still pending", async
   // alice: $30 in Alpha, $20 in Beta (de-duped); carol: $10 in Alpha; bob: $15 in Beta.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, null); // extra ws still loading
   setProjectSpend(60, 15);
   setAccountUsage(75);
@@ -195,6 +198,7 @@ test("summary reflects combined deduped spend once all caches are warm", async (
   // Total: $70+$15+$15+$8 = $108
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
   setProjectSpend(85, 15, 8);
   setAccountUsage(108, 3);
@@ -206,8 +210,8 @@ test("summary reflects combined deduped spend once all caches are warm", async (
   assert.equal(json.accountUsageTotalSpendUsd, 108);
   assert.equal(json.accountUsageAttributableSpendUsd, 105);
   assert.equal(json.accountUsageUnattributableSpendUsd, 3);
-  assert.equal(json.reconciliationSpendUsd, 8,
-    "account anchor minus the $100 displayed group rollup must be explicit");
+  assert.equal(json.reconciliationSpendUsd, 0,
+    "real and synthetic rows fully reconcile to the account anchor");
 });
 
 test("summary deduplication: alice counted only once across groups", async () => {
@@ -215,6 +219,7 @@ test("summary deduplication: alice counted only once across groups", async () =>
   // alice's $30 Alpha + $20 Beta Comcast is summed once ($50) then attributed to Alpha.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
   setProjectSpend(85, 15, 8);
   setAccountUsage(108);
@@ -332,6 +337,7 @@ test("CSV attribution matches dashboard even when API returns groups in reverse 
 test("/groups and /summary: user with $0 in first group gets full combined spend attributed there", async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 0], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 10], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 10], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 5]]));
   setProjectSpend(25, 15);
   setAccountUsage(40);
@@ -341,10 +347,13 @@ test("/groups and /summary: user with $0 in first group gets full combined spend
   const beta  = grpJson.groups.find((g) => g.groupId === "sg-beta");
   assert.equal(alpha.spendLoaded, true, "Alpha must be loaded");
   assert.equal(beta.spendLoaded, true, "Beta must be loaded");
-  // Alpha: alice($0+$10+$5=15) + carol($10) = $25
-  assert.equal(alpha.spendUsd, 25, "Alpha combined: alice $15 + carol $10");
+  // Alpha owns ws-main usage only: alice($10) + carol($10) = $20.
+  assert.equal(alpha.spendUsd, 20, "Alpha workspace spend: alice $10 + carol $10");
   // Beta: bob($15), alice attributed to Alpha
   assert.equal(beta.spendUsd, 15, "Beta combined: bob $15 (alice attributed to Alpha)");
+  const noGroup = grpJson.groups.find((g) => g.groupId === "synthetic:no-group:ws-extra");
+  assert.equal(noGroup.name, "No group");
+  assert.equal(noGroup.spendUsd, 5, "extra-workspace spend is explicit, not injected into Alpha");
 
   const sumJson = await req("/summary");
   assert.equal(sumJson.isComplete, true);
@@ -369,26 +378,21 @@ test("CSV: user with $0 in first group gets full combined spend in CSV row for t
 
 // ── Dedup correctness: shared user + missing earlier group ─────────────────────────
 
-test("/groups: spendLoaded stays false while earlier-group member usage is missing", async () => {
-  // Beta loads first; alice is shared. Alpha sorts before Beta so alice SHOULD be
-  // attributed to Alpha — but Alpha's usage is missing, so the rollup is incomplete.
-  // spendLoaded must remain false for Beta (and all groups) until Alpha loads.
+test("/groups: complete workspace usage remains authoritative when group usage is missing", async () => {
+  // The workspace payload and directory membership are sufficient for exact
+  // attribution even when an earlier group's filtered usage payload is missing.
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 20], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map());
 
   const json = await req("/groups");
   const beta = json.groups.find((g) => g.groupId === "sg-beta");
   assert.ok(beta, "Beta must appear in /groups response");
-  assert.equal(beta.spendLoaded, false,
-    "Beta.spendLoaded must be false: Alpha's member usage missing so alice's dedup attribution is provisional");
-  assert.equal(beta.spendUsd, null, "spendUsd must be null while rollup is incomplete");
-  assert.equal(json.isComplete, false, "top-level isComplete must be false");
-  assert.equal(
-    json.pendingCount,
-    1,
-    "the one missing source group must be counted once, not again as a missing display row",
-  );
+  assert.equal(beta.spendLoaded, true);
+  assert.equal(beta.spendUsd, 15);
+  assert.equal(json.isComplete, true);
+  assert.equal(json.pendingCount, 0);
 });
 
 test("/groups: correct combined spend once all group caches warm", async () => {
@@ -396,6 +400,7 @@ test("/groups: correct combined spend once all group caches warm", async () => {
   // Two-phase approach: sum Comcast across all her groups first, then add extra-ws once.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5]]));
   setProjectSpend(85, 15);
 
@@ -404,11 +409,75 @@ test("/groups: correct combined spend once all group caches warm", async () => {
   const beta  = json.groups.find((g) => g.groupId === "sg-beta");
   assert.equal(alpha.spendLoaded, true, "Alpha must be loaded");
   assert.equal(beta.spendLoaded, true, "Beta must be loaded");
-  // Alpha: alice($30+$20 Comcast + $20 extra = $70) + carol($10 + $5 extra = $15) = $85
-  assert.equal(alpha.spendUsd, 85, "Alpha combined spend: alice $70 + carol $15");
+  // Alpha: authoritative ws-main values, alice($50) + carol($10) = $60.
+  assert.equal(alpha.spendUsd, 60, "Alpha workspace spend: alice $50 + carol $10");
   // Beta: bob ($15, no extra-ws). Alice attributed to Alpha.
   assert.equal(beta.spendUsd, 15, "Beta combined spend: bob $15 (alice attributed to Alpha)");
+  assert.equal(
+    json.groups.find((g) => g.groupId === "synthetic:no-group:ws-extra")?.spendUsd,
+    25,
+  );
   assert.equal(json.isComplete, true);
+});
+
+test("/groups retains ungrouped members and no-user charges with stable workspace attribution", async () => {
+  const extendedMembers = new Map(members);
+  extendedMembers.set("erin", m("erin", false, {
+    "ws-main": { role: "member", isDisabled: false },
+  }));
+  __setDirectoryCacheForTests({
+    workspaces: wsExtra,
+    groups: [...groups].reverse(),
+    members: extendedMembers,
+    groupMembers: new Map([
+      ["sg-alpha", ["alice", "carol"]],
+      ["sg-beta", ["alice", "bob"]],
+    ]),
+  });
+  __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
+  __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests(
+    "ws-main",
+    RANGE,
+    new Map([["alice", 35], ["carol", 10], ["bob", 15], ["erin", 7]]),
+    { unattributableTotalCostUsd: 3 },
+  );
+  __setWsSpendForTests(
+    "ws-extra",
+    RANGE,
+    new Map([["alice", 35], ["dave", 8]]),
+    { unattributableTotalCostUsd: 2 },
+  );
+  setProjectSpend(45, 15);
+  setAccountUsage(115, 5);
+
+  try {
+    const json = await req("/groups");
+    assert.equal(json.isComplete, true);
+    assert.equal(json.groups.find((g) => g.groupId === "sg-alpha")?.spendUsd, 45,
+      "workspace payload wins over drifting 30/20 group observations and Alpha wins stable attribution");
+    assert.equal(json.groups.find((g) => g.groupId === "sg-beta")?.spendUsd, 15);
+
+    const mainNoGroup = json.groups.find(
+      (g) => g.groupId === "synthetic:no-group:ws-main",
+    );
+    assert.equal(mainNoGroup.name, "No group");
+    assert.equal(mainNoGroup.memberCount, 1);
+    assert.equal(mainNoGroup.spendUsd, 10, "erin $7 plus $3 no-user workspace spend");
+
+    const extraNoGroup = json.groups.find(
+      (g) => g.groupId === "synthetic:no-group:ws-extra",
+    );
+    assert.equal(extraNoGroup.spendUsd, 45,
+      "equal $35 observations in separate workspaces are both retained, plus dave and no-user spend");
+
+    const summary = await req("/summary");
+    assert.equal(summary.totalSpendUsd, 115);
+    assert.equal(summary.memberBasedTotalSpendUsd, 115);
+    assert.equal(summary.reconciliationSpendUsd, 0);
+  } finally {
+    restoreDir();
+  }
 });
 
 // ── Documented behavior: ungrouped members ─────────────────────────────────────────
@@ -416,6 +485,7 @@ test("/groups: correct combined spend once all group caches warm", async () => {
 test("unmatched project spend is included in the project-based summary total", async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["dave", 8]]));
   setProjectSpend(10, 15, 8);
   setAccountUsage(33);
@@ -432,6 +502,7 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
   // can become true without the admin first visiting /groups or /summary.
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
+  __setWsSpendForTests("ws-main", RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
 
   // First request: caches cold — spendLoaded must be false (rollup not complete).
@@ -442,6 +513,7 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
   // Warm all caches as the background queue would do after the first request.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20]]));
 
   // Second request: caches warm — spendLoaded must be true and spend correct.

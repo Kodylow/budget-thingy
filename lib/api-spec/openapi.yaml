@@ -1021,6 +1021,13 @@ components:
         type:
           type: string
           description: Group type (custom, admin, member, guest)
+        isSynthetic:
+          type: boolean
+          description: True for a generated accounting row rather than a real Enterprise group
+        syntheticKind:
+          type: string
+          enum: [no_group]
+          description: Kind of generated accounting row; present only when isSynthetic is true
         memberCount:
           type: ["integer", "null"]
           description: Number of members in the group, null while loading

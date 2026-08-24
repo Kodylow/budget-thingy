@@ -90,6 +90,16 @@ export interface SpendPoint {
   spendUsd: number;
 }
 
+/**
+ * Kind of generated accounting row; present only when isSynthetic is true
+ */
+export type GroupSyntheticKind = typeof GroupSyntheticKind[keyof typeof GroupSyntheticKind];
+
+
+export const GroupSyntheticKind = {
+  no_group: 'no_group',
+} as const;
+
 export interface Group {
   groupId: string;
   workspaceId: string;
@@ -103,6 +113,10 @@ export interface Group {
   teamName?: string | null;
   /** Group type (custom, admin, member, guest) */
   type: string;
+  /** True for a generated accounting row rather than a real Enterprise group */
+  isSynthetic?: boolean;
+  /** Kind of generated accounting row; present only when isSynthetic is true */
+  syntheticKind?: GroupSyntheticKind;
   /**
      * Number of members in the group, null while loading
      * @nullable
