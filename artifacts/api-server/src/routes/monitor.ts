@@ -489,6 +489,15 @@ router.get("/groups", async (req, res): Promise<void> => {
           teamRollupSpend += rollup.byGroup.get(srcId)?.spendUsd ?? 0;
         }
       }
+      // spendUsd is the current deduped rollup estimate for this team — it is
+      // always emitted (non-null) so the dashboard can display it as a
+      // provisional figure while loading is still in progress. spendLoaded
+      // remains a global flag because the two-phase dedup algorithm can change
+      // any team's attributed total when any other group loads (Phase 1 sums
+      // spend across ALL groups before Phase 2 attributes it to the first
+      // sorted group). The dashboard uses spendUsd immediately and treats
+      // spendLoaded as "is the value now final?" rather than "is there a
+      // value to show?".
       teamRawSpend[teamName] = {
         spendUsd: teamRollupSpend,
         spendLoaded: rollup.isComplete,

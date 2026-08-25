@@ -552,10 +552,13 @@ export default function Dashboard() {
           </span>
         </td>
         <td className="py-3 px-4 text-right">
-          {!team.spendLoaded ? (
+          {/* Show the provisional rollup value as soon as any spend is available,
+              even before spendLoaded (which waits for global dedup completion).
+              When spendUsd is still 0 and not loaded, show the spinner instead. */}
+          {!team.spendLoaded && team.spendUsd === 0 ? (
             <div className="flex justify-end"><LoadingCell /></div>
           ) : (
-            <span className="text-sm font-mono tabular-nums font-semibold">
+            <span className={`text-sm font-mono tabular-nums font-semibold${!team.spendLoaded ? ' text-muted-foreground' : ''}`}>
               ${team.spendUsd.toFixed(2)}
             </span>
           )}

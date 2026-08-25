@@ -524,6 +524,84 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
   assert.equal(warm.group.spendUsd, 15, "Beta spend = bob $15; alice attributed to Alpha");
 });
 
+// ── teamRawSpend: provisional spendUsd available before spendLoaded is true ──────────
+//
+// teamRawSpend.spendUsd is the current deduped rollup estimate for a team — it
+// is always emitted (non-null, 0 before any group loads) so the dashboard can
+// display it as a provisional figure during loading. spendLoaded=true means the
+// value is final; spendLoaded=false means it may still change as other groups load.
+//
+// This allows the dashboard to show "$40.00 (loading)" instead of "—" for teams
+// whose own groups have already contributed data to the rollup.
+
+test("/groups teamRawSpend: spendUsd populates provisionally while spendLoaded stays false", async () => {
+  // OT-Alpha → Team A, OT-Beta → Team B. Alice is in both groups.
+  // Phase 2 of the dedup rollup attributes alice to Alpha (sorts first), so
+  // Team A's provisional value changes once Beta loads: $40 → $60.
+  // spendLoaded stays false until both groups load (global dedup requirement).
+  const TEAM_A = "OT-Team-A";
+  const TEAM_B = "OT-Team-B";
+  setOtDir();
+  await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+  await db.insert(groupTeamsTable).values([
+    { groupName: OT_G1.name, teamName: TEAM_A },
+    { groupName: OT_G2.name, teamName: TEAM_B },
+  ]);
+  // Seed zero project spend so projectAttribution.isComplete is true for both steps.
+  seedOtProject(OT_G1.id, 0);
+  seedOtProject(OT_G2.id, 0);
+  try {
+    // Step 1: Alpha loaded, Beta pending.
+    // Rollup Phase 1 only sees Alpha: alice=$30, carol=$10.
+    // Team A provisional: alice($30) + carol($10) = $40.
+    // Team B provisional: $0 (Beta pending, no byGroup entry yet).
+    __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 30], ["carol", 10]]));
+    __setMemberUsageForTests(OT_G2.id, RANGE, null);
+
+    const partial = await req("/groups");
+    const teamA_partial = partial.teamRawSpend?.[TEAM_A];
+    const teamB_partial = partial.teamRawSpend?.[TEAM_B];
+    assert.ok(teamA_partial, "teamRawSpend must include Team A");
+    assert.ok(teamB_partial, "teamRawSpend must include Team B");
+    assert.equal(partial.isComplete, false, "isComplete must be false while Beta is pending");
+    assert.equal(
+      teamA_partial.spendLoaded, false,
+      "Team A spendLoaded must be false: rollup is not globally complete",
+    );
+    assert.equal(
+      teamA_partial.spendUsd, 40,
+      "Team A spendUsd is the provisional rollup estimate: alice $30 + carol $10 = $40",
+    );
+    assert.equal(
+      teamB_partial.spendLoaded, false,
+      "Team B spendLoaded must be false: Beta's member usage is pending",
+    );
+    assert.equal(
+      teamB_partial.spendUsd, 0,
+      "Team B spendUsd is $0 while Beta is pending",
+    );
+
+    // Step 2: Both loaded. Phase 1 combines alice's spend ($30 Alpha + $20 Beta = $50);
+    // Phase 2 attributes the $50 to Alpha (first in sort order). carol ($10) goes
+    // to Alpha; bob ($15) is Beta-only.
+    __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 20], ["bob", 15]]));
+
+    const full = await req("/groups");
+    const teamA_full = full.teamRawSpend?.[TEAM_A];
+    const teamB_full = full.teamRawSpend?.[TEAM_B];
+    assert.equal(full.isComplete, true, "isComplete must be true once both groups are loaded");
+    assert.equal(teamA_full.spendLoaded, true, "Team A must be loaded once rollup is complete");
+    assert.equal(teamA_full.spendUsd, 60, "Team A final: alice $50 (combined) + carol $10 = $60");
+    assert.equal(teamB_full.spendLoaded, true, "Team B must be loaded once rollup is complete");
+    assert.equal(teamB_full.spendUsd, 15, "Team B final: bob $15 (alice attributed to Alpha)");
+  } finally {
+    await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+    __setMemberUsageForTests(OT_G1.id, RANGE, null);
+    __setMemberUsageForTests(OT_G2.id, RANGE, null);
+    restoreOtDir();
+  }
+});
+
 // ── Over-threshold counts and totalRemainingUsd reconciliation ─────────────────────
 // These tests use distinct group IDs ("sg-ot-*") and group names ("OT-*") that
 // are not shared with any other test file, avoiding DB conflicts when test files
