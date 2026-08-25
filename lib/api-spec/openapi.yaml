@@ -440,6 +440,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /users/activity:
+    get:
+      operationId: getUserActivity
+      tags: [groups]
+      summary: List canonical per-user activity
+      description: >
+        Returns one row per visible member using the same workspace-aware,
+        all-metric attributed usage shown in group and cluster member tables.
+        Each user-workspace pair is counted once and distinct workspaces are
+        summed. Replit's in-product per-user table is Agent-only and may be lower.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Progressive canonical user activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserActivityResponse"
+        "400":
+          description: Invalid date range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Enterprise API unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /export/users.csv:
+    get:
+      operationId: exportUsersCsv
+      tags: [groups]
+      summary: Export canonical per-user activity as CSV
+      description: >
+        Exports the same selected-range, all-metric attributed per-user values
+        returned by User Activity. Values include AI, deployments, storage, and
+        other attributed metrics; Replit's in-product per-user table is Agent-only.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: User activity CSV
+          headers:
+            X-Export-Complete:
+              description: Whether all authoritative workspace usage was loaded
+              schema:
+                type: boolean
+            X-Usage-Range:
+              description: Resolved range cache key used for the export
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        "400":
+          description: Invalid date range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /budgets:
     get:
       operationId: listBudgets
@@ -1231,7 +1313,7 @@ components:
           type: boolean
         spendUsd:
           type: ["number", "null"]
-          description: Usage in the selected range attributable to this user within the group
+          description: Canonical all-metric attributed usage for this user across the caller's visible workspaces in the selected range
         remainingUsd:
           type: ["number", "null"]
         percentUsed:
@@ -1296,7 +1378,7 @@ components:
             $ref: "#/components/schemas/GroupMember"
         membersSpendUsd:
           type: number
-          description: Sum of loaded member spend (reconciles with group spend plus unattributed)
+          description: Sum of canonical per-user rows currently listed; informational and not a group budget accounting total
         unattributedSpendUsd:
           type: number
           description: Group spend not attributable to a listed member (deleted users, shared costs)
@@ -1305,6 +1387,41 @@ components:
           description: False while member usage is still loading; poll every ~8s until true
         rangeLabel:
           type: string
+    UserActivityEntry:
+      type: object
+      required: [userId, username, email, teamName, groupName, spendUsd, workspaceRole]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        teamName:
+          type: string
+        groupName:
+          type: string
+        spendUsd:
+          type: number
+          description: Canonical all-metric attributed usage for the selected range
+        workspaceRole:
+          type: string
+    UserActivityResponse:
+      type: object
+      required: [isComplete, loadedCount, totalCount, users]
+      properties:
+        isComplete:
+          type: boolean
+        loadedCount:
+          type: integer
+          description: Authoritative workspace usage scopes currently loaded
+        totalCount:
+          type: integer
+          description: Authoritative workspace usage scopes in the caller's visibility
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserActivityEntry"
     Summary:
       type: object
       required:

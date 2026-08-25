@@ -1,10 +1,8 @@
 /**
  * Regression tests for /users/activity cross-group spend totals.
  * Locks in:
- *  - Spend uses WORKSPACE-LEVEL deduplication: the Replit usage API returns
- *    workspace-level spend per user — every group in the same workspace reports
- *    the same dollar amount. We take MAX per (user, workspace), then SUM across
- *    workspaces. Naive group-level additive summation would multiply-count.
+ *  - Spend uses the canonical workspace-aware by-user map: every user-workspace
+ *    pair is counted once and distinct workspaces are summed.
  *  - Groups in DIFFERENT workspaces are always independent: "Admins" in ws-1
  *    and "Admins" in ws-2 are separate pools and are always summed.
  *  - The displayed group/team is the one where the user has the MOST single-group
@@ -23,6 +21,7 @@ import {
 } from "../lib/enterprise.ts";
 
 const RANGE = "billing:from-cutoff";
+const CUSTOM_RANGE = "custom:2026-06-01:2026-06-30";
 
 function m(userId, isAccountAdmin, workspaces = {}) {
   return {
@@ -94,30 +93,32 @@ test.before(async () => {
 
 test.after(async () => {
   for (const g of groups) __setMemberUsageForTests(g.id, RANGE, null);
+  __setWsSpendForTests("ws-1", RANGE, null);
+  __setWsSpendForTests("ws-2", RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
+  __setWsSpendForTests("ws-1", CUSTOM_RANGE, null);
+  __setWsSpendForTests("ws-2", CUSTOM_RANGE, null);
+  __setWsSpendForTests("ws-extra", CUSTOM_RANGE, null);
   __setDirectoryCacheForTests(null);
   setAuthorizationResolver(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
   server?.close();
 });
 
-async function activity(user = "acct") {
-  const res = await fetch(`${baseUrl}/api/users/activity`, {
+async function activity(user = "acct", query = "") {
+  const res = await fetch(`${baseUrl}/api/users/activity${query}`, {
     headers: { "x-test-user": user },
   });
   assert.equal(res.status, 200);
   return res.json();
 }
 
-test("workspace-level dedup: same-workspace groups count once (max), different workspaces sum, extra-workspace included", async () => {
-  // The Replit usage API returns WORKSPACE-level spend: both ws-1 groups report the
-  // same dollar amount for denise in production. Here we seed Admins-ws1=$100 and
-  // Devs-ws1=$50 (same workspace, different values) to prove the MAX is taken, not
-  // the additive sum. In production both would be identical, but max is always safe.
+test("canonical by-user totals count each workspace once and sum distinct workspaces", async () => {
   __setMemberUsageForTests("sg-admins-ws1", RANGE, new Map([["denise", 100]]));
   __setMemberUsageForTests("sg-devs-ws1",   RANGE, new Map([["denise", 50], ["eve", 20]]));
   __setMemberUsageForTests("sg-admins-ws2", RANGE, new Map([["denise", 700]]));
-  // ws-extra has no custom groups; denise spent $25 there, dave $40.
+  __setWsSpendForTests("ws-1", RANGE, new Map([["denise", 100], ["eve", 20]]));
+  __setWsSpendForTests("ws-2", RANGE, new Map([["denise", 700]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["denise", 25], ["dave", 40]]));
 
   const json = await activity();
@@ -125,12 +126,12 @@ test("workspace-level dedup: same-workspace groups count once (max), different w
 
   const denise = json.users.find((u) => u.username === "denise");
   assert.ok(denise, "denise must appear");
-  // ws-1: max(100, 50) = 100 (not 150 — additive would be wrong)
+  // ws-1 is one authoritative observation despite overlapping groups.
   // ws-2: 700
   // extra: 25
   // Total: 100 + 700 + 25 = 825.
   assert.equal(denise.spendUsd, 825,
-    "spend = max-per-workspace summed across workspaces: ws-1=100 + ws-2=700 + extra=25");
+    "spend = one observation per workspace: ws-1=100 + ws-2=700 + extra=25");
   // Displayed group = highest single-group spend (Admins in ws-2, $700).
   assert.equal(denise.groupName, "Admins");
   // workspaceRole reflects the attributed (highest-spend) group's workspace: ws-2 member.
@@ -151,15 +152,67 @@ test("user with $0 in first-sorted group still shows full total; zero-spend user
   __setMemberUsageForTests("sg-admins-ws1", RANGE, new Map([["denise", 0]]));
   __setMemberUsageForTests("sg-devs-ws1",   RANGE, new Map([["denise", 30], ["eve", 0]]));
   __setMemberUsageForTests("sg-admins-ws2", RANGE, new Map());
+  __setWsSpendForTests("ws-1", RANGE, new Map([["denise", 30], ["eve", 0]]));
+  __setWsSpendForTests("ws-2", RANGE, new Map());
   __setWsSpendForTests("ws-extra", RANGE, new Map());
 
   const json = await activity();
   const denise = json.users.find((u) => u.username === "denise");
   assert.equal(denise.spendUsd, 30);
-  assert.equal(denise.groupName, "Devs", "highest-spend group wins display");
+  assert.equal(denise.groupName, "Admins", "canonical stable attribution supplies display metadata");
 
   // eve has $0 everywhere — keeps her first-membership group attribution.
   const eve = json.users.find((u) => u.username === "eve");
   assert.equal(eve.spendUsd, 0);
   assert.equal(eve.groupName, "Devs");
+});
+
+function parseCsv(csv) {
+  const unquote = (value) => value.trim().replace(/^"|"$/g, "").replace(/""/g, '"');
+  const lines = csv.trim().split(/\r?\n/);
+  const headers = lines[0].split(",").map(unquote);
+  return lines.slice(1).map((line) => {
+    const columns = line.split(",").map(unquote);
+    return Object.fromEntries(headers.map((header, index) => [header, columns[index] ?? ""]));
+  });
+}
+
+test("selected custom range has API, group-detail, cluster-source, and CSV parity with equal cross-workspace spend", async () => {
+  // Equal dollar values in distinct workspaces are separate observations and
+  // must both survive; the extra workspace proves account-wide completeness.
+  __setWsSpendForTests("ws-1", CUSTOM_RANGE, new Map([["denise", 40], ["eve", 5]]));
+  __setWsSpendForTests("ws-2", CUSTOM_RANGE, new Map([["denise", 40]]));
+  __setWsSpendForTests("ws-extra", CUSTOM_RANGE, new Map([["denise", 15], ["dave", 7]]));
+
+  const query = "?rangeType=custom&startDate=2026-06-01&endDate=2026-06-30";
+  const activityJson = await activity("acct", query);
+  assert.equal(activityJson.isComplete, true);
+  const activityDenise = activityJson.users.find((user) => user.username === "denise");
+  assert.equal(activityDenise.spendUsd, 95, "40 + 40 + 15; equal values are not deduplicated across workspaces");
+
+  const detailRes = await fetch(`${baseUrl}/api/groups/sg-admins-ws1${query}`, {
+    headers: { "x-test-user": "acct" },
+  });
+  assert.equal(detailRes.status, 200);
+  const detail = await detailRes.json();
+  const detailDenise = detail.members.find((member) => member.username === "denise");
+  assert.equal(detailDenise.spendUsd, activityDenise.spendUsd);
+  // Cluster member tables merge these same group-detail member rows.
+  assert.equal(detailDenise.spendUsd, 95);
+
+  const csvRes = await fetch(`${baseUrl}/api/export/users.csv${query}`, {
+    headers: { "x-test-user": "acct" },
+  });
+  assert.equal(csvRes.status, 200);
+  assert.equal(csvRes.headers.get("x-usage-range"), CUSTOM_RANGE);
+  const csvRows = parseCsv(await csvRes.text());
+  const csvDenise = csvRows.find((row) => row.Username === "denise");
+  assert.equal(Number(csvDenise["Spend (USD)"]), activityDenise.spendUsd);
+
+  // The billing range remains independent from the custom selection.
+  const billingJson = await activity();
+  assert.notEqual(
+    billingJson.users.find((user) => user.username === "denise").spendUsd,
+    activityDenise.spendUsd,
+  );
 });

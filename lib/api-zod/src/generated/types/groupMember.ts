@@ -39,7 +39,7 @@ export interface GroupMember {
   budgetSource?: string | null;
   spendLoaded: boolean;
   /**
-     * Usage in the selected range attributable to this user within the group
+     * Canonical all-metric attributed usage for this user across the caller's visible workspaces in the selected range
      * @nullable
      */
   spendUsd?: number | null;

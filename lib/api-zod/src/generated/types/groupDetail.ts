@@ -11,7 +11,7 @@ import type { GroupMember } from './groupMember';
 export interface GroupDetail {
   group: Group;
   members: GroupMember[];
-  /** Sum of loaded member spend (reconciles with group spend plus unattributed) */
+  /** Sum of canonical per-user rows currently listed; informational and not a group budget accounting total */
   membersSpendUsd: number;
   /** Group spend not attributable to a listed member (deleted users, shared costs) */
   unattributedSpendUsd: number;

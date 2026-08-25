@@ -1825,6 +1825,7 @@ export function getDedupedUsageRollup(
 
   const byGroup = new Map<string, DedupedGroupRollup>();
   for (const group of ordered) byGroup.set(group.id, { spendUsd: 0, memberCount: 0, byUser: new Map() });
+  const byUser = new Map<string, number>();
   const ungroupedByWorkspace = new Map<string, DedupedGroupRollup>();
   const scopedWorkspaceIds =
     workspaceIds ?? new Set(ordered.map((group) => group.workspaceId));
@@ -1872,6 +1873,7 @@ export function getDedupedUsageRollup(
       const target = owner ? byGroup.get(owner.id)! : ungrouped;
       const targetByUser = target.byUser as Map<string, number>;
       targetByUser.set(userId, spendUsd);
+      byUser.set(userId, (byUser.get(userId) ?? 0) + spendUsd);
       (target as { spendUsd: number }).spendUsd += spendUsd;
       (target as { memberCount: number }).memberCount += 1;
       totalMemberCount += 1;
@@ -1897,6 +1899,7 @@ export function getDedupedUsageRollup(
 
   return {
     byGroup,
+    byUser,
     ungroupedByWorkspace,
     totalSpendUsd,
     totalMemberCount,

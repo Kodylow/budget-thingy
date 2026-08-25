@@ -277,7 +277,7 @@ export interface GroupMember {
   budgetSource?: string | null;
   spendLoaded: boolean;
   /**
-     * Usage in the selected range attributable to this user within the group
+     * Canonical all-metric attributed usage for this user across the caller's visible workspaces in the selected range
      * @nullable
      */
   spendUsd?: number | null;
@@ -327,13 +327,33 @@ export interface GroupProjectsResponse {
 export interface GroupDetail {
   group: Group;
   members: GroupMember[];
-  /** Sum of loaded member spend (reconciles with group spend plus unattributed) */
+  /** Sum of canonical per-user rows currently listed; informational and not a group budget accounting total */
   membersSpendUsd: number;
   /** Group spend not attributable to a listed member (deleted users, shared costs) */
   unattributedSpendUsd: number;
   /** False while member usage is still loading; poll every ~8s until true */
   isComplete: boolean;
   rangeLabel: string;
+}
+
+export interface UserActivityEntry {
+  userId: string;
+  username: string;
+  email: string;
+  teamName: string;
+  groupName: string;
+  /** Canonical all-metric attributed usage for the selected range */
+  spendUsd: number;
+  workspaceRole: string;
+}
+
+export interface UserActivityResponse {
+  isComplete: boolean;
+  /** Authoritative workspace usage scopes currently loaded */
+  loadedCount: number;
+  /** Authoritative workspace usage scopes in the caller's visibility */
+  totalCount: number;
+  users: UserActivityEntry[];
 }
 
 export interface Summary {
@@ -665,6 +685,36 @@ export const GetTrendsGranularity = {
   week: 'week',
   month: 'month',
 } as const;
+
+export type GetUserActivityParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
+export type ExportUsersCsvParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
 
 export type ListAlertsParams = {
 /**

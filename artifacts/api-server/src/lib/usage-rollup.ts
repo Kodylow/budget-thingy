@@ -23,6 +23,10 @@ export interface DedupedGroupRollup {
 
 export interface DedupedUsageRollup {
   byGroup: Map<string, DedupedGroupRollup>;
+  /** All-metric attributed usage by user, with each user-workspace pair counted
+   * once and distinct workspaces summed. This is the canonical per-user value
+   * for detail, activity, cluster, and export surfaces. */
+  byUser: Map<string, number>;
   /** Workspace usage that cannot be assigned to a custom group in that workspace. */
   ungroupedByWorkspace: Map<string, DedupedGroupRollup>;
   totalSpendUsd: number;
@@ -71,6 +75,7 @@ export function computeDedupedUsageRollup(
 ): DedupedUsageRollup {
   const ordered = orderGroups(groups);
   const byGroup = new Map<string, DedupedGroupRollup>();
+  const byUser = new Map<string, number>();
   const seenUsers = new Set<string>();
   let totalSpendUsd = 0;
   let pendingCount = 0;
@@ -93,12 +98,14 @@ export function computeDedupedUsageRollup(
       rollup.spendUsd += spendUsd;
       rollup.memberCount += 1;
       rollupByUser.set(userId, spendUsd);
+      byUser.set(userId, spendUsd);
       totalSpendUsd += spendUsd;
     }
   }
 
   return {
     byGroup,
+    byUser,
     ungroupedByWorkspace: new Map(),
     totalSpendUsd,
     totalMemberCount: seenUsers.size,

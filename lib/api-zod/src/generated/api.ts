@@ -219,11 +219,11 @@ export const GetGroupDetailResponse = zod.object({
   "allocatedBudgetUsd": zod.number().nullish().describe('Not used; always null (budgets are tracked at team level from the spreadsheet)'),
   "budgetSource": zod.string().nullish().describe('Not used; always null'),
   "spendLoaded": zod.boolean(),
-  "spendUsd": zod.number().nullish().describe('Usage in the selected range attributable to this user within the group'),
+  "spendUsd": zod.number().nullish().describe('Canonical all-metric attributed usage for this user across the caller\'s visible workspaces in the selected range'),
   "remainingUsd": zod.number().nullish(),
   "percentUsed": zod.number().nullish()
 })),
-  "membersSpendUsd": zod.number().describe('Sum of loaded member spend (reconciles with group spend plus unattributed)'),
+  "membersSpendUsd": zod.number().describe('Sum of canonical per-user rows currently listed; informational and not a group budget accounting total'),
   "unattributedSpendUsd": zod.number().describe('Group spend not attributable to a listed member (deleted users, shared costs)'),
   "isComplete": zod.boolean().describe('False while member usage is still loading; poll every ~8s until true'),
   "rangeLabel": zod.string()
@@ -386,6 +386,45 @@ export const GetTrendsResponse = zod.object({
   "loadedCount": zod.number(),
   "totalCount": zod.number()
 })
+
+
+/**
+ * Returns one row per visible member using the same workspace-aware, all-metric attributed usage shown in group and cluster member tables. Each user-workspace pair is counted once and distinct workspaces are summed. Replit's in-product per-user table is Agent-only and may be lower.
+ * @summary List canonical per-user activity
+ */
+export const GetUserActivityQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const GetUserActivityResponse = zod.object({
+  "isComplete": zod.boolean(),
+  "loadedCount": zod.number().describe('Authoritative workspace usage scopes currently loaded'),
+  "totalCount": zod.number().describe('Authoritative workspace usage scopes in the caller\'s visibility'),
+  "users": zod.array(zod.object({
+  "userId": zod.string(),
+  "username": zod.string(),
+  "email": zod.string(),
+  "teamName": zod.string(),
+  "groupName": zod.string(),
+  "spendUsd": zod.number().describe('Canonical all-metric attributed usage for the selected range'),
+  "workspaceRole": zod.string()
+}))
+})
+
+
+/**
+ * Exports the same selected-range, all-metric attributed per-user values returned by User Activity. Values include AI, deployments, storage, and other attributed metrics; Replit's in-product per-user table is Agent-only.
+ * @summary Export canonical per-user activity as CSV
+ */
+export const ExportUsersCsvQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const ExportUsersCsvResponse = zod.unknown()
 
 
 /**

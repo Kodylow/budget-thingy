@@ -625,6 +625,18 @@ test("account-admin removal survives the designated editor's next verified login
 // ── /users/activity authorization tests ──────────────────────────────────────
 
 test("workspace admin cannot receive out-of-scope users from /users/activity", async () => {
+  // Seed authoritative billing-range workspace observations so these route
+  // checks do not launch background network work that can leak into later tests.
+  __setWsSpendForTests(
+    "ws-1",
+    "billing:from-cutoff",
+    new Map([["ws1admin", 10], ["plain", 0], ["editor", 0]]),
+  );
+  __setWsSpendForTests(
+    "ws-2",
+    "billing:from-cutoff",
+    new Map([["ws2user", 20]]),
+  );
   const { status, json } = await req("/users/activity", { user: "ws1admin" });
   assert.equal(status, 200);
   const usernames = json.users.map((u) => u.username).sort();
@@ -664,6 +676,10 @@ test("account admin sees all members in /users/activity", async () => {
   assert.ok(usernames.includes("ws2user"), "account admin must see ws2user");
   assert.ok(usernames.includes("ws1admin"), "account admin must see ws1admin");
   assert.ok(usernames.includes("plain"), "account admin must see plain");
+  // Keep later authorization tests isolated from any workspace data hydrated
+  // while the activity endpoint was exercised.
+  __setWsSpendForTests("ws-1", "billing:from-cutoff", null);
+  __setWsSpendForTests("ws-2", "billing:from-cutoff", null);
 });
 
 // ── parseIsAccountAdmin new-field-shape regression ───────────────────────────
@@ -691,7 +707,7 @@ test("member with top-level role:admin field is granted account_admin access", a
     const { status, json } = await req("/groups", { user: "new-shape-admin" });
     assert.equal(status, 200, "new-shape admin must receive 200, not 403");
     // Account admins see every group.
-    const ids = json.groups.map((g) => g.groupId).sort();
+    const ids = json.groups.filter((group) => !group.isSynthetic).map((g) => g.groupId).sort();
     assert.deepEqual(ids, ["g-ws1-a", "g-ws2-a"]);
   } finally {
     __setDirectoryCacheForTests({ groups, members, groupMembers });

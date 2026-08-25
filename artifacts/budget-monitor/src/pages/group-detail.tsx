@@ -194,7 +194,11 @@ export default function GroupDetail() {
       <Card>
         <CardHeader>
           <CardTitle>Members</CardTitle>
-          <CardDescription>Per-user spending and budget allocation within the group</CardDescription>
+          <CardDescription>
+            Per-user values include AI, deployments, storage, and other attributed metrics
+            for the selected range. Replit&apos;s in-product per-user table is Agent-only
+            and may be lower.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">

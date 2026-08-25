@@ -262,10 +262,11 @@ async function getCsv() {
 }
 
 test("CSV: users always have group/team even on a cold cache (zero spend)", async () => {
-  // Cold cache: member usage not loaded, extra ws not loaded.
+  // Cold cache: neither authoritative workspace usage nor fallback member usage loaded.
   // Every grouped member must still appear with their group/team.
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
+  __setWsSpendForTests("ws-main", RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
 
   const rows = await getCsv();
@@ -284,6 +285,7 @@ test("CSV: zero-spend group members have group/team attribution after cache warm
   // She must still appear with Group=Alpha, not blank.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30]])); // carol not in map
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 30], ["bob", 15], ["carol", 0]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map());
 
   const rows = await getCsv();
@@ -311,11 +313,11 @@ test("CSV attribution matches dashboard even when API returns groups in reverse 
     ]),
   });
 
-  // alice: $30 in Alpha, $20 in Beta — BOTH in ws-main (same workspace).
-  // With workspace-level dedup: max(30, 20) = $30 from ws-main, + $5 extra = $35.
-  // Alpha ($30) beats Beta ($20) → alice is attributed to Alpha regardless of dir order.
+  // The authoritative ws-main observation counts alice once, regardless of
+  // overlapping group payloads, and the extra workspace remains additive.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 30], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 5]]));
   setProjectSpend(40, 15);
 
@@ -324,8 +326,7 @@ test("CSV attribution matches dashboard even when API returns groups in reverse 
   assert.ok(alice, "alice must appear in CSV");
   // alice's group must be Alpha (not Beta) regardless of directory order
   assert.equal(alice["Group"], "Alpha", `alice must be attributed to Alpha; got ${alice["Group"]}`);
-  // ws-main: max(30, 20) = 30. Extra-ws: 5. Combined: 35.
-  // (Additive 30+20+5=55 would be wrong — ws-main is one pool.)
+  // ws-main: 30. Extra-ws: 5. Combined: 35.
   assert.equal(alice["Spend (USD)"], "35.00", `alice spend must be $35; got ${alice["Spend (USD)"]}`);
 
   restoreDir();
@@ -366,15 +367,15 @@ test("/groups and /summary: user with $0 in first group gets full combined spend
 test("CSV: user with $0 in first group gets full combined spend in CSV row for that group", async () => {
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 0], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 10], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 10], ["carol", 10], ["bob", 15]]));
   __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 5]]));
 
   const rows = await getCsv();
   const alice = rows.find((r) => r["Username"] === "alice");
   assert.ok(alice, "alice must appear in CSV");
-  // Group column shows the user's highest-spend group (primary cost center):
-  // alice has $0 in Alpha and $10 in Beta, so Beta wins the display attribution.
-  assert.equal(alice["Group"], "Beta", "alice must display her highest-spend group (Beta)");
-  // alice: $0 (Alpha) + $10 (Beta) Comcast + $5 extra = $15
+  // Canonical stable attribution assigns overlapping members to Alpha.
+  assert.equal(alice["Group"], "Alpha");
+  // alice: $10 ws-main + $5 extra = $15
   assert.equal(alice["Spend (USD)"], "15.00", `alice spend must be $15; got ${alice["Spend (USD)"]}`);
 });
 
@@ -823,6 +824,7 @@ test("/groups teamRawSpend: spendUsd populates provisionally while spendLoaded s
     // Team B provisional: $0 (Beta pending, no byGroup entry yet).
     __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 30], ["carol", 10]]));
     __setMemberUsageForTests(OT_G2.id, RANGE, null);
+    __setWsSpendForTests("ws-main", RANGE, null);
 
     const partial = await req("/groups");
     const teamA_partial = partial.teamRawSpend?.[TEAM_A];
@@ -851,6 +853,11 @@ test("/groups teamRawSpend: spendUsd populates provisionally while spendLoaded s
     // Phase 2 attributes the $50 to Alpha (first in sort order). carol ($10) goes
     // to Alpha; bob ($15) is Beta-only.
     __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 20], ["bob", 15]]));
+    __setWsSpendForTests(
+      "ws-main",
+      RANGE,
+      new Map([["alice", 50], ["carol", 10], ["bob", 15]]),
+    );
 
     const full = await req("/groups");
     const teamA_full = full.teamRawSpend?.[TEAM_A];
@@ -864,6 +871,7 @@ test("/groups teamRawSpend: spendUsd populates provisionally while spendLoaded s
     await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
     __setMemberUsageForTests(OT_G1.id, RANGE, null);
     __setMemberUsageForTests(OT_G2.id, RANGE, null);
+    __setWsSpendForTests("ws-main", RANGE, null);
     restoreOtDir();
   }
 });

@@ -54,8 +54,6 @@ import {
   queueMemberUsageFetch,
   getMemberUsage,
   queueAccountUsageFetch,
-  queueExtraWorkspacesFetch,
-  getExtraWorkspaceSpend,
   queueAllWorkspacesFetch,
   queueWsSpendFetch,
   getWsSpendByUser,
@@ -148,6 +146,69 @@ function mergedGroupMemberIds(
       if (!seen.has(uid)) { seen.add(uid); result.push(uid); }
     }
   }
+  return result;
+}
+
+type CanonicalUserAttribution = {
+  groupName: string;
+  teamName: string;
+  workspaceId: string;
+  displaySpendUsd: number;
+};
+
+/**
+ * Choose display metadata from canonical attribution without using it to
+ * calculate totals. Totals always come from canonical.byUser.
+ */
+function canonicalUserAttribution(
+  canonical: ReturnType<typeof getCanonicalUsage>,
+  groups: EnterpriseGroup[],
+  groupMembers: ReadonlyMap<string, readonly string[]>,
+  teamNameMap: ReadonlyMap<string, string>,
+): Map<string, CanonicalUserAttribution> {
+  const ordered = [...groups].sort(
+    (a, b) =>
+      a.workspaceId.localeCompare(b.workspaceId) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+      a.id.localeCompare(b.id),
+  );
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const result = new Map<string, CanonicalUserAttribution>();
+
+  // Give every directory member a stable group/team even when their spend is zero.
+  for (const group of ordered) {
+    const primaryId = canonical.mergePlan.primaryByGroupId.get(group.id) ?? group.id;
+    const primary = byId.get(primaryId) ?? group;
+    for (const userId of groupMembers.get(group.id) ?? []) {
+      if (!result.has(userId)) {
+        result.set(userId, {
+          groupName: primary.name,
+          teamName: teamNameMap.get(primary.name) ?? "",
+          workspaceId: group.workspaceId,
+          displaySpendUsd: 0,
+        });
+      }
+    }
+  }
+
+  // Preserve the existing primary-cost-center presentation, but only compare
+  // canonical workspace observations. This never changes the canonical total.
+  for (const group of ordered) {
+    const primaryId = canonical.mergePlan.primaryByGroupId.get(group.id) ?? group.id;
+    const primary = byId.get(primaryId) ?? group;
+    for (const [userId, spendUsd] of canonical.byGroup.get(group.id)?.byUser ?? []) {
+      const current = result.get(userId);
+      if (!current || spendUsd > current.displaySpendUsd) {
+        result.set(userId, {
+          groupName: primary.name,
+          teamName: teamNameMap.get(primary.name) ?? "",
+          workspaceId: group.workspaceId,
+          displaySpendUsd: spendUsd,
+        });
+      }
+    }
+  }
+
   return result;
 }
 
@@ -517,28 +578,6 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
 
     const spend = getSpend(group.id, range.key);
 
-    // Aggregate member usage across all source groups (primary + aliases).
-    // This ensures the detail view shows the full combined spend even when
-    // billing data has not yet migrated to the new workspace's group.
-    const aggregatedMemberUsage = (() => {
-      const byUser = new Map<string, number>();
-      let totalCostUsd = 0;
-      let anyLoaded = false;
-      for (const id of sourceIds) {
-        const usage = getMemberUsage(id, range.key);
-        if (!usage) continue;
-        anyLoaded = true;
-        for (const [uid, s] of usage.byUser) {
-          byUser.set(uid, (byUser.get(uid) ?? 0) + s);
-          totalCostUsd += s;
-        }
-      }
-      return anyLoaded ? { byUser, totalCostUsd } : undefined;
-    })();
-    const memberUsage = aggregatedMemberUsage;
-    // All source groups must be loaded for spend to be considered complete.
-    const allSourcesLoaded = sourceIds.every((id) => !!getMemberUsage(id, range.key));
-
     const isAccountAdmin = isAccountWide(req.authz);
     const groupedWorkspaceIds = scoped.map((item) => item.workspaceId);
     const scopedWorkspaceIds = isAccountAdmin
@@ -625,17 +664,10 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           const srcGroup = dir.groups.find((g) => g.id === id);
           return srcGroup ? m?.workspaces.get(srcGroup.workspaceId) : undefined;
         }).find(Boolean);
-      // Member spend shows the user's actual workspace-level spend for this group
-      // (from the Replit usage API), so admins see real usage figures for every member.
-      // This is intentionally different from the deduped budget attribution used for
-      // the group total — a user in multiple groups will show their real spend here
-      // even if their budget attribution is assigned to a different group.
-      // Member spend is available as soon as this group's own usage cache loads;
-      // it does not need the full cross-group rollup to complete.
-      const memberSpendLoaded = allSourcesLoaded;
-      const rawSpend = memberUsage?.byUser.get(userId);
-      const spendUsd = !memberSpendLoaded ? null : (rawSpend ?? 0);
-      const spendLoaded = memberSpendLoaded;
+      // Every per-user surface uses the same canonical all-metric total for the
+      // caller's selected range and visible workspaces.
+      const spendLoaded = canonical.isComplete;
+      const spendUsd = spendLoaded ? (canonical.byUser.get(userId) ?? 0) : null;
       return {
         userId,
         username: m?.username ?? null,
@@ -655,15 +687,12 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // Reconciliation: members removed from the group since the last sync still count
     // toward group spend (they are captured in the rollup).  unattributedSpendUsd
     // surfaces that residual so the cluster page can show an accurate attributed total.
-    // Note: member rows show raw workspace spend (listedMembersSpend), which can exceed
-    // combinedSpend for members whose spend is attributed elsewhere; the cluster total
-    // is therefore derived from group.spendUsd (= combinedSpend), not member-row sums.
     const combinedSpend = attributed.spendUsd;
-    const combinedLoaded = allSourcesLoaded && rollup.isComplete;
+    const combinedLoaded = rollup.isComplete;
     let listedMembersSpend = 0;
-    if (memberUsage) {
+    if (canonical.isComplete) {
       for (const userId of userIds) {
-        listedMembersSpend += memberUsage.byUser.get(userId) ?? 0;
+        listedMembersSpend += canonical.byUser.get(userId) ?? 0;
       }
     }
     // Unattributed spend = spend from members removed from the group since the last sync
@@ -2124,6 +2153,14 @@ router.get("/trends", async (req, res): Promise<void> => {
 // Each user appears once (first custom group wins). Spend is shown where cached;
 // groups whose per-member usage has not loaded yet are included with spend=0 and queued.
 router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+
   let dir: Awaited<ReturnType<typeof getDirectory>>;
   try {
     dir = await getDirectory();
@@ -2133,20 +2170,23 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     return;
   }
 
-  const billingRange = resolveRange("billing");
   const groupTeams = await db.select().from(groupTeamsTable);
   const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
-  // Route is account-wide (true account admins and managed editors).
-  // Queue member usage + extra workspace fetches so combined spend is populated.
-  for (const group of dir.groups) queueMemberUsageFetch(group, billingRange, 1);
-  queueExtraWorkspacesFetch(dir, billingRange, 1);
-  queueAllWorkspacesFetch(dir, billingRange, 1);
-  const exportExtraSpend = getExtraWorkspaceSpend(dir, billingRange.key);
-
-  const groupsLoaded = dir.groups.filter((g) => !!getMemberUsage(g.id, billingRange.key)).length;
-  const totalGroups = dir.groups.length;
-  const exportComplete = groupsLoaded === totalGroups;
+  // Route is account-wide (true account admins and managed editors). Workspace
+  // payloads are authoritative for canonical per-user totals.
+  queueAllWorkspacesFetch(dir, range, 1);
+  const workspaceIds = new Set(dir.workspaces.keys());
+  const canonical = getCanonicalUsage(
+    dir.groups,
+    range.key,
+    workspaceIds,
+    dir.groupMembers,
+    dir.members,
+    teamNameMap,
+    dir.workspaces,
+    true,
+  );
 
   // Pass 1: register every group member with a default (first-membership) group/team,
   // using the stable sort order (workspaceId → name → id). Attribution is driven by
@@ -2158,53 +2198,12 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
       a.id.localeCompare(b.id),
   );
-  const userGroupAttr = new Map<string, { groupName: string; teamName: string; spendUsd: number }>();
-  for (const group of sortedGroupsForCsv) {
-    const teamName = teamNameMap.get(group.name) ?? "";
-    for (const userId of dir.groupMembers.get(group.id) ?? []) {
-      if (!userGroupAttr.has(userId)) {
-        userGroupAttr.set(userId, { groupName: group.name, teamName, spendUsd: 0 });
-      }
-    }
-  }
-
-  // Pass 1.5: compute total spend per user with workspace-level deduplication,
-  // mirroring /users/activity exactly.
-  // The Replit usage API returns WORKSPACE-level spend per user — every group
-  // in the same workspace reports the same dollar amount. Take the MAX across
-  // groups within each workspace, then SUM across workspaces.
-  const csvTopGroupSpend = new Map<string, number>(); // userId → highest single-group spend
-  const csvWorkspaceMaxSpend = new Map<string, Map<string, number>>(); // userId → wsId → maxSpend
-
-  for (const group of sortedGroupsForCsv) {
-    const memberUsage = getMemberUsage(group.id, billingRange.key);
-    if (!memberUsage) continue;
-    const teamName = teamNameMap.get(group.name) ?? "";
-    for (const [userId, spend] of memberUsage.byUser) {
-      if (spend <= 0) continue;
-      const attr = userGroupAttr.get(userId);
-      if (!attr) continue;
-
-      // Workspace-level dedup: track max spend per (user, workspace)
-      let wsMap = csvWorkspaceMaxSpend.get(userId);
-      if (!wsMap) { wsMap = new Map(); csvWorkspaceMaxSpend.set(userId, wsMap); }
-      wsMap.set(group.workspaceId, Math.max(wsMap.get(group.workspaceId) ?? 0, spend));
-
-      // Track highest-spend group for display attribution
-      const prevTop = csvTopGroupSpend.get(userId) ?? 0;
-      if (spend > prevTop) {
-        csvTopGroupSpend.set(userId, spend);
-        attr.groupName = group.name;
-        attr.teamName = teamName;
-      }
-    }
-  }
-
-  // Sum workspace-level maximums → true cross-workspace total per user
-  for (const [userId, wsMap] of csvWorkspaceMaxSpend) {
-    const attr = userGroupAttr.get(userId);
-    if (attr) attr.spendUsd = [...wsMap.values()].reduce((sum, s) => sum + s, 0);
-  }
+  const userGroupAttr = canonicalUserAttribution(
+    canonical,
+    sortedGroupsForCsv,
+    dir.groupMembers,
+    teamNameMap,
+  );
 
   // Pass 2: emit one row per enterprise member (covers users not in any custom group).
   // Extra-workspace spend (workspaces without custom groups) is added for every user
@@ -2216,8 +2215,7 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
       .map((wsId) => dir.workspaces.get(wsId)?.name ?? wsId)
       .filter(Boolean)
       .join("; ");
-    const extraSpend = exportExtraSpend.byUser.get(userId) ?? 0;
-    const spendUsd = (attr?.spendUsd ?? 0) + extraSpend;
+    const spendUsd = canonical.byUser.get(userId) ?? 0;
     rows.push({
       email: m.email,
       name: m.name ?? "",
@@ -2239,7 +2237,7 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.spendUsd.toFixed(2)].map(escape).join(","),
   );
 
-  const isComplete = exportComplete && exportExtraSpend.isComplete;
+  const isComplete = canonical.isComplete;
   const csv = [header, ...lines].join("\r\n");
 
   res.setHeader("Content-Type", "text/csv");
@@ -2247,21 +2245,16 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     "Content-Disposition",
     `attachment; filename="all-users-${new Date().toISOString().slice(0, 10)}.csv"`,
   );
-  res.setHeader("X-Groups-Loaded", String(groupsLoaded));
-  res.setHeader("X-Groups-Total", String(totalGroups));
+  res.setHeader("X-Groups-Loaded", String(Math.max(0, workspaceIds.size - canonical.pendingCount)));
+  res.setHeader("X-Groups-Total", String(workspaceIds.size));
   res.setHeader("X-Export-Complete", String(isComplete));
+  res.setHeader("X-Usage-Range", range.key);
   res.send(csv);
 });
 
 // ── GET /users/activity ───────────────────────────────────────────────────────
-// Returns workspace members with their true total billing-period spend.
-// The Replit usage API returns WORKSPACE-level spend per user, not group-level:
-// every group within the same workspace reports the identical dollar amount.
-// Aggregation uses workspace-level max dedup — MAX per (user, workspaceId)
-// summed across distinct workspaces — to avoid multiply-counting spend when a
-// user belongs to several groups in the same workspace.
-// Groups in DIFFERENT workspaces are independent pools and are always summed.
-// Account admins also see spend from extra workspaces that have no custom groups.
+// Returns workspace members with canonical all-metric spend for the selected range.
+// Each user-workspace pair is counted once and distinct workspaces are summed.
 // The displayed group/team is the user's highest-spend group (primary cost center).
 // NOTE: these per-user totals can exceed the deduped budget totals in /groups
 // and /summary, which attribute shared users to a single group to avoid
@@ -2272,6 +2265,14 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
 router.get("/users/activity", async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.json({ isComplete: true, loadedCount: 0, totalCount: 0, users: [] });
+    return;
+  }
+
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
     return;
   }
 
@@ -2294,107 +2295,41 @@ router.get("/users/activity", async (req, res): Promise<void> => {
       a.id.localeCompare(b.id),
   );
 
-  const billingRange = resolveRange("billing");
   const groupTeams = await db.select().from(groupTeamsTable);
   const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
-  // Extra-workspace spend (workspaces with no custom groups) is account-wide
-  // data, so include it only for account admins — never leak out-of-scope
-  // spend to workspace admins.
-  const includeExtraSpend = isAccountWide(req.authz);
-  let extraSpend: { byUser: Map<string, number>; isComplete: boolean } = {
-    byUser: new Map(),
-    isComplete: true,
-  };
-  if (includeExtraSpend) {
-    queueExtraWorkspacesFetch(dir, billingRange, 1);
-    queueAllWorkspacesFetch(dir, billingRange, 1);
-    extraSpend = getExtraWorkspaceSpend(dir, billingRange.key);
+  const callerIsAccountAdmin = isAccountWide(req.authz);
+  const groupedWorkspaceIds = orderedGroups.map((group) => group.workspaceId);
+  const scopedWorkspaceIds = callerIsAccountAdmin
+    ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
+    : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
+  for (const workspaceId of scopedWorkspaceIds) {
+    queueWsSpendFetch(workspaceId, range, 1);
   }
 
-  let groupsLoaded = 0;
-  const totalGroups = orderedGroups.length;
-
-  // Pass 1: register every visible group member with a default (first-membership)
-  // attribution, and track visibility scoping. Spend and the displayed group are
-  // finalized in Pass 1.5: total spend is the SUM across every group's usage data
-  // (same-name groups in different workspaces are independent groups with
-  // independent spend — no name-based dedup), and the displayed group/team is the
-  // one where the user spent the most (their primary cost center).
-  const userGroupAttr = new Map<
-    string,
-    { groupId: string; groupName: string; teamName: string; spendUsd: number; workspaceId: string }
-  >();
   const visibleUserIds = new Set<string>();
-
   for (const group of orderedGroups) {
-    const memberUsage = getMemberUsage(group.id, billingRange.key);
-    if (!memberUsage) {
-      queueMemberUsageFetch(group, billingRange, 1);
-    } else {
-      groupsLoaded++;
-    }
-    const teamName = teamNameMap.get(group.name) ?? "";
     for (const userId of dir.groupMembers.get(group.id) ?? []) {
       visibleUserIds.add(userId);
-      if (!userGroupAttr.has(userId)) {
-        userGroupAttr.set(userId, {
-          groupId: group.id,
-          groupName: group.name,
-          teamName,
-          spendUsd: 0,           // accumulated in Pass 1.5
-          workspaceId: group.workspaceId,
-        });
-      }
     }
   }
 
-  // Pass 1.5: compute total spend per user with workspace-level deduplication.
-  // The Replit usage API returns WORKSPACE-level spend per user, not group-level:
-  // every group in the same workspace reports the same dollar amount for a given user.
-  // Naively summing across all groups in a workspace multiplies spend by the number
-  // of groups the user belongs to in that workspace.
-  // Correct approach: take the MAX across groups within each workspace, then SUM
-  // across workspaces for the true cross-workspace total.
-  // Groups in DIFFERENT workspaces are always independent pools — "Admins" in
-  // workspace A and "Admins" in workspace B represent separate usage and are summed.
-  // The displayed group/team is the one with the highest single-group spend.
-  const topGroupSpendByUser = new Map<string, number>(); // userId → highest single-group spend
-  const userWorkspaceMaxSpend = new Map<string, Map<string, number>>(); // userId → wsId → maxSpend
-
-  for (const group of orderedGroups) {
-    const memberUsage = getMemberUsage(group.id, billingRange.key);
-    if (!memberUsage) continue;
-    const teamName = teamNameMap.get(group.name) ?? "";
-    for (const [userId, spend] of memberUsage.byUser) {
-      if (spend <= 0) continue;
-      const attr = userGroupAttr.get(userId);
-      if (!attr) continue;
-
-      // Workspace-level dedup: track max spend per (user, workspace)
-      let wsMap = userWorkspaceMaxSpend.get(userId);
-      if (!wsMap) { wsMap = new Map(); userWorkspaceMaxSpend.set(userId, wsMap); }
-      wsMap.set(group.workspaceId, Math.max(wsMap.get(group.workspaceId) ?? 0, spend));
-
-      // Track the group with the highest single spend for display attribution
-      const prevTop = topGroupSpendByUser.get(userId) ?? 0;
-      if (spend > prevTop) {
-        topGroupSpendByUser.set(userId, spend);
-        attr.groupId = group.id;
-        attr.groupName = group.name;
-        attr.teamName = teamName;
-        attr.workspaceId = group.workspaceId;
-      }
-    }
-  }
-
-  // Sum workspace-level maximums → true cross-workspace total per user
-  for (const [userId, wsMap] of userWorkspaceMaxSpend) {
-    const attr = userGroupAttr.get(userId);
-    if (attr) attr.spendUsd = [...wsMap.values()].reduce((sum, s) => sum + s, 0);
-  }
-
-  const callerIsAccountAdmin = isAccountWide(req.authz);
+  const canonical = getCanonicalUsage(
+    orderedGroups,
+    range.key,
+    scopedWorkspaceIds,
+    dir.groupMembers,
+    dir.members,
+    teamNameMap,
+    dir.workspaces,
+    callerIsAccountAdmin,
+  );
+  const userGroupAttr = canonicalUserAttribution(
+    canonical,
+    orderedGroups,
+    dir.groupMembers,
+    teamNameMap,
+  );
 
   // Pass 2: emit one entry per relevant member.
   // Workspace admins see only members in their visible groups.
@@ -2429,7 +2364,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
       email: m.email,
       teamName: attr?.teamName ?? "",
       groupName: attr?.groupName ?? "",
-      spendUsd: (attr?.spendUsd ?? 0) + (extraSpend.byUser.get(userId) ?? 0),
+      spendUsd: canonical.byUser.get(userId) ?? 0,
       workspaceRole,
     });
   }
@@ -2437,8 +2372,13 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   // Sort spend descending
   users.sort((a, b) => b.spendUsd - a.spendUsd);
 
-  const isComplete = groupsLoaded === totalGroups && extraSpend.isComplete;
-  res.json({ isComplete, loadedCount: groupsLoaded, totalCount: totalGroups, users });
+  const totalCount = scopedWorkspaceIds.size;
+  res.json({
+    isComplete: canonical.isComplete,
+    loadedCount: Math.max(0, totalCount - canonical.pendingCount),
+    totalCount,
+    users,
+  });
 });
 
 export default router;

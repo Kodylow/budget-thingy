@@ -307,7 +307,9 @@ export default function ClusterDetail() {
           <CardTitle>Members</CardTitle>
           <CardDescription>
             Each person appears once. Role shows their highest privilege across{' '}
-            {sortedRoleLabels.join(' / ')} sub-groups.
+            {sortedRoleLabels.join(' / ')} sub-groups. Spend includes AI, deployments,
+            storage, and other attributed metrics for the selected range; Replit&apos;s
+            in-product per-user table is Agent-only and may be lower.
           </CardDescription>
         </CardHeader>
         <CardContent>

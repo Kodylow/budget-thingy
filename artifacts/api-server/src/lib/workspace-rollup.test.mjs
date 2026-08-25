@@ -69,6 +69,11 @@ test("uses exact workspace-user identity and retains synthetic workspace usage",
 
   assert.equal(result.isComplete, true);
   assert.equal(result.totalSpendUsd, 80);
+  assert.deepEqual(
+    result.byUser,
+    new Map([["shared", 70], ["ungrouped", 7]]),
+    "equal spend in distinct workspaces is summed once per user-workspace pair",
+  );
   assert.deepEqual(result.byGroup.get("alpha")?.byUser, new Map([["shared", 35]]));
   assert.equal(result.byGroup.get("beta")?.spendUsd, 0);
   assert.deepEqual(result.ungroupedByWorkspace.get("ws-main"), {

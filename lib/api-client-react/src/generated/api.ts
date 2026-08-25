@@ -31,6 +31,7 @@ import type {
   CheckResult,
   ClusterHeadline,
   ErrorEnvelope,
+  ExportUsersCsvParams,
   ForbiddenResponse,
   GetCanonicalClusterHeadlineParams,
   GetClusterProjectsParams,
@@ -38,6 +39,7 @@ import type {
   GetGroupProjectsParams,
   GetSummaryParams,
   GetTrendsParams,
+  GetUserActivityParams,
   GroupAdminsItem,
   GroupBudget,
   GroupBudgetInput,
@@ -59,7 +61,8 @@ import type {
   TeamBudgetInput,
   TeamBudgetsResponse,
   TrendsResponse,
-  UnauthorizedResponse
+  UnauthorizedResponse,
+  UserActivityResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -1322,6 +1325,176 @@ export function useGetTrends<TData = Awaited<ReturnType<typeof getTrends>>, TErr
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetTrendsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetUserActivityUrl = (params?: GetUserActivityParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/users/activity?${stringifiedParams}` : `/api/users/activity`
+}
+
+/**
+ * Returns one row per visible member using the same workspace-aware, all-metric attributed usage shown in group and cluster member tables. Each user-workspace pair is counted once and distinct workspaces are summed. Replit's in-product per-user table is Agent-only and may be lower.
+ * @summary List canonical per-user activity
+ */
+export const getUserActivity = async (params?: GetUserActivityParams, options?: RequestInit): Promise<UserActivityResponse> => {
+
+  return customFetch<UserActivityResponse>(getGetUserActivityUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUserActivityQueryKey = (params?: GetUserActivityParams,) => {
+    return [
+    `/api/users/activity`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetUserActivityQueryOptions = <TData = Awaited<ReturnType<typeof getUserActivity>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params?: GetUserActivityParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUserActivityQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUserActivity>>> = ({ signal }) => getUserActivity(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUserActivity>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUserActivityQueryResult = NonNullable<Awaited<ReturnType<typeof getUserActivity>>>
+export type GetUserActivityQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List canonical per-user activity
+ */
+
+export function useGetUserActivity<TData = Awaited<ReturnType<typeof getUserActivity>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ params?: GetUserActivityParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUserActivityQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportUsersCsvUrl = (params?: ExportUsersCsvParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/export/users.csv?${stringifiedParams}` : `/api/export/users.csv`
+}
+
+/**
+ * Exports the same selected-range, all-metric attributed per-user values returned by User Activity. Values include AI, deployments, storage, and other attributed metrics; Replit's in-product per-user table is Agent-only.
+ * @summary Export canonical per-user activity as CSV
+ */
+export const exportUsersCsv = async (params?: ExportUsersCsvParams, options?: RequestInit): Promise<string> => {
+
+  return customFetch<string>(getExportUsersCsvUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportUsersCsvQueryKey = (params?: ExportUsersCsvParams,) => {
+    return [
+    `/api/export/users.csv`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportUsersCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportUsersCsv>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params?: ExportUsersCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportUsersCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportUsersCsvQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportUsersCsv>>> = ({ signal }) => exportUsersCsv(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportUsersCsv>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportUsersCsvQueryResult = NonNullable<Awaited<ReturnType<typeof exportUsersCsv>>>
+export type ExportUsersCsvQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Export canonical per-user activity as CSV
+ */
+
+export function useExportUsersCsv<TData = Awaited<ReturnType<typeof exportUsersCsv>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ExportUsersCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportUsersCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportUsersCsvQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

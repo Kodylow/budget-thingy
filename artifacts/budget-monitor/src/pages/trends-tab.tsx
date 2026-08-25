@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import {
+  getGetUserActivityQueryKey,
   getGetTrendsQueryKey,
+  useGetUserActivity,
   useGetTrends,
   type GetTrendsGranularity,
 } from '@workspace/api-client-react';
@@ -24,6 +25,7 @@ import {
 } from '@/components/ui/chart';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useRange } from '@/components/range-context';
 
 const SERIES_COLORS = [
   '#0f3d62',
@@ -97,35 +99,18 @@ function Toggle<T extends string>({
   );
 }
 
-// ---------- User Activity types & hook ----------
-
-interface UserActivityEntry {
-  userId: string;
-  username: string;
-  email: string;
-  teamName: string;
-  groupName: string;
-  spendUsd: number;
-  workspaceRole: string;
-}
-
-interface UserActivityResponse {
-  isComplete: boolean;
-  loadedCount: number;
-  totalCount: number;
-  users: UserActivityEntry[];
-}
-
 function useUserActivity() {
-  return useQuery<UserActivityResponse>({
-    queryKey: ['userActivity'],
-    queryFn: async () => {
-      const res = await fetch('/api/users/activity');
-      if (!res.ok) throw new Error('Failed to fetch user activity');
-      return res.json() as Promise<UserActivityResponse>;
+  const { rangeType, startDate, endDate } = useRange();
+  const params = {
+    rangeType,
+    ...(rangeType === 'custom' ? { startDate, endDate } : {}),
+  };
+  return useGetUserActivity(params, {
+    query: {
+      queryKey: getGetUserActivityQueryKey(params),
+      refetchInterval: (query) =>
+        query.state.data?.isComplete === false ? 8000 : false,
     },
-    refetchInterval: (query) =>
-      query.state.data?.isComplete === false ? 8000 : false,
   });
 }
 
@@ -189,7 +174,9 @@ function UserActivityCard() {
           <div>
             <CardTitle>User Activity</CardTitle>
             <CardDescription className="mt-1">
-              Workspace members ranked by spend for the current billing period.
+              Workspace members ranked by all-metric attributed usage for the selected range.
+              Values include AI, deployments, storage, and other attributed metrics;
+              Replit&apos;s in-product per-user table is Agent-only and may be lower.
               {!data?.isComplete && data && (
                 <span className="text-amber-600 dark:text-amber-400">
                   {' '}Data is loading — updates as each group completes.
