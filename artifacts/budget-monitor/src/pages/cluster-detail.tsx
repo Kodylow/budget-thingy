@@ -7,6 +7,8 @@ import {
   getGetGroupDetailQueryKey,
   getGetClusterProjectsQueryOptions,
   getGetClusterProjectsQueryKey,
+  useGetCanonicalClusterHeadline,
+  getGetCanonicalClusterHeadlineQueryKey,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -86,6 +88,13 @@ export default function ClusterDetail() {
     }),
   );
   const clusterProjectsData = clusterProjectsQuery.data;
+  const { data: clusterHeadline } = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
+    query: {
+      queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
+      refetchInterval: (q: any) => (q.state.data?.isComplete ? false : 8000),
+      enabled: groupIds.length > 0,
+    },
+  });
   const allLoaded = results.every((r) => !r.isLoading);
   const anyComplete = results.some((r) => r.data?.isComplete);
   const allComplete = results.every((r) => r.data?.isComplete);
@@ -163,21 +172,8 @@ export default function ClusterDetail() {
       };
     }, [results, groupRoleMap]);
 
-  // Cluster total comes from the sum of each constituent group's dedup-attributed
-  // spend (group.spendUsd), not the sum of member rows.  Member rows show raw
-  // workspace spend so every person's real usage is visible, but that can exceed
-  // the dedup total when a member is also counted in another cluster — the
-  // attributed group total is the authoritative budget-consistent figure.
-  const { clusterAttributedTotal, clusterSpendLoaded } = useMemo(() => {
-    let total = 0;
-    let loaded = true;
-    for (const r of results) {
-      const g = r.data?.group;
-      if (!g?.spendLoaded || g.spendUsd == null) { loaded = false; continue; }
-      total += g.spendUsd;
-    }
-    return { clusterAttributedTotal: total, clusterSpendLoaded: loaded };
-  }, [results]);
+  const clusterAttributedTotal = clusterHeadline?.spendUsd ?? 0;
+  const clusterSpendLoaded = clusterHeadline?.isComplete ?? false;
 
   const sortedRoleLabels = useMemo(() => {
     const roles = new Set(Object.values(groupRoleMap));
@@ -250,7 +246,7 @@ export default function ClusterDetail() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Spend</CardTitle>
+            <CardTitle className="text-sm font-medium">Canonical Rollup Spend</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -262,14 +258,14 @@ export default function ClusterDetail() {
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">
-              Attributed spend (matches dashboard total)
+              Workspace-aware member rollup used for budgets and alerts
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Member Spend</CardTitle>
+            <CardTitle className="text-sm font-medium">Member Actual Usage</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -281,7 +277,7 @@ export default function ClusterDetail() {
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">
-              Each member's actual usage within this team (may exceed Total Spend when members are shared across teams)
+              Informational member rows; not the canonical budget total
             </p>
           </CardContent>
         </Card>
@@ -413,9 +409,9 @@ export default function ClusterDetail() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Projects</CardTitle>
+            <CardTitle>Project-Attributed Spend</CardTitle>
           <CardDescription>
-            Project spending for this team, attributed by project creator. Each project is counted once based on who created it.
+            Project attribution by creator. These rows explain project ownership and are not expected to reconcile to the canonical rollup total.
           </CardDescription>
         </CardHeader>
         <CardContent>

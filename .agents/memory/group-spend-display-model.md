@@ -7,14 +7,14 @@ description: Account anchor and reconciliation rules versus scoped and drill-dow
 
 ## The rule
 
-For account-wide callers, the dashboard Total Spend is the durable unfiltered Enterprise usage total. The visible team and unassigned-group rows retain their current rollup accounting, and one explicit residual bridges those rows to the account anchor.
+Dashboard Total Spend and every visible group/team row use the canonical workspace-aware member rollup. For account-wide callers, the unfiltered Enterprise usage total is reconciliation metadata that explains any difference from the canonical rollup.
 
-Member and cluster drill-down pages continue to show per-person usage. Existing group/team threshold alerts intentionally continue to use their legacy raw/member accounting until alert behavior is separately migrated.
+All headline group, team, budget, trend, cluster, and threshold-alert surfaces must consume that same range-scoped canonical rollup. Project attribution and per-person usage remain explanatory detail models, never substitutes for budget or alert accounting.
 
-Workspace-scoped callers must never receive the account anchor or its residual. Their dashboard retains the scoped rollup plus scoped unattributed-project treatment.
+Workspace-scoped callers must never receive the account anchor or its residual. Their dashboard retains the canonical rollup recomputed only over their visible workspace scope.
 
 **Why:**
-No filtered group/member/project model reliably captures ungrouped users, unattributed charges, and former members. Replit Settings uses the unfiltered account total, while scoped admins must remain isolated from enterprise-wide figures.
+One server-owned model prevents percentages and remaining budget from disagreeing between dashboard, trends, clusters, and alerts. The unfiltered account total remains a completeness/reconciliation anchor, while scoped admins must remain isolated from enterprise-wide figures.
 
 **How to apply:**
-Use the account anchor only for account-wide summary totals. Compute its residual against the exact top-level rows displayed, render loading until the anchor exists, and keep scoped, drill-down, trend, budget, and alert semantics unchanged.
+Use canonical group/team maps for summary totals, every rollup, budget, and alert calculation; defer rather than calculate from incomplete usage. Expose the account anchor only as account-wide reconciliation metadata. Label stored alert values as send-time snapshots and project tables as attribution.

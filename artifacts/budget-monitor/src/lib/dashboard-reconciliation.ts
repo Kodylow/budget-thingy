@@ -4,6 +4,13 @@ export interface DashboardReconciliation {
   isTotalLoaded: boolean;
 }
 
+export function isCanonicalSummaryPending(
+  isLoading: boolean,
+  isComplete: boolean | null | undefined,
+): boolean {
+  return isLoading || isComplete !== true;
+}
+
 export function reconcileDashboardSpend({
   isAccountWide,
   visibleRollupSpendUsd,

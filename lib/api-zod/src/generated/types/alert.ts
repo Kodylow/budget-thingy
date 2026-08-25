@@ -15,6 +15,7 @@ export interface Alert {
   workspaceIds: string[];
   /** Threshold percent crossed (50, 75, 90, 100) */
   threshold: number;
+  /** Canonical spend snapshot captured when this delivery was attempted */
   spendUsd: number;
   budgetUsd: number;
   recipients: string[];
@@ -23,4 +24,15 @@ export interface Alert {
   status: string;
   /** @nullable */
   errorMessage?: string | null;
+  /**
+     * Current canonical spend for the entity; null while usage is incomplete
+     * @nullable
+     */
+  currentSpendUsd: number | null;
+  /**
+     * Current canonical spend as a percent of the current allocated pool
+     * @nullable
+     */
+  currentPercentUsed: number | null;
+  currentUsageComplete: boolean;
 }

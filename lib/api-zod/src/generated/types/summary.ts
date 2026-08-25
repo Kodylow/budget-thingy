@@ -9,7 +9,7 @@
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Account usage anchor for account-wide callers once available; otherwise the scoped visible rollup total */
+  /** Workspace-aware member-deduped canonical rollup total for the caller's scope */
   totalSpendUsd: number;
   /** Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility */
   memberBasedTotalSpendUsd?: number;

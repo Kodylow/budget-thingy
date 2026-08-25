@@ -1905,6 +1905,164 @@ export function getDedupedUsageRollup(
   };
 }
 
+/**
+ * The canonical range-scoped accounting result used by every headline, budget,
+ * trend, and alert surface. Project usage and the account total are
+ * reconciliation metadata only: they never replace or alter the member-deduped
+ * rollup that drives group/team spend.
+ */
+export interface CanonicalUsageResult extends DedupedUsageRollup {
+  rangeKey: string;
+  mergePlan: CanonicalGroupMergePlan;
+  displayGroups: readonly EnterpriseGroup[];
+  spendByPrimaryGroup: ReadonlyMap<string, number>;
+  byTeam: ReadonlyMap<string, number>;
+  accountUsage: AccountUsage | null;
+  accountReconciliationSpendUsd: number | null;
+  projectAttribution: ProjectAttribution | null;
+}
+
+export interface CanonicalGroupMergePlan {
+  mergeMap: Map<string, string[]>;
+  hiddenGroupIds: Set<string>;
+  primaryByGroupId: Map<string, string>;
+}
+
+export interface CanonicalMergedGroupBudget {
+  amountUsd: number;
+  sourceGroupId: string;
+}
+
+/**
+ * Resolve one displayed primary's budget across its migration aliases.
+ * A budget stored directly on the displayed primary always wins. Otherwise the
+ * first alias by stable ID supplies the budget, so restarts and directory order
+ * cannot change the effective pool.
+ */
+export function resolveCanonicalMergedGroupBudget(
+  primaryGroupId: string,
+  mergePlan: CanonicalGroupMergePlan,
+  budgetByGroupId: ReadonlyMap<string, number>,
+): CanonicalMergedGroupBudget | null {
+  const primaryAmount = budgetByGroupId.get(primaryGroupId);
+  if (primaryAmount != null) {
+    return { amountUsd: primaryAmount, sourceGroupId: primaryGroupId };
+  }
+  const aliasId = (mergePlan.mergeMap.get(primaryGroupId) ?? [])
+    .filter((id) => id !== primaryGroupId && budgetByGroupId.has(id))
+    .sort()[0];
+  if (!aliasId) return null;
+  return { amountUsd: budgetByGroupId.get(aliasId)!, sourceGroupId: aliasId };
+}
+
+/** Shared migration policy for same-name groups duplicated across workspaces. */
+export function buildCanonicalGroupMergePlan(
+  groups: readonly EnterpriseGroup[],
+  workspaces: ReadonlyMap<string, Pick<EnterpriseWorkspace, "name">>,
+): CanonicalGroupMergePlan {
+  const byName = new Map<string, EnterpriseGroup[]>();
+  for (const group of groups) {
+    const key = group.name.trim().toLowerCase();
+    const matches = byName.get(key) ?? [];
+    matches.push(group);
+    byName.set(key, matches);
+  }
+  const mergeMap = new Map<string, string[]>();
+  const hiddenGroupIds = new Set<string>();
+  const primaryByGroupId = new Map<string, string>();
+  for (const matches of byName.values()) {
+    const body = matches[0]!.name
+      .replace(/^az-replit\s*[-–]\s*/i, "")
+      .toLowerCase()
+      .trim();
+    const matched = matches.find((group) => {
+      const workspaceName = (workspaces.get(group.workspaceId)?.name ?? "").trim().toLowerCase();
+      const firstToken = workspaceName.split(/[-\s]+/)[0] ?? "";
+      return firstToken.length >= 2 && body.startsWith(firstToken);
+    });
+    const primary = matched ?? matches.slice().sort((a, b) => {
+      const aName = workspaces.get(a.workspaceId)?.name ?? "";
+      const bName = workspaces.get(b.workspaceId)?.name ?? "";
+      return aName.localeCompare(bName) || a.id.localeCompare(b.id);
+    })[0]!;
+    const sourceIds = matches.map((group) => group.id);
+    mergeMap.set(primary.id, sourceIds);
+    for (const group of matches) {
+      primaryByGroupId.set(group.id, primary.id);
+      if (group.id !== primary.id) hiddenGroupIds.add(group.id);
+    }
+  }
+  return { mergeMap, hiddenGroupIds, primaryByGroupId };
+}
+
+export function getCanonicalUsage(
+  groups: EnterpriseGroup[],
+  rangeKey: string,
+  workspaceIds?: ReadonlySet<string>,
+  groupMembers?: ReadonlyMap<string, readonly string[]>,
+  directoryMembers?: ReadonlyMap<string, EnterpriseMember>,
+  ...options: [
+    teamByGroupName: ReadonlyMap<string, string> | undefined,
+    workspaces: ReadonlyMap<string, EnterpriseWorkspace>,
+    includeAccountMetadata?: boolean,
+    requireGroupMemberUsage?: boolean,
+  ]
+): CanonicalUsageResult {
+  const [
+    teamByGroupName,
+    workspaces,
+    includeAccountMetadata = false,
+    requireGroupMemberUsage = false,
+  ] = options;
+  const rollup = getDedupedUsageRollup(
+    groups,
+    rangeKey,
+    workspaceIds,
+    groupMembers,
+    directoryMembers,
+  );
+  const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces);
+  const displayGroups = groups.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
+  const spendByPrimaryGroup = new Map<string, number>();
+  for (const group of displayGroups) {
+    const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+    spendByPrimaryGroup.set(
+      group.id,
+      sourceIds.reduce((sum, id) => sum + (rollup.byGroup.get(id)?.spendUsd ?? 0), 0),
+    );
+  }
+  const byTeam = new Map<string, number>();
+  if (teamByGroupName) {
+    for (const group of displayGroups) {
+      const teamName = teamByGroupName.get(group.name);
+      if (!teamName) continue;
+      byTeam.set(
+        teamName,
+        (byTeam.get(teamName) ?? 0) + (spendByPrimaryGroup.get(group.id) ?? 0),
+      );
+    }
+  }
+  const accountUsage = includeAccountMetadata ? (getAccountUsage(rangeKey) ?? null) : null;
+  const missingMemberUsageCount = requireGroupMemberUsage
+    ? groups.filter((group) => !getMemberUsage(group.id, rangeKey)).length
+    : 0;
+  return {
+    ...rollup,
+    isComplete: rollup.isComplete && missingMemberUsageCount === 0,
+    pendingCount: rollup.pendingCount + missingMemberUsageCount,
+    rangeKey,
+    mergePlan,
+    displayGroups,
+    spendByPrimaryGroup,
+    byTeam,
+    accountUsage,
+    accountReconciliationSpendUsd: accountUsage
+      ? accountUsage.totalCostUsd - rollup.totalSpendUsd
+      : null,
+    projectAttribution: getProjectAttribution(rangeKey, groups, workspaces),
+  };
+}
+
 export function getDedupedMemberCounts(
   groups: EnterpriseGroup[],
   membersByGroup: ReadonlyMap<string, readonly string[]>,

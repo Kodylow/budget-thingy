@@ -5,5 +5,6 @@ export * from "./generated/types";
 export { GetGroupDetailParams } from "./generated/api";
 export { GetGroupProjectsParams } from "./generated/api";
 export { GetClusterProjectsParams } from "./generated/api";
+export { GetCanonicalClusterHeadlineParams } from "./generated/api";
 export * from './generated/api';
 export * from './generated/types';

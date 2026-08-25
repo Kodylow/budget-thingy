@@ -349,6 +349,10 @@ test("workspace admin alerts are scoped and recipient addresses are redacted", a
   assert.equal(json[0].entityType, "group");
   assert.equal(json[0].entityId, "g-ws1-a");
   assert.deepEqual(json[0].recipients, []);
+  assert.equal(json[0].spendUsd, 50, "stored spend remains the send-time snapshot");
+  assert.equal(json[0].currentUsageComplete, false);
+  assert.equal(json[0].currentSpendUsd, null);
+  assert.equal(json[0].currentPercentUsed, null);
 });
 
 test("workspace admin is denied account-only recipient list (403)", async () => {

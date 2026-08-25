@@ -17,12 +17,14 @@ import {
   __setMemberUsageForTests,
   __setProjectUsageForTests,
   __setWsSpendForTests,
+  resolveRange,
 } from "../lib/enterprise.ts";
 import {
   db,
   groupBudgetsTable,
   groupTeamsTable,
   teamBudgetsTable,
+  alertsTable,
 } from "@workspace/db";
 
 function m(userId, isAccountAdmin, workspaces = {}) {
@@ -420,6 +422,270 @@ test("/groups: correct combined spend once all group caches warm", async () => {
   assert.equal(json.isComplete, true);
 });
 
+test("cluster headline uses the canonical rollup instead of project attribution", async () => {
+  __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
+  __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
+  __setWsSpendForTests("ws-extra", RANGE, new Map());
+  setProjectSpend(1, 2);
+
+  const headline = await req("/clusters/sg-alpha,sg-beta/headline");
+  assert.equal(headline.isComplete, true);
+  assert.equal(headline.spendUsd, 75, "cluster headline must equal canonical group rollup, not $3 of projects");
+});
+
+test("same-name migration aliases reconcile groups, summary pools, and cluster headline", async () => {
+  const primary = {
+    id: "merge-primary",
+    workspaceId: "ws-main",
+    name: "AZ-Replit – Main",
+    type: "custom",
+  };
+  const hidden = { ...primary, id: "merge-hidden", workspaceId: "ws-extra" };
+  __setDirectoryCacheForTests({
+    workspaces: wsExtra,
+    groups: [hidden, primary],
+    members,
+    groupMembers: new Map([
+      [primary.id, ["carol"]],
+      [hidden.id, ["dave"]],
+    ]),
+  });
+  await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [primary.id, hidden.id]));
+  await db.insert(groupBudgetsTable).values({ groupId: hidden.id, amountUsd: 100 });
+  const [storedAlert] = await db.insert(alertsTable).values({
+    groupId: primary.id,
+    groupName: primary.name,
+    entityType: "group",
+    entityId: primary.id,
+    entityName: primary.name,
+    workspaceIds: ["ws-main", "ws-extra"],
+    threshold: 50,
+    spendUsd: 10,
+    budgetUsd: 100,
+    recipients: ["snapshot@example.com"],
+    status: "sent",
+  }).returning();
+  __setMemberUsageForTests(primary.id, RANGE, new Map([["carol", 45]]));
+  __setMemberUsageForTests(hidden.id, RANGE, new Map([["dave", 35]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["carol", 45]]));
+  __setWsSpendForTests("ws-extra", RANGE, new Map([["dave", 35]]));
+  for (const group of [primary, hidden]) {
+    __setProjectUsageForTests(group.id, RANGE, {
+      fetchedAt: Date.now(),
+      totalCostUsd: 1,
+      byProject: new Map([[`${group.id}-project`, {
+        projectId: `${group.id}-project`,
+        totalCostUsd: 1,
+        metrics: [],
+      }]]),
+    });
+  }
+  const aliasTrendRanges = [];
+  const now = new Date();
+  let trendCursor = new Date(Date.UTC(2026, 4, 20));
+  while (trendCursor < now) {
+    const year = trendCursor.getUTCFullYear();
+    const month = trendCursor.getUTCMonth();
+    const end = new Date(Math.min(Date.UTC(year, month + 1, 0), now.getTime()));
+    const trendRange = resolveRange(
+      "custom",
+      trendCursor.toISOString().slice(0, 10),
+      end.toISOString().slice(0, 10),
+    );
+    aliasTrendRanges.push(trendRange);
+    __setMemberUsageForTests(primary.id, trendRange.key, new Map([["carol", 45]]));
+    __setMemberUsageForTests(hidden.id, trendRange.key, new Map([["dave", 35]]));
+    __setWsSpendForTests("ws-main", trendRange.key, new Map([["carol", 45]]));
+    __setWsSpendForTests("ws-extra", trendRange.key, new Map([["dave", 35]]));
+    trendCursor = new Date(Date.UTC(year, month + 1, 1));
+  }
+  try {
+    const groupsJson = await req("/groups");
+    assert.equal(groupsJson.groups.filter((group) => !group.isSynthetic).length, 1);
+    assert.equal(groupsJson.groups[0].groupId, primary.id);
+    assert.equal(groupsJson.groups[0].spendUsd, 80);
+    assert.equal(groupsJson.groups[0].budgetUsd, 100);
+    assert.equal(groupsJson.groups[0].percentUsed, 80);
+
+    const summary = await req("/summary");
+    assert.equal(summary.totalGroups, 1);
+    assert.equal(summary.totalRemainingUsd, 20);
+    assert.equal(summary.groupsOver75, 1);
+    assert.equal(summary.groupsOver100, 0);
+
+    const headline = await req(
+      `/clusters/${primary.id},${hidden.id}/headline`,
+    );
+    assert.equal(headline.spendUsd, 80, "primary and alias in a cluster must count one merged pool");
+
+    const trends = await req(
+      `/trends?granularity=month&groupIds=${primary.id}&groupIds=${hidden.id}`,
+    );
+    const groupSeries = trends.series.filter((series) => series.type === "group");
+    assert.equal(groupSeries.length, 1, "same-name aliases must emit one primary trend series");
+    assert.equal(groupSeries[0].name, primary.name);
+    assert.deepEqual(groupSeries[0].data, trends.buckets.map(() => 80));
+    assert.equal(
+      groupSeries[0].data.at(-1),
+      groupsJson.groups[0].spendUsd,
+      "trend, /groups, and cluster headline must use the same merged spend",
+    );
+    assert.equal(groupSeries[0].data.at(-1), headline.spendUsd);
+
+    const alertHistory = await req("/alerts");
+    const current = alertHistory.find((alert) => alert.id === storedAlert.id);
+    assert.equal(current.spendUsd, 10, "stored alert spend remains its send-time snapshot");
+    assert.equal(current.currentSpendUsd, 80);
+    assert.equal(current.currentPercentUsed, 80);
+    assert.equal(current.currentUsageComplete, true);
+
+    await db.insert(groupBudgetsTable).values({ groupId: primary.id, amountUsd: 200 });
+    const primaryWins = await req("/groups");
+    assert.equal(primaryWins.groups[0].budgetUsd, 200, "primary budget must win over alias budget");
+    assert.equal(primaryWins.groups[0].percentUsed, 40);
+  } finally {
+    await db.delete(alertsTable).where(eq(alertsTable.id, storedAlert.id));
+    await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [primary.id, hidden.id]));
+    __setMemberUsageForTests(primary.id, RANGE, null);
+    __setMemberUsageForTests(hidden.id, RANGE, null);
+    __setProjectUsageForTests(primary.id, RANGE, null);
+    __setProjectUsageForTests(hidden.id, RANGE, null);
+    for (const trendRange of aliasTrendRanges) {
+      __setMemberUsageForTests(primary.id, trendRange.key, null);
+      __setMemberUsageForTests(hidden.id, trendRange.key, null);
+      __setWsSpendForTests("ws-main", trendRange.key, null);
+      __setWsSpendForTests("ws-extra", trendRange.key, null);
+    }
+    restoreDir();
+  }
+});
+
+test("trends use canonical workspace rollups for every bucket", async () => {
+  const now = new Date();
+  let cursor = new Date(Date.UTC(2026, 4, 20));
+  while (cursor < now) {
+    const year = cursor.getUTCFullYear();
+    const month = cursor.getUTCMonth();
+    const end = new Date(Math.min(Date.UTC(year, month + 1, 0), now.getTime()));
+    const range = resolveRange(
+      "custom",
+      cursor.toISOString().slice(0, 10),
+      end.toISOString().slice(0, 10),
+    );
+    __setMemberUsageForTests("sg-alpha", range.key, new Map([["alice", 30], ["carol", 10]]));
+    __setMemberUsageForTests("sg-beta", range.key, new Map([["alice", 20], ["bob", 15]]));
+    __setWsSpendForTests("ws-main", range.key, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
+    __setWsSpendForTests("ws-extra", range.key, new Map());
+    cursor = new Date(Date.UTC(year, month + 1, 1));
+  }
+
+  const trends = await req("/trends?granularity=month&groupIds=sg-alpha&groupIds=sg-beta");
+  assert.equal(trends.isComplete, true);
+  const alpha = trends.series.find((series) => series.type === "group" && series.name === "Alpha");
+  const beta = trends.series.find((series) => series.type === "group" && series.name === "Beta");
+  assert.deepEqual(alpha.data, trends.buckets.map(() => 60));
+  assert.deepEqual(beta.data, trends.buckets.map(() => 15));
+});
+
+test("five team route percentages reconcile with the checker canonical fixture", async () => {
+  const expectedSpend = [55, 65, 80, 95, 120];
+  const teamNames = expectedSpend.map((_, index) => `Route-Team-${index + 1}`);
+  const routeGroups = expectedSpend.map((_, index) => ({
+    id: `route-five-g${index + 1}`,
+    workspaceId: index % 2 === 0 ? "ws-main" : "ws-extra",
+    name: `Route Five Group ${index + 1}`,
+    type: "custom",
+  }));
+  const routeMembers = new Map(members);
+  expectedSpend.forEach((_, index) => {
+    const workspaceId = routeGroups[index].workspaceId;
+    routeMembers.set(
+      `route-five-u${index + 1}`,
+      m(`route-five-u${index + 1}`, false, {
+        [workspaceId]: { role: "member", isDisabled: false },
+      }),
+    );
+  });
+  __setDirectoryCacheForTests({
+    workspaces: wsExtra,
+    groups: routeGroups,
+    members: routeMembers,
+    groupMembers: new Map(routeGroups.map((group, index) => [
+      group.id,
+      ["alice", `route-five-u${index + 1}`], // overlapping directory membership
+    ])),
+  });
+  await db.insert(groupTeamsTable).values(routeGroups.map((group, index) => ({
+    groupName: group.name,
+    teamName: teamNames[index],
+  })));
+  await db.insert(teamBudgetsTable).values(teamNames.map((teamName) => ({
+    teamName,
+    amountUsd: 100,
+  })));
+  for (const [index, group] of routeGroups.entries()) {
+    const userId = `route-five-u${index + 1}`;
+    __setMemberUsageForTests(group.id, RANGE, new Map([[userId, expectedSpend[index]]]));
+    __setProjectUsageForTests(group.id, RANGE, {
+      fetchedAt: Date.now(),
+      totalCostUsd: 1,
+      byProject: new Map([[`${group.id}-project`, {
+        projectId: `${group.id}-project`,
+        totalCostUsd: 1,
+        metrics: [],
+      }]]),
+    });
+  }
+  __setWsSpendForTests(
+    "ws-main",
+    RANGE,
+    new Map(routeGroups
+      .map((group, index) => [group, index])
+      .filter(([group]) => group.workspaceId === "ws-main")
+      .map(([, index]) => [`route-five-u${index + 1}`, expectedSpend[index]])),
+  );
+  __setWsSpendForTests(
+    "ws-extra",
+    RANGE,
+    new Map(routeGroups
+      .map((group, index) => [group, index])
+      .filter(([group]) => group.workspaceId === "ws-extra")
+      .map(([, index]) => [`route-five-u${index + 1}`, expectedSpend[index]])),
+  );
+  try {
+    const groupsJson = await req("/groups");
+    const routePairs = teamNames.map((teamName) => {
+      const spendUsd = groupsJson.teamRawSpend[teamName].spendUsd;
+      return { teamName, spendUsd, percentUsed: spendUsd };
+    });
+    assert.deepEqual(
+      routePairs,
+      teamNames.map((teamName, index) => ({
+        teamName,
+        spendUsd: expectedSpend[index],
+        percentUsed: expectedSpend[index],
+      })),
+      "all five route team spend/percent pairs must match the checker fixture",
+    );
+
+    const summary = await req("/summary");
+    assert.equal(summary.groupsOver50, 5);
+    assert.equal(summary.groupsOver75, 3);
+    assert.equal(summary.groupsOver90, 2);
+    assert.equal(summary.groupsOver100, 1);
+    assert.equal(summary.totalRemainingUsd, 85);
+  } finally {
+    await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, routeGroups.map((group) => group.name)));
+    await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, teamNames));
+    for (const group of routeGroups) {
+      __setMemberUsageForTests(group.id, RANGE, null);
+      __setProjectUsageForTests(group.id, RANGE, null);
+    }
+    restoreDir();
+  }
+});
+
 test("/groups retains ungrouped members and no-user charges with stable workspace attribution", async () => {
   const extendedMembers = new Map(members);
   extendedMembers.set("erin", m("erin", false, {
@@ -665,10 +931,11 @@ test("summary: unassigned group over 75% shows in groupsOver75 and totalRemainin
   await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
   await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
   await db.insert(groupBudgetsTable).values({ groupId: OT_G1.id, amountUsd: 100 });
-  seedOtProject(OT_G1.id, 80, 10); // OT-Alpha project $80, $10 unattributed residual
+  seedOtProject(OT_G1.id, 5, 10);  // deliberately divergent project attribution
   seedOtProject(OT_G2.id, 0);       // OT-Beta no spend
   __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["carol", 80]]));
   __setMemberUsageForTests(OT_G2.id, RANGE, new Map());
+  __setWsSpendForTests("ws-main", RANGE, new Map([["carol", 80]]));
   setAccountUsage(90);
   try {
     const json = await req("/summary");
@@ -700,6 +967,7 @@ test("summary: team pool over 100% is counted once and unattributed spend exclud
   seedOtProject(OT_G2.id, 50);     // OT-Beta $50 → team total $110
   __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 60], ["carol", 0]]));
   __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 50], ["bob", 0]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 110], ["bob", 0], ["carol", 0]]));
   setAccountUsage(120);
   try {
     const json = await req("/summary");
@@ -750,10 +1018,11 @@ test("summary: team pool + unassigned group remaining reconciles with table mode
   await db.insert(groupTeamsTable).values({ groupName: OT_G1.name, teamName: TEAM });
   await db.insert(teamBudgetsTable).values({ teamName: TEAM, amountUsd: 200 });
   await db.insert(groupBudgetsTable).values({ groupId: OT_G2.id, amountUsd: 100 });
-  seedOtProject(OT_G1.id, 100); // team pool $100 (50%)
-  seedOtProject(OT_G2.id, 80);  // OT-Beta $80 (80%)
+  seedOtProject(OT_G1.id, 1);   // project attribution must not drive pool math
+  seedOtProject(OT_G2.id, 2);
   __setMemberUsageForTests(OT_G1.id, RANGE, new Map([["alice", 100], ["carol", 0]]));
-  __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["alice", 80], ["bob", 0]]));
+  __setMemberUsageForTests(OT_G2.id, RANGE, new Map([["bob", 80]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 100], ["bob", 80], ["carol", 0]]));
   setAccountUsage(180);
   try {
     const json = await req("/summary");

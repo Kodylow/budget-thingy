@@ -157,8 +157,21 @@ export default function Alerts() {
                     </div>
                     <div className="text-sm text-muted-foreground space-y-1">
                       <p data-testid={`text-spend-${alert.id}`}>
-                        Spend: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Allocated pool:{' '}
+                        Send-time snapshot: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Allocated pool:{' '}
                         <span className="font-mono">${alert.budgetUsd.toFixed(2)}</span>
+                      </p>
+                      <p data-testid={`text-current-spend-${alert.id}`}>
+                        Current canonical spend:{' '}
+                        {alert.currentUsageComplete && alert.currentSpendUsd != null ? (
+                          <>
+                            <span className="font-mono">${alert.currentSpendUsd.toFixed(2)}</span>
+                            {alert.currentPercentUsed != null && (
+                              <span className="font-mono"> ({alert.currentPercentUsed.toFixed(1)}%)</span>
+                            )}
+                          </>
+                        ) : (
+                          <span>Loading…</span>
+                        )}
                       </p>
                       <p className="break-words" data-testid={`text-recipients-${alert.id}`}>
                         Recipients: {alert.recipients.join(', ')}

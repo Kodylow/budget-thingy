@@ -34,14 +34,16 @@ vi.mock("./email", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Enterprise mock: raw group spend is driven by getSpendMock; team rollups are
-// driven by fixture member-usage maps run through the REAL deduping rollup so
-// cross-workspace member overlap is exercised authentically.
+// Enterprise mock: canonical group/team rollups are driven by fixture
+// member-usage maps run through the real deduping helper. getSpendMock remains
+// only as a compatibility fixture for billing-period/raw reconciliation tests.
 // ---------------------------------------------------------------------------
 
 const getSpendMock = vi.fn();
 let periodStartAfterRawRefresh: string | null = null;
 let rawSpendRefreshGroupIds: string[] = [];
+let rawSpendCallbacks = new Map<string, () => void>();
+let rawSpendFetchResult: "fresh_cache" | "queued" = "fresh_cache";
 
 // groupId -> Map<userId, spendUsd> member usage fixture for the team range.
 let memberUsageFixture = new Map<string, Map<string, number>>();
@@ -71,10 +73,16 @@ vi.mock("./enterprise", () => ({
   getBillingPeriod: () => ({ label: "July 2026", start: billingStart }),
   // Spend is provided synchronously via getSpendMock, so report a fresh cache to
   // let runCheck's spend-refresh wait resolve immediately.
-  queueGroupSpendFetch: (group: EnterpriseGroup) => {
+  queueGroupSpendFetch: (
+    group: EnterpriseGroup,
+    _priority: number,
+    _force: boolean,
+    callback?: () => void,
+  ) => {
     rawSpendRefreshGroupIds.push(group.id);
+    if (callback) rawSpendCallbacks.set(group.id, callback);
     if (periodStartAfterRawRefresh) billingStart = periodStartAfterRawRefresh;
-    return "fresh_cache";
+    return rawSpendFetchResult;
   },
   queueMemberUsageFetch: () => false,
   queueProjectUsageFetch: () => false,
@@ -137,6 +145,144 @@ vi.mock("./enterprise", () => ({
       usageByGroup,
     );
   },
+  getCanonicalUsage: (
+    groups: EnterpriseGroup[],
+    _rangeKey: string,
+    _workspaceIds?: ReadonlySet<string>,
+    _groupMembers?: ReadonlyMap<string, readonly string[]>,
+    _directoryMembers?: unknown,
+    teamByGroupName?: ReadonlyMap<string, string>,
+    workspaces?: ReadonlyMap<string, { name: string }>,
+    _includeAccountMetadata?: boolean,
+    requireGroupMemberUsage?: boolean,
+  ) => {
+    const usageByGroup = new Map<
+      string,
+      { byUser: Map<string, number>; unattributableTotalCostUsd: number }
+    >();
+    for (const g of groups) {
+      const base = memberUsageFixture.get(g.id);
+      if (base) {
+        const byUser = new Map<string, number>();
+        for (const [uid, s] of base) byUser.set(uid, s + (extraSpendFixture.get(uid) ?? 0));
+        usageByGroup.set(g.id, { byUser, unattributableTotalCostUsd: 0 });
+      } else {
+        const raw = getSpendMock(g.id);
+        if (raw) {
+          usageByGroup.set(g.id, {
+            byUser: new Map([[`canonical:${g.id}`, raw.spendUsd]]),
+            unattributableTotalCostUsd: 0,
+          });
+        }
+      }
+    }
+    const rollup = computeDedupedUsageRollup(
+      groups.map((g) => ({ id: g.id, workspaceId: g.workspaceId, name: g.name })),
+      usageByGroup,
+    );
+    const mergeMap = new Map<string, string[]>();
+    const hiddenGroupIds = new Set<string>();
+    const primaryByGroupId = new Map<string, string>();
+    const displayGroups: EnterpriseGroup[] = [];
+    for (const group of groups) {
+      if (primaryByGroupId.has(group.id)) continue;
+      const sameName = groups.filter((candidate) =>
+        candidate.name.trim().toLowerCase() === group.name.trim().toLowerCase());
+      const body = group.name.replace(/^az-replit\s*[-–]\s*/i, "").toLowerCase().trim();
+      const primary = sameName.find((candidate) => {
+        const workspaceName = (workspaces?.get(candidate.workspaceId)?.name ?? "").toLowerCase();
+        const token = workspaceName.split(/[-\s]+/)[0] ?? "";
+        return token.length >= 2 && body.startsWith(token);
+      }) ?? sameName.slice().sort(
+        (a, b) =>
+          (workspaces?.get(a.workspaceId)?.name ?? "").localeCompare(
+            workspaces?.get(b.workspaceId)?.name ?? "",
+          ) || a.id.localeCompare(b.id),
+      )[0]!;
+      mergeMap.set(primary.id, sameName.map((candidate) => candidate.id));
+      displayGroups.push(primary);
+      for (const candidate of sameName) {
+        primaryByGroupId.set(candidate.id, primary.id);
+        if (candidate.id !== primary.id) hiddenGroupIds.add(candidate.id);
+      }
+    }
+    const spendByPrimaryGroup = new Map(
+      displayGroups.map((group) => [
+        group.id,
+        (mergeMap.get(group.id) ?? [group.id]).reduce(
+          (sum, id) => sum + (rollup.byGroup.get(id)?.spendUsd ?? 0),
+          0,
+        ),
+      ]),
+    );
+    const byTeam = new Map<string, number>();
+    for (const group of displayGroups) {
+      const team = teamByGroupName?.get(group.name);
+      if (team) byTeam.set(
+        team,
+        (byTeam.get(team) ?? 0) + (spendByPrimaryGroup.get(group.id) ?? 0),
+      );
+    }
+    return {
+      ...rollup,
+      mergePlan: { mergeMap, hiddenGroupIds, primaryByGroupId },
+      displayGroups,
+      spendByPrimaryGroup,
+      byTeam,
+      isComplete:
+        extraSpendComplete &&
+        (!requireGroupMemberUsage || groups.every((group) => memberUsageFixture.has(group.id))),
+      pendingCount:
+        (extraSpendComplete ? 0 : 1) +
+        (requireGroupMemberUsage
+          ? groups.filter((group) => !memberUsageFixture.has(group.id)).length
+          : 0),
+    };
+  },
+  buildCanonicalGroupMergePlan: (
+    groups: EnterpriseGroup[],
+    workspaces?: ReadonlyMap<string, { name: string }>,
+  ) => {
+    const mergeMap = new Map<string, string[]>();
+    const hiddenGroupIds = new Set<string>();
+    const primaryByGroupId = new Map<string, string>();
+    for (const group of groups) {
+      if (primaryByGroupId.has(group.id)) continue;
+      const sameName = groups.filter((candidate) =>
+        candidate.name.trim().toLowerCase() === group.name.trim().toLowerCase());
+      const body = group.name.replace(/^az-replit\s*[-–]\s*/i, "").toLowerCase().trim();
+      const primary = sameName.find((candidate) => {
+        const workspaceName = (workspaces?.get(candidate.workspaceId)?.name ?? "").toLowerCase();
+        const token = workspaceName.split(/[-\s]+/)[0] ?? "";
+        return token.length >= 2 && body.startsWith(token);
+      }) ?? sameName.slice().sort(
+        (a, b) =>
+          (workspaces?.get(a.workspaceId)?.name ?? "").localeCompare(
+            workspaces?.get(b.workspaceId)?.name ?? "",
+          ) || a.id.localeCompare(b.id),
+      )[0]!;
+      mergeMap.set(primary.id, sameName.map((candidate) => candidate.id));
+      for (const candidate of sameName) {
+        primaryByGroupId.set(candidate.id, primary.id);
+        if (candidate.id !== primary.id) hiddenGroupIds.add(candidate.id);
+      }
+    }
+    return { mergeMap, hiddenGroupIds, primaryByGroupId };
+  },
+  resolveCanonicalMergedGroupBudget: (
+    primaryGroupId: string,
+    mergePlan: { mergeMap: Map<string, string[]> },
+    budgets: ReadonlyMap<string, number>,
+  ) => {
+    const primary = budgets.get(primaryGroupId);
+    if (primary != null) return { amountUsd: primary, sourceGroupId: primaryGroupId };
+    const aliasId = (mergePlan.mergeMap.get(primaryGroupId) ?? [])
+      .filter((id) => id !== primaryGroupId && budgets.has(id))
+      .sort()[0];
+    return aliasId
+      ? { amountUsd: budgets.get(aliasId)!, sourceGroupId: aliasId }
+      : null;
+  },
   resolveRange: () => ({ key: "billing:from-cutoff", label: "July 2026", type: "billing" }),
 }));
 
@@ -144,8 +290,18 @@ vi.mock("./logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { evaluateGroup, getFiredThresholds, runCheck, THRESHOLDS } from "./checker";
-import type { EnterpriseGroup } from "./enterprise";
+import {
+  evaluateGroup,
+  getFiredThresholds,
+  runCheck,
+  startChecker,
+  THRESHOLDS,
+} from "./checker";
+import {
+  getCanonicalUsage,
+  resolveCanonicalMergedGroupBudget,
+  type EnterpriseGroup,
+} from "./enterprise";
 
 const GROUP: EnterpriseGroup = {
   id: "grp-1",
@@ -247,14 +403,29 @@ beforeEach(async () => {
   billingStart = PERIOD_JUL;
   periodStartAfterRawRefresh = null;
   rawSpendRefreshGroupIds = [];
+  rawSpendCallbacks = new Map();
+  rawSpendFetchResult = "fresh_cache";
 });
 
-function setSpend(spendUsd: number, periodStart = PERIOD_JUL) {
+function setSpend(
+  spendUsd: number,
+  periodStart = PERIOD_JUL,
+  populateMemberUsage = true,
+) {
   getSpendMock.mockReturnValue({ spendUsd, periodStart });
+  billingStart = periodStart;
+  if (populateMemberUsage) {
+    for (const group of directoryGroups) {
+      const existing = memberUsageFixture.get(group.id);
+      if (!existing || existing.has(`canonical:${group.id}`)) {
+        memberUsageFixture.set(group.id, new Map([[`canonical:${group.id}`, spendUsd]]));
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Group behavior (raw group spend) — unchanged evaluation semantics
+// Group behavior (canonical member-rollup spend)
 // ---------------------------------------------------------------------------
 
 describe("threshold dedup per (group, period, threshold)", () => {
@@ -296,6 +467,8 @@ describe("threshold dedup per (group, period, threshold)", () => {
       `INSERT INTO group_budgets (group_id, amount_usd) VALUES ('grp-2', 1000)`,
     );
     const other = { ...GROUP, id: "grp-2", name: "Design" };
+    directoryGroups = [GROUP, other];
+    memberUsageFixture.set(other.id, new Map([["canonical:grp-2", 520]]));
     const alerts = await evaluateGroup(other);
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.groupId).toBe("grp-2");
@@ -426,6 +599,116 @@ describe("lowering a pool below current spend is evaluated on the next run", () 
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.threshold).toBe(75);
     expect(await getFiredThresholds("grp-1", PERIOD_JUL)).toEqual([50, 75]);
+  });
+});
+
+describe("canonical group alert parity", () => {
+  it("uses canonical member rollup rather than divergent raw group spend", async () => {
+    setSpend(100); // raw group total would not cross any threshold
+    memberUsageFixture.set("grp-1", new Map([["u1", 800]]));
+    groupMembersFixture.set("grp-1", ["u1"]);
+
+    const alerts = await evaluateGroup(GROUP);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]!.spendUsd).toBe(800);
+    expect(alerts[0]!.threshold).toBe(75);
+  });
+
+  it("defers a group alert while canonical usage is incomplete", async () => {
+    setSpend(900);
+    memberUsageFixture.set("grp-1", new Map([["u1", 900]]));
+    extraSpendComplete = false;
+
+    expect(await evaluateGroup(GROUP)).toEqual([]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(await getFiredThresholds("grp-1", PERIOD_JUL)).toEqual([]);
+  });
+
+  it("startChecker callback defers until every group member payload is complete", async () => {
+    const unrelated = {
+      ...GROUP,
+      id: "unrelated-group",
+      workspaceId: "ws-2",
+      name: "Unrelated",
+    };
+    directoryGroups = [GROUP, unrelated];
+    groupMembersFixture = new Map([
+      [GROUP.id, ["u-primary"]],
+      [unrelated.id, ["u-unrelated"]],
+    ]);
+    memberUsageFixture = new Map([
+      [GROUP.id, new Map([["u-primary", 600]])],
+      // Workspace data is available, but this unrelated member payload is pending.
+    ]);
+    setSpend(600, PERIOD_JUL, false);
+    rawSpendFetchResult = "queued";
+    const intervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(
+      () => 0 as unknown as ReturnType<typeof setInterval>,
+    );
+    try {
+      startChecker();
+      await vi.waitFor(() => expect(rawSpendCallbacks.has(GROUP.id)).toBe(true));
+
+      rawSpendCallbacks.get(GROUP.id)!();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sendEmailMock).not.toHaveBeenCalled();
+      expect(await getFiredThresholds(GROUP.id, PERIOD_JUL, "group")).toEqual([]);
+
+      memberUsageFixture.set(unrelated.id, new Map([["u-unrelated", 0]]));
+      rawSpendCallbacks.get(GROUP.id)!();
+      await vi.waitFor(() => expect(sendEmailMock).toHaveBeenCalledTimes(1));
+      expect(await getFiredThresholds(GROUP.id, PERIOD_JUL, "group")).toEqual([50]);
+    } finally {
+      intervalSpy.mockRestore();
+    }
+  });
+
+  it("alerts the displayed primary with primary plus hidden-alias spend", async () => {
+    const primary = {
+      ...GROUP,
+      id: "z-heuristic-primary",
+      name: "AZ-Replit – Acme",
+    };
+    const alias = { ...primary, id: "a-lexical-alias", workspaceId: "ws-2" };
+    directoryGroups = [alias, primary];
+    groupMembersFixture = new Map([
+      [primary.id, ["u-primary"]],
+      [alias.id, ["u-alias"]],
+    ]);
+    memberUsageFixture = new Map([
+      [primary.id, new Map([["u-primary", 45]])],
+      [alias.id, new Map([["u-alias", 35]])],
+    ]);
+    await pglite.exec(
+      `INSERT INTO group_budgets (group_id, amount_usd) VALUES ('a-lexical-alias', 100)`,
+    );
+    setSpend(1);
+    const canonical = getCanonicalUsage(
+      directoryGroups,
+      "billing:from-cutoff",
+      new Set(["ws-1", "ws-2"]),
+      groupMembersFixture,
+      new Map(),
+      undefined,
+      new Map([
+        ["ws-1", { id: "ws-1", name: "Acme Workspace", slug: "acme", memberCount: 0 }],
+        ["ws-2", { id: "ws-2", name: "Beta Workspace", slug: "beta", memberCount: 0 }],
+      ]),
+    );
+    expect(canonical.displayGroups.map((group) => group.id)).toEqual([primary.id]);
+    expect(canonical.spendByPrimaryGroup.get(primary.id)).toBe(80);
+    expect(resolveCanonicalMergedGroupBudget(
+      primary.id,
+      canonical.mergePlan,
+      new Map([[alias.id, 100], [primary.id, 200]]),
+    )).toEqual({ amountUsd: 200, sourceGroupId: primary.id });
+
+    const alerts = (await runCheck(true)).alerts;
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]!.entityId).toBe(primary.id);
+    expect(alerts[0]!.spendUsd).toBe(80);
+    expect((alerts[0]!.spendUsd / alerts[0]!.budgetUsd) * 100).toBe(80);
+    expect(alerts[0]!.workspaceIds).toEqual(["ws-1", "ws-2"]);
   });
 });
 
@@ -600,7 +883,26 @@ describe("team allocated pool checks", () => {
     expect(retried.alerts).toHaveLength(1);
   });
 
-  it("still evaluates independent group pools while team data is incomplete", async () => {
+  it("reports zero checked entities when workspaces are ready but member canonical input is incomplete", async () => {
+    await configureTeam(1000);
+    await pglite.exec(`INSERT INTO group_budgets (group_id, amount_usd) VALUES ('gA', 1000)`);
+    memberUsageFixture = new Map([
+      ["gA", new Map([["u1", 600]])],
+      // Workspace payloads are complete, but gB's required member payload is absent.
+    ]);
+    extraSpendComplete = true;
+    setSpend(600, PERIOD_JUL, false);
+
+    const result = await runCheck(true);
+    expect(result.checkedGroups).toBe(0);
+    expect(result.checkedTeams).toBe(0);
+    expect(result.alerts).toHaveLength(0);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(await getFiredThresholds("gA", PERIOD_JUL, "group")).toEqual([]);
+    expect(await getFiredThresholds("Platform", PERIOD_JUL, "team")).toEqual([]);
+  });
+
+  it("defers group and team pools while canonical usage is incomplete", async () => {
     await configureTeam(1000);
     await pglite.exec(`INSERT INTO group_budgets (group_id, amount_usd) VALUES ('grp-1', 1000)`);
     directoryGroups = [GROUP, ...directoryGroups];
@@ -614,11 +916,10 @@ describe("team allocated pool checks", () => {
     extraSpendComplete = false;
 
     const result = await runCheck(true);
-    expect(result.checkedGroups).toBe(1);
+    expect(result.checkedGroups).toBe(0);
     expect(result.checkedTeams).toBe(0);
-    expect(result.alerts).toHaveLength(1);
-    expect(result.alerts[0]!.entityType).toBe("group");
-    expect(await getFiredThresholds("grp-1", PERIOD_JUL, "group")).toEqual([50]);
+    expect(result.alerts).toHaveLength(0);
+    expect(await getFiredThresholds("grp-1", PERIOD_JUL, "group")).toEqual([]);
     expect(await getFiredThresholds("Platform", PERIOD_JUL, "team")).toEqual([]);
   });
 
@@ -680,5 +981,92 @@ describe("team allocated pool checks", () => {
     expect(subject).toContain("allocated pool alert");
     expect(html).toContain("Enterprise team <strong>Platform</strong>");
     expect(html).toContain("Allocated pool");
+  });
+
+  it("reconciles five dashboard team percentages with checker alerts and defers incomplete data", async () => {
+    await pglite.exec(`DELETE FROM group_budgets`);
+    const teams = ["Team-1", "Team-2", "Team-3", "Team-4", "Team-5"];
+    const expectedSpend = [55, 65, 80, 95, 120];
+    directoryGroups = teams.map((team, index) => ({
+      id: `five-g${index + 1}`,
+      workspaceId: index % 2 === 0 ? "ws-1" : "ws-2",
+      name: `Five Group ${index + 1}`,
+    } as EnterpriseGroup));
+    groupMembersFixture = new Map(
+      directoryGroups.map((group, index) => [
+        group.id,
+        ["overlap-user", `five-u${index + 1}`],
+      ]),
+    );
+    memberUsageFixture = new Map(
+      directoryGroups.map((group, index) => [
+        group.id,
+        new Map([
+          ["overlap-user", index === 0 ? 5 : 0],
+          [`five-u${index + 1}`, expectedSpend[index]! - (index === 0 ? 5 : 0)],
+        ]),
+      ]),
+    );
+    await testDb.insert(schema.groupTeamsTable).values(
+      directoryGroups.map((group, index) => ({
+        groupName: group.name,
+        teamName: teams[index]!,
+      })),
+    );
+    await testDb.insert(schema.teamBudgetsTable).values(
+      teams.map((teamName) => ({ teamName, amountUsd: 100 })),
+    );
+
+    const teamMap = new Map(
+      directoryGroups.map((group, index) => [group.name, teams[index]!]),
+    );
+
+    // A partially loaded dashboard has no trustworthy percentages, and the
+    // checker must likewise send none.
+    extraSpendComplete = false;
+    const deferred = await runCheck(true);
+    expect(deferred.checkedTeams).toBe(0);
+    expect(deferred.alerts).toEqual([]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+
+    extraSpendComplete = true;
+    const dashboardCanonical = getCanonicalUsage(
+      directoryGroups,
+      "billing:from-cutoff",
+      new Set(["ws-1", "ws-2"]),
+      groupMembersFixture,
+      new Map(),
+      teamMap,
+      new Map([
+        ["ws-1", { id: "ws-1", name: "Acme Workspace", slug: "acme", memberCount: 0 }],
+        ["ws-2", { id: "ws-2", name: "Beta Workspace", slug: "beta", memberCount: 0 }],
+      ]),
+    );
+    expect(dashboardCanonical.isComplete).toBe(true);
+
+    const result = await runCheck(true);
+    expect(result.checkedTeams).toBe(5);
+    expect(result.alerts).toHaveLength(5);
+
+    const dashboardPairs = teams.map((teamName) => ({
+      teamName,
+      spendUsd: dashboardCanonical.byTeam.get(teamName),
+      percentUsed: (dashboardCanonical.byTeam.get(teamName)! / 100) * 100,
+    }));
+    expect(dashboardPairs).toHaveLength(5);
+    dashboardPairs.forEach((pair, index) => {
+      expect(pair.teamName).toBe(teams[index]);
+      expect(pair.spendUsd).toBe(expectedSpend[index]);
+      expect(pair.percentUsed).toBeCloseTo(expectedSpend[index]!);
+    });
+
+    for (const pair of dashboardPairs) {
+      const alert = result.alerts.find(
+        (candidate) => candidate.entityType === "team" && candidate.entityId === pair.teamName,
+      );
+      expect(alert, `${pair.teamName} checker alert`).toBeDefined();
+      expect(alert!.spendUsd).toBe(pair.spendUsd);
+      expect((alert!.spendUsd / alert!.budgetUsd) * 100).toBeCloseTo(pair.percentUsed);
+    }
   });
 });

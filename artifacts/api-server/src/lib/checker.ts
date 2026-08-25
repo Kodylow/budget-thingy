@@ -12,7 +12,6 @@ import {
 import { logger } from "./logger";
 import {
   getDirectory,
-  getSpend,
   getBillingPeriod,
   isConfigured,
   queueGroupSpendFetch,
@@ -20,10 +19,9 @@ import {
   queueProjectUsageFetch,
   queueExtraWorkspacesFetch,
   queueAllWorkspacesFetch,
-  getExtraWorkspaceSpend,
-  getDedupedUsageRollup,
-  getMemberUsage,
-  getWorkspaceMemberUsage,
+  getCanonicalUsage,
+  buildCanonicalGroupMergePlan,
+  resolveCanonicalMergedGroupBudget,
   resolveRange,
   type EnterpriseGroup,
 } from "./enterprise";
@@ -37,6 +35,25 @@ export const CHECK_INTERVAL_MINUTES = 10;
 // the dashboard uses for its deduped team rollups.
 const TEAM_RANGE_KEY = "billing:from-cutoff";
 
+type CheckerDirectory = Awaited<ReturnType<typeof getDirectory>>;
+
+function getStrictCheckerCanonicalUsage(
+  dir: CheckerDirectory,
+  teamByGroupName?: ReadonlyMap<string, string>,
+) {
+  return getCanonicalUsage(
+    dir.groups,
+    TEAM_RANGE_KEY,
+    new Set(dir.workspaces.keys()),
+    dir.groupMembers,
+    dir.members,
+    teamByGroupName,
+    dir.workspaces,
+    false,
+    true,
+  );
+}
+
 let lastCheckAt: Date | null = null;
 
 const evaluationsInFlight = new Map<string, Promise<Alert[]>>();
@@ -45,7 +62,7 @@ export function getLastCheckAt(): Date | null {
 }
 
 /**
- * A single allocated-pool entity to evaluate. Both raw groups and cross-workspace
+ * A single allocated-pool entity to evaluate. Both canonical groups and cross-workspace
  * teams reduce to this shape so a single evaluator handles dedup, retries, and
  * the "one highest-due email, mark all due" behavior identically.
  */
@@ -226,29 +243,43 @@ async function evaluateEntity(spec: EntitySpec): Promise<Alert[]> {
 
 /**
  * Evaluate thresholds for one group and send any due alerts.
- * Group spend is the raw per-group spend (unchanged behavior).
+ * Group spend comes from the same canonical workspace-aware member rollup used
+ * by dashboard group rows and team headers.
  */
 async function evaluateGroupOnce(group: EnterpriseGroup): Promise<Alert[]> {
-  const spend = getSpend(group.id);
-  if (!spend) return [];
-
-  const [budget] = await db
-    .select()
-    .from(groupBudgetsTable)
-    .where(eq(groupBudgetsTable.groupId, group.id));
+  const dir = await getDirectory();
+  const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
+  const primaryId = mergePlan.primaryByGroupId.get(group.id) ?? group.id;
+  const primary = dir.groups.find((candidate) => candidate.id === primaryId);
+  if (!primary) return [];
+  const budgetRows = await db.select().from(groupBudgetsTable);
+  const budget = resolveCanonicalMergedGroupBudget(
+    primary.id,
+    mergePlan,
+    new Map(budgetRows.map((row) => [row.groupId, row.amountUsd])),
+  );
   if (!budget || budget.amountUsd <= 0) return [];
 
-  const dir = await getDirectory();
-  const workspaceName = dir.workspaces.get(group.workspaceId)?.name ?? null;
+  const canonical = getStrictCheckerCanonicalUsage(dir);
+  if (!canonical.isComplete) return [];
+  const workspaceName = dir.workspaces.get(primary.workspaceId)?.name ?? null;
+  const periodStart = getBillingPeriod().start;
+  if (!periodStart) return [];
 
   return evaluateEntity({
     entityType: "group",
-    entityId: group.id,
-    entityName: group.name,
-    spendUsd: spend.spendUsd,
+    entityId: primary.id,
+    entityName: primary.name,
+    spendUsd: canonical.spendByPrimaryGroup.get(primary.id) ?? 0,
     budgetUsd: budget.amountUsd,
-    periodStart: spend.periodStart,
-    workspaceIds: [group.workspaceId],
+    periodStart,
+    workspaceIds: [
+      ...new Set(
+        (mergePlan.mergeMap.get(primary.id) ?? [primary.id])
+          .map((id) => dir.groups.find((candidate) => candidate.id === id)?.workspaceId)
+          .filter((id): id is string => !!id),
+      ),
+    ].sort(),
     workspaceName,
   });
 }
@@ -287,13 +318,8 @@ async function buildTeamSpecs(): Promise<EntitySpec[]> {
 
   // Deduped rollup across ALL directory groups, including extra-workspace spend,
   // so a team spanning multiple workspaces sees exactly the dashboard total.
-  const rollup = getDedupedUsageRollup(
-    dir.groups,
-    TEAM_RANGE_KEY,
-    new Set(dir.workspaces.keys()),
-    dir.groupMembers,
-    dir.members,
-  );
+  const rollup = getStrictCheckerCanonicalUsage(dir, teamByGroupName);
+  if (!rollup.isComplete) return [];
 
   // Period start for team thresholds: use the shared cutoff-anchored billing
   // period (same anchor the dashboard/groups use for fired-threshold tracking).
@@ -308,8 +334,7 @@ async function buildTeamSpecs(): Promise<EntitySpec[]> {
     const teamName = teamByGroupName.get(group.name);
     if (!teamName) continue;
     if (!budgetByTeam.has(teamName)) continue;
-    const groupSpend = rollup.byGroup.get(group.id)?.spendUsd ?? 0;
-    spendByTeam.set(teamName, (spendByTeam.get(teamName) ?? 0) + groupSpend);
+    spendByTeam.set(teamName, rollup.byTeam.get(teamName) ?? 0);
     let wsSet = workspacesByTeam.get(teamName);
     if (!wsSet) {
       wsSet = new Set<string>();
@@ -333,16 +358,6 @@ async function buildTeamSpecs(): Promise<EntitySpec[]> {
     });
   }
   return specs;
-}
-
-/** Return true only when every workspace has an authoritative usage payload. */
-function hasCompleteTeamData(
-  workspaceIds: readonly string[],
-  rangeKey: string,
-): boolean {
-  return workspaceIds.every(
-    (workspaceId) => !!getWorkspaceMemberUsage(workspaceId, rangeKey),
-  );
 }
 
 const teamChecksInFlight = new Map<string, Promise<{ checkedTeams: number; alerts: Alert[] }>>();
@@ -382,14 +397,26 @@ async function runCheckInternal(
   for (const group of dir.groups) {
     queueProjectUsageFetch(group, projectRange, force ? 0 : 1, force);
   }
-  const [budgets, teamBudgets] = await Promise.all([
+  const [budgets, teamBudgets, groupTeams] = await Promise.all([
     db.select().from(groupBudgetsTable),
     db.select().from(teamBudgetsTable),
+    db.select().from(groupTeamsTable),
   ]);
   const budgeted = new Set(budgets.map((b) => b.groupId));
-  const groups = dir.groups.filter((g) => budgeted.has(g.id));
+  const budgetByGroupId = new Map(budgets.map((row) => [row.groupId, row.amountUsd]));
+  const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
+  const groups = dir.groups.filter(
+    (group) =>
+      !mergePlan.hiddenGroupIds.has(group.id) &&
+      !!resolveCanonicalMergedGroupBudget(
+        group.id,
+        mergePlan,
+        budgetByGroupId,
+      ),
+  );
   const teamsConfigured = teamBudgets.length > 0;
-  let teamDataReady = true;
+  const teamByGroupName = new Map(groupTeams.map((row) => [row.groupName, row.teamName]));
+  let canonicalDataReady = true;
   // Team thresholds use the same period anchor as group thresholds. In a
   // team-only configuration there may be no group-budget fetch to populate
   // that anchor, so refresh one directory group's raw spend as the period
@@ -424,39 +451,39 @@ async function runCheckInternal(
   // Team pools need the deduped cross-workspace rollup, which is built from
   // per-group member usage plus extra-workspace spend across ALL directory
   // groups (so cross-workspace overlap dedups exactly like the dashboard).
-  // queueMemberUsageFetch has no completion callback, so queue every group's
-  // member usage and poll the caches until they land (bounded wait).
-  if (teamsConfigured) {
+  // queueMemberUsageFetch has no completion callback, so queue every group and
+  // inspect the complete canonical input set. If anything is still pending,
+  // this run defers and a later scheduled/manual run retries it.
+  if (groups.length > 0 || teamsConfigured) {
     const range = resolveRange("billing");
     for (const g of dir.groups) queueMemberUsageFetch(g, range, force ? 0 : 1, force);
     queueExtraWorkspacesFetch(dir, range, force ? 0 : 1, force);
     queueAllWorkspacesFetch(dir, range, force ? 0 : 1, force);
-    const workspaceDataComplete = hasCompleteTeamData(
-      [...dir.workspaces.keys()],
-      range.key,
-    );
-    if (!workspaceDataComplete) {
-      teamDataReady = false;
+    const canonical = getStrictCheckerCanonicalUsage(dir, teamByGroupName);
+    if (!canonical.isComplete) {
+      canonicalDataReady = false;
       logger.warn(
-        { workspaceDataComplete },
-        "Team pool check deferred because deduplication data is incomplete",
+        { canonicalDataComplete: canonical.isComplete },
+        "Allocated pool check deferred because canonical usage is incomplete",
       );
     }
   }
 
   const alerts: Alert[] = [];
-  for (const g of groups) {
-    alerts.push(...(await evaluateGroup(g)));
+  if (canonicalDataReady) {
+    for (const g of groups) {
+      alerts.push(...(await evaluateGroup(g)));
+    }
   }
   let checkedTeams = 0;
-  if (teamsConfigured && teamDataReady) {
+  if (teamsConfigured && canonicalDataReady) {
     const teamResult = await evaluateTeamsOnce();
     checkedTeams = teamResult.checkedTeams;
     alerts.push(...teamResult.alerts);
   }
 
   lastCheckAt = new Date();
-  return { checkedGroups: groups.length, checkedTeams, alerts };
+  return { checkedGroups: canonicalDataReady ? groups.length : 0, checkedTeams, alerts };
 }
 
 let fullCheckInFlight: Promise<{

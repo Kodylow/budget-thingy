@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { reconcileDashboardSpend } from "./dashboard-reconciliation.ts";
+import {
+  isCanonicalSummaryPending,
+  reconcileDashboardSpend,
+} from "./dashboard-reconciliation.ts";
+
+test("canonical summary cards stay loading during cold and partial responses", () => {
+  assert.equal(isCanonicalSummaryPending(true, undefined), true);
+  assert.equal(isCanonicalSummaryPending(false, false), true);
+  assert.equal(isCanonicalSummaryPending(false, true), false);
+});
 
 test("account rows plus reconciliation equal the unfiltered account anchor", () => {
   const result = reconcileDashboardSpend({

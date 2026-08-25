@@ -29,8 +29,10 @@ import type {
   AuthUserEnvelope,
   BeginBrowserLoginParams,
   CheckResult,
+  ClusterHeadline,
   ErrorEnvelope,
   ForbiddenResponse,
+  GetCanonicalClusterHeadlineParams,
   GetClusterProjectsParams,
   GetGroupDetailParams,
   GetGroupProjectsParams,
@@ -992,6 +994,96 @@ export function useGetClusterProjects<TData = Awaited<ReturnType<typeof getClust
 
 
 
+export const getGetCanonicalClusterHeadlineUrl = (clusterKey: string,
+    params?: GetCanonicalClusterHeadlineParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/clusters/${clusterKey}/headline?${stringifiedParams}` : `/api/clusters/${clusterKey}/headline`
+}
+
+/**
+ * Returns member-deduped canonical spend across the requested visible groups.
+ * @summary Canonical cluster spend headline
+ */
+export const getCanonicalClusterHeadline = async (clusterKey: string,
+    params?: GetCanonicalClusterHeadlineParams, options?: RequestInit): Promise<ClusterHeadline> => {
+
+  return customFetch<ClusterHeadline>(getGetCanonicalClusterHeadlineUrl(clusterKey,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCanonicalClusterHeadlineQueryKey = (clusterKey: string,
+    params?: GetCanonicalClusterHeadlineParams,) => {
+    return [
+    `/api/clusters/${clusterKey}/headline`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCanonicalClusterHeadlineQueryOptions = <TData = Awaited<ReturnType<typeof getCanonicalClusterHeadline>>, TError = ErrorType<ApiError>>(clusterKey: string,
+    params?: GetCanonicalClusterHeadlineParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCanonicalClusterHeadline>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCanonicalClusterHeadlineQueryKey(clusterKey,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCanonicalClusterHeadline>>> = ({ signal }) => getCanonicalClusterHeadline(clusterKey,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: clusterKey !== null && clusterKey !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCanonicalClusterHeadline>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCanonicalClusterHeadlineQueryResult = NonNullable<Awaited<ReturnType<typeof getCanonicalClusterHeadline>>>
+export type GetCanonicalClusterHeadlineQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Canonical cluster spend headline
+ */
+
+export function useGetCanonicalClusterHeadline<TData = Awaited<ReturnType<typeof getCanonicalClusterHeadline>>, TError = ErrorType<ApiError>>(
+ clusterKey: string,
+    params?: GetCanonicalClusterHeadlineParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCanonicalClusterHeadline>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCanonicalClusterHeadlineQueryOptions(clusterKey,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getRefreshGroupUsageUrl = (groupId: string,) => {
 
 
@@ -1080,7 +1172,7 @@ export const getGetSummaryUrl = (params?: GetSummaryParams,) => {
 }
 
 /**
- * Aggregate visible stats across custom groups and budgets for the selected range. For account-wide callers, totalSpendUsd is anchored to an unfiltered Enterprise usage request and reconciliationSpendUsd bridges it to the displayed rollup. Workspace-scoped callers retain scoped totals and never receive account figures.
+ * Aggregate visible stats across custom groups and budgets for the selected range. totalSpendUsd always uses the workspace-aware member-deduped canonical rollup. For account-wide callers, the unfiltered Enterprise usage request is returned only as reconciliation metadata. Workspace-scoped callers never receive account figures.
  * @summary Dashboard summary
  */
 export const getSummary = async (params?: GetSummaryParams, options?: RequestInit): Promise<Summary> => {
@@ -2219,7 +2311,7 @@ export const getListAlertsUrl = (params?: ListAlertsParams,) => {
 }
 
 /**
- * Sent threshold alerts, newest first.
+ * Sent threshold alerts, newest first. Stored spend is the send-time snapshot; current fields use the latest canonical rollup.
  * @summary Alert history
  */
 export const listAlerts = async (params?: ListAlertsParams, options?: RequestInit): Promise<Alert[]> => {

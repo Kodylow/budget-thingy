@@ -234,6 +234,16 @@ export interface TrendsResponse {
   totalCount: number;
 }
 
+export interface ClusterHeadline {
+  /**
+     * Canonical member-deduped cluster spend; null until the scoped rollup is complete
+     * @nullable
+     */
+  spendUsd: number | null;
+  isComplete: boolean;
+  pendingCount: number;
+}
+
 export interface GroupMember {
   userId: string;
   /** @nullable */
@@ -329,7 +339,7 @@ export interface GroupDetail {
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Account usage anchor for account-wide callers once available; otherwise the scoped visible rollup total */
+  /** Workspace-aware member-deduped canonical rollup total for the caller's scope */
   totalSpendUsd: number;
   /** Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility */
   memberBasedTotalSpendUsd?: number;
@@ -454,6 +464,7 @@ export interface Alert {
   workspaceIds: string[];
   /** Threshold percent crossed (50, 75, 90, 100) */
   threshold: number;
+  /** Canonical spend snapshot captured when this delivery was attempted */
   spendUsd: number;
   budgetUsd: number;
   recipients: string[];
@@ -462,6 +473,17 @@ export interface Alert {
   status: string;
   /** @nullable */
   errorMessage?: string | null;
+  /**
+     * Current canonical spend for the entity; null while usage is incomplete
+     * @nullable
+     */
+  currentSpendUsd: number | null;
+  /**
+     * Current canonical spend as a percent of the current allocated pool
+     * @nullable
+     */
+  currentPercentUsed: number | null;
+  currentUsageComplete: boolean;
 }
 
 export interface CheckResult {
@@ -586,6 +608,21 @@ endDate?: EndDateParameter;
 };
 
 export type GetClusterProjectsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
+export type GetCanonicalClusterHeadlineParams = {
 /**
  * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */

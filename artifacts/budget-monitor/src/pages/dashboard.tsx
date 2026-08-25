@@ -66,7 +66,7 @@ import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import TrendsTab from './trends-tab';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
-import { reconcileDashboardSpend } from '@/lib/dashboard-reconciliation';
+import { isCanonicalSummaryPending } from '@/lib/dashboard-reconciliation';
 
 interface TeamSection {
   teamName: string;
@@ -134,21 +134,10 @@ export default function Dashboard() {
   const groups = useMemo(
     () =>
       (groupsData?.groups ?? []).map((group) => {
-        // Prefer group.spendUsd (deduped across overlapping groups) once available.
-        // Fall back to group.rollupSpendUsd while spendUsd is still null (i.e. not
-        // all groups have finished loading), so rows populate immediately with no
-        // blank or $0.00 flash during the loading window.
-        const spendUsd = group.spendUsd ?? group.rollupSpendUsd ?? 0;
-        const spendLoaded = group.spendLoaded ?? group.rollupSpendLoaded ?? false;
-        const hasBudget = group.budgetUsd != null && group.budgetUsd > 0;
         return {
           ...group,
-          spendUsd,
-          spendLoaded,
-          rollupSpendUsd: spendUsd,
-          rollupSpendLoaded: spendLoaded,
-          remainingUsd: spendLoaded && hasBudget ? group.budgetUsd! - spendUsd : null,
-          percentUsed: spendLoaded && hasBudget ? (spendUsd / group.budgetUsd!) * 100 : null,
+          spendUsd: group.rollupSpendUsd,
+          spendLoaded: group.rollupSpendLoaded,
         };
       }),
     [groupsData?.groups],
@@ -156,7 +145,6 @@ export default function Dashboard() {
   const isComplete = groupsData?.isComplete ?? false;
   const pendingCount = groupsData?.pendingCount ?? 0;
   const projectSpendLoaded = groupsData?.projectSpendLoaded ?? false;
-  const unattributedProjectSpendUsd = groupsData?.unattributedProjectSpendUsd ?? 0;
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
@@ -184,13 +172,12 @@ export default function Dashboard() {
 
     const teamSections: TeamSection[] = [];
     for (const [teamName, teamGroups] of teamMap) {
-      const { memberCount, spendUsd: rollupSpend, spendLoaded: rollupLoaded } = sumAttributedRollup(teamGroups);
-      // Prefer teamRawSpend from /groups (the authoritative member-deduped total computed
-      // server-side) so team headers match the summary card. Fall back to client-side
-      // sumAttributedRollup when teamRawSpend is absent (older API versions).
+      const { memberCount } = sumAttributedRollup(teamGroups);
+      // Financial values remain server-owned. Missing canonical data stays in a
+      // loading state instead of being re-derived from partial browser data.
       const serverTeamSpend = groupsData?.teamRawSpend?.[teamName];
-      const spendUsd = serverTeamSpend != null ? serverTeamSpend.spendUsd : rollupSpend;
-      const spendLoaded = serverTeamSpend != null ? serverTeamSpend.spendLoaded : rollupLoaded;
+      const spendUsd = serverTeamSpend?.spendUsd ?? 0;
+      const spendLoaded = serverTeamSpend?.spendLoaded ?? false;
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
@@ -222,8 +209,6 @@ export default function Dashboard() {
     let totalBudgetUsd = 0;
     let budgetedSpendUsd = 0;
     let budgetedPools = 0;
-    let poolsOver75 = 0;
-    let poolsOver100 = 0;
 
     const addRow = (spendUsd: number, budgetUsd: number | null, spendLoaded: boolean) => {
       totalSpendUsd += spendUsd;
@@ -232,9 +217,6 @@ export default function Dashboard() {
       budgetedPools += 1;
       if (!spendLoaded) return;
       budgetedSpendUsd += spendUsd;
-      const percentUsed = (spendUsd / budgetUsd) * 100;
-      if (percentUsed >= 75) poolsOver75 += 1;
-      if (percentUsed >= 100) poolsOver100 += 1;
     };
 
     for (const team of teamSections) {
@@ -249,30 +231,8 @@ export default function Dashboard() {
       budgetedSpendUsd,
       totalRemainingUsd: totalBudgetUsd - budgetedSpendUsd,
       budgetedPools,
-      poolsOver75,
-      poolsOver100,
     };
   }, [teamSections, unassigned]);
-
-  const reconciledSpend = useMemo(
-    () =>
-      reconcileDashboardSpend({
-        isAccountWide,
-        visibleRollupSpendUsd: tableTotals.totalSpendUsd,
-        accountUsageTotalSpendUsd: summary?.accountUsageTotalSpendUsd,
-        accountReconciliationSpendUsd: summary?.reconciliationSpendUsd,
-        projectSpendLoaded,
-        unattributedProjectSpendUsd,
-      }),
-    [
-      isAccountWide,
-      projectSpendLoaded,
-      summary?.accountUsageTotalSpendUsd,
-      summary?.reconciliationSpendUsd,
-      tableTotals.totalSpendUsd,
-      unattributedProjectSpendUsd,
-    ],
-  );
 
   const byGroupRows = useMemo(() => {
     const q = byGroupSearch.trim().toLowerCase();
@@ -311,10 +271,10 @@ export default function Dashboard() {
   const statCards = [
     {
       title: 'Total Spend',
-      value: `$${reconciledSpend.totalSpendUsd.toFixed(2)}`,
+      value: summary ? `$${summary.totalSpendUsd.toFixed(2)}` : '—',
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
-      loading: groupsLoading || !reconciledSpend.isTotalLoaded,
+      loading: isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
     },
     {
       title: 'Total Budget',
@@ -325,18 +285,18 @@ export default function Dashboard() {
     },
     {
       title: 'Remaining',
-      value: `$${(summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd).toFixed(2)}`,
+      value: summary?.totalRemainingUsd != null ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
       description: 'Across visible budgeted pools',
       icon: Wallet,
-      loading: summaryLoading && groupsLoading,
-      valueClassName: (summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd) < 0 ? 'text-destructive' : '',
+      loading: isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
+      valueClassName: (summary?.totalRemainingUsd ?? 0) < 0 ? 'text-destructive' : '',
     },
     {
       title: 'Over Threshold',
-      value: (summary?.groupsOver75 ?? tableTotals.poolsOver75).toString(),
-      description: `${summary?.groupsOver100 ?? tableTotals.poolsOver100} over budget`,
+      value: summary ? summary.groupsOver75.toString() : '—',
+      description: `${summary?.groupsOver100 ?? 0} over budget`,
       icon: AlertTriangle,
-      loading: summaryLoading && groupsLoading,
+      loading: isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
     },
     {
       title: 'Alerts Sent',
@@ -787,8 +747,8 @@ export default function Dashboard() {
                   ) : (
                     groups.map((group) => renderGroupRow(group))
                   )}
-                  {reconciledSpend.residualSpendUsd !== null &&
-                    (isAccountWide || reconciledSpend.residualSpendUsd > 0) && (
+                  {summary?.reconciliationSpendUsd != null &&
+                    (isAccountWide || summary.reconciliationSpendUsd > 0) && (
                     <tr
                       className="border-b border-border bg-muted/10"
                       data-testid={isAccountWide ? "row-account-reconciliation" : "row-unattributed-projects"}
@@ -811,7 +771,7 @@ export default function Dashboard() {
                       <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
-                          ${reconciledSpend.residualSpendUsd.toFixed(2)}
+                           ${summary.reconciliationSpendUsd.toFixed(2)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
@@ -838,9 +798,9 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete && reconciledSpend.isTotalLoaded ? (
+                        {isComplete && summary ? (
                           <span className="text-sm font-mono tabular-nums">
-                            ${reconciledSpend.totalSpendUsd.toFixed(2)}
+                            ${summary.totalSpendUsd.toFixed(2)}
                           </span>
                         ) : (
                           <div className="flex justify-end"><LoadingCell /></div>
@@ -909,7 +869,7 @@ export default function Dashboard() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <CardTitle>Spend by Group</CardTitle>
-                  <CardDescription>Raw API spend per group — same figure shown on each group's detail page</CardDescription>
+                  <CardDescription>Canonical workspace-aware rollup spend used for budgets and alerts</CardDescription>
                 </div>
                 <div className="relative w-full sm:w-64">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -934,7 +894,7 @@ export default function Dashboard() {
                           { col: 'team' as ByGroupSortCol, label: 'Team', align: 'left' },
                           { col: 'workspace' as ByGroupSortCol, label: 'Workspace', align: 'left' },
                           { col: 'members' as ByGroupSortCol, label: 'Members', align: 'right' },
-                          { col: 'spend' as ByGroupSortCol, label: 'Spend', align: 'right' },
+                          { col: 'spend' as ByGroupSortCol, label: 'Canonical Spend', align: 'right' },
                         ] as const
                       ).map(({ col, label, align }) => (
                         <th

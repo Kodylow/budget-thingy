@@ -297,6 +297,27 @@ export const GetClusterProjectsResponse = zod.object({
 
 
 /**
+ * Returns member-deduped canonical spend across the requested visible groups.
+ * @summary Canonical cluster spend headline
+ */
+export const GetCanonicalClusterHeadlineParams = zod.object({
+  "clusterKey": zod.coerce.string()
+})
+
+export const GetCanonicalClusterHeadlineQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const GetCanonicalClusterHeadlineResponse = zod.object({
+  "spendUsd": zod.number().nullable().describe('Canonical member-deduped cluster spend; null until the scoped rollup is complete'),
+  "isComplete": zod.boolean(),
+  "pendingCount": zod.number()
+})
+
+
+/**
  * Queues a high-priority usage fetch for one group, bypassing cache TTL.
  * @summary Force-refresh one group's usage
  */
@@ -310,7 +331,7 @@ export const RefreshGroupUsageResponse = zod.object({
 
 
 /**
- * Aggregate visible stats across custom groups and budgets for the selected range. For account-wide callers, totalSpendUsd is anchored to an unfiltered Enterprise usage request and reconciliationSpendUsd bridges it to the displayed rollup. Workspace-scoped callers retain scoped totals and never receive account figures.
+ * Aggregate visible stats across custom groups and budgets for the selected range. totalSpendUsd always uses the workspace-aware member-deduped canonical rollup. For account-wide callers, the unfiltered Enterprise usage request is returned only as reconciliation metadata. Workspace-scoped callers never receive account figures.
  * @summary Dashboard summary
  */
 export const GetSummaryQueryParams = zod.object({
@@ -322,7 +343,7 @@ export const GetSummaryQueryParams = zod.object({
 export const GetSummaryResponse = zod.object({
   "totalGroups": zod.number(),
   "budgetedGroups": zod.number(),
-  "totalSpendUsd": zod.number().describe('Account usage anchor for account-wide callers once available; otherwise the scoped visible rollup total'),
+  "totalSpendUsd": zod.number().describe('Workspace-aware member-deduped canonical rollup total for the caller\'s scope'),
   "memberBasedTotalSpendUsd": zod.number().optional().describe('Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility'),
   "accountUsageTotalSpendUsd": zod.number().nullable().describe('Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers'),
   "accountUsageAttributableSpendUsd": zod.number().nullable().describe('Attributable portion of the unfiltered account usage anchor; null outside account-wide scope'),
@@ -565,7 +586,7 @@ export const ListWorkspaceAdminsResponse = zod.array(ListWorkspaceAdminsResponse
 
 
 /**
- * Sent threshold alerts, newest first.
+ * Sent threshold alerts, newest first. Stored spend is the send-time snapshot; current fields use the latest canonical rollup.
  * @summary Alert history
  */
 export const listAlertsQueryLimitMax = 200;
@@ -583,12 +604,15 @@ export const ListAlertsResponseItem = zod.object({
   "entityName": zod.string(),
   "workspaceIds": zod.array(zod.string()),
   "threshold": zod.number().describe('Threshold percent crossed (50, 75, 90, 100)'),
-  "spendUsd": zod.number(),
+  "spendUsd": zod.number().describe('Canonical spend snapshot captured when this delivery was attempted'),
   "budgetUsd": zod.number(),
   "recipients": zod.array(zod.string()),
   "sentAt": zod.string(),
   "status": zod.string().describe('sent or failed'),
-  "errorMessage": zod.string().nullish()
+  "errorMessage": zod.string().nullish(),
+  "currentSpendUsd": zod.number().nullable().describe('Current canonical spend for the entity; null while usage is incomplete'),
+  "currentPercentUsed": zod.number().nullable().describe('Current canonical spend as a percent of the current allocated pool'),
+  "currentUsageComplete": zod.boolean()
 })
 export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
 
@@ -608,12 +632,15 @@ export const RunAlertCheckResponse = zod.object({
   "entityName": zod.string(),
   "workspaceIds": zod.array(zod.string()),
   "threshold": zod.number().describe('Threshold percent crossed (50, 75, 90, 100)'),
-  "spendUsd": zod.number(),
+  "spendUsd": zod.number().describe('Canonical spend snapshot captured when this delivery was attempted'),
   "budgetUsd": zod.number(),
   "recipients": zod.array(zod.string()),
   "sentAt": zod.string(),
   "status": zod.string().describe('sent or failed'),
-  "errorMessage": zod.string().nullish()
+  "errorMessage": zod.string().nullish(),
+  "currentSpendUsd": zod.number().nullable().describe('Current canonical spend for the entity; null while usage is incomplete'),
+  "currentPercentUsed": zod.number().nullable().describe('Current canonical spend as a percent of the current allocated pool'),
+  "currentUsageComplete": zod.boolean()
 })).optional()
 })
 
@@ -633,12 +660,15 @@ export const SendTestAlertResponse = zod.object({
   "entityName": zod.string(),
   "workspaceIds": zod.array(zod.string()),
   "threshold": zod.number().describe('Threshold percent crossed (50, 75, 90, 100)'),
-  "spendUsd": zod.number(),
+  "spendUsd": zod.number().describe('Canonical spend snapshot captured when this delivery was attempted'),
   "budgetUsd": zod.number(),
   "recipients": zod.array(zod.string()),
   "sentAt": zod.string(),
   "status": zod.string().describe('sent or failed'),
-  "errorMessage": zod.string().nullish()
+  "errorMessage": zod.string().nullish(),
+  "currentSpendUsd": zod.number().nullable().describe('Current canonical spend for the entity; null while usage is incomplete'),
+  "currentPercentUsed": zod.number().nullable().describe('Current canonical spend as a percent of the current allocated pool'),
+  "currentUsageComplete": zod.boolean()
 })
 
 

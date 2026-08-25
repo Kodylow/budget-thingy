@@ -35,6 +35,7 @@ import {
   GetStatusResponse,
   GetGroupDetailResponse,
   GetGroupProjectsResponse,
+  GetCanonicalClusterHeadlineResponse,
   GetTrendsQueryParams,
   GetTrendsResponse,
   ListEditorsResponse,
@@ -53,7 +54,6 @@ import {
   queueMemberUsageFetch,
   getMemberUsage,
   queueAccountUsageFetch,
-  getAccountUsage,
   queueExtraWorkspacesFetch,
   getExtraWorkspaceSpend,
   queueAllWorkspacesFetch,
@@ -62,12 +62,13 @@ import {
   getWorkspaceMemberUsage,
   queueProjectUsageFetch,
   getProjectUsage,
-  getProjectAttribution,
   queueProjectTitlesFetch,
   getProjectTitles,
   getProjectInfo,
   hasProjectInfo,
-  getDedupedUsageRollup,
+  getCanonicalUsage,
+  buildCanonicalGroupMergePlan,
+  resolveCanonicalMergedGroupBudget,
   getDedupedMemberCounts,
   resolveRange,
   isBadRangeError,
@@ -133,89 +134,6 @@ function effectiveGroupBudget(appBudget: number | undefined): EffectiveBudget {
 }
 
 /**
- * When the same group name exists in multiple workspaces (e.g. after a workspace
- * migration where "AZ-Replit – Comcast Advertising" was created in the Comcast
- * Advertising workspace while the old copy in the Comcast workspace still carries
- * the billing data), the dashboard would show two rows for the same logical group.
- *
- * This function detects those duplicates and builds a merge plan:
- *   • `mergeMap`      — primaryGroupId → [primaryId, ...aliasIds]
- *   • `hiddenGroupIds` — set of non-primary IDs to exclude from responses
- *
- * Primary selection: prefer the workspace whose name equals the group's suffix
- * (the part after "AZ-Replit – "). For "AZ-Replit – Comcast Advertising" the
- * Comcast Advertising workspace wins. Falls back to alphabetical workspace name.
- *
- * Spend from ALL same-name source groups is summed on the primary so that no
- * spend is lost during the transition period when billing data has not yet
- * migrated to the new workspace.
- */
-interface GroupMergePlan {
-  /** primary group ID → all source IDs (primary + aliases) */
-  mergeMap: Map<string, string[]>;
-  /** non-primary group IDs to hide from dashboard/detail responses */
-  hiddenGroupIds: Set<string>;
-}
-
-function buildGroupMergePlan(
-  groups: EnterpriseGroup[],
-  workspaces: ReadonlyMap<string, { name: string }>,
-): GroupMergePlan {
-  const byName = new Map<string, EnterpriseGroup[]>();
-  for (const g of groups) {
-    const key = g.name.trim().toLowerCase();
-    if (!byName.has(key)) byName.set(key, []);
-    byName.get(key)!.push(g);
-  }
-
-  const mergeMap = new Map<string, string[]>();
-  const hiddenGroupIds = new Set<string>();
-
-  for (const [, nameGroups] of byName) {
-    if (nameGroups.length <= 1) continue;
-
-    // Extract the body of the group name after "az-replit -" (handles both " - " and " – ").
-    // e.g. "AZ-Replit - NBCU - Viewer" → "nbcu - viewer"
-    //      "AZ-Replit - Finance - Member" → "finance - member"
-    //      "AZ-Replit - PrepProd-Admins" → "prepprod-admins"
-    const body = nameGroups[0].name
-      .replace(/^az-replit\s*[-–]\s*/i, "")
-      .toLowerCase()
-      .trim();
-
-    // Try to find the workspace whose name "owns" this group:
-    // Match the first dash/space-delimited token of the workspace name against the
-    // start of the body.  "NBCU" → token "nbcu", matches body "nbcu - viewer".
-    // "Finance-Community" → token "finance", matches body "finance - member".
-    // "Global Product" → token "global", does NOT match body "gpo connected living".
-    const matchedGroup = nameGroups.find((g) => {
-      const wsName = (workspaces.get(g.workspaceId)?.name ?? "").trim().toLowerCase();
-      const firstToken = wsName.split(/[-\s]+/)[0] ?? "";
-      return firstToken.length >= 2 && body.startsWith(firstToken);
-    });
-
-    const primary =
-      matchedGroup ??
-      // No workspace-name prefix match (e.g. cross-workspace groups like "preprod-admins"):
-      // fall back to alphabetical workspace name so the result is deterministic.
-      // "Comcast" (the main account workspace) sorts early and naturally becomes the
-      // primary for these shared/cross-workspace groups.
-      nameGroups.slice().sort((a, b) => {
-        const aN = workspaces.get(a.workspaceId)?.name ?? "";
-        const bN = workspaces.get(b.workspaceId)?.name ?? "";
-        return aN.localeCompare(bN);
-      })[0];
-
-    mergeMap.set(primary.id, nameGroups.map((g) => g.id));
-    for (const g of nameGroups) {
-      if (g.id !== primary.id) hiddenGroupIds.add(g.id);
-    }
-  }
-
-  return { mergeMap, hiddenGroupIds };
-}
-
-/**
  * Given a set of source group IDs (a merged group's aliases), return the union of
  * their directory members (deduped) in stable insertion order.
  */
@@ -233,7 +151,16 @@ function mergedGroupMemberIds(
   return result;
 }
 
-function alertToJson(a: typeof alertsTable.$inferSelect) {
+interface CurrentAlertUsage {
+  spendUsd: number | null;
+  percentUsed: number | null;
+  isComplete: boolean;
+}
+
+function alertToJson(
+  a: typeof alertsTable.$inferSelect,
+  current?: CurrentAlertUsage,
+) {
   return {
     id: a.id,
     entityType: a.entityType,
@@ -247,6 +174,9 @@ function alertToJson(a: typeof alertsTable.$inferSelect) {
     sentAt: a.sentAt.toISOString(),
     status: a.status,
     errorMessage: a.errorMessage,
+    currentSpendUsd: current?.spendUsd ?? null,
+    currentPercentUsed: current?.percentUsed ?? null,
+    currentUsageComplete: current?.isComplete ?? false,
   };
 }
 
@@ -276,7 +206,7 @@ router.get("/groups", async (req, res): Promise<void> => {
 
     // Detect same-name groups across workspaces (e.g. after a workspace migration)
     // so only the preferred workspace version shows as a single merged row.
-    const mergePlan = buildGroupMergePlan(scoped, dir.workspaces);
+    const mergePlan = buildCanonicalGroupMergePlan(scoped, dir.workspaces);
     const displayGroups = scoped.filter((g) => !mergePlan.hiddenGroupIds.has(g.id));
 
     // Member-level usage is the dashboard's critical path: the deduped rollup
@@ -301,19 +231,19 @@ router.get("/groups", async (req, res): Promise<void> => {
     const billing = getBillingPeriod();
     // Pass ALL scoped groups (including aliases) so the dedup rollup correctly
     // attributes shared users across both the old and new workspace versions.
-    const rollup = getDedupedUsageRollup(
+    const canonical = getCanonicalUsage(
       scoped,
       range.key,
       scopedWorkspaceIds,
       dir.groupMembers,
       dir.members,
-    );
-    const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
-    const projectAttribution = getProjectAttribution(
-      range.key,
-      scoped,
+      groupTeamMap,
       dir.workspaces,
+      isAccountAdmin,
     );
+    const rollup = canonical;
+    const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
+    const projectAttribution = canonical.projectAttribution!;
 
     // Include source group IDs (alias groups) in the history query so merged
     // primaries can show the complete spend history across both workspace versions.
@@ -380,12 +310,13 @@ router.get("/groups", async (req, res): Promise<void> => {
           }
         }
 
-        const budget = effectiveGroupBudget(budgetMap.get(g.id));
+        const mergedBudget = resolveCanonicalMergedGroupBudget(g.id, mergePlan, budgetMap);
+        const budget = effectiveGroupBudget(mergedBudget?.amountUsd);
         // Threshold state is always tracked against the cutoff-anchored billing period.
-        const billingSpend = getSpend(g.id, "billing:from-cutoff");
+        const billingPeriodStart = getBillingPeriod().start;
         const fired =
-          billingSpend && budget.amountUsd != null
-            ? await getFiredThresholds(g.id, billingSpend.periodStart)
+          billingPeriodStart && budget.amountUsd != null
+            ? await getFiredThresholds(g.id, billingPeriodStart)
             : [];
         const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
 
@@ -550,7 +481,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
 
     // Build merge plan so alias (hidden) groups redirect and primaries aggregate
     // member usage and spend from all same-name workspace variants.
-    const mergePlan = buildGroupMergePlan(scoped, dir.workspaces);
+    const mergePlan = buildCanonicalGroupMergePlan(scoped, dir.workspaces);
 
     // If this group is a hidden alias, treat it as not found (the primary carries
     // all the data; direct navigation to an alias would show misleading $0 spend).
@@ -616,15 +547,19 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     for (const workspaceId of scopedWorkspaceIds) {
       queueWsSpendFetch(workspaceId, range, 0);
     }
-    const rollup = getDedupedUsageRollup(
+    const canonical = getCanonicalUsage(
       scoped,
       range.key,
       scopedWorkspaceIds,
       dir.groupMembers,
       dir.members,
+      undefined,
+      dir.workspaces,
+      isAccountAdmin,
     );
+    const rollup = canonical;
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
-    const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
+    const projectAttribution = canonical.projectAttribution!;
     const projectSpendUsd = sourceIds.reduce(
       (sum, id) => sum + (projectAttribution.spendByGroup.get(id) ?? 0),
       0,
@@ -651,20 +586,22 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     ]);
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
     const groupTeamMap = new Map(groupTeamsRows.map((gt) => [gt.groupName, gt.teamName]));
-    const budget = effectiveGroupBudget(budgetMap.get(group.id));
+    const mergedBudget = resolveCanonicalMergedGroupBudget(group.id, mergePlan, budgetMap);
+    const budget = effectiveGroupBudget(mergedBudget?.amountUsd);
     const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
+    const billingPeriodStart = getBillingPeriod().start;
     const billingSpend = getSpend(group.id, "billing:from-cutoff");
     const fired =
-      billingSpend && budget.amountUsd != null
-        ? await getFiredThresholds(group.id, billingSpend.periodStart)
+      billingPeriodStart && budget.amountUsd != null
+        ? await getFiredThresholds(group.id, billingPeriodStart)
         : [];
 
     // Merge history from all source groups by date.
     const detailHistoryArr: { date: string; spendUsd: number }[] = [];
-    if (billingSpend) {
+    if (billingPeriodStart) {
       const histResult = await getHistoryForGroups(
         [...new Set(sourceIds)],
-        billingSpend.periodStart,
+        billingPeriodStart,
       );
       const byDate = new Map<string, number>();
       for (const id of sourceIds) {
@@ -863,6 +800,59 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
   }
 });
 
+router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => {
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  try {
+    const groupIds = String(req.params["clusterKey"]).split(",").map((id) => id.trim()).filter(Boolean);
+    if (groupIds.length === 0) {
+      res.status(400).json({ error: "No group IDs in cluster key" });
+      return;
+    }
+    const dir = await getDirectory();
+    const requested = groupIds.map((id) => dir.groups.find((group) => group.id === id));
+    if (requested.some((group) => !group || !canSeeGroup(req.authz!, group))) {
+      res.status(404).json({ error: "No matching groups found" });
+      return;
+    }
+    const scoped = visibleGroups(req.authz!, dir.groups);
+    const scopedWorkspaceIds = isAccountWide(req.authz)
+      ? new Set([...dir.workspaces.keys(), ...scoped.map((group) => group.workspaceId)])
+      : new Set([...req.authz!.workspaceIds, ...scoped.map((group) => group.workspaceId)]);
+    for (const group of scoped) queueMemberUsageFetch(group, range, 0);
+    for (const workspaceId of scopedWorkspaceIds) queueWsSpendFetch(workspaceId, range, 0);
+    const canonical = getCanonicalUsage(
+      scoped,
+      range.key,
+      scopedWorkspaceIds,
+      dir.groupMembers,
+      dir.members,
+      undefined,
+      dir.workspaces,
+    );
+    const primaryIds = new Set(
+      groupIds.map((groupId) => canonical.mergePlan.primaryByGroupId.get(groupId) ?? groupId),
+    );
+    const spendUsd = [...primaryIds].reduce(
+      (sum, groupId) => sum + (canonical.spendByPrimaryGroup.get(groupId) ?? 0),
+      0,
+    );
+    res.json(GetCanonicalClusterHeadlineResponse.parse({
+      spendUsd: canonical.isComplete ? spendUsd : null,
+      isComplete: canonical.isComplete,
+      pendingCount: canonical.pendingCount,
+    }));
+  } catch (err) {
+    req.log.error({ err }, "getClusterHeadline failed");
+    res.status(503).json({ error: getApiHealth().error ?? "Enterprise API unavailable" });
+  }
+});
+
 router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
@@ -1052,13 +1042,6 @@ router.get("/summary", async (req, res): Promise<void> => {
             const dir = await getDirectory();
             const scoped = visibleGroups(authz, dir.groups);
             visibleGroupIds = new Set(scoped.map((g) => g.id));
-            totalGroups = scoped.length;
-            for (const g of scoped) {
-              const budget = effectiveGroupBudget(budgetMap.get(g.id));
-              if (budget.amountUsd != null && budget.amountUsd > 0) {
-                budgetedGroups += 1;
-              }
-            }
             const scopedWorkspaceIds = isAccount
               ? new Set([
                   ...dir.workspaces.keys(),
@@ -1080,54 +1063,56 @@ router.get("/summary", async (req, res): Promise<void> => {
             for (const workspaceId of scopedWorkspaceIds) {
               queueWsSpendFetch(workspaceId, range, 1);
             }
-            const summaryRollup = getDedupedUsageRollup(
+            const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+            const canonical = getCanonicalUsage(
               scoped,
               range.key,
               scopedWorkspaceIds,
               dir.groupMembers,
               dir.members,
+              groupTeamMap,
+              dir.workspaces,
+              isAccount,
             );
-            memberBasedTotalSpendUsd = summaryRollup.totalSpendUsd;
-            const projectAttribution = getProjectAttribution(range.key, scoped, dir.workspaces);
-            // totalSpendUsd = member-deduped group rollup + unattributed project spend.
-            // This mirrors tableTotals.totalSpendUsd on the dashboard exactly:
-            //   Σ teamRawSpend[team].spendUsd               (member-deduped per team)
-            //   + Σ rollup[unassignedGroup].spendUsd          (member-deduped per unassigned group)
-            //   + projectAttribution.unattributedSpendUsd    (project spend not matched to any group)
-            // so the "Total Spend" stat card and the team-header rows use the same accounting model.
-            const displayedRollupSpendUsd = summaryRollup.totalSpendUsd;
+            memberBasedTotalSpendUsd = canonical.totalSpendUsd;
+            totalGroups = canonical.displayGroups.length;
+            budgetedGroups = canonical.displayGroups.filter(
+              (group) =>
+                (resolveCanonicalMergedGroupBudget(
+                  group.id,
+                  canonical.mergePlan,
+                  budgetMap,
+                )?.amountUsd ?? 0) > 0,
+            ).length;
+            // The member-deduped rollup is the financial source of truth.
+            // Account and project totals below are reconciliation metadata only.
+            totalSpendUsd = canonical.totalSpendUsd;
             if (isAccount) {
-              const accountUsage = getAccountUsage(range.key);
+              const accountUsage = canonical.accountUsage;
               if (accountUsage) {
                 accountUsageTotalSpendUsd = accountUsage.totalCostUsd;
                 accountUsageAttributableSpendUsd = accountUsage.attributableTotalCostUsd;
                 accountUsageUnattributableSpendUsd = accountUsage.unattributableTotalCostUsd;
-                reconciliationSpendUsd = accountUsage.totalCostUsd - displayedRollupSpendUsd;
-                totalSpendUsd = accountUsage.totalCostUsd;
-              } else {
-                // Keep the prior rollup as provisional response data. Account-wide
-                // clients use the nullable anchor field to render loading, never $0.
-                totalSpendUsd = displayedRollupSpendUsd + projectAttribution.unattributedSpendUsd;
+                reconciliationSpendUsd = canonical.accountReconciliationSpendUsd;
               }
-            } else {
-              totalSpendUsd = displayedRollupSpendUsd + projectAttribution.unattributedSpendUsd;
             }
-            pending = summaryRollup.pendingCount + projectAttribution.pendingCount;
-            summaryExtraComplete = summaryRollup.isComplete;
+            pending = canonical.pendingCount;
+            summaryExtraComplete = canonical.isComplete;
 
             // Compute over-threshold counts using the same top-level pool logic as tableTotals.
             // Groups assigned to a team: aggregate attributed spend per team and compare against team budget.
             // Unassigned groups: compare attributed spend against the group's own budget.
-            const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
             const teamBudgetAmountMap = new Map(teamBudgets.map((tb) => [tb.teamName, tb.amountUsd]));
-            const teamAttributedSpend = new Map<string, number>();
-            for (const group of scoped) {
-              const spend = projectAttribution.spendByGroup.get(group.id) ?? 0;
+            const teamAttributedSpend = canonical.byTeam;
+            for (const group of canonical.displayGroups) {
+              const spend = canonical.spendByPrimaryGroup.get(group.id) ?? 0;
               const teamName = groupTeamMap.get(group.name);
-              if (teamName) {
-                teamAttributedSpend.set(teamName, (teamAttributedSpend.get(teamName) ?? 0) + spend);
-              } else {
-                const groupBudget = budgetMap.get(group.id);
+              if (!teamName) {
+                const groupBudget = resolveCanonicalMergedGroupBudget(
+                  group.id,
+                  canonical.mergePlan,
+                  budgetMap,
+                )?.amountUsd;
                 if (groupBudget != null && groupBudget > 0) {
                   const pct = (spend / groupBudget) * 100;
                   if (pct >= 50) over50++;
@@ -1155,7 +1140,7 @@ router.get("/summary", async (req, res): Promise<void> => {
             const seenTeams = new Set<string>();
             let budgetedPoolSpend = 0;
             totalBudgetUsd = 0; // override outer default; set correctly below
-            for (const group of scoped) {
+            for (const group of canonical.displayGroups) {
               const teamName = groupTeamMap.get(group.name);
               if (teamName) {
                 if (!seenTeams.has(teamName)) {
@@ -1167,10 +1152,14 @@ router.get("/summary", async (req, res): Promise<void> => {
                   }
                 }
               } else {
-                const budget = budgetMap.get(group.id);
+                const budget = resolveCanonicalMergedGroupBudget(
+                  group.id,
+                  canonical.mergePlan,
+                  budgetMap,
+                )?.amountUsd;
                 if (budget != null && budget > 0) {
                   totalBudgetUsd += budget;
-                  budgetedPoolSpend += projectAttribution.spendByGroup.get(group.id) ?? 0;
+                  budgetedPoolSpend += canonical.spendByPrimaryGroup.get(group.id) ?? 0;
                 }
               }
             }
@@ -1214,8 +1203,7 @@ router.get("/summary", async (req, res): Promise<void> => {
             billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
             isComplete:
               pending === 0 &&
-              summaryExtraComplete &&
-              (!isAccount || accountUsageTotalSpendUsd !== null),
+              summaryExtraComplete,
           }),
         );
       })(),
@@ -1768,30 +1756,66 @@ router.get("/alerts", async (req, res): Promise<void> => {
   const canSeeRecipients = isApplicationAdmin(authz);
   const parsed = ListAlertsQueryParams.safeParse(req.query);
   const limit = parsed.success && parsed.data.limit ? parsed.data.limit : 100;
-
-  if (accountWide) {
-    const alerts = await db
-      .select()
-      .from(alertsTable)
-      .orderBy(desc(alertsTable.sentAt))
-      .limit(limit);
-    const visible = alerts.map(alertToJson).map((alert) =>
-      canSeeRecipients ? alert : { ...alert, recipients: [] },
-    );
-    res.json(ListAlertsResponse.parse(visible));
-    return;
-  }
-
-  // Workspace admins: scope alert history to visible groups, and strip the
-  // account-only recipient list from each returned alert.
   let allowedIds = new Set<string>();
+  let currentByEntity = new Map<string, CurrentAlertUsage>();
   try {
     const dir = await getDirectory();
-    allowedIds = new Set(visibleGroups(authz, dir.groups).map((g) => g.id));
+    const scoped = visibleGroups(authz, dir.groups);
+    allowedIds = new Set(scoped.map((g) => g.id));
+    const [groupTeams, groupBudgets, teamBudgets] = await Promise.all([
+      db.select().from(groupTeamsTable),
+      db.select().from(groupBudgetsTable),
+      db.select().from(teamBudgetsTable),
+    ]);
+    const teamByGroupName = new Map(groupTeams.map((row) => [row.groupName, row.teamName]));
+    const groupBudgetById = new Map(groupBudgets.map((row) => [row.groupId, row.amountUsd]));
+    const teamBudgetByName = new Map(teamBudgets.map((row) => [row.teamName, row.amountUsd]));
+    const range = resolveRange("billing");
+    const workspaceIds = accountWide
+      ? new Set([...dir.workspaces.keys(), ...scoped.map((group) => group.workspaceId)])
+      : new Set([...authz.workspaceIds, ...scoped.map((group) => group.workspaceId)]);
+    for (const group of scoped) queueMemberUsageFetch(group, range, 1);
+    for (const workspaceId of workspaceIds) queueWsSpendFetch(workspaceId, range, 1);
+    const canonical = getCanonicalUsage(
+      scoped,
+      range.key,
+      workspaceIds,
+      dir.groupMembers,
+      dir.members,
+      teamByGroupName,
+      dir.workspaces,
+    );
+    for (const group of canonical.displayGroups) {
+      const budget = resolveCanonicalMergedGroupBudget(
+        group.id,
+        canonical.mergePlan,
+        groupBudgetById,
+      )?.amountUsd;
+      const spend = canonical.spendByPrimaryGroup.get(group.id) ?? 0;
+      currentByEntity.set(`group|${group.id}`, {
+        spendUsd: canonical.isComplete ? spend : null,
+        percentUsed: canonical.isComplete && budget != null && budget > 0
+          ? (spend / budget) * 100
+          : null,
+        isComplete: canonical.isComplete,
+      });
+    }
+    for (const [teamName, spend] of canonical.byTeam) {
+      const budget = teamBudgetByName.get(teamName);
+      currentByEntity.set(`team|${teamName}`, {
+        spendUsd: canonical.isComplete ? spend : null,
+        percentUsed: canonical.isComplete && budget != null && budget > 0
+          ? (spend / budget) * 100
+          : null,
+        isComplete: canonical.isComplete,
+      });
+    }
   } catch {
-    // Fail closed: expose no alert history if scope can't be resolved.
-    res.json(ListAlertsResponse.parse([]));
-    return;
+    if (!accountWide) {
+      // Fail closed: expose no alert history if workspace scope can't be resolved.
+      res.json(ListAlertsResponse.parse([]));
+      return;
+    }
   }
   const allAlerts = await db
     .select()
@@ -1799,14 +1823,18 @@ router.get("/alerts", async (req, res): Promise<void> => {
     .orderBy(desc(alertsTable.sentAt));
   const allowedWorkspaceIds = new Set(authz.workspaceIds);
   const scoped = allAlerts
-    .filter((a) =>
+    .filter((a) => accountWide || (
       a.entityType === "team"
         ? a.workspaceIds.length > 0 &&
           a.workspaceIds.every((workspaceId) => allowedWorkspaceIds.has(workspaceId))
-        : allowedIds.has(a.entityId || a.groupId),
-    )
+        : allowedIds.has(a.entityId || a.groupId)
+    ))
     .slice(0, limit)
-    .map((a) => ({ ...alertToJson(a), recipients: [] }));
+    .map((a) => {
+      const entityId = a.entityId || a.groupId;
+      const alert = alertToJson(a, currentByEntity.get(`${a.entityType}|${entityId}`));
+      return canSeeRecipients ? alert : { ...alert, recipients: [] };
+    });
   res.json(ListAlertsResponse.parse(scoped));
 });
 
@@ -1822,7 +1850,7 @@ router.post("/alerts/check", requireAccountOperator, async (req, res): Promise<v
         checkedGroups: result.checkedGroups,
         checkedTeams: result.checkedTeams,
         alertsSent: result.alerts.filter((a) => a.status === "sent").length,
-        alerts: result.alerts.map(alertToJson),
+        alerts: result.alerts.map((alert) => alertToJson(alert)),
       }),
     );
   } catch (err) {
@@ -1984,8 +2012,11 @@ router.get("/trends", async (req, res): Promise<void> => {
     const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const requestedTeams = teamNames ? new Set(teamNames) : null;
     const requestedGroups = groupIds ? new Set(groupIds) : null;
-    const groups = visible.filter((group) => {
-      if (requestedGroups && !requestedGroups.has(group.id)) return false;
+    const mergePlan = buildCanonicalGroupMergePlan(visible, dir.workspaces);
+    const displayGroups = visible.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
+    const groups = displayGroups.filter((group) => {
+      const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+      if (requestedGroups && !sourceIds.some((id) => requestedGroups.has(id))) return false;
       const teamName = teamNameMap.get(group.name) ?? null;
       return !requestedTeams || (teamName !== null && requestedTeams.has(teamName));
     });
@@ -1993,20 +2024,37 @@ router.get("/trends", async (req, res): Promise<void> => {
     const ranges = buckets.map((bucket) =>
       resolveRange("custom", bucket.startDate, bucket.endDate),
     );
-    let loadedCount = 0;
     const totalCount = groups.length * ranges.length;
-
-    for (const group of groups) {
+    const accountWide = isAccountWide(req.authz);
+    const scopedWorkspaceIds = accountWide
+      ? new Set([...dir.workspaces.keys(), ...visible.map((group) => group.workspaceId)])
+      : new Set([...req.authz!.workspaceIds, ...visible.map((group) => group.workspaceId)]);
+    for (const group of visible) {
       for (const range of ranges) {
-        if (getSpend(group.id, range.key)) {
-          loadedCount += 1;
-        } else {
-          // Every missing request enters the shared rate-limited usage queue at
-          // once. The queue serializes and paces the Enterprise API calls.
-          queueGroupSpendFetch(group, 1, false, undefined, range);
-        }
+        queueMemberUsageFetch(group, range, 1);
       }
     }
+    for (const workspaceId of scopedWorkspaceIds) {
+      for (const range of ranges) queueWsSpendFetch(workspaceId, range, 1);
+    }
+    const canonicalByRange = new Map(
+      ranges.map((range) => [
+        range.key,
+        getCanonicalUsage(
+          visible,
+          range.key,
+          scopedWorkspaceIds,
+          dir.groupMembers,
+          dir.members,
+          teamNameMap,
+          dir.workspaces,
+        ),
+      ]),
+    );
+    const loadedCount = ranges.reduce(
+      (count, range) => count + (canonicalByRange.get(range.key)!.isComplete ? groups.length : 0),
+      0,
+    );
 
     const duplicateGroupNames = new Set(
       groups
@@ -2020,7 +2068,12 @@ router.get("/trends", async (req, res): Promise<void> => {
         ? `${group.name} (${dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId})`
         : group.name,
       type: "group" as const,
-      data: ranges.map((range) => getSpend(group.id, range.key)?.spendUsd ?? null),
+      data: ranges.map((range) => {
+        const canonical = canonicalByRange.get(range.key)!;
+        return canonical.isComplete
+          ? (canonical.spendByPrimaryGroup.get(group.id) ?? 0)
+          : null;
+      }),
     }));
 
     const teams = new Map<string, typeof groups>();
@@ -2037,9 +2090,12 @@ router.get("/trends", async (req, res): Promise<void> => {
         name,
         type: "team" as const,
         data: ranges.map((range) => {
-          const spends = teamGroups.map((group) => getSpend(group.id, range.key));
-          return spends.every(Boolean)
-            ? spends.reduce((sum, spend) => sum + (spend?.spendUsd ?? 0), 0)
+          const canonical = canonicalByRange.get(range.key)!;
+          return canonical.isComplete
+            ? teamGroups.reduce(
+                (sum, group) => sum + (canonical.spendByPrimaryGroup.get(group.id) ?? 0),
+                0,
+              )
             : null;
         }),
       }));
