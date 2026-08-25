@@ -19,7 +19,12 @@ import {
   SESSION_TTL,
   type SessionData,
 } from '../lib/auth';
-import { maybeBootstrapEditor, resolveCurrentAuthorization } from '../lib/authz';
+import {
+  getPersistedEditorRole,
+  maybeBootstrapEditor,
+  resolveCurrentAuthorization,
+} from '../lib/authz';
+import { getDirectory } from '../lib/enterprise';
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
@@ -243,6 +248,48 @@ router.get('/callback', async (req: Request, res: Response) => {
   const sid = await createSession(sessionData);
   setSessionCookie(res, sid);
   res.redirect(returnTo);
+});
+
+/**
+ * GET /api/auth/me/debug
+ *
+ * Returns the caller's raw Enterprise directory entry, resolved admin flags,
+ * workspace roles, editor-allowlist status, and overall authz result.
+ *
+ * Requires a valid session but intentionally bypasses the `requireAuth` gate
+ * so blocked admins can self-diagnose without developer log access. Only
+ * describes the caller — never exposes other users' data.
+ */
+router.get('/auth/me/debug', async (req: Request, res: Response) => {
+  if (!req.isAuthenticated()) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+
+  const userId = req.user.id;
+
+  const [dir, editorRole, authz] = await Promise.all([
+    getDirectory().catch(() => null),
+    getPersistedEditorRole(userId).catch(() => null),
+    resolveCurrentAuthorization(userId).catch(() => null),
+  ]);
+
+  const member = dir?.members.get(userId) ?? null;
+
+  res.json({
+    userId,
+    foundInDirectory: member !== null,
+    isAccountAdmin: member?.isAccountAdmin ?? false,
+    workspaces: member
+      ? [...member.workspaces.entries()].map(([workspaceId, ws]) => ({
+          workspaceId,
+          role: ws.role,
+          isDisabled: ws.isDisabled,
+        }))
+      : [],
+    editorAllowlistRole: editorRole ?? null,
+    authzRole: authz?.role ?? null,
+  });
 });
 
 router.get('/logout', async (req: Request, res: Response) => {

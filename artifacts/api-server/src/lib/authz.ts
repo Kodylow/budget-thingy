@@ -6,6 +6,7 @@ import {
 import { eq } from "drizzle-orm";
 
 import { getDirectory, type EnterpriseGroup } from "./enterprise";
+import { logger } from "./logger";
 
 /**
  * Injectable authorization resolver used by both the auth route and the
@@ -176,15 +177,43 @@ export async function resolveAuthorization(
   }
 
   // (3)/(4) All others fall back to Enterprise-derived workspace scope.
-  if (!member) return null;
-
-  const workspaceIds: string[] = [];
-  for (const [workspaceId, ws] of member.workspaces) {
-    if (ws.isDisabled) continue;
-    if (isAdminRole(ws.role)) workspaceIds.push(workspaceId);
+  if (!member) {
+    logger.warn(
+      {
+        userId,
+        foundInDirectory: false,
+        isAccountAdmin: false,
+        workspaceMembershipCount: 0,
+        adminWorkspaceCount: 0,
+        disabledWorkspaceCount: 0,
+      },
+      "resolveAuthorization: user not found in Enterprise directory — access denied",
+    );
+    return null;
   }
 
-  if (workspaceIds.length === 0) return null;
+  const workspaceIds: string[] = [];
+  let adminWorkspaceCount = 0;
+  let disabledWorkspaceCount = 0;
+  for (const [workspaceId, ws] of member.workspaces) {
+    if (ws.isDisabled) { disabledWorkspaceCount++; continue; }
+    if (isAdminRole(ws.role)) { adminWorkspaceCount++; workspaceIds.push(workspaceId); }
+  }
+
+  if (workspaceIds.length === 0) {
+    logger.warn(
+      {
+        userId,
+        foundInDirectory: true,
+        isAccountAdmin: member.isAccountAdmin,
+        workspaceMembershipCount: member.workspaces.size,
+        adminWorkspaceCount,
+        disabledWorkspaceCount,
+      },
+      "resolveAuthorization: user has no enabled admin workspace memberships — access denied",
+    );
+    return null;
+  }
   return { role: "workspace_admin", workspaceIds: [...new Set(workspaceIds)] };
 }
 

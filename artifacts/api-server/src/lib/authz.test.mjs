@@ -13,7 +13,7 @@ import {
   BOOTSTRAP_EDITOR_EMAIL,
   setEditorAllowlistLookup,
 } from "./authz.ts";
-import { __setDirectoryCacheForTests } from "./enterprise.ts";
+import { __setDirectoryCacheForTests, parseIsAccountAdmin } from "./enterprise.ts";
 
 // ---------------------------------------------------------------------------
 // Representative fixture: a Comcast-style Enterprise directory with three
@@ -208,4 +208,73 @@ test("isAccountWide / isAccountEditor handle null authz", () => {
 
 test("normalizeEmail trims and lowercases", () => {
   assert.equal(normalizeEmail("  KODY.Low@Repl.it \n"), BOOTSTRAP_EDITOR_EMAIL);
+});
+
+// ---------------------------------------------------------------------------
+// parseIsAccountAdmin: all recognized field shapes + fail-closed behaviour.
+// ---------------------------------------------------------------------------
+
+function rawMember(overrides = {}) {
+  return {
+    user: { id: "u1", username: "u1", email: "u1@example.com", firstName: null, lastName: null },
+    workspaces: [],
+    ...overrides,
+  };
+}
+
+test("parseIsAccountAdmin: top-level isAccountAdmin boolean", () => {
+  assert.equal(parseIsAccountAdmin(rawMember({ isAccountAdmin: true })), true);
+  assert.equal(parseIsAccountAdmin(rawMember({ isAccountAdmin: false })), false);
+});
+
+test("parseIsAccountAdmin: top-level user_is_account_admin boolean", () => {
+  assert.equal(parseIsAccountAdmin(rawMember({ user_is_account_admin: true })), true);
+  assert.equal(parseIsAccountAdmin(rawMember({ user_is_account_admin: false })), false);
+});
+
+test("parseIsAccountAdmin: user.isAccountAdmin (nested boolean)", () => {
+  const rm = rawMember();
+  rm.user.isAccountAdmin = true;
+  assert.equal(parseIsAccountAdmin(rm), true);
+  rm.user.isAccountAdmin = false;
+  assert.equal(parseIsAccountAdmin(rm), false);
+});
+
+test("parseIsAccountAdmin: user.is_account_admin (nested snake_case boolean)", () => {
+  const rm = rawMember();
+  rm.user.is_account_admin = true;
+  assert.equal(parseIsAccountAdmin(rm), true);
+  rm.user.is_account_admin = false;
+  assert.equal(parseIsAccountAdmin(rm), false);
+});
+
+test("parseIsAccountAdmin: top-level role string (admin / owner / account_admin)", () => {
+  for (const role of ["admin", "ADMIN", " Admin ", "owner", "account_admin"]) {
+    assert.equal(parseIsAccountAdmin(rawMember({ role })), true, `role=${role}`);
+  }
+  for (const role of ["member", "viewer", "guest", ""]) {
+    assert.equal(parseIsAccountAdmin(rawMember({ role })), false, `role=${role}`);
+  }
+});
+
+test("parseIsAccountAdmin: organizationRole string", () => {
+  assert.equal(parseIsAccountAdmin(rawMember({ organizationRole: "admin" })), true);
+  assert.equal(parseIsAccountAdmin(rawMember({ organizationRole: "owner" })), true);
+  assert.equal(parseIsAccountAdmin(rawMember({ organizationRole: "member" })), false);
+});
+
+test("parseIsAccountAdmin: accountRole string", () => {
+  assert.equal(parseIsAccountAdmin(rawMember({ accountRole: "account_admin" })), true);
+  assert.equal(parseIsAccountAdmin(rawMember({ accountRole: "owner" })), true);
+  assert.equal(parseIsAccountAdmin(rawMember({ accountRole: "member" })), false);
+});
+
+test("parseIsAccountAdmin: no recognized field resolves to false (fail closed)", () => {
+  assert.equal(parseIsAccountAdmin(rawMember()), false);
+});
+
+test("parseIsAccountAdmin: non-boolean isAccountAdmin is not treated as truthy", () => {
+  // Only strict === true counts for the boolean fields.
+  assert.equal(parseIsAccountAdmin(rawMember({ isAccountAdmin: 1 })), false);
+  assert.equal(parseIsAccountAdmin(rawMember({ isAccountAdmin: "true" })), false);
 });

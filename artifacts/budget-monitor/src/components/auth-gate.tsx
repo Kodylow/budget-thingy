@@ -12,7 +12,7 @@ import { useAuthContext } from '@/components/auth-context';
  * - the authenticated app (children) for account or workspace admins.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { isLoading, isAuthenticated, isDenied, login, logout } = useAuthContext();
+  const { isLoading, isAuthenticated, isDenied, user, login, logout } = useAuthContext();
 
   if (isLoading) {
     return <LoadingShell />;
@@ -23,7 +23,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (isDenied) {
-    return <DeniedShell onLogout={logout} />;
+    return <DeniedShell userId={user?.id ?? null} onLogout={logout} />;
   }
 
   return <>{children}</>;
@@ -75,7 +75,7 @@ function SignedOutShell({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function DeniedShell({ onLogout }: { onLogout: () => void }) {
+function DeniedShell({ userId, onLogout }: { userId: string | null; onLogout: () => void }) {
   return (
     <CenteredShell>
       <Card data-testid="auth-denied">
@@ -90,7 +90,20 @@ function DeniedShell({ onLogout }: { onLogout: () => void }) {
             administrator if you believe this is a mistake.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
+          {userId && (
+            <div className="rounded-md bg-muted px-3 py-2 text-center">
+              <p className="mb-1 text-xs text-muted-foreground">
+                Share this ID with your account administrator:
+              </p>
+              <code
+                className="select-all break-all font-mono text-xs text-foreground"
+                data-testid="denied-user-id"
+              >
+                {userId}
+              </code>
+            </div>
+          )}
           <Button
             variant="outline"
             className="w-full"

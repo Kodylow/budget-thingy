@@ -27,6 +27,7 @@ import {
   __setMemberUsageForTests,
   __setWsSpendForTests,
   __setProjectUsageForTests,
+  parseIsAccountAdmin,
   resolveRange,
 } from "../lib/enterprise.ts";
 
@@ -659,4 +660,78 @@ test("account admin sees all members in /users/activity", async () => {
   assert.ok(usernames.includes("ws2user"), "account admin must see ws2user");
   assert.ok(usernames.includes("ws1admin"), "account admin must see ws1admin");
   assert.ok(usernames.includes("plain"), "account admin must see plain");
+});
+
+// ── parseIsAccountAdmin new-field-shape regression ───────────────────────────
+//
+// Simulates a member whose raw Enterprise directory record uses a newly-supported
+// field shape (top-level `role`, `organizationRole`, or `accountRole` string)
+// rather than the legacy `isAccountAdmin` boolean. The test verifies that
+// `parseIsAccountAdmin` correctly resolves these shapes to `true` and that the
+// full authorization pipeline grants `account_admin` access to those members.
+
+test("member with top-level role:admin field is granted account_admin access", async () => {
+  const rawNewShape = {
+    user: { id: "new-shape-admin", username: "new-shape-admin", email: "new-shape-admin@example.com", firstName: null, lastName: null },
+    role: "admin", // NEW field shape — no isAccountAdmin boolean present
+    workspaces: [],
+  };
+  const isAdmin = parseIsAccountAdmin(rawNewShape);
+  assert.equal(isAdmin, true, "parseIsAccountAdmin must resolve role:'admin' to true");
+
+  const extendedMembers = new Map(members);
+  extendedMembers.set("new-shape-admin", m("new-shape-admin", isAdmin, {}));
+  __setDirectoryCacheForTests({ groups, members: extendedMembers, groupMembers });
+
+  try {
+    const { status, json } = await req("/groups", { user: "new-shape-admin" });
+    assert.equal(status, 200, "new-shape admin must receive 200, not 403");
+    // Account admins see every group.
+    const ids = json.groups.map((g) => g.groupId).sort();
+    assert.deepEqual(ids, ["g-ws1-a", "g-ws2-a"]);
+  } finally {
+    __setDirectoryCacheForTests({ groups, members, groupMembers });
+  }
+});
+
+test("member with organizationRole:owner field is granted account_admin access", async () => {
+  const rawNewShape = {
+    user: { id: "org-role-admin", username: "org-role-admin", email: "org-role-admin@example.com", firstName: null, lastName: null },
+    organizationRole: "owner",
+    workspaces: [],
+  };
+  const isAdmin = parseIsAccountAdmin(rawNewShape);
+  assert.equal(isAdmin, true, "parseIsAccountAdmin must resolve organizationRole:'owner' to true");
+
+  const extendedMembers = new Map(members);
+  extendedMembers.set("org-role-admin", m("org-role-admin", isAdmin, {}));
+  __setDirectoryCacheForTests({ groups, members: extendedMembers, groupMembers });
+
+  try {
+    const { status } = await req("/groups", { user: "org-role-admin" });
+    assert.equal(status, 200, "org-role admin must receive 200, not 403");
+  } finally {
+    __setDirectoryCacheForTests({ groups, members, groupMembers });
+  }
+});
+
+test("member with accountRole:account_admin field is granted account_admin access", async () => {
+  const rawNewShape = {
+    user: { id: "acct-role-admin", username: "acct-role-admin", email: "acct-role-admin@example.com", firstName: null, lastName: null },
+    accountRole: "account_admin",
+    workspaces: [],
+  };
+  const isAdmin = parseIsAccountAdmin(rawNewShape);
+  assert.equal(isAdmin, true, "parseIsAccountAdmin must resolve accountRole:'account_admin' to true");
+
+  const extendedMembers = new Map(members);
+  extendedMembers.set("acct-role-admin", m("acct-role-admin", isAdmin, {}));
+  __setDirectoryCacheForTests({ groups, members: extendedMembers, groupMembers });
+
+  try {
+    const { status } = await req("/groups", { user: "acct-role-admin" });
+    assert.equal(status, 200, "acct-role admin must receive 200, not 403");
+  } finally {
+    __setDirectoryCacheForTests({ groups, members, groupMembers });
+  }
 });

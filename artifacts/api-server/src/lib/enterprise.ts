@@ -745,20 +745,77 @@ interface RawMember {
   // top-level boolean or nested under the user; parse defensively.
   isAccountAdmin?: boolean;
   user_is_account_admin?: boolean;
+  // Additional field shapes observed or documented by the Replit Enterprise API.
+  role?: string;
+  organizationRole?: string;
+  accountRole?: string;
   workspaces: { id: string; role: string; isDisabled: boolean }[];
+}
+
+/**
+ * The set of role strings that are considered account-wide admins.
+ * Intentionally mirrors the ADMIN_ROLES set in authz.ts; kept local here to
+ * avoid a circular import (authz.ts imports enterprise.ts).
+ */
+const RAW_ADMIN_ROLES = new Set(["admin", "owner", "account_admin"]);
+
+function rawIsAdminRole(role: unknown): boolean {
+  if (typeof role !== "string") return false;
+  return RAW_ADMIN_ROLES.has(role.trim().toLowerCase());
 }
 
 /** Extract the account-admin flag from a raw directory member, tolerating
  * a few plausible field placements without weakening the closed-by-default
- * posture (anything unrecognized resolves to false). */
+ * posture (anything unrecognized resolves to false).
+ *
+ * Checked field shapes (in order):
+ *   rm.isAccountAdmin (boolean)
+ *   rm.user_is_account_admin (boolean)
+ *   rm.user.isAccountAdmin / rm.user.is_account_admin (boolean)
+ *   rm.role (string, matched against ADMIN_ROLES)
+ *   rm.organizationRole (string, matched against ADMIN_ROLES)
+ *   rm.accountRole (string, matched against ADMIN_ROLES)
+ *
+ * A warning is logged when none of the recognized boolean fields are present
+ * and a string-role field resolves to non-admin, so future API shape changes
+ * surface in server logs rather than silent denials.
+ */
 export function parseIsAccountAdmin(rm: RawMember): boolean {
   const user = rm.user as unknown as Record<string, unknown> | undefined;
-  return (
-    rm.isAccountAdmin === true ||
-    rm.user_is_account_admin === true ||
-    (user?.["isAccountAdmin"] === true) ||
-    (user?.["is_account_admin"] === true)
-  );
+
+  // Boolean fields — checked first; unambiguous.
+  if (rm.isAccountAdmin === true) return true;
+  if (rm.user_is_account_admin === true) return true;
+  if (user?.["isAccountAdmin"] === true) return true;
+  if (user?.["is_account_admin"] === true) return true;
+
+  // String role fields — checked against the ADMIN_ROLES set.
+  if (rawIsAdminRole(rm.role)) return true;
+  if (rawIsAdminRole(rm.organizationRole)) return true;
+  if (rawIsAdminRole(rm.accountRole)) return true;
+
+  // None of the recognized boolean shapes were present. If an unexpected
+  // role-like string field exists, log so future API changes are visible.
+  const rmRec = rm as unknown as Record<string, unknown>;
+  const hasNoRecognizedBooleans =
+    rm.isAccountAdmin === undefined &&
+    rm.user_is_account_admin === undefined &&
+    user?.["isAccountAdmin"] === undefined &&
+    user?.["is_account_admin"] === undefined;
+  if (hasNoRecognizedBooleans) {
+    const unknownRoleFields = Object.keys(rmRec).filter(
+      (k) => !["user", "workspaces", "role", "organizationRole", "accountRole"].includes(k) &&
+             typeof rmRec[k] === "string" && (k.toLowerCase().includes("role") || k.toLowerCase().includes("admin")),
+    );
+    if (unknownRoleFields.length > 0) {
+      logger.warn(
+        { userId: rm.user?.id, unknownRoleFields },
+        "parseIsAccountAdmin: unrecognized role-like fields on raw member — API shape may have changed",
+      );
+    }
+  }
+
+  return false;
 }
 export interface PlatformBudgets {
   // workspaceId -> group limits (groupId -> amountUsd)
