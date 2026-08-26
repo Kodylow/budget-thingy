@@ -1159,8 +1159,10 @@ router.get("/summary", async (req, res): Promise<void> => {
                   budgetMap,
                 )?.amountUsd ?? 0) > 0,
             ).length;
-            // The member-deduped rollup is the financial source of truth.
-            // Account and project totals below are reconciliation metadata only.
+            // Workspace-aware member attribution is the source of truth for rows,
+            // budgets, teams, and alerts. For account-wide viewers, the unfiltered
+            // account /usage anchor is the headline total and the difference is an
+            // explicit reconciliation row so the visible table sums to gross usage.
             totalSpendUsd = canonical.totalSpendUsd;
             if (isAccount) {
               const accountUsage = canonical.accountUsage;
@@ -1169,6 +1171,7 @@ router.get("/summary", async (req, res): Promise<void> => {
                 accountUsageAttributableSpendUsd = accountUsage.attributableTotalCostUsd;
                 accountUsageUnattributableSpendUsd = accountUsage.unattributableTotalCostUsd;
                 reconciliationSpendUsd = canonical.accountReconciliationSpendUsd;
+                totalSpendUsd = accountUsage.totalCostUsd;
               }
             }
             pending = canonical.pendingCount;
@@ -1283,7 +1286,8 @@ router.get("/summary", async (req, res): Promise<void> => {
             pacePeriodIsFallback: pacePeriod.isFallback,
             isComplete:
               pending === 0 &&
-              summaryExtraComplete,
+              summaryExtraComplete &&
+              (!isAccount || accountUsageTotalSpendUsd !== null),
           }),
         );
       })(),

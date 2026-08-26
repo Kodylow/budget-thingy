@@ -218,6 +218,26 @@ test("summary reflects combined deduped spend once all caches are warm", async (
     "real and synthetic rows fully reconcile to the account anchor");
 });
 
+test("account headline and visible reconciliation row sum to unfiltered gross usage", async () => {
+  __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
+  __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
+  __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
+  setProjectSpend(85, 15, 8);
+  setAccountUsage(120, 15);
+
+  const json = await req("/summary");
+  assert.equal(json.isComplete, true);
+  assert.equal(json.memberBasedTotalSpendUsd, 108);
+  assert.equal(json.reconciliationSpendUsd, 12);
+  assert.equal(json.totalSpendUsd, 120);
+  assert.equal(
+    json.memberBasedTotalSpendUsd + json.reconciliationSpendUsd,
+    json.accountUsageTotalSpendUsd,
+    "canonical rows plus the explicit residual must equal the gross account anchor",
+  );
+});
+
 test("summary deduplication: alice counted only once across groups", async () => {
   // Re-run with the same warm fixture to confirm no cross-group double-counting.
   // alice's $30 Alpha + $20 Beta Comcast is summed once ($50) then attributed to Alpha.
@@ -968,6 +988,12 @@ test("closed weekly and monthly trend totals reconcile with the identical canoni
     { groupName: OT_G2.name, teamName: TEAM },
   ]);
   seedCanonicalRange(headlineRange, 75);
+  __setAccountUsageForTests(headlineRange.key, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 75,
+    attributableTotalCostUsd: 75,
+    unattributableTotalCostUsd: 0,
+  });
   for (const [start, end, total] of [...monthlyFixtures, ...weeklyFixtures]) {
     seedCanonicalRange(resolveRange("custom", start, end), total);
   }
@@ -1005,6 +1031,7 @@ test("closed weekly and monthly trend totals reconcile with the identical canoni
       __setMemberUsageForTests(OT_G2.id, rangeKey, null);
       __setWsSpendForTests("ws-main", rangeKey, null);
     }
+    __setAccountUsageForTests(headlineRange.key, null);
     restoreOtDir();
   }
 });
