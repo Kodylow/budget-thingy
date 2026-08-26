@@ -156,6 +156,10 @@ export const ListGroupsResponse = zod.object({
   "projectedSpendUsd": zod.number().nullish().describe('Linear projection of end-of-period spend, null while loading or too early in the period')
 })),
   "isComplete": zod.boolean().describe('False while background usage fetches are still pending; poll every ~8s until true'),
+  "syncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
+  "syncError": zod.string().nullish(),
+  "failedCount": zod.number(),
+  "partialCount": zod.number(),
   "pendingCount": zod.number().describe('Number of outstanding raw group-spend and member-usage fetches'),
   "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"'),
   "projectSpendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded'),
@@ -335,6 +339,20 @@ export const RefreshGroupUsageResponse = zod.object({
 
 
 /**
+ * @summary Retry failed or partial dashboard usage scopes
+ */
+export const RetryUsageSyncQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const RetryUsageSyncResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
  * Aggregate visible stats across custom groups and budgets for the selected range. totalSpendUsd always uses the workspace-aware member-deduped canonical rollup. For account-wide callers, the unfiltered Enterprise usage request is returned only as reconciliation metadata. Workspace-scoped callers never receive account figures.
  * @summary Dashboard summary
  */
@@ -365,7 +383,12 @@ export const GetSummaryResponse = zod.object({
   "pacePeriodEnd": zod.string().describe('Exclusive period end used for dashboard pace projections'),
   "pacePeriodLabel": zod.string(),
   "pacePeriodIsFallback": zod.boolean().describe('True when pace uses the fixed safe fallback because no discovered interval is available'),
-  "isComplete": zod.boolean()
+  "isComplete": zod.boolean(),
+  "syncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
+  "syncError": zod.string().nullish(),
+  "pendingCount": zod.number(),
+  "failedCount": zod.number(),
+  "partialCount": zod.number()
 })
 
 

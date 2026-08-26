@@ -185,6 +185,16 @@ export interface Group {
   projectedSpendUsd?: number | null;
 }
 
+export type GroupsResponseSyncStatus = typeof GroupsResponseSyncStatus[keyof typeof GroupsResponseSyncStatus];
+
+
+export const GroupsResponseSyncStatus = {
+  complete: 'complete',
+  syncing: 'syncing',
+  partial: 'partial',
+  failed: 'failed',
+} as const;
+
 /**
  * Per-team member-deduped rollup spend, with each member counted once across groups
  */
@@ -199,6 +209,11 @@ export interface GroupsResponse {
   groups: Group[];
   /** False while background usage fetches are still pending; poll every ~8s until true */
   isComplete: boolean;
+  syncStatus: GroupsResponseSyncStatus;
+  /** @nullable */
+  syncError?: string | null;
+  failedCount: number;
+  partialCount: number;
   /** Number of outstanding raw group-spend and member-usage fetches */
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
@@ -367,6 +382,16 @@ export interface UserActivityResponse {
   users: UserActivityEntry[];
 }
 
+export type SummarySyncStatus = typeof SummarySyncStatus[keyof typeof SummarySyncStatus];
+
+
+export const SummarySyncStatus = {
+  complete: 'complete',
+  syncing: 'syncing',
+  partial: 'partial',
+  failed: 'failed',
+} as const;
+
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
@@ -412,6 +437,12 @@ export interface Summary {
   /** True when pace uses the fixed safe fallback because no discovered interval is available */
   pacePeriodIsFallback: boolean;
   isComplete: boolean;
+  syncStatus: SummarySyncStatus;
+  /** @nullable */
+  syncError?: string | null;
+  pendingCount: number;
+  failedCount: number;
+  partialCount: number;
 }
 
 export type UsageRangeRebuildInputRangeType = typeof UsageRangeRebuildInputRangeType[keyof typeof UsageRangeRebuildInputRangeType];
@@ -686,6 +717,21 @@ endDate?: EndDateParameter;
 };
 
 export type GetCanonicalClusterHeadlineParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
+export type RetryUsageSyncParams = {
 /**
  * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */

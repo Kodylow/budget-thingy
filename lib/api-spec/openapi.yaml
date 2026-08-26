@@ -359,6 +359,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /usage/retry:
+    post:
+      operationId: retryUsageSync
+      tags: [groups]
+      summary: Retry failed or partial dashboard usage scopes
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "202":
+          description: Retry queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /summary:
     get:
       operationId: getSummary
@@ -1235,7 +1253,7 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, isComplete, pendingCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend]
+      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend]
       properties:
         groups:
           type: array
@@ -1244,6 +1262,15 @@ components:
         isComplete:
           type: boolean
           description: False while background usage fetches are still pending; poll every ~8s until true
+        syncStatus:
+          type: string
+          enum: [complete, syncing, partial, failed]
+        syncError:
+          type: ["string", "null"]
+        failedCount:
+          type: integer
+        partialCount:
+          type: integer
         pendingCount:
           type: integer
           description: Number of outstanding raw group-spend and member-usage fetches
@@ -1494,6 +1521,10 @@ components:
           pacePeriodLabel,
           pacePeriodIsFallback,
           isComplete,
+          syncStatus,
+          pendingCount,
+          failedCount,
+          partialCount,
         ]
       properties:
         totalGroups:
@@ -1549,6 +1580,17 @@ components:
           description: True when pace uses the fixed safe fallback because no discovered interval is available
         isComplete:
           type: boolean
+        syncStatus:
+          type: string
+          enum: [complete, syncing, partial, failed]
+        syncError:
+          type: ["string", "null"]
+        pendingCount:
+          type: integer
+        failedCount:
+          type: integer
+        partialCount:
+          type: integer
     UsageRangeRebuildInput:
       type: object
       required: [rangeType]

@@ -4,11 +4,13 @@ import {
   apiDirectoryCacheTable,
   apiBillingPeriodCacheTable,
   apiSpendCacheTable,
+  apiProjectMetadataTable,
+  apiProjectMetadataStateTable,
   usageSyncChunksTable,
   usageSyncStateTable,
   type UsageSyncChunk,
 } from "@workspace/db/schema";
-import { and, eq, gte, like, lt, sql } from "drizzle-orm";
+import { and, eq, gte, like, lt, lte, sql } from "drizzle-orm";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
@@ -405,6 +407,18 @@ interface SyncMetadata {
   syncedThrough: number;
   completedAt: number;
   isClosed: boolean;
+  status: UsageSyncStatus;
+  error: string | null;
+}
+
+export type UsageSyncStatus = "syncing" | "success" | "partial" | "failed";
+
+export interface UsageSyncSummary {
+  status: "complete" | "syncing" | "partial" | "failed";
+  pendingCount: number;
+  failedCount: number;
+  partialCount: number;
+  error: string | null;
 }
 
 export const RECONCILIATION_OVERLAP_MS = 7 * 24 * 60 * 60 * 1000;
@@ -514,7 +528,7 @@ function planSyncChunks(
   now = Date.now(),
 ): { replacementStart: Date; chunks: Array<{ start: Date; end: Date }>; isClosed: boolean } {
   const { start, end, isClosed } = rangeBounds(range, now);
-  if (previous?.isClosed) {
+  if (previous?.isClosed && previous.status === "success") {
     return { replacementStart: end, chunks: [], isClosed: previous.isClosed };
   }
 
@@ -524,7 +538,7 @@ function planSyncChunks(
     return { replacementStart: start, chunks: [{ start, end }], isClosed: true };
   }
 
-  if (previous && previous.syncedThrough >= end.getTime() &&
+  if (previous?.status === "success" && previous.syncedThrough >= end.getTime() &&
       now - previous.completedAt < USAGE_TTL_MS) {
     return { replacementStart: end, chunks: [], isClosed: false };
   }
@@ -557,12 +571,33 @@ function planSyncChunks(
   return { replacementStart: new Date(recentStartMs), chunks, isClosed: false };
 }
 
+interface FetchedUsageChunk {
+  payload: StoredUsagePayload;
+  partial: boolean;
+  error: string | null;
+}
+
+function combineUsagePayloads(parts: StoredUsagePayload[]): StoredUsagePayload {
+  return {
+    totalCostUsd: parts.reduce((sum, part) => sum + part.totalCostUsd, 0),
+    attributableTotalCostUsd: parts.reduce(
+      (sum, part) => sum + part.attributableTotalCostUsd,
+      0,
+    ),
+    unattributableTotalCostUsd: parts.reduce(
+      (sum, part) => sum + part.unattributableTotalCostUsd,
+      0,
+    ),
+    groups: parts.flatMap((part) => part.groups),
+  };
+}
+
 async function fetchUsageChunk(
   mode: UsageSyncMode,
   baseParams: Record<string, string | undefined>,
   start: Date,
   end: Date,
-): Promise<StoredUsagePayload> {
+): Promise<FetchedUsageChunk> {
   const groups: UsageGroupEntry[] = [];
   let first: UsageData | undefined;
   let cursor: string | undefined;
@@ -586,14 +621,39 @@ async function fetchUsageChunk(
     groups.push(...(data.groups ?? []));
     if (!groupBy || !data.pagination?.hasMore) {
       return {
-        totalCostUsd: first.totalCostUsd,
-        attributableTotalCostUsd: first.attributableTotalCostUsd ?? 0,
-        unattributableTotalCostUsd: first.unattributableTotalCostUsd ?? 0,
-        groups,
+        payload: {
+          totalCostUsd: first.totalCostUsd,
+          attributableTotalCostUsd: first.attributableTotalCostUsd ?? 0,
+          unattributableTotalCostUsd: first.unattributableTotalCostUsd ?? 0,
+          groups,
+        },
+        partial: false,
+        error: null,
       };
     }
     if (!data.pagination.cursor) {
-      throw new Error("Usage pagination reported more pages without a cursor");
+      const duration = end.getTime() - start.getTime();
+      if (duration > 60 * 60 * 1000) {
+        const midpoint = new Date(start.getTime() + Math.floor(duration / 2));
+        const left = await fetchUsageChunk(mode, baseParams, start, midpoint);
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        const right = await fetchUsageChunk(mode, baseParams, midpoint, end);
+        return {
+          payload: combineUsagePayloads([left.payload, right.payload]),
+          partial: left.partial || right.partial,
+          error: left.error ?? right.error,
+        };
+      }
+      return {
+        payload: {
+          totalCostUsd: first.totalCostUsd,
+          attributableTotalCostUsd: first.attributableTotalCostUsd ?? 0,
+          unattributableTotalCostUsd: first.unattributableTotalCostUsd ?? 0,
+          groups,
+        },
+        partial: true,
+        error: "Usage pagination reported more pages without a cursor",
+      };
     }
     cursor = data.pagination.cursor;
     await new Promise((r) => setTimeout(r, 700));
@@ -611,6 +671,20 @@ async function synchronizeUsage(
 ): Promise<UsageSyncChunk[]> {
   await maybePruneExpiredCustomUsage();
   const id = syncId(mode, range.key, scopeKey);
+  const priorMetadata = syncMetadata.get(id);
+  const { start: attemptedStart } = rangeBounds(range);
+  const startedAt = new Date();
+  // Running state is process-local until the advisory-lock transaction commits.
+  // A crash therefore leaves either the prior terminal state or no state at all,
+  // both of which are safely retryable after startup.
+  syncMetadata.set(id, {
+    syncedThrough: priorMetadata?.syncedThrough ?? attemptedStart.getTime(),
+    completedAt: startedAt.getTime(),
+    isClosed: priorMetadata?.isClosed ?? false,
+    status: "syncing",
+    error: null,
+  });
+  try {
   const result = await db.transaction(async (tx) => {
     // The in-process queue serializes API calls for one server. This lock extends
     // the same guarantee across replicas and is held through planning, fetching,
@@ -629,6 +703,8 @@ async function synchronizeUsage(
           syncedThrough: storedState.syncedThrough.getTime(),
           completedAt: storedState.completedAt.getTime(),
           isClosed: storedState.isClosed,
+          status: storedState.status as UsageSyncStatus,
+          error: storedState.errorMessage,
         }
       : undefined;
     const previous = fullRebuild
@@ -646,24 +722,30 @@ async function synchronizeUsage(
           eq(usageSyncChunksTable.rangeKey, range.key),
           eq(usageSyncChunksTable.scopeKey, scopeKey),
         ));
-      return { rows, metadata: storedPrevious! };
+      return { rows, metadata: { ...storedPrevious!, status: "success" as const, error: null } };
     }
 
     // Every chunk/page is fetched before any DELETE/INSERT. A network failure
     // rolls back the transaction and preserves the prior snapshot + watermark.
-    const fetched: Array<{ start: Date; end: Date; payload: StoredUsagePayload }> = [];
+    const fetched: Array<{
+      start: Date;
+      end: Date;
+      payload: StoredUsagePayload;
+      partial: boolean;
+      error: string | null;
+    }> = [];
     for (const chunk of plan.chunks) {
       if (fetched.length > 0) {
         await new Promise((r) => setTimeout(r, 700));
       }
-      fetched.push({
-        ...chunk,
-        payload: await fetchUsageChunk(mode, baseParams, chunk.start, chunk.end),
-      });
+      const result = await fetchUsageChunk(mode, baseParams, chunk.start, chunk.end);
+      fetched.push({ ...chunk, ...result });
     }
 
     const completedAt = new Date();
     const { start: rangeStart, end: syncedThrough } = rangeBounds(range);
+    const partialError = fetched.find((chunk) => chunk.partial)?.error ?? null;
+    const status: UsageSyncStatus = partialError ? "partial" : "success";
     await tx
       .delete(usageSyncChunksTable)
       .where(and(
@@ -690,10 +772,21 @@ async function synchronizeUsage(
       rangeStart,
       syncedThrough,
       isClosed: plan.isClosed,
+      status,
+      errorMessage: partialError,
+      startedAt,
       completedAt,
     }).onConflictDoUpdate({
       target: [usageSyncStateTable.mode, usageSyncStateTable.rangeKey, usageSyncStateTable.scopeKey],
-      set: { rangeStart, syncedThrough, isClosed: plan.isClosed, completedAt },
+      set: {
+        rangeStart,
+        syncedThrough,
+        isClosed: plan.isClosed && status === "success",
+        status,
+        errorMessage: partialError,
+        startedAt,
+        completedAt,
+      },
     });
     const rows = await tx
       .select()
@@ -708,12 +801,72 @@ async function synchronizeUsage(
       metadata: {
         syncedThrough: syncedThrough.getTime(),
         completedAt: completedAt.getTime(),
-        isClosed: plan.isClosed,
+        isClosed: plan.isClosed && status === "success",
+        status,
+        error: partialError,
       },
     };
   });
   syncMetadata.set(id, result.metadata);
   return result.rows;
+  } catch (err) {
+    const completedAt = new Date();
+    const message = err instanceof Error ? err.message : String(err);
+    const failureMetadata = await db.transaction(async (tx): Promise<SyncMetadata> => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${id}))`);
+      const [current] = await tx.select().from(usageSyncStateTable).where(and(
+        eq(usageSyncStateTable.mode, mode),
+        eq(usageSyncStateTable.rangeKey, range.key),
+        eq(usageSyncStateTable.scopeKey, scopeKey),
+      ));
+      // A competing replica may have completed a newer attempt after this one
+      // started. Never let this older failure overwrite that newer success.
+      if (current && current.completedAt > startedAt) {
+        return {
+          syncedThrough: current.syncedThrough.getTime(),
+          completedAt: current.completedAt.getTime(),
+          isClosed: current.isClosed,
+          status: current.status as UsageSyncStatus,
+          error: current.errorMessage,
+        };
+      }
+      if (current) {
+        await tx.update(usageSyncStateTable).set({
+          status: "failed",
+          errorMessage: message.slice(0, 1000),
+          startedAt,
+          completedAt,
+        }).where(and(
+          eq(usageSyncStateTable.mode, mode),
+          eq(usageSyncStateTable.rangeKey, range.key),
+          eq(usageSyncStateTable.scopeKey, scopeKey),
+          lte(usageSyncStateTable.completedAt, startedAt),
+        ));
+      } else {
+        await tx.insert(usageSyncStateTable).values({
+          mode,
+          rangeKey: range.key,
+          scopeKey,
+          rangeStart: attemptedStart,
+          syncedThrough: attemptedStart,
+          isClosed: false,
+          status: "failed",
+          errorMessage: message.slice(0, 1000),
+          startedAt,
+          completedAt,
+        });
+      }
+      return {
+        syncedThrough: priorMetadata?.syncedThrough ?? attemptedStart.getTime(),
+        completedAt: completedAt.getTime(),
+        isClosed: priorMetadata?.isClosed ?? false,
+        status: "failed",
+        error: message,
+      };
+    });
+    syncMetadata.set(id, failureMetadata);
+    throw err;
+  }
 }
 
 function storedPayload(row: UsageSyncChunk): StoredUsagePayload {
@@ -819,8 +972,94 @@ function isDurablyFresh(
   force: boolean,
 ): boolean {
   const metadata = syncMetadata.get(syncId(mode, rangeKey, scopeKey));
-  if (metadata?.isClosed) return true;
+  if (!force && (metadata?.status === "failed" || metadata?.status === "partial")) return true;
+  if (metadata?.isClosed && metadata.status === "success") return true;
   return !force && fetchedAt !== undefined && Date.now() - fetchedAt < USAGE_TTL_MS;
+}
+
+function markUsageSyncQueued(
+  mode: UsageSyncMode,
+  rangeKey: string,
+  scopeKey: string,
+): void {
+  const id = syncId(mode, rangeKey, scopeKey);
+  const previous = syncMetadata.get(id);
+  const now = Date.now();
+  syncMetadata.set(id, {
+    syncedThrough: previous?.syncedThrough ?? 0,
+    completedAt: now,
+    isClosed: previous?.isClosed ?? false,
+    status: "syncing",
+    error: null,
+  });
+}
+
+export function getUsageSyncSummary(
+  rangeKey: string,
+  groups: readonly EnterpriseGroup[],
+  workspaceIds: Iterable<string>,
+  includeAccount = false,
+  includeProjects = true,
+): UsageSyncSummary {
+  const requirements = [
+    ...groups.flatMap((group) => [
+      ...(!wsSpendCache.has(`${rangeKey}|${group.workspaceId}`) ? [{
+        id: syncId("group_member", rangeKey, group.id),
+        loaded: memberUsageCache.has(`${rangeKey}|${group.id}`),
+      }] : []),
+      ...(includeProjects ? [{
+        id: syncId("group_project", rangeKey, group.id),
+        loaded: projectUsageCache.has(`${rangeKey}|${group.id}`),
+      }] : []),
+    ]),
+    ...[...workspaceIds].map((workspaceId) => ({
+      id: syncId("workspace_member", rangeKey, workspaceId),
+      loaded: wsSpendCache.has(`${rangeKey}|${workspaceId}`),
+    })),
+    ...(includeAccount ? [{
+      id: syncId("account_total", rangeKey, ACCOUNT_USAGE_SCOPE),
+      loaded: accountUsageCache.has(rangeKey),
+    }] : []),
+  ];
+  let pendingCount = 0;
+  let failedCount = 0;
+  let partialCount = 0;
+  let error: string | null = null;
+  for (const { id, loaded } of requirements) {
+    const metadata = syncMetadata.get(id);
+    // The loaded fallback supports in-process test seams and upgrades from
+    // pre-ledger caches. Normal runtime hydration always supplies metadata.
+    if ((!metadata && !loaded) || metadata?.status === "syncing") pendingCount++;
+    else if (metadata?.status === "failed") {
+      failedCount++;
+      error ??= metadata.error;
+    } else if (metadata?.status === "partial") {
+      partialCount++;
+      error ??= metadata.error;
+    }
+  }
+  return {
+    status: failedCount > 0
+      ? "failed"
+      : partialCount > 0
+        ? "partial"
+        : pendingCount > 0
+          ? "syncing"
+          : "complete",
+    pendingCount,
+    failedCount,
+    partialCount,
+    error,
+  };
+}
+
+export function isUsageSyncRetryable(
+  mode: UsageSyncMode,
+  rangeKey: string,
+  scopeKey: string,
+): boolean {
+  const status = syncMetadata.get(syncId(mode, rangeKey, scopeKey))?.status;
+  return status === "failed" || status === "partial";
 }
 
 // ---------- Directory (workspaces, groups, members, platform budgets) ----------
@@ -1128,12 +1367,14 @@ function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend):
 export async function initCache(): Promise<void> {
   try {
     await maybePruneExpiredCustomUsage();
-    const [dirRow, billingPeriodRow, spendRows, durable] = await Promise.all([
+    const [dirRow, billingPeriodRow, spendRows, projectRows, projectStates, durable] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
       db.query.apiBillingPeriodCacheTable.findFirst({
         where: eq(apiBillingPeriodCacheTable.id, "current"),
       }),
       db.select().from(apiSpendCacheTable),
+      db.select().from(apiProjectMetadataTable),
+      db.select().from(apiProjectMetadataStateTable),
       db.transaction(async (tx) => {
         await tx.execute(sql`set transaction isolation level repeatable read read only`);
         const states = await tx.select().from(usageSyncStateTable);
@@ -1188,11 +1429,29 @@ export async function initCache(): Promise<void> {
         syncedThrough: state.syncedThrough.getTime(),
         completedAt: state.completedAt.getTime(),
         isClosed: state.isClosed,
+          status: state.status as UsageSyncStatus,
+          error: state.errorMessage,
       });
     }
     hydrateDurableUsage(chunks);
     if (chunks.length > 0) {
       logger.info({ chunks: chunks.length, scopes: states.length }, "Incremental usage cache hydrated from DB");
+    }
+    const projectsByWorkspace = new Map<string, Map<string, ProjectInfo>>();
+    for (const state of projectStates) {
+      if (state.status !== "success") continue;
+      projectsByWorkspace.set(state.workspaceId, new Map());
+    }
+    for (const row of projectRows) {
+      const workspace = projectsByWorkspace.get(row.workspaceId);
+      if (!workspace) continue;
+      workspace.set(row.projectId, { title: row.title, creatorId: row.creatorId });
+    }
+    for (const [workspaceId, projects] of projectsByWorkspace) {
+      if (!projectInfoCache.has(workspaceId)) projectInfoCache.set(workspaceId, projects);
+    }
+    if (projectStates.length > 0) {
+      logger.info({ workspaces: projectStates.length, projects: projectRows.length }, "Project metadata hydrated from DB");
     }
   } catch (err) {
     logger.warn({ err }, "Failed to hydrate caches from DB — will fetch fresh on first request");
@@ -1218,6 +1477,21 @@ export interface DirectoryCache {
 
 let directoryCache: DirectoryCache | null = null;
 let directoryPromise: Promise<DirectoryCache> | null = null;
+function setSuccessfulSyncMetadataForTests(
+  mode: UsageSyncMode,
+  rangeKey: string,
+  scopeKey: string,
+  fetchedAt = Date.now(),
+): void {
+  syncMetadata.set(syncId(mode, rangeKey, scopeKey), {
+    syncedThrough: fetchedAt,
+    completedAt: fetchedAt,
+    isClosed: false,
+    status: "success",
+    error: null,
+  });
+}
+
 export function __setMemberUsageForTests(
   first: string,
   second: string | ReadonlyMap<string, ReadonlyMap<string, number>> | null,
@@ -1228,6 +1502,7 @@ export function __setMemberUsageForTests(
     const byUser = third as Map<string, number> | null;
     if (byUser === null) {
       memberUsageCache.delete(key);
+      syncMetadata.delete(syncId("group_member", second, first));
       return;
     }
     const totalCostUsd = [...byUser.values()].reduce((sum, spend) => sum + spend, 0);
@@ -1238,6 +1513,7 @@ export function __setMemberUsageForTests(
       unattributableTotalCostUsd: 0,
       totalCostUsd,
     });
+    setSuccessfulSyncMetadataForTests("group_member", second, first);
     return;
   }
 
@@ -1246,6 +1522,9 @@ export function __setMemberUsageForTests(
   const unattributableByGroup = (third as ReadonlyMap<string, number> | undefined) ?? new Map();
   for (const key of memberUsageCache.keys()) {
     if (key.startsWith(`${rangeKey}|`)) memberUsageCache.delete(key);
+  }
+  for (const id of syncMetadata.keys()) {
+    if (id.startsWith(`group_member|${rangeKey}|`)) syncMetadata.delete(id);
   }
   if (!usageByGroup) return;
   for (const [groupId, byUser] of usageByGroup) {
@@ -1257,6 +1536,7 @@ export function __setMemberUsageForTests(
       unattributableTotalCostUsd: unattributableByGroup.get(groupId) ?? 0,
       totalCostUsd: totalCostUsd + (unattributableByGroup.get(groupId) ?? 0),
     });
+    setSuccessfulSyncMetadataForTests("group_member", rangeKey, groupId);
   }
 }
 /**
@@ -1281,6 +1561,7 @@ export function __setWsSpendForTests(
   if (byUser === null) {
     wsSpendCache.delete(key);
     wsSpendCachedAt.delete(key);
+    syncMetadata.delete(syncId("workspace_member", rangeKey, wsId));
   } else {
     const attributableTotalCostUsd =
       totals?.attributableTotalCostUsd ??
@@ -1296,6 +1577,7 @@ export function __setWsSpendForTests(
         totals?.totalCostUsd ?? attributableTotalCostUsd + unattributableTotalCostUsd,
     });
     wsSpendCachedAt.set(key, fetchedAt);
+    setSuccessfulSyncMetadataForTests("workspace_member", rangeKey, wsId, fetchedAt);
   }
 }
 
@@ -1575,7 +1857,7 @@ export function queueAccountUsageFetch(
   )) {
     return false;
   }
-  return enqueueUsage(`account-usage:${range.key}`, priority, async () => {
+  const queued = enqueueUsage(`account-usage:${range.key}`, priority, async () => {
     try {
       const rows = await synchronizeUsage(
         "account_total",
@@ -1589,6 +1871,8 @@ export function queueAccountUsageFetch(
       logger.error({ err, range: range.key }, "Failed to fetch account usage");
     }
   });
+  if (queued) markUsageSyncQueued("account_total", range.key, ACCOUNT_USAGE_SCOPE);
+  return queued;
 }
 
 interface FullRebuildScope {
@@ -1630,25 +1914,35 @@ async function rebuildUsageRangeAtomically(
 
     const staged: Array<{
       scope: FullRebuildScope;
-      chunks: Array<{ start: Date; end: Date; payload: StoredUsagePayload }>;
+      chunks: Array<{
+        start: Date;
+        end: Date;
+        payload: StoredUsagePayload;
+        partial: boolean;
+        error: string | null;
+      }>;
       isClosed: boolean;
     }> = [];
     for (const scope of scopes) {
       const plan = planSyncChunks(range, undefined);
-      const chunks: Array<{ start: Date; end: Date; payload: StoredUsagePayload }> = [];
+      const chunks: Array<{
+        start: Date;
+        end: Date;
+        payload: StoredUsagePayload;
+        partial: boolean;
+        error: string | null;
+      }> = [];
       for (const chunk of plan.chunks) {
         if (chunks.length > 0 || staged.length > 0) {
           await new Promise((resolve) => setTimeout(resolve, 700));
         }
-        chunks.push({
-          ...chunk,
-          payload: await fetchUsageChunk(
-            scope.mode,
-            scope.params,
-            chunk.start,
-            chunk.end,
-          ),
-        });
+        const fetched = await fetchUsageChunk(
+          scope.mode,
+          scope.params,
+          chunk.start,
+          chunk.end,
+        );
+        chunks.push({ ...chunk, ...fetched });
       }
       staged.push({ scope, chunks, isClosed: plan.isClosed });
     }
@@ -1678,13 +1972,16 @@ async function rebuildUsageRangeAtomically(
       await tx.insert(usageSyncChunksTable).values(chunkValues.slice(offset, offset + 500));
     }
     if (staged.length > 0) {
-      await tx.insert(usageSyncStateTable).values(staged.map(({ scope, isClosed }) => ({
+      await tx.insert(usageSyncStateTable).values(staged.map(({ scope, isClosed, chunks }) => ({
         mode: scope.mode,
         rangeKey: range.key,
         scopeKey: scope.scopeKey,
         rangeStart,
         syncedThrough,
-        isClosed,
+        isClosed: isClosed && !chunks.some((chunk) => chunk.partial),
+        status: chunks.some((chunk) => chunk.partial) ? "partial" : "success",
+        errorMessage: chunks.find((chunk) => chunk.partial)?.error ?? null,
+        startedAt: completedAt,
         completedAt,
       })));
     }
@@ -1703,7 +2000,9 @@ async function rebuildUsageRangeAtomically(
       metadata: {
         syncedThrough: syncedThrough.getTime(),
         completedAt: completedAt.getTime(),
-        isClosed,
+        isClosed: isClosed && !chunks.some((chunk) => chunk.partial),
+        status: (chunks.some((chunk) => chunk.partial) ? "partial" : "success") as UsageSyncStatus,
+        error: chunks.find((chunk) => chunk.partial)?.error ?? null,
       },
     }));
   });
@@ -1799,6 +2098,16 @@ export function __setAccountUsageForTests(
 ): void {
   if (usage) accountUsageCache.set(rangeKey, usage);
   else accountUsageCache.delete(rangeKey);
+  if (usage) {
+    setSuccessfulSyncMetadataForTests(
+      "account_total",
+      rangeKey,
+      ACCOUNT_USAGE_SCOPE,
+      usage.fetchedAt,
+    );
+  } else {
+    syncMetadata.delete(syncId("account_total", rangeKey, ACCOUNT_USAGE_SCOPE));
+  }
 }
 
 export function getMemberUsage(groupId: string, rangeKey: string): MemberUsage | undefined {
@@ -1815,7 +2124,7 @@ export function queueMemberUsageFetch(
   if (isDurablyFresh("group_member", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
-  return enqueueUsage(`member-usage:${cacheKey}`, priority, async () => {
+  const queued = enqueueUsage(`member-usage:${cacheKey}`, priority, async () => {
     try {
       const rows = await synchronizeUsage("group_member", range, group.id, {
         workspaceId: group.workspaceId,
@@ -1826,6 +2135,8 @@ export function queueMemberUsageFetch(
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
     }
   });
+  if (queued) markUsageSyncQueued("group_member", range.key, group.id);
+  return queued;
 }
 
 // ---------- Per-workspace member spend (workspaces without custom groups) ----------
@@ -1863,7 +2174,7 @@ export function queueWsSpendFetch(
   if (cached && isDurablyFresh("workspace_member", range.key, wsId, cachedAt, force)) return false;
   if (wsSpendFetching.has(cacheKey)) return false;
   wsSpendFetching.add(cacheKey);
-  return enqueueUsage(`ws-spend:${cacheKey}`, priority, async () => {
+  const queued = enqueueUsage(`ws-spend:${cacheKey}`, priority, async () => {
     try {
       const rows = await synchronizeUsage("workspace_member", range, wsId, {
         workspaceId: wsId,
@@ -1879,6 +2190,9 @@ export function queueWsSpendFetch(
       wsSpendFetching.delete(cacheKey);
     }
   });
+  if (queued) markUsageSyncQueued("workspace_member", range.key, wsId);
+  else wsSpendFetching.delete(cacheKey);
+  return queued;
 }
 
 /** Queue per-member spend fetches for every workspace that owns no custom groups.
@@ -2046,8 +2360,13 @@ export function __setProjectUsageForTests(
   usage: ProjectUsage | null,
 ): void {
   const key = `${rangeKey}|${groupId}`;
-  if (usage) projectUsageCache.set(key, usage);
-  else projectUsageCache.delete(key);
+  if (usage) {
+    projectUsageCache.set(key, usage);
+    setSuccessfulSyncMetadataForTests("group_project", rangeKey, groupId, usage.fetchedAt);
+  } else {
+    projectUsageCache.delete(key);
+    syncMetadata.delete(syncId("group_project", rangeKey, groupId));
+  }
 }
 
 export function queueProjectUsageFetch(
@@ -2061,7 +2380,7 @@ export function queueProjectUsageFetch(
   if (isDurablyFresh("group_project", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
-  return enqueueUsage(`project-usage:${cacheKey}`, priority, async () => {
+  const queued = enqueueUsage(`project-usage:${cacheKey}`, priority, async () => {
     try {
       const rows = await synchronizeUsage("group_project", range, group.id, {
         workspaceId: group.workspaceId,
@@ -2072,6 +2391,8 @@ export function queueProjectUsageFetch(
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch project usage");
     }
   });
+  if (queued) markUsageSyncQueued("group_project", range.key, group.id);
+  return queued;
 }
 
 function hydrateDurableUsage(rows: UsageSyncChunk[]): void {
@@ -2142,11 +2463,28 @@ export function hasProjectInfo(workspaceId: string): boolean {
   return projectInfoCache.has(workspaceId);
 }
 
-export function queueProjectTitlesFetch(workspaceId: string, priority = 0): boolean {
-  if (projectInfoCache.has(workspaceId) || projectTitlesFetching.has(workspaceId)) return false;
+export function queueProjectTitlesFetch(
+  workspaceId: string,
+  priority = 0,
+  force = false,
+): boolean {
+  if ((!force && projectInfoCache.has(workspaceId)) || projectTitlesFetching.has(workspaceId)) {
+    return false;
+  }
   projectTitlesFetching.add(workspaceId);
   return enqueueUsage(`project-titles:${workspaceId}`, priority, async () => {
+    const startedAt = new Date();
     try {
+      await db.insert(apiProjectMetadataStateTable).values({
+        workspaceId,
+        status: "syncing",
+        errorMessage: null,
+        startedAt,
+        completedAt: startedAt,
+      }).onConflictDoUpdate({
+        target: apiProjectMetadataStateTable.workspaceId,
+        set: { status: "syncing", errorMessage: null, startedAt },
+      });
       const projects = await paginate<RawProject>("/projects", { workspaceId });
       const infoMap = new Map<string, ProjectInfo>();
       for (const p of projects) {
@@ -2155,8 +2493,43 @@ export function queueProjectTitlesFetch(workspaceId: string, priority = 0): bool
           creatorId: p.creatorId ?? null,
         });
       }
+      const completedAt = new Date();
+      await db.transaction(async (tx) => {
+        await tx.delete(apiProjectMetadataTable)
+          .where(eq(apiProjectMetadataTable.workspaceId, workspaceId));
+        if (projects.length > 0) {
+          await tx.insert(apiProjectMetadataTable).values(projects.map((project) => ({
+            workspaceId,
+            projectId: project.id,
+            title: project.title ?? null,
+            creatorId: project.creatorId ?? null,
+            fetchedAt: completedAt,
+          })));
+        }
+        await tx.insert(apiProjectMetadataStateTable).values({
+          workspaceId,
+          status: "success",
+          errorMessage: null,
+          startedAt,
+          completedAt,
+        }).onConflictDoUpdate({
+          target: apiProjectMetadataStateTable.workspaceId,
+          set: { status: "success", errorMessage: null, startedAt, completedAt },
+        });
+      });
       projectInfoCache.set(workspaceId, infoMap);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await db.insert(apiProjectMetadataStateTable).values({
+        workspaceId,
+        status: "failed",
+        errorMessage: message.slice(0, 1000),
+        startedAt,
+        completedAt: new Date(),
+      }).onConflictDoUpdate({
+        target: apiProjectMetadataStateTable.workspaceId,
+        set: { status: "failed", errorMessage: message.slice(0, 1000), completedAt: new Date() },
+      }).catch((dbErr: unknown) => logger.warn({ err: dbErr, workspaceId }, "Failed to persist project metadata failure"));
       logger.warn({ err, workspaceId }, "Failed to fetch project titles");
     } finally {
       projectTitlesFetching.delete(workspaceId);
@@ -2463,6 +2836,7 @@ export function __resetDurableUsageCachesForTests(): void {
   wsSpendCache.clear();
   wsSpendCachedAt.clear();
   projectUsageCache.clear();
+  projectInfoCache.clear();
   syncMetadata.clear();
   billingPeriodCache = null;
 }

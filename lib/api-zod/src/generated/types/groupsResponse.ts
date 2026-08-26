@@ -6,12 +6,18 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Group } from './group';
+import type { GroupsResponseSyncStatus } from './groupsResponseSyncStatus';
 import type { GroupsResponseTeamRawSpend } from './groupsResponseTeamRawSpend';
 
 export interface GroupsResponse {
   groups: Group[];
   /** False while background usage fetches are still pending; poll every ~8s until true */
   isComplete: boolean;
+  syncStatus: GroupsResponseSyncStatus;
+  /** @nullable */
+  syncError?: string | null;
+  failedCount: number;
+  partialCount: number;
   /** Number of outstanding raw group-spend and member-usage fetches */
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */

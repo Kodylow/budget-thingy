@@ -55,6 +55,7 @@ import type {
   MobileTokenExchangeRequest,
   MobileTokenExchangeSuccess,
   OkResponse,
+  RetryUsageSyncParams,
   Summary,
   SystemStatus,
   TeamBudget,
@@ -1158,6 +1159,84 @@ export const useRefreshGroupUsage = <TError = ErrorType<UnauthorizedResponse | F
         TContext
       > => {
       return useMutation(getRefreshGroupUsageMutationOptions(options));
+    }
+
+export const getRetryUsageSyncUrl = (params?: RetryUsageSyncParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/usage/retry?${stringifiedParams}` : `/api/usage/retry`
+}
+
+/**
+ * @summary Retry failed or partial dashboard usage scopes
+ */
+export const retryUsageSync = async (params?: RetryUsageSyncParams, options?: RequestInit): Promise<OkResponse> => {
+
+  return customFetch<OkResponse>(getRetryUsageSyncUrl(params),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRetryUsageSyncMutationOptions = <TError = ErrorType<UnauthorizedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryUsageSync>>, TError,{params?: RetryUsageSyncParams}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryUsageSync>>, TError,{params?: RetryUsageSyncParams}, TContext> => {
+
+const mutationKey = ['retryUsageSync'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryUsageSync>>, {params?: RetryUsageSyncParams}> = (props) => {
+          const {params} = props ?? {};
+
+          return  retryUsageSync(params,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryUsageSyncMutationResult = NonNullable<Awaited<ReturnType<typeof retryUsageSync>>>
+
+    export type RetryUsageSyncMutationError = ErrorType<UnauthorizedResponse>
+
+    /**
+ * @summary Retry failed or partial dashboard usage scopes
+ */
+export const useRetryUsageSync = <TError = ErrorType<UnauthorizedResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryUsageSync>>, TError,{params?: RetryUsageSyncParams}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryUsageSync>>,
+        TError,
+        {params?: RetryUsageSyncParams},
+        TContext
+      > => {
+      return useMutation(getRetryUsageSyncMutationOptions(options));
     }
 
 export const getGetSummaryUrl = (params?: GetSummaryParams,) => {

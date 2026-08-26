@@ -113,6 +113,8 @@ export default function Dashboard() {
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [byGroupSearch, setByGroupSearch] = useState('');
+  const [retryingSync, setRetryingSync] = useState(false);
+  const [retryPollingStartedAt, setRetryPollingStartedAt] = useState<number | null>(null);
   type ByGroupSortCol = 'name' | 'team' | 'workspace' | 'members' | 'spend';
   const [byGroupSort, setByGroupSort] = useState<{ col: ByGroupSortCol; dir: 'asc' | 'desc' }>({ col: 'spend', dir: 'desc' });
 
@@ -131,7 +133,9 @@ export default function Dashboard() {
         const data = query.state.data;
         const paceComplete = rangeType !== 'billing' ||
           (data?.groups.every((group) => group.paceSpendLoaded) ?? false);
-        return data?.isComplete && paceComplete ? false : 8000;
+        const retryPolling = retryPollingStartedAt !== null;
+        return retryPolling ? 2000 : (data?.syncStatus === 'failed' || data?.syncStatus === 'partial') ||
+          (data?.isComplete && paceComplete) ? false : 8000;
       },
     },
   });
@@ -140,7 +144,11 @@ export default function Dashboard() {
     query: {
       queryKey: getGetSummaryQueryKey(queryParams),
       refetchInterval: (query) => {
-        return query.state.data?.isComplete ? false : 8000;
+        const status = query.state.data?.syncStatus;
+        const retryPolling = retryPollingStartedAt !== null;
+        return retryPolling ? 2000 : status === 'failed' || status === 'partial' || query.state.data?.isComplete
+          ? false
+          : 8000;
       },
     },
   });
@@ -173,6 +181,38 @@ export default function Dashboard() {
   const isComplete = groupsData?.isComplete ?? false;
   const pendingCount = groupsData?.pendingCount ?? 0;
   const projectSpendLoaded = groupsData?.projectSpendLoaded ?? false;
+  const syncStatus = groupsData?.syncStatus ?? 'syncing';
+  useEffect(() => {
+    if (
+      retryPollingStartedAt !== null &&
+      (syncStatus === 'syncing' || syncStatus === 'complete')
+    ) {
+      setRetryPollingStartedAt(null);
+    }
+  }, [retryPollingStartedAt, syncStatus]);
+  const retrySync = async () => {
+    setRetryingSync(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('rangeType', rangeType);
+      if (rangeType === 'custom') {
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+      }
+      const response = await fetch(`/api/usage/retry?${params}`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Retry request failed');
+      setRetryPollingStartedAt(Date.now());
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey(queryParams) }),
+        queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey(queryParams) }),
+      ]);
+    } finally {
+      setRetryingSync(false);
+    }
+  };
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
@@ -716,7 +756,7 @@ export default function Dashboard() {
             <span className="sm:hidden">Export</span>
           </a>}
           <RangeFilter />
-          {!isComplete && (
+          {!isComplete && syncStatus === 'syncing' && (
             <Badge
               variant="outline"
               className="flex items-center gap-2"
@@ -732,6 +772,29 @@ export default function Dashboard() {
                 {projectSpendLoaded ? "Syncing history" : "Syncing project spend"} · {pendingCount} remaining
               </span>
               <span className="sm:hidden">Syncing...</span>
+            </Badge>
+          )}
+          {(syncStatus === 'failed' || syncStatus === 'partial') && (
+            <Badge
+              variant="outline"
+              className="flex items-center gap-2 border-destructive/50 text-destructive"
+              data-testid="badge-sync-error"
+              title={groupsData?.syncError ?? 'Some usage scopes could not be synchronized.'}
+            >
+              <AlertTriangle className="h-3 w-3" />
+              <span className="hidden sm:inline">
+                {syncStatus === 'failed'
+                  ? `${groupsData?.failedCount ?? 0} sync failed`
+                  : `${groupsData?.partialCount ?? 0} sync partial`}
+              </span>
+              <button
+                type="button"
+                className="underline underline-offset-2 disabled:opacity-50"
+                disabled={retryingSync}
+                onClick={() => void retrySync()}
+              >
+                {retryingSync ? 'Retrying…' : 'Retry'}
+              </button>
             </Badge>
           )}
         </div>

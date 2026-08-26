@@ -70,6 +70,9 @@ export const usageSyncStateTable = pgTable(
     rangeStart: timestamp("range_start", { withTimezone: true }).notNull(),
     syncedThrough: timestamp("synced_through", { withTimezone: true }).notNull(),
     isClosed: boolean("is_closed").notNull().default(false),
+    status: text("status").notNull().default("success"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
   },
   (t) => [
@@ -80,3 +83,28 @@ export const usageSyncStateTable = pgTable(
 
 export type UsageSyncChunk = typeof usageSyncChunksTable.$inferSelect;
 export type UsageSyncState = typeof usageSyncStateTable.$inferSelect;
+
+/** Durable project directory entries returned by /projects. */
+export const apiProjectMetadataTable = pgTable(
+  "api_project_metadata",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    projectId: text("project_id").notNull(),
+    title: text("title"),
+    creatorId: text("creator_id"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workspaceId, t.projectId] }),
+    index("api_project_metadata_workspace_idx").on(t.workspaceId),
+  ],
+);
+
+/** Records even empty workspace project listings so they hydrate as complete. */
+export const apiProjectMetadataStateTable = pgTable("api_project_metadata_state", {
+  workspaceId: text("workspace_id").primaryKey(),
+  status: text("status").notNull().default("success"),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+});

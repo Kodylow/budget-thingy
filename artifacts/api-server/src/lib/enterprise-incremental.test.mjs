@@ -13,12 +13,38 @@ const extraWorkspaceId = `incremental-extra-${crypto.randomUUID()}`;
 let fetchCount = 0;
 let failNextUsageFetch = false;
 let failAtFetchCount = null;
+let noCursorProjectMode = false;
+let projectMetadataFetchCount = 0;
+let failNextProjectMetadataFetch = false;
 const usageRequestUrls = [];
 
 globalThis.fetch = async (input) => {
   fetchCount += 1;
   const url = new URL(String(input));
   usageRequestUrls.push(url);
+  if (url.pathname.endsWith("/projects")) {
+    projectMetadataFetchCount += 1;
+    if (failNextProjectMetadataFetch) {
+      failNextProjectMetadataFetch = false;
+      return {
+        ok: false,
+        status: 503,
+        headers: { get: () => null },
+        text: async () => "forced project metadata failure",
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => "10" },
+      json: async () => ({
+        data: [
+          { id: "persisted-project", title: "Persisted project", creatorId: "creator-1" },
+        ],
+        pagination: { cursor: null, hasMore: false },
+      }),
+    };
+  }
   if (failNextUsageFetch || fetchCount === failAtFetchCount) {
     failNextUsageFetch = false;
     failAtFetchCount = null;
@@ -33,7 +59,9 @@ globalThis.fetch = async (input) => {
   const cursor = url.searchParams.get("cursor");
   const isProject = groupBy === "project";
   const isGroupMember = groupBy === "member" && url.searchParams.has("groupId");
-  const pagination = cursor
+  const pagination = noCursorProjectMode && isProject
+    ? { cursor: null, hasMore: true }
+    : cursor
     ? { cursor: null, hasMore: false }
     : { cursor: "page-2", hasMore: true };
 
@@ -172,6 +200,128 @@ test("all usage modes paginate, persist, hydrate, and reuse closed ranges", asyn
     enterprise.getProjectUsage(groupId, range.key)?.byProject.get("project-2")?.totalCostUsd,
     7,
   );
+});
+
+test("no-cursor pagination terminates as durable partial and retries only when forced", async () => {
+  const partialRange = {
+    key: `custom:no-cursor-${crypto.randomUUID()}`,
+    label: "No cursor test",
+    params: {
+      startTime: "2026-06-01T00:00:00.000Z",
+      endTime: "2026-06-01T02:00:00.000Z",
+    },
+  };
+  noCursorProjectMode = true;
+  assert.equal(enterprise.queueProjectUsageFetch(group, partialRange, 0), true);
+  await waitForQueue();
+
+  const partial = enterprise.getUsageSyncSummary(
+    partialRange.key,
+    [group],
+    [],
+    false,
+  );
+  assert.equal(partial.status, "partial");
+  assert.equal(partial.pendingCount, 1, "missing member scope remains pending");
+  assert.equal(partial.partialCount, 1);
+  assert.equal(
+    enterprise.isUsageSyncRetryable("group_project", partialRange.key, group.id),
+    true,
+  );
+  assert.match(partial.error, /without a cursor/);
+  const partialFetchCount = fetchCount;
+  assert.equal(
+    enterprise.queueProjectUsageFetch(group, partialRange, 0),
+    false,
+    "terminal partial state must not be requeued by polling",
+  );
+  assert.equal(fetchCount, partialFetchCount);
+
+  noCursorProjectMode = false;
+  assert.equal(enterprise.queueProjectUsageFetch(group, partialRange, 0, true), true);
+  await waitForQueue();
+  const retried = enterprise.getUsageSyncSummary(
+    partialRange.key,
+    [group],
+    [],
+    false,
+  );
+  assert.equal(retried.partialCount, 0);
+  assert.equal(
+    enterprise.isUsageSyncRetryable("group_project", partialRange.key, group.id),
+    false,
+  );
+  assert.equal(retried.status, "syncing", "only the intentionally absent member scope remains");
+});
+
+test("failed usage scopes become terminal and do not remain pending", async () => {
+  const failedRange = {
+    key: `custom:failed-scope-${crypto.randomUUID()}`,
+    label: "Failed scope test",
+    params: {
+      startTime: "2026-06-01T00:00:00.000Z",
+      endTime: "2026-06-01T02:00:00.000Z",
+    },
+  };
+  failNextUsageFetch = true;
+  assert.equal(enterprise.queueProjectUsageFetch(group, failedRange, 0), true);
+  await waitForQueue();
+  const failed = enterprise.getUsageSyncSummary(failedRange.key, [group], [], false);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failedCount, 1);
+  assert.equal(failed.pendingCount, 1, "only the absent member scope is pending");
+  assert.equal(
+    enterprise.queueProjectUsageFetch(group, failedRange, 0),
+    false,
+    "polling must not automatically loop a terminal failure",
+  );
+  assert.equal(
+    enterprise.isUsageSyncRetryable("group_project", failedRange.key, group.id),
+    true,
+  );
+});
+
+test("project metadata persists and hydrates without an API refetch", async () => {
+  const metadataWorkspace = `metadata-${crypto.randomUUID()}`;
+  assert.equal(enterprise.queueProjectTitlesFetch(metadataWorkspace, 0), true);
+  await waitForQueue();
+  assert.deepEqual(enterprise.getProjectInfo(metadataWorkspace, "persisted-project"), {
+    title: "Persisted project",
+    creatorId: "creator-1",
+  });
+  const completedFetches = projectMetadataFetchCount;
+
+  enterprise.__resetDurableUsageCachesForTests();
+  await enterprise.initCache();
+  assert.deepEqual(enterprise.getProjectInfo(metadataWorkspace, "persisted-project"), {
+    title: "Persisted project",
+    creatorId: "creator-1",
+  });
+  assert.equal(enterprise.queueProjectTitlesFetch(metadataWorkspace, 0), false);
+  assert.equal(projectMetadataFetchCount, completedFetches);
+});
+
+test("failed project metadata is not hydrated as complete and remains retryable", async () => {
+  const failedWorkspace = `metadata-failed-${crypto.randomUUID()}`;
+  assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0), true);
+  await waitForQueue();
+  assert.equal(enterprise.hasProjectInfo(failedWorkspace), true);
+
+  failNextProjectMetadataFetch = true;
+  assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0, true), true);
+  await waitForQueue();
+  assert.equal(
+    enterprise.hasProjectInfo(failedWorkspace),
+    true,
+    "the prior usable metadata stays available until restart",
+  );
+
+  enterprise.__resetDurableUsageCachesForTests();
+  await enterprise.initCache();
+  assert.equal(enterprise.hasProjectInfo(failedWorkspace), false);
+  assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0), true);
+  await waitForQueue();
+  assert.equal(enterprise.hasProjectInfo(failedWorkspace), true);
 });
 
 test("project attribution prefers sub-workspaces, then highest spend, and reports unattributed residual", () => {

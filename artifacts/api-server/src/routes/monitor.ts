@@ -70,6 +70,8 @@ import {
   getProjectInfo,
   hasProjectInfo,
   getCanonicalUsage,
+  getUsageSyncSummary,
+  isUsageSyncRetryable,
   buildCanonicalGroupMergePlan,
   resolveCanonicalMergedGroupBudget,
   getDedupedMemberCounts,
@@ -343,6 +345,12 @@ router.get("/groups", async (req, res): Promise<void> => {
       : null;
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
     const projectAttribution = canonical.projectAttribution!;
+    const sync = getUsageSyncSummary(
+      range.key,
+      scoped,
+      scopedWorkspaceIds,
+      false,
+    );
 
     // Include source group IDs (alias groups) in the history query so merged
     // primaries can show the complete spend history across both workspace versions.
@@ -543,12 +551,12 @@ router.get("/groups", async (req, res): Promise<void> => {
     res.json(
       ListGroupsResponse.parse({
         groups,
-        isComplete:
-          rollup.isComplete && projectAttribution.isComplete,
-        // rollup.pendingCount already counts every missing source group. Adding
-        // missing display rows counted the same work twice (e.g. 126 became 252).
-        pendingCount:
-          rollup.pendingCount + projectAttribution.pendingCount,
+        isComplete: sync.status === "complete",
+        syncStatus: sync.status,
+        syncError: sync.error,
+        pendingCount: sync.pendingCount,
+        failedCount: sync.failedCount,
+        partialCount: sync.partialCount,
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
         projectSpendLoaded: projectAttribution.isComplete,
         unattributedProjectSpendUsd: projectAttribution.unattributedSpendUsd,
@@ -1063,6 +1071,42 @@ router.post("/groups/:groupId/refresh", requireAccountOperator, async (req, res)
   res.status(202).json(RefreshGroupUsageResponse.parse({ ok: true }));
 });
 
+router.post("/usage/retry", async (req, res): Promise<void> => {
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  const dir = await getDirectory();
+  const scoped = visibleGroups(req.authz!, dir.groups);
+  const groupedWorkspaceIds = scoped.map((group) => group.workspaceId);
+  const workspaceIds = isAccountWide(req.authz)
+    ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
+    : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
+  for (const group of scoped) {
+    if (isUsageSyncRetryable("group_member", range.key, group.id)) {
+      queueMemberUsageFetch(group, range, -20, true);
+    }
+    if (isUsageSyncRetryable("group_project", range.key, group.id)) {
+      queueProjectUsageFetch(group, range, -20, true);
+    }
+  }
+  for (const workspaceId of workspaceIds) {
+    if (isUsageSyncRetryable("workspace_member", range.key, workspaceId)) {
+      queueWsSpendFetch(workspaceId, range, -20, true);
+    }
+  }
+  if (
+    isAccountWide(req.authz) &&
+    isUsageSyncRetryable("account_total", range.key, "enterprise")
+  ) {
+    queueAccountUsageFetch(range, -20, true);
+  }
+  res.status(202).json(RefreshGroupUsageResponse.parse({ ok: true }));
+});
+
 router.get("/summary", async (req, res): Promise<void> => {
   let range: UsageRange;
   try {
@@ -1108,6 +1152,8 @@ router.get("/summary", async (req, res): Promise<void> => {
         let over75 = 0;
         let over90 = 0;
         let over100 = 0;
+        let scoped: EnterpriseGroup[] = [];
+        let scopedWorkspaceIds = new Set<string>();
 
         // Set of visible groups, used both to scope spend and to filter alerts.
         let visibleGroupIds = new Set<string>();
@@ -1115,9 +1161,9 @@ router.get("/summary", async (req, res): Promise<void> => {
         if (isConfigured()) {
           try {
             const dir = await getDirectory();
-            const scoped = visibleGroups(authz, dir.groups);
+            scoped = visibleGroups(authz, dir.groups);
             visibleGroupIds = new Set(scoped.map((g) => g.id));
-            const scopedWorkspaceIds = isAccount
+            scopedWorkspaceIds = isAccount
               ? new Set([
                   ...dir.workspaces.keys(),
                   ...scoped.map((group) => group.workspaceId),
@@ -1262,6 +1308,13 @@ router.get("/summary", async (req, res): Promise<void> => {
             (!periodStart || a.sentAt >= periodStart),
         ).length;
 
+        const sync = getUsageSyncSummary(
+          range.key,
+          scoped,
+          scopedWorkspaceIds,
+          isAccount,
+          false,
+        );
         res.json(
           GetSummaryResponse.parse({
             totalGroups,
@@ -1285,9 +1338,15 @@ router.get("/summary", async (req, res): Promise<void> => {
             pacePeriodLabel: pacePeriod.label,
             pacePeriodIsFallback: pacePeriod.isFallback,
             isComplete:
+              sync.status === "complete" &&
               pending === 0 &&
               summaryExtraComplete &&
               (!isAccount || accountUsageTotalSpendUsd !== null),
+            syncStatus: sync.status,
+            syncError: sync.error,
+            pendingCount: sync.pendingCount,
+            failedCount: sync.failedCount,
+            partialCount: sync.partialCount,
           }),
         );
       })(),

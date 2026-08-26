@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { SummarySyncStatus } from './summarySyncStatus';
 
 export interface Summary {
   totalGroups: number;
@@ -51,4 +52,10 @@ export interface Summary {
   /** True when pace uses the fixed safe fallback because no discovered interval is available */
   pacePeriodIsFallback: boolean;
   isComplete: boolean;
+  syncStatus: SummarySyncStatus;
+  /** @nullable */
+  syncError?: string | null;
+  pendingCount: number;
+  failedCount: number;
+  partialCount: number;
 }
