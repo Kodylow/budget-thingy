@@ -1447,7 +1447,7 @@ components:
           description: Human-readable workspace name, null when unknown
     GroupProjectsResponse:
       type: object
-      required: [projects, unattributedSpendUsd, isComplete]
+      required: [projects, unattributedSpendUsd, isComplete, titlesComplete]
       properties:
         projects:
           type: array
@@ -1458,7 +1458,10 @@ components:
           description: Group spend not attributable to any returned project row
         isComplete:
           type: boolean
-          description: False while project usage is still loading; poll every ~8s until true
+          description: False while project usage or project titles are still loading; poll every ~8s until true
+        titlesComplete:
+          type: boolean
+          description: True once project metadata has loaded for every workspace represented by the response
     GroupDetail:
       type: object
       required: [group, members, isComplete, rangeLabel, membersSpendUsd, unattributedSpendUsd]

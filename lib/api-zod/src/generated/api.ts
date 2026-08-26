@@ -274,7 +274,8 @@ export const GetGroupProjectsResponse = zod.object({
   "workspaceName": zod.string().nullable().describe('Human-readable workspace name, null when unknown')
 })),
   "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
-  "isComplete": zod.boolean().describe('False while project usage is still loading; poll every ~8s until true')
+  "isComplete": zod.boolean().describe('False while project usage or project titles are still loading; poll every ~8s until true'),
+  "titlesComplete": zod.boolean().describe('True once project metadata has loaded for every workspace represented by the response')
 })
 
 
@@ -312,7 +313,8 @@ export const GetClusterProjectsResponse = zod.object({
   "workspaceName": zod.string().nullable().describe('Human-readable workspace name, null when unknown')
 })),
   "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
-  "isComplete": zod.boolean().describe('False while project usage is still loading; poll every ~8s until true')
+  "isComplete": zod.boolean().describe('False while project usage or project titles are still loading; poll every ~8s until true'),
+  "titlesComplete": zod.boolean().describe('True once project metadata has loaded for every workspace represented by the response')
 })
 
 
@@ -796,5 +798,3 @@ export const RebuildUsageRangeBody = zod.object({
 export const RebuildUsageRangeResponse = zod.object({
   "ok": zod.boolean()
 })
-
-

@@ -866,7 +866,8 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
     const titleMap = getProjectTitles(group.workspaceId);
     const groupSpend = getSpend(group.id, range.key);
 
-    const isComplete = !!projectUsage && hasProjectInfo(group.workspaceId);
+    const titlesComplete = hasProjectInfo(group.workspaceId);
+    const isComplete = !!projectUsage && titlesComplete;
 
     const projects = projectUsage
       ? Array.from(projectUsage.byProject.values())
@@ -914,6 +915,7 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
         projects,
         unattributedSpendUsd,
         isComplete,
+        titlesComplete,
       }),
     );
   } catch (err) {
@@ -1128,6 +1130,7 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
         projects: attributed,
         unattributedSpendUsd,
         isComplete: allGroupsLoaded && projectInfoLoaded,
+        titlesComplete: projectInfoLoaded,
       }),
     );
   } catch (err) {

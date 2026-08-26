@@ -16,6 +16,7 @@ import { ChevronLeft, RefreshCw, DollarSign, Wallet, TrendingUp, AlertTriangle }
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function GroupDetail() {
   const [match, params] = useRoute('/groups/:groupId');
@@ -52,7 +53,8 @@ export default function GroupDetail() {
   const { data: projectsData } = useGetGroupProjects(groupId, queryParams, {
     query: {
       queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
-      refetchInterval: (query) => query.state.data?.isComplete ? false : 8000,
+      refetchInterval: (query) =>
+        query.state.data?.isComplete && query.state.data.titlesComplete ? false : 8000,
       enabled: !!groupId,
     }
   });
@@ -191,15 +193,23 @@ export default function GroupDetail() {
         })}
       </div>
 
+      <Tabs defaultValue="members">
       <Card>
         <CardHeader>
-          <CardTitle>Members</CardTitle>
-          <CardDescription>
-            Each total combines deduplicated member AI usage with non-AI hosting,
-            storage, and other project costs attributed to that project&apos;s creator.
-          </CardDescription>
+          <TabsList aria-label="Group spending breakdown">
+            <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="projects">Projects</TabsTrigger>
+          </TabsList>
         </CardHeader>
-        <CardContent>
+        <TabsContent value="members" className="mt-0">
+          <CardHeader className="pt-0">
+            <CardTitle>Members</CardTitle>
+            <CardDescription>
+              Each total combines deduplicated member AI usage with non-AI hosting,
+              storage, and other project costs attributed to that project&apos;s creator.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -326,14 +336,14 @@ export default function GroupDetail() {
               </tfoot>
             </table>
           </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Projects</CardTitle>
-          <CardDescription>Per-project spending within the group for the selected period</CardDescription>
-        </CardHeader>
-        <CardContent>
+          </CardContent>
+        </TabsContent>
+        <TabsContent value="projects" className="mt-0">
+          <CardHeader className="pt-0">
+            <CardTitle>Projects</CardTitle>
+            <CardDescription>Per-project spending within the group for the selected period</CardDescription>
+          </CardHeader>
+          <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -370,7 +380,11 @@ export default function GroupDetail() {
                       <tr key={project.projectId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                         <td className="py-3 px-4">
                           <div className="flex flex-col">
-                            <span className="text-sm font-medium">{project.title ?? <span className="italic text-muted-foreground">Untitled</span>}</span>
+                            <span className="text-sm font-medium">
+                              {!projectsData.titlesComplete
+                                ? <LoadingCell />
+                                : project.title ?? <span className="italic text-muted-foreground">Untitled</span>}
+                            </span>
                             <span className="text-xs text-muted-foreground font-mono">{project.projectId}</span>
                             {project.workspaceName && (
                               <span className="text-xs text-muted-foreground mt-0.5">{project.workspaceName}</span>
@@ -448,8 +462,10 @@ export default function GroupDetail() {
               )}
             </table>
           </div>
-        </CardContent>
+          </CardContent>
+        </TabsContent>
       </Card>
+      </Tabs>
     </div>
   );
 }

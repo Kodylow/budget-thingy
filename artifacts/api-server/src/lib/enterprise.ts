@@ -1223,6 +1223,7 @@ interface RawBudget {
 
 const DIRECTORY_TTL_MS = 15 * 60 * 1000;
 const USAGE_TTL_MS = 10 * 60 * 1000;
+const PROJECT_INFO_TTL_MS = 15 * 60 * 1000;
 
 // ---------- DB serialisation helpers ----------
 
@@ -1448,7 +1449,13 @@ export async function initCache(): Promise<void> {
       workspace.set(row.projectId, { title: row.title, creatorId: row.creatorId });
     }
     for (const [workspaceId, projects] of projectsByWorkspace) {
-      if (!projectInfoCache.has(workspaceId)) projectInfoCache.set(workspaceId, projects);
+      if (!projectInfoCache.has(workspaceId)) {
+        projectInfoCache.set(workspaceId, projects);
+        const completedAt = projectStates.find(
+          (state) => state.workspaceId === workspaceId && state.status === "success",
+        )?.completedAt;
+        if (completedAt) projectInfoFetchedAt.set(workspaceId, completedAt.getTime());
+      }
     }
     if (projectStates.length > 0) {
       logger.info({ workspaces: projectStates.length, projects: projectRows.length }, "Project metadata hydrated from DB");
@@ -2499,6 +2506,7 @@ export interface ProjectInfo {
 
 // workspaceId -> projectId -> { title, creatorId }
 const projectInfoCache = new Map<string, Map<string, ProjectInfo>>();
+const projectInfoFetchedAt = new Map<string, number>();
 const projectTitlesFetching = new Set<string>();
 
 export function getProjectTitles(workspaceId: string): Map<string, string> {
@@ -2523,8 +2531,13 @@ export function __setProjectInfoForTests(
   workspaceId: string,
   projects: ReadonlyMap<string, ProjectInfo> | null,
 ): void {
-  if (projects) projectInfoCache.set(workspaceId, new Map(projects));
-  else projectInfoCache.delete(workspaceId);
+  if (projects) {
+    projectInfoCache.set(workspaceId, new Map(projects));
+    projectInfoFetchedAt.set(workspaceId, Date.now());
+  } else {
+    projectInfoCache.delete(workspaceId);
+    projectInfoFetchedAt.delete(workspaceId);
+  }
 }
 /** Returns true if project info (titles + creatorIds) has been fetched for this workspace. */
 export function hasProjectInfo(workspaceId: string): boolean {
@@ -2536,7 +2549,14 @@ export function queueProjectTitlesFetch(
   priority = 0,
   force = false,
 ): boolean {
-  if ((!force && projectInfoCache.has(workspaceId)) || projectTitlesFetching.has(workspaceId)) {
+  const fetchedAt = projectInfoFetchedAt.get(workspaceId);
+  if (
+    projectTitlesFetching.has(workspaceId) ||
+    (!force &&
+      projectInfoCache.has(workspaceId) &&
+      fetchedAt !== undefined &&
+      Date.now() - fetchedAt < PROJECT_INFO_TTL_MS)
+  ) {
     return false;
   }
   projectTitlesFetching.add(workspaceId);
@@ -2586,6 +2606,7 @@ export function queueProjectTitlesFetch(
         });
       });
       projectInfoCache.set(workspaceId, infoMap);
+      projectInfoFetchedAt.set(workspaceId, completedAt.getTime());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await db.insert(apiProjectMetadataStateTable).values({

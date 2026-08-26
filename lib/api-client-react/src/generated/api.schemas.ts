@@ -366,8 +366,10 @@ export interface GroupProjectsResponse {
   projects: GroupProject[];
   /** Group spend not attributable to any returned project row */
   unattributedSpendUsd: number;
-  /** False while project usage is still loading; poll every ~8s until true */
+  /** False while project usage or project titles are still loading; poll every ~8s until true */
   isComplete: boolean;
+  /** True once project metadata has loaded for every workspace represented by the response */
+  titlesComplete: boolean;
 }
 
 export interface GroupDetail {
@@ -848,4 +850,3 @@ export type ListAlertsParams = {
  */
 limit?: number;
 };
-
