@@ -424,6 +424,11 @@ export interface UsageSyncSummary {
 export const RECONCILIATION_OVERLAP_MS = 7 * 24 * 60 * 60 * 1000;
 export const CUSTOM_RANGE_CLOSURE_GRACE_MS = 24 * 60 * 60 * 1000;
 const MAX_USAGE_PAGES = 200;
+// Cursorless pagination is an upstream API defect. Date sharding can recover
+// additional rows, but unbounded bisection of a multi-month range creates
+// thousands of serial requests and prevents any terminal state from reaching
+// Postgres. Four levels cap one chunk at 31 requests before committing partial.
+const MAX_CURSORLESS_SHARD_DEPTH = 4;
 /** Closed custom snapshots are retained long enough for normal reporting needs. */
 export const CUSTOM_RANGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
@@ -597,6 +602,7 @@ async function fetchUsageChunk(
   baseParams: Record<string, string | undefined>,
   start: Date,
   end: Date,
+  cursorlessShardDepth = 0,
 ): Promise<FetchedUsageChunk> {
   const groups: UsageGroupEntry[] = [];
   let first: UsageData | undefined;
@@ -633,11 +639,26 @@ async function fetchUsageChunk(
     }
     if (!data.pagination.cursor) {
       const duration = end.getTime() - start.getTime();
-      if (duration > 60 * 60 * 1000) {
+      if (
+        duration > 60 * 60 * 1000 &&
+        cursorlessShardDepth < MAX_CURSORLESS_SHARD_DEPTH
+      ) {
         const midpoint = new Date(start.getTime() + Math.floor(duration / 2));
-        const left = await fetchUsageChunk(mode, baseParams, start, midpoint);
+        const left = await fetchUsageChunk(
+          mode,
+          baseParams,
+          start,
+          midpoint,
+          cursorlessShardDepth + 1,
+        );
         await new Promise((resolve) => setTimeout(resolve, 700));
-        const right = await fetchUsageChunk(mode, baseParams, midpoint, end);
+        const right = await fetchUsageChunk(
+          mode,
+          baseParams,
+          midpoint,
+          end,
+          cursorlessShardDepth + 1,
+        );
         return {
           payload: combineUsagePayloads([left.payload, right.payload]),
           partial: left.partial || right.partial,
@@ -677,13 +698,15 @@ async function synchronizeUsage(
   // Running state is process-local until the advisory-lock transaction commits.
   // A crash therefore leaves either the prior terminal state or no state at all,
   // both of which are safely retryable after startup.
-  syncMetadata.set(id, {
-    syncedThrough: priorMetadata?.syncedThrough ?? attemptedStart.getTime(),
-    completedAt: startedAt.getTime(),
-    isClosed: priorMetadata?.isClosed ?? false,
-    status: "syncing",
-    error: null,
-  });
+  if (priorMetadata?.status !== "success") {
+    syncMetadata.set(id, {
+      syncedThrough: priorMetadata?.syncedThrough ?? attemptedStart.getTime(),
+      completedAt: startedAt.getTime(),
+      isClosed: priorMetadata?.isClosed ?? false,
+      status: "syncing",
+      error: null,
+    });
+  }
   try {
   const result = await db.transaction(async (tx) => {
     // The in-process queue serializes API calls for one server. This lock extends
@@ -984,6 +1007,9 @@ function markUsageSyncQueued(
 ): void {
   const id = syncId(mode, rangeKey, scopeKey);
   const previous = syncMetadata.get(id);
+  // Keep serving an already-hydrated Postgres snapshot as complete while its
+  // incremental replacement is queued. Only a genuinely cold scope blocks UI.
+  if (previous?.status === "success") return;
   const now = Date.now();
   syncMetadata.set(id, {
     syncedThrough: previous?.syncedThrough ?? 0,
@@ -1864,7 +1890,7 @@ export function queueAccountUsageFetch(
   )) {
     return false;
   }
-  const queued = enqueueUsage(`account-usage:${range.key}`, priority, async () => {
+  const queued = enqueueUsage(`account-usage:${range.key}`, cached ? priority : 0, async () => {
     try {
       const rows = await synchronizeUsage(
         "account_total",
@@ -2131,7 +2157,7 @@ export function queueMemberUsageFetch(
   if (isDurablyFresh("group_member", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
-  const queued = enqueueUsage(`member-usage:${cacheKey}`, priority, async () => {
+  const queued = enqueueUsage(`member-usage:${cacheKey}`, cached ? priority : 0, async () => {
     try {
       const rows = await synchronizeUsage("group_member", range, group.id, {
         workspaceId: group.workspaceId,
@@ -2181,7 +2207,7 @@ export function queueWsSpendFetch(
   if (cached && isDurablyFresh("workspace_member", range.key, wsId, cachedAt, force)) return false;
   if (wsSpendFetching.has(cacheKey)) return false;
   wsSpendFetching.add(cacheKey);
-  const queued = enqueueUsage(`ws-spend:${cacheKey}`, priority, async () => {
+  const queued = enqueueUsage(`ws-spend:${cacheKey}`, cached ? priority : 0, async () => {
     try {
       const rows = await synchronizeUsage("workspace_member", range, wsId, {
         workspaceId: wsId,
@@ -2447,7 +2473,7 @@ export function queueProjectUsageFetch(
   if (isDurablyFresh("group_project", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
-  const queued = enqueueUsage(`project-usage:${cacheKey}`, priority, async () => {
+  const queued = enqueueUsage(`project-usage:${cacheKey}`, cached ? priority : 0, async () => {
     try {
       const rows = await synchronizeUsage("group_project", range, group.id, {
         workspaceId: group.workspaceId,
@@ -2550,29 +2576,32 @@ export function queueProjectTitlesFetch(
   force = false,
 ): boolean {
   const fetchedAt = projectInfoFetchedAt.get(workspaceId);
+  const hasStoredSnapshot = projectInfoCache.has(workspaceId);
   if (
     projectTitlesFetching.has(workspaceId) ||
     (!force &&
-      projectInfoCache.has(workspaceId) &&
+      hasStoredSnapshot &&
       fetchedAt !== undefined &&
       Date.now() - fetchedAt < PROJECT_INFO_TTL_MS)
   ) {
     return false;
   }
   projectTitlesFetching.add(workspaceId);
-  return enqueueUsage(`project-titles:${workspaceId}`, priority, async () => {
+  return enqueueUsage(`project-titles:${workspaceId}`, hasStoredSnapshot ? priority : 0, async () => {
     const startedAt = new Date();
     try {
-      await db.insert(apiProjectMetadataStateTable).values({
-        workspaceId,
-        status: "syncing",
-        errorMessage: null,
-        startedAt,
-        completedAt: startedAt,
-      }).onConflictDoUpdate({
-        target: apiProjectMetadataStateTable.workspaceId,
-        set: { status: "syncing", errorMessage: null, startedAt },
-      });
+      if (!hasStoredSnapshot) {
+        await db.insert(apiProjectMetadataStateTable).values({
+          workspaceId,
+          status: "syncing",
+          errorMessage: null,
+          startedAt,
+          completedAt: startedAt,
+        }).onConflictDoUpdate({
+          target: apiProjectMetadataStateTable.workspaceId,
+          set: { status: "syncing", errorMessage: null, startedAt },
+        });
+      }
       const projects = await paginate<RawProject>("/projects", { workspaceId });
       const infoMap = new Map<string, ProjectInfo>();
       for (const p of projects) {
@@ -2609,16 +2638,18 @@ export function queueProjectTitlesFetch(
       projectInfoFetchedAt.set(workspaceId, completedAt.getTime());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await db.insert(apiProjectMetadataStateTable).values({
-        workspaceId,
-        status: "failed",
-        errorMessage: message.slice(0, 1000),
-        startedAt,
-        completedAt: new Date(),
-      }).onConflictDoUpdate({
-        target: apiProjectMetadataStateTable.workspaceId,
-        set: { status: "failed", errorMessage: message.slice(0, 1000), completedAt: new Date() },
-      }).catch((dbErr: unknown) => logger.warn({ err: dbErr, workspaceId }, "Failed to persist project metadata failure"));
+      if (!hasStoredSnapshot) {
+        await db.insert(apiProjectMetadataStateTable).values({
+          workspaceId,
+          status: "failed",
+          errorMessage: message.slice(0, 1000),
+          startedAt,
+          completedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: apiProjectMetadataStateTable.workspaceId,
+          set: { status: "failed", errorMessage: message.slice(0, 1000), completedAt: new Date() },
+        }).catch((dbErr: unknown) => logger.warn({ err: dbErr, workspaceId }, "Failed to persist project metadata failure"));
+      }
       logger.warn({ err, workspaceId }, "Failed to fetch project titles");
     } finally {
       projectTitlesFetching.delete(workspaceId);

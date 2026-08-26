@@ -202,18 +202,49 @@ test("all usage modes paginate, persist, hydrate, and reuse closed ranges", asyn
   );
 });
 
+test("an incremental refresh keeps the successful Postgres snapshot complete", async () => {
+  const refreshRange = {
+    key: `custom:background-refresh-${crypto.randomUUID()}`,
+    label: "Background refresh test",
+    params: {
+      startTime: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      endTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    },
+  };
+
+  assert.equal(enterprise.queueAccountUsageFetch(refreshRange, 0), true);
+  await waitForQueue();
+  assert.equal(
+    enterprise.getUsageSyncSummary(refreshRange.key, [], [], true).status,
+    "complete",
+  );
+
+  assert.equal(enterprise.queueAccountUsageFetch(refreshRange, 1, true), true);
+  assert.equal(
+    enterprise.getUsageSyncSummary(refreshRange.key, [], [], true).status,
+    "complete",
+    "usable stored data must remain complete while its incremental refresh runs",
+  );
+  await waitForQueue();
+});
+
 test("no-cursor pagination terminates as durable partial and retries only when forced", async () => {
   const partialRange = {
     key: `custom:no-cursor-${crypto.randomUUID()}`,
     label: "No cursor test",
     params: {
       startTime: "2026-06-01T00:00:00.000Z",
-      endTime: "2026-06-01T02:00:00.000Z",
+      endTime: "2026-08-01T00:00:00.000Z",
     },
   };
+  const fetchesBeforePartial = fetchCount;
   noCursorProjectMode = true;
   assert.equal(enterprise.queueProjectUsageFetch(group, partialRange, 0), true);
   await waitForQueue();
+  assert.ok(
+    fetchCount - fetchesBeforePartial <= 31,
+    "cursorless recovery must be bounded for multi-month ranges",
+  );
 
   const partial = enterprise.getUsageSyncSummary(
     partialRange.key,
@@ -301,7 +332,7 @@ test("project metadata persists and hydrates without an API refetch", async () =
   assert.equal(projectMetadataFetchCount, completedFetches);
 });
 
-test("failed project metadata is not hydrated as complete and remains retryable", async () => {
+test("failed project metadata refresh preserves the stored snapshot across restart", async () => {
   const failedWorkspace = `metadata-failed-${crypto.randomUUID()}`;
   assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0), true);
   await waitForQueue();
@@ -318,10 +349,12 @@ test("failed project metadata is not hydrated as complete and remains retryable"
 
   enterprise.__resetDurableUsageCachesForTests();
   await enterprise.initCache();
-  assert.equal(enterprise.hasProjectInfo(failedWorkspace), false);
-  assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0), true);
-  await waitForQueue();
-  assert.equal(enterprise.hasProjectInfo(failedWorkspace), true);
+  assert.equal(
+    enterprise.hasProjectInfo(failedWorkspace),
+    true,
+    "a failed refresh must not invalidate usable Postgres metadata",
+  );
+  assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0), false);
 });
 
 test("project attribution uses highest cross-group total and reports unattributed residual", () => {
