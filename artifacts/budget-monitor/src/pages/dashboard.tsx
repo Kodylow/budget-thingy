@@ -3,33 +3,53 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Download, Search, ChevronsUpDown, ChevronUp } from 'lucide-react';
 
-// Credit pool period: May 20 2026 (spend cutoff) → May 17 2027 (expiry)
 import { useAuthContext, useCanWrite } from '@/components/auth-context';
-const PACE_PERIOD_START_MS = new Date('2026-05-20T00:00:00.000Z').getTime();
-const PACE_PERIOD_END_MS   = new Date('2027-05-17T00:00:00.000Z').getTime();
-const PACE_TOTAL_DAYS = (PACE_PERIOD_END_MS - PACE_PERIOD_START_MS) / 86_400_000;
 
 type PaceStatus = 'on-track' | 'at-risk' | 'over-pace';
 interface PaceResult { status: PaceStatus; projectedUsd: number; daysRemaining: number; }
 
-function calcPace(spendUsd: number, budgetUsd: number): PaceResult | null {
+function calcPace(
+  spendUsd: number,
+  budgetUsd: number,
+  periodStart: string,
+  periodEnd: string,
+): PaceResult | null {
   if (budgetUsd <= 0 || spendUsd == null) return null;
   const now = Date.now();
-  const daysElapsed = (now - PACE_PERIOD_START_MS) / 86_400_000;
+  const startMs = new Date(periodStart).getTime();
+  const endMs = new Date(periodEnd).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  const daysElapsed = (now - startMs) / 86_400_000;
   if (daysElapsed <= 0) return null;
-  const daysRemaining = Math.max(0, (PACE_PERIOD_END_MS - now) / 86_400_000);
-  const projectedUsd = (spendUsd / daysElapsed) * PACE_TOTAL_DAYS;
+  const daysRemaining = Math.max(0, (endMs - now) / 86_400_000);
+  const projectedUsd = (spendUsd / daysElapsed) * ((endMs - startMs) / 86_400_000);
   const ratio = projectedUsd / budgetUsd;
   const status: PaceStatus = ratio <= 1.0 ? 'on-track' : ratio <= 1.15 ? 'at-risk' : 'over-pace';
   return { status, projectedUsd, daysRemaining };
 }
 
-function PaceCell({ spendUsd, budgetUsd, spendLoaded, semibold }: {
-  spendUsd: number; budgetUsd: number | null; spendLoaded: boolean; semibold?: boolean;
+function PaceCell({
+  spendUsd,
+  budgetUsd,
+  spendLoaded,
+  semibold,
+  periodStart,
+  periodEnd,
+  periodLabel,
+  isFallback,
+}: {
+  spendUsd: number;
+  budgetUsd: number | null;
+  spendLoaded: boolean;
+  semibold?: boolean;
+  periodStart: string;
+  periodEnd: string;
+  periodLabel: string;
+  isFallback: boolean;
 }) {
   if (!spendLoaded) return <span className="text-sm text-muted-foreground">—</span>;
   if (budgetUsd == null || budgetUsd <= 0) return <span className="text-sm text-muted-foreground">—</span>;
-  const pace = calcPace(spendUsd, budgetUsd);
+  const pace = calcPace(spendUsd, budgetUsd, periodStart, periodEnd);
   if (!pace) return <span className="text-sm text-muted-foreground">—</span>;
   const cfg = {
     'on-track':  { label: 'On Track',  cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' },
@@ -37,7 +57,10 @@ function PaceCell({ spendUsd, budgetUsd, spendLoaded, semibold }: {
     'over-pace': { label: 'Over Pace', cls: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300' },
   }[pace.status];
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div
+      className="flex flex-col items-end gap-0.5"
+      title={`Pace period: ${periodLabel}${isFallback ? ' (safe fallback)' : ''}`}
+    >
       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.cls} ${semibold ? 'font-semibold' : ''}`}>
         {cfg.label}
       </span>
@@ -73,6 +96,8 @@ interface TeamSection {
   memberCount: number;
   spendUsd: number;
   spendLoaded: boolean;
+  paceSpendUsd: number;
+  paceSpendLoaded: boolean;
   budgetUsd: number | null;
   remainingUsd: number | null;
   percentUsed: number | null;
@@ -103,7 +128,10 @@ export default function Dashboard() {
     query: {
       queryKey: getListGroupsQueryKey(queryParams),
       refetchInterval: (query) => {
-        return query.state.data?.isComplete ? false : 8000;
+        const data = query.state.data;
+        const paceComplete = rangeType !== 'billing' ||
+          (data?.groups.every((group) => group.paceSpendLoaded) ?? false);
+        return data?.isComplete && paceComplete ? false : 8000;
       },
     },
   });
@@ -178,6 +206,11 @@ export default function Dashboard() {
       const serverTeamSpend = groupsData?.teamRawSpend?.[teamName];
       const spendUsd = serverTeamSpend?.spendUsd ?? 0;
       const spendLoaded = serverTeamSpend?.spendLoaded ?? false;
+      const paceSpendLoaded = teamGroups.every((group) => group.paceSpendLoaded);
+      const paceSpendUsd = teamGroups.reduce(
+        (sum, group) => sum + (group.paceSpendUsd ?? 0),
+        0,
+      );
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
@@ -188,6 +221,8 @@ export default function Dashboard() {
         memberCount,
         spendUsd,
         spendLoaded,
+        paceSpendUsd,
+        paceSpendLoaded,
         budgetUsd: budgetUsd ?? null,
         remainingUsd,
         percentUsed,
@@ -208,27 +243,54 @@ export default function Dashboard() {
     let totalSpendUsd = 0;
     let totalBudgetUsd = 0;
     let budgetedSpendUsd = 0;
+    let budgetedPaceSpendUsd = 0;
+    let paceSpendLoaded = true;
     let budgetedPools = 0;
 
-    const addRow = (spendUsd: number, budgetUsd: number | null, spendLoaded: boolean) => {
+    const addRow = (
+      spendUsd: number,
+      budgetUsd: number | null,
+      spendLoaded: boolean,
+      paceSpendUsd: number,
+      rowPaceSpendLoaded: boolean,
+    ) => {
       totalSpendUsd += spendUsd;
       if (budgetUsd === null || budgetUsd <= 0) return;
       totalBudgetUsd += budgetUsd;
       budgetedPools += 1;
       if (!spendLoaded) return;
       budgetedSpendUsd += spendUsd;
+      if (!rowPaceSpendLoaded) {
+        paceSpendLoaded = false;
+        return;
+      }
+      budgetedPaceSpendUsd += paceSpendUsd;
     };
 
     for (const team of teamSections) {
-      addRow(team.spendUsd, team.budgetUsd, team.spendLoaded);
+      addRow(
+        team.spendUsd,
+        team.budgetUsd,
+        team.spendLoaded,
+        team.paceSpendUsd,
+        team.paceSpendLoaded,
+      );
     }
     for (const group of unassigned) {
-      addRow(group.spendUsd ?? 0, group.budgetUsd ?? null, group.spendLoaded);
+      addRow(
+        group.spendUsd ?? 0,
+        group.budgetUsd ?? null,
+        group.spendLoaded,
+        group.paceSpendUsd ?? 0,
+        group.paceSpendLoaded,
+      );
     }
     return {
       totalSpendUsd,
       totalBudgetUsd,
       budgetedSpendUsd,
+      budgetedPaceSpendUsd,
+      paceSpendLoaded,
       totalRemainingUsd: totalBudgetUsd - budgetedSpendUsd,
       budgetedPools,
     };
@@ -396,9 +458,13 @@ export default function Dashboard() {
       </td>
       <td className="py-3 px-4 text-right">
         <PaceCell
-          spendUsd={group.spendUsd ?? 0}
+          spendUsd={group.paceSpendUsd ?? 0}
           budgetUsd={group.budgetUsd ?? null}
-          spendLoaded={group.spendLoaded}
+          spendLoaded={group.paceSpendLoaded}
+          periodStart={summary?.pacePeriodStart ?? ''}
+          periodEnd={summary?.pacePeriodEnd ?? ''}
+          periodLabel={summary?.pacePeriodLabel ?? ''}
+          isFallback={summary?.pacePeriodIsFallback ?? true}
         />
       </td>
     </tr>
@@ -562,10 +628,14 @@ export default function Dashboard() {
         </td>
         <td className="py-3 px-4 text-right">
           <PaceCell
-            spendUsd={team.spendUsd}
+            spendUsd={team.paceSpendUsd}
             budgetUsd={team.budgetUsd}
-            spendLoaded={team.spendLoaded}
+            spendLoaded={team.paceSpendLoaded}
             semibold
+            periodStart={summary?.pacePeriodStart ?? ''}
+            periodEnd={summary?.pacePeriodEnd ?? ''}
+            periodLabel={summary?.pacePeriodLabel ?? ''}
+            isFallback={summary?.pacePeriodIsFallback ?? true}
           />
         </td>
       </tr>
@@ -644,6 +714,12 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+      {summary && (
+        <p className="text-xs text-muted-foreground">
+          Pace period: {summary.pacePeriodLabel}
+          {summary.pacePeriodIsFallback ? ' (safe fallback)' : ''}
+        </p>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
         {statCards.map((stat) => {
@@ -838,12 +914,16 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete && tableTotals.totalBudgetUsd > 0 ? (
+                        {isComplete && tableTotals.paceSpendLoaded && tableTotals.totalBudgetUsd > 0 ? (
                           <PaceCell
-                            spendUsd={tableTotals.budgetedSpendUsd}
+                            spendUsd={tableTotals.budgetedPaceSpendUsd}
                             budgetUsd={tableTotals.totalBudgetUsd}
-                            spendLoaded={isComplete}
+                            spendLoaded={tableTotals.paceSpendLoaded}
                             semibold
+                            periodStart={summary?.pacePeriodStart ?? ''}
+                            periodEnd={summary?.pacePeriodEnd ?? ''}
+                            periodLabel={summary?.pacePeriodLabel ?? ''}
+                            isFallback={summary?.pacePeriodIsFallback ?? true}
                           />
                         ) : (
                           <span className="text-sm text-muted-foreground">—</span>

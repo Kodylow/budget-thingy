@@ -440,6 +440,13 @@ test("workspace admin mutation attempts are rejected (403, read-only)", async ()
   const check = await req("/alerts/check", { user: "ws1admin", method: "POST" });
   assert.equal(check.status, 403);
 
+  const rebuild = await req("/usage/ranges/rebuild", {
+    user: "ws1admin",
+    method: "POST",
+    body: { rangeType: "billing" },
+  });
+  assert.equal(rebuild.status, 403);
+
   const setTeamBudget = await req("/teams/Team%20One/budget", {
     user: "ws1admin",
     method: "PUT",

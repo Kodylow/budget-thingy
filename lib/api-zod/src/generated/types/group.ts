@@ -39,6 +39,13 @@ export interface Group {
      * @nullable
      */
   spendUsd?: number | null;
+  /** Whether usage bounded to the discovered pace period is complete */
+  paceSpendLoaded: boolean;
+  /**
+     * Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
+     * @nullable
+     */
+  paceSpendUsd?: number | null;
   /** Whether project usage for every visible custom group is loaded */
   projectSpendLoaded?: boolean;
   /**

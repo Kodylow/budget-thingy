@@ -11,12 +11,24 @@ const groupId = `incremental-group-${crypto.randomUUID()}`;
 const workspaceId = `incremental-workspace-${crypto.randomUUID()}`;
 const extraWorkspaceId = `incremental-extra-${crypto.randomUUID()}`;
 let fetchCount = 0;
+let failNextUsageFetch = false;
+let failAtFetchCount = null;
 const usageRequestUrls = [];
 
 globalThis.fetch = async (input) => {
   fetchCount += 1;
   const url = new URL(String(input));
   usageRequestUrls.push(url);
+  if (failNextUsageFetch || fetchCount === failAtFetchCount) {
+    failNextUsageFetch = false;
+    failAtFetchCount = null;
+    return {
+      ok: false,
+      status: 503,
+      headers: { get: () => null },
+      text: async () => "forced rebuild failure",
+    };
+  }
   const groupBy = url.searchParams.get("groupBy");
   const cursor = url.searchParams.get("cursor");
   const isProject = groupBy === "project";
@@ -66,10 +78,15 @@ globalThis.fetch = async (input) => {
     headers: { get: () => "10" },
     json: async () => ({
       data: {
-        interval: {
-          startTime: url.searchParams.get("startTime"),
-          endTime: url.searchParams.get("endTime"),
-        },
+        interval: url.searchParams.get("billingPeriod") === "current"
+          ? {
+              startTime: "2026-08-01T00:00:00.000Z",
+              endTime: "2026-09-01T00:00:00.000Z",
+            }
+          : {
+              startTime: url.searchParams.get("startTime"),
+              endTime: url.searchParams.get("endTime"),
+            },
         totalCostUsd,
         attributableTotalCostUsd: totalCostUsd === 25 ? 20 : totalCostUsd,
         unattributableTotalCostUsd: totalCostUsd === 25 ? 5 : 0,
@@ -219,4 +236,101 @@ test("project attribution prefers sub-workspaces, then highest spend, and report
   for (const group of groups) {
     enterprise.__setProjectUsageForTests(group.id, attributionRange, null);
   }
+});
+
+test("billing period discovery exposes freshness, mismatch, fallback, and restart hydration", async () => {
+  enterprise.__setBillingPeriodForTests(null);
+  const fallback = enterprise.getBillingPeriodMetadata();
+  assert.equal(fallback.isFallback, true);
+  assert.equal(fallback.start, enterprise.SPEND_DATA_CUTOFF_ISO);
+
+  await enterprise.refreshBillingPeriodMetadata(0);
+  await waitForQueue();
+  const discovered = enterprise.getBillingPeriodMetadata();
+  assert.equal(discovered.start, "2026-08-01T00:00:00.000Z");
+  assert.equal(discovered.end, "2026-09-01T00:00:00.000Z");
+  assert.equal(discovered.isFallback, false);
+  assert.equal(discovered.isFresh, true);
+  assert.equal(discovered.differsFromReportingCutoff, true);
+
+  enterprise.__setBillingPeriodForTests(null);
+  await enterprise.initCache();
+  assert.equal(enterprise.getBillingPeriodMetadata().start, discovered.start);
+});
+
+test("open ranges reconcile seven days and custom ranges close only after the grace window", () => {
+  const now = Date.parse("2026-08-20T12:00:00.000Z");
+  const openRange = {
+    key: "mtd:2026-08-01",
+    label: "Aug 2026 (MTD)",
+    params: {
+      startTime: "2026-08-01T00:00:00.000Z",
+      endTime: "2026-08-20T12:00:00.000Z",
+    },
+  };
+  const openPlan = enterprise.__planSyncChunksForTests(openRange, {
+    syncedThrough: Date.parse("2026-08-20T12:00:00.000Z"),
+    completedAt: 0,
+    isClosed: false,
+  }, now);
+  assert.equal(openPlan.replacementStart, "2026-08-13T00:00:00.000Z");
+
+  const graceRange = {
+    key: "custom:2026-08-01:2026-08-19",
+    label: "2026-08-01 to 2026-08-19",
+    params: {
+      startTime: "2026-08-01T00:00:00.000Z",
+      endTime: "2026-08-20T00:00:00.000Z",
+    },
+  };
+  assert.equal(
+    enterprise.__planSyncChunksForTests(graceRange, undefined, now).isClosed,
+    false,
+  );
+  assert.equal(
+    enterprise.__planSyncChunksForTests(
+      graceRange,
+      undefined,
+      Date.parse("2026-08-21T00:00:00.001Z"),
+    ).isClosed,
+    true,
+  );
+});
+
+test("failed full rebuild preserves the previously committed account snapshot", async () => {
+  const rollbackRange = {
+    ...range,
+    key: `custom:rollback-${crypto.randomUUID()}`,
+  };
+  const initial = await enterprise.__rebuildAccountUsageForTests(rollbackRange);
+  assert.ok(initial.length > 0);
+  failNextUsageFetch = true;
+  await assert.rejects(
+    enterprise.__rebuildAccountUsageForTests(rollbackRange),
+    /forced rebuild failure/,
+  );
+  const afterFailure = await enterprise.__rebuildAccountUsageForTests(rollbackRange);
+  assert.deepEqual(
+    afterFailure.map((row) => row.payloadJson),
+    initial.map((row) => row.payloadJson),
+  );
+});
+
+test("failure after one staged scope rolls back the entire selected range", async () => {
+  const atomicRange = {
+    ...range,
+    key: `custom:atomic-rollback-${crypto.randomUUID()}`,
+  };
+  await enterprise.__rebuildAccountAndWorkspaceUsageForTests(atomicRange, workspaceId);
+  const before = await enterprise.__getDurableRangeRowsForTests(atomicRange.key);
+  assert.ok(before.length >= 2);
+
+  // Account scope stages first; fail on the first workspace request.
+  failAtFetchCount = fetchCount + 2;
+  await assert.rejects(
+    enterprise.__rebuildAccountAndWorkspaceUsageForTests(atomicRange, workspaceId),
+    /forced rebuild failure/,
+  );
+  const after = await enterprise.__getDurableRangeRowsForTests(atomicRange.key);
+  assert.deepEqual(after, before);
 });

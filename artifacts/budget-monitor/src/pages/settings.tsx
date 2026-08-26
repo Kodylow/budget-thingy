@@ -3,29 +3,61 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, CheckCircle, Trash2, Plus, XCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle, RefreshCw, Trash2, Plus, XCircle } from 'lucide-react';
 import {
   useGetStatus,
   useListEditors,
   useAddEditor,
   useDeleteEditor,
   getListEditorsQueryKey,
+  useRebuildUsageRange,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuthContext } from '@/components/auth-context';
+import { RangeFilter } from '@/components/range-filter';
+import { useRange } from '@/components/range-context';
 
 export default function Settings() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { isAccountAdmin } = useAuthContext();
+  const { rangeType, startDate, endDate } = useRange();
   const [newEditorUserId, setNewEditorUserId] = useState('');
 
   const { data: status, isLoading: statusLoading } = useGetStatus();
   const { data: editors, isLoading: editorsLoading } = useListEditors();
   const addEditor = useAddEditor();
   const deleteEditor = useDeleteEditor();
+  const rebuildRange = useRebuildUsageRange();
+
+  const handleRebuildRange = () => {
+    rebuildRange.mutate(
+      {
+        data: {
+          rangeType,
+          ...(rangeType === 'custom' ? { startDate, endDate } : {}),
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries();
+          toast({
+            title: 'Range rebuild queued',
+            description: 'The selected range will be rebuilt without changing other cached ranges.',
+          });
+        },
+        onError: (error: any) => {
+          toast({
+            title: 'Unable to rebuild range',
+            description: error?.data?.error || 'Check the selected dates and try again.',
+            variant: 'destructive',
+          });
+        },
+      },
+    );
+  };
 
   const handleAddEditor = () => {
     const userId = newEditorUserId.trim();
@@ -158,6 +190,42 @@ export default function Settings() {
                 <Badge className="w-fit" variant="default">Active</Badge>
               </div>
 
+              <div
+                className="flex flex-col gap-3 p-3 rounded-lg border border-border"
+                data-testid="status-billing-period"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    {status.billingPeriodFallback || !status.billingPeriodFresh ? (
+                      <AlertCircle className="h-5 w-5 text-chart-2 shrink-0 mt-0.5" />
+                    ) : (
+                      <CheckCircle className="h-5 w-5 text-chart-1 shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <p className="text-sm font-medium">Enterprise Billing Period</p>
+                      <p className="text-xs text-muted-foreground">{status.billingPeriodLabel}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {status.billingPeriodFallback
+                          ? 'Using the safe fallback until Enterprise billing metadata is available.'
+                          : status.billingPeriodFresh
+                            ? `Resolved ${formatDistanceToNow(new Date(status.billingPeriodFetchedAt!), { addSuffix: true })}`
+                            : 'Stored billing metadata is more than 24 hours old.'}
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant={status.billingPeriodFallback || !status.billingPeriodFresh ? 'secondary' : 'default'}>
+                    {status.billingPeriodFallback ? 'Fallback' : status.billingPeriodFresh ? 'Current' : 'Stale'}
+                  </Badge>
+                </div>
+                {status.billingPeriodDiffersFromReportingCutoff && (
+                  <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs">
+                    The Enterprise billing period starts on{' '}
+                    {new Date(status.billingPeriodStart).toLocaleDateString()} while spend reporting remains
+                    fixed to the May 20 data-availability cutoff.
+                  </div>
+                )}
+              </div>
+
               {(!status.enterpriseApiConfigured || !status.enterpriseApiOk) && (
                 <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-3">
                   <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
@@ -173,6 +241,29 @@ export default function Settings() {
           ) : (
             <p className="text-muted-foreground text-sm">Unable to load status</p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Rebuild Usage Range</CardTitle>
+          <CardDescription>
+            Re-fetch every usage scope for one range. Existing data remains available if the rebuild fails.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <RangeFilter />
+          <Button
+            onClick={handleRebuildRange}
+            disabled={
+              rebuildRange.isPending ||
+              (rangeType === 'custom' && (!startDate || !endDate))
+            }
+            data-testid="button-rebuild-range"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${rebuildRange.isPending ? 'animate-spin' : ''}`} />
+            {rebuildRange.isPending ? 'Queueing…' : 'Rebuild selected range'}
+          </Button>
         </CardContent>
       </Card>
 

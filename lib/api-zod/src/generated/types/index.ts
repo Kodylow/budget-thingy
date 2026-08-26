@@ -68,5 +68,7 @@ export * from './trendSeries';
 export * from './trendSeriesType';
 export * from './trendsResponse';
 export * from './unauthorizedResponse';
+export * from './usageRangeRebuildInput';
+export * from './usageRangeRebuildInputRangeType';
 export * from './userActivityEntry';
 export * from './userActivityResponse';

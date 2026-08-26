@@ -17,6 +17,8 @@ import {
   __setMemberUsageForTests,
   __setProjectUsageForTests,
   __setWsSpendForTests,
+  __setBillingPeriodForTests,
+  resolvePaceUsageRange,
   resolveRange,
 } from "../lib/enterprise.ts";
 import {
@@ -1044,5 +1046,44 @@ test("summary: team pool + unassigned group remaining reconciles with table mode
     await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
     clearOtProject();
     restoreOtDir();
+  }
+});
+
+test("group pace spend excludes usage before a later discovered billing start", async () => {
+  restoreDir();
+  __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
+  __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
+  __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20], ["carol", 5], ["dave", 8]]));
+  setProjectSpend(85, 15, 8);
+
+  __setBillingPeriodForTests({
+    startTime: "2026-08-01T00:00:00.000Z",
+    endTime: "2026-09-01T00:00:00.000Z",
+    fetchedAt: new Date(),
+    source: "api",
+  });
+  const paceRange = resolvePaceUsageRange();
+  assert.ok(paceRange);
+  __setMemberUsageForTests("sg-alpha", paceRange.key, new Map([["alice", 5], ["carol", 1]]));
+  __setMemberUsageForTests("sg-beta", paceRange.key, new Map([["alice", 2], ["bob", 3]]));
+  __setWsSpendForTests("ws-main", paceRange.key, new Map([["alice", 7], ["carol", 1], ["bob", 3]]));
+  __setWsSpendForTests("ws-extra", paceRange.key, new Map([["alice", 4], ["carol", 0.5], ["dave", 1]]));
+
+  try {
+    const json = await req("/groups");
+    const alpha = json.groups.find((group) => group.groupId === "sg-alpha");
+    const beta = json.groups.find((group) => group.groupId === "sg-beta");
+    assert.equal(alpha.rollupSpendUsd, 60, "reporting spend still includes May through July");
+    assert.equal(alpha.paceSpendUsd, 8, "pace spend contains only August usage");
+    assert.equal(beta.rollupSpendUsd, 15);
+    assert.equal(beta.paceSpendUsd, 3);
+    assert.equal(alpha.paceSpendLoaded, true);
+  } finally {
+    __setMemberUsageForTests("sg-alpha", paceRange.key, null);
+    __setMemberUsageForTests("sg-beta", paceRange.key, null);
+    __setWsSpendForTests("ws-main", paceRange.key, null);
+    __setWsSpendForTests("ws-extra", paceRange.key, null);
+    __setBillingPeriodForTests(null);
   }
 });

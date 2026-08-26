@@ -926,6 +926,37 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /usage/ranges/rebuild:
+    post:
+      operationId: rebuildUsageRange
+      tags: [status]
+      summary: Rebuild one usage range
+      description: >
+        Account-admin-only control that queues a complete, transaction-safe
+        rebuild of the selected range without changing any other cached range.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsageRangeRebuildInput"
+      responses:
+        "202":
+          description: Full range rebuild queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          description: Invalid range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
   responses:
     Unauthorized:
@@ -1117,7 +1148,7 @@ components:
           type: number
     Group:
       type: object
-      required: [groupId, workspaceId, name, type, spendLoaded, rollupSpendLoaded, rollupSpendUsd, rollupMemberCount, thresholdsFired, history]
+      required: [groupId, workspaceId, name, type, spendLoaded, paceSpendLoaded, rollupSpendLoaded, rollupSpendUsd, rollupMemberCount, thresholdsFired, history]
       properties:
         groupId:
           type: string
@@ -1152,6 +1183,12 @@ components:
         spendUsd:
           type: ["number", "null"]
           description: Raw per-group spend reported by the Enterprise API, null while loading
+        paceSpendLoaded:
+          type: boolean
+          description: Whether usage bounded to the discovered pace period is complete
+        paceSpendUsd:
+          type: ["number", "null"]
+          description: Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
         projectSpendLoaded:
           type: boolean
           description: Whether project usage for every visible custom group is loaded
@@ -1440,6 +1477,10 @@ components:
           groupsOver100,
           alertsSentThisPeriod,
           billingPeriodLabel,
+          pacePeriodStart,
+          pacePeriodEnd,
+          pacePeriodLabel,
+          pacePeriodIsFallback,
           isComplete,
         ]
       properties:
@@ -1483,8 +1524,30 @@ components:
           type: integer
         billingPeriodLabel:
           type: string
+        pacePeriodStart:
+          type: string
+          description: Inclusive period start used for dashboard pace projections
+        pacePeriodEnd:
+          type: string
+          description: Exclusive period end used for dashboard pace projections
+        pacePeriodLabel:
+          type: string
+        pacePeriodIsFallback:
+          type: boolean
+          description: True when pace uses the fixed safe fallback because no discovered interval is available
         isComplete:
           type: boolean
+    UsageRangeRebuildInput:
+      type: object
+      required: [rangeType]
+      properties:
+        rangeType:
+          type: string
+          enum: [billing, mtd, ytd, custom]
+        startDate:
+          type: string
+        endDate:
+          type: string
     GroupBudget:
       type: object
       required: [groupId, amountUsd, updatedAt]
@@ -1658,7 +1721,20 @@ components:
     SystemStatus:
       type: object
       required:
-        [enterpriseApiConfigured, enterpriseApiOk, emailConfigured, checkerIntervalMinutes]
+        [
+          enterpriseApiConfigured,
+          enterpriseApiOk,
+          emailConfigured,
+          checkerIntervalMinutes,
+          billingPeriodStart,
+          billingPeriodEnd,
+          billingPeriodLabel,
+          billingPeriodFetchedAt,
+          billingPeriodFresh,
+          billingPeriodFallback,
+          billingPeriodDiffersFromReportingCutoff,
+          reportingCutoff,
+        ]
       properties:
         enterpriseApiConfigured:
           type: boolean
@@ -1676,3 +1752,19 @@ components:
           type: integer
         lastCheckAt:
           type: ["string", "null"]
+        billingPeriodStart:
+          type: string
+        billingPeriodEnd:
+          type: string
+        billingPeriodLabel:
+          type: string
+        billingPeriodFetchedAt:
+          type: ["string", "null"]
+        billingPeriodFresh:
+          type: boolean
+        billingPeriodFallback:
+          type: boolean
+        billingPeriodDiffersFromReportingCutoff:
+          type: boolean
+        reportingCutoff:
+          type: string

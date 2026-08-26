@@ -131,6 +131,13 @@ export interface Group {
      * @nullable
      */
   spendUsd?: number | null;
+  /** Whether usage bounded to the discovered pace period is complete */
+  paceSpendLoaded: boolean;
+  /**
+     * Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
+     * @nullable
+     */
+  paceSpendUsd?: number | null;
   /** Whether project usage for every visible custom group is loaded */
   projectSpendLoaded?: boolean;
   /**
@@ -393,7 +400,30 @@ export interface Summary {
   groupsOver100: number;
   alertsSentThisPeriod: number;
   billingPeriodLabel: string;
+  /** Inclusive period start used for dashboard pace projections */
+  pacePeriodStart: string;
+  /** Exclusive period end used for dashboard pace projections */
+  pacePeriodEnd: string;
+  pacePeriodLabel: string;
+  /** True when pace uses the fixed safe fallback because no discovered interval is available */
+  pacePeriodIsFallback: boolean;
   isComplete: boolean;
+}
+
+export type UsageRangeRebuildInputRangeType = typeof UsageRangeRebuildInputRangeType[keyof typeof UsageRangeRebuildInputRangeType];
+
+
+export const UsageRangeRebuildInputRangeType = {
+  billing: 'billing',
+  mtd: 'mtd',
+  ytd: 'ytd',
+  custom: 'custom',
+} as const;
+
+export interface UsageRangeRebuildInput {
+  rangeType: UsageRangeRebuildInputRangeType;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface GroupBudget {
@@ -528,6 +558,15 @@ export interface SystemStatus {
   checkerIntervalMinutes: number;
   /** @nullable */
   lastCheckAt?: string | null;
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
+  billingPeriodLabel: string;
+  /** @nullable */
+  billingPeriodFetchedAt: string | null;
+  billingPeriodFresh: boolean;
+  billingPeriodFallback: boolean;
+  billingPeriodDiffersFromReportingCutoff: boolean;
+  reportingCutoff: string;
 }
 
 /**

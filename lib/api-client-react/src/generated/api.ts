@@ -62,6 +62,7 @@ import type {
   TeamBudgetsResponse,
   TrendsResponse,
   UnauthorizedResponse,
+  UsageRangeRebuildInput,
   UserActivityResponse
 } from './api.schemas';
 
@@ -2774,4 +2775,76 @@ export function useGetStatus<TData = Awaited<ReturnType<typeof getStatus>>, TErr
 
 
 
+
+export const getRebuildUsageRangeUrl = () => {
+
+
+
+
+  return `/api/usage/ranges/rebuild`
+}
+
+/**
+ * Account-admin-only control that queues a complete, transaction-safe rebuild of the selected range without changing any other cached range.
+ * @summary Rebuild one usage range
+ */
+export const rebuildUsageRange = async (usageRangeRebuildInput: UsageRangeRebuildInput, options?: RequestInit): Promise<OkResponse> => {
+
+  return customFetch<OkResponse>(getRebuildUsageRangeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(usageRangeRebuildInput)
+  }
+);}
+
+
+
+
+
+export const getRebuildUsageRangeMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rebuildUsageRange>>, TError,{data: BodyType<UsageRangeRebuildInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rebuildUsageRange>>, TError,{data: BodyType<UsageRangeRebuildInput>}, TContext> => {
+
+const mutationKey = ['rebuildUsageRange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rebuildUsageRange>>, {data: BodyType<UsageRangeRebuildInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  rebuildUsageRange(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RebuildUsageRangeMutationResult = NonNullable<Awaited<ReturnType<typeof rebuildUsageRange>>>
+    export type RebuildUsageRangeMutationBody = BodyType<UsageRangeRebuildInput>
+    export type RebuildUsageRangeMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Rebuild one usage range
+ */
+export const useRebuildUsageRange = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rebuildUsageRange>>, TError,{data: BodyType<UsageRangeRebuildInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rebuildUsageRange>>,
+        TError,
+        {data: BodyType<UsageRangeRebuildInput>},
+        TContext
+      > => {
+      return useMutation(getRebuildUsageRangeMutationOptions(options));
+    }
 

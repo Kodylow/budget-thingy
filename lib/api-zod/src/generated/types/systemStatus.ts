@@ -21,4 +21,13 @@ export interface SystemStatus {
   checkerIntervalMinutes: number;
   /** @nullable */
   lastCheckAt?: string | null;
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
+  billingPeriodLabel: string;
+  /** @nullable */
+  billingPeriodFetchedAt: string | null;
+  billingPeriodFresh: boolean;
+  billingPeriodFallback: boolean;
+  billingPeriodDiffersFromReportingCutoff: boolean;
+  reportingCutoff: string;
 }

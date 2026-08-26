@@ -42,6 +42,8 @@ import {
   AddEditorBody,
   AddEditorResponse,
   DeleteEditorResponse,
+  RebuildUsageRangeBody,
+  RebuildUsageRangeResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -49,6 +51,9 @@ import {
   getDirectory,
   getSpend,
   getBillingPeriod,
+  getBillingPeriodMetadata,
+  resolvePaceUsageRange,
+  queueFullRangeRebuild,
   queueGroupSpendFetch,
   refreshAllGroupSpends,
   queueMemberUsageFetch,
@@ -269,6 +274,12 @@ router.get("/groups", async (req, res): Promise<void> => {
     // so only the preferred workspace version shows as a single merged row.
     const mergePlan = buildCanonicalGroupMergePlan(scoped, dir.workspaces);
     const displayGroups = scoped.filter((g) => !mergePlan.hiddenGroupIds.has(g.id));
+    const paceMetadata = getBillingPeriodMetadata();
+    // Pace is meaningful only on the current billing view. When discovery is
+    // unavailable, the reporting range already matches the safe cutoff fallback.
+    const paceRange = range.key === "billing:from-cutoff"
+      ? (paceMetadata.isFallback ? range : resolvePaceUsageRange())
+      : null;
 
     // Member-level usage is the dashboard's critical path: the deduped rollup
     // cannot render until every visible group has it. Queue it interactively so
@@ -278,6 +289,11 @@ router.get("/groups", async (req, res): Promise<void> => {
     for (const group of scoped) queueProjectUsageFetch(group, range, 0);
     for (const workspaceId of scopedWorkspaceIds) {
       queueWsSpendFetch(workspaceId, range, 0);
+    }
+    if (paceRange) {
+      for (const workspaceId of scopedWorkspaceIds) {
+        queueWsSpendFetch(workspaceId, paceRange, -20);
+      }
     }
     // Raw group totals support alerting/history metadata but are not required to
     // construct the member-deduped dashboard, so keep them in the background.
@@ -303,6 +319,18 @@ router.get("/groups", async (req, res): Promise<void> => {
       isAccountAdmin,
     );
     const rollup = canonical;
+    const paceCanonical = paceRange
+      ? getCanonicalUsage(
+          scoped,
+          paceRange.key,
+          scopedWorkspaceIds,
+          dir.groupMembers,
+          dir.members,
+          groupTeamMap,
+          dir.workspaces,
+          false,
+        )
+      : null;
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
     const projectAttribution = canonical.projectAttribution!;
 
@@ -335,6 +363,7 @@ router.get("/groups", async (req, res): Promise<void> => {
           (sum, id) => sum + (rollup.byGroup.get(id)?.spendUsd ?? 0),
           0,
         );
+        const paceSpend = paceCanonical?.spendByPrimaryGroup.get(g.id) ?? 0;
         const projectSpendUsd = sourceIds.reduce(
           (sum, id) => sum + (projectAttribution.spendByGroup.get(id) ?? 0),
           0,
@@ -405,6 +434,8 @@ router.get("/groups", async (req, res): Promise<void> => {
           rollupMemberCount: mergedRollupMemberCount,
           spendLoaded: fullyLoaded,
           spendUsd: fullyLoaded ? combinedSpend : null,
+          paceSpendLoaded: paceCanonical?.isComplete ?? false,
+          paceSpendUsd: paceCanonical?.isComplete ? paceSpend : null,
           projectSpendLoaded: projectAttribution.isComplete,
           projectSpendUsd: projectAttribution.isComplete ? projectSpendUsd : null,
           rollupSpendLoaded: rollup.isComplete,
@@ -429,6 +460,7 @@ router.get("/groups", async (req, res): Promise<void> => {
 
     for (const [workspaceId, ungrouped] of rollup.ungroupedByWorkspace) {
       const workspaceUsage = getWorkspaceMemberUsage(workspaceId, range.key);
+      const paceUngrouped = paceCanonical?.ungroupedByWorkspace.get(workspaceId);
       groups.push({
         groupId: `synthetic:no-group:${workspaceId}`,
         workspaceId,
@@ -442,6 +474,8 @@ router.get("/groups", async (req, res): Promise<void> => {
         rollupMemberCount: ungrouped.memberCount,
         spendLoaded: rollup.isComplete,
         spendUsd: rollup.isComplete ? ungrouped.spendUsd : null,
+        paceSpendLoaded: paceCanonical?.isComplete ?? false,
+        paceSpendUsd: paceCanonical?.isComplete ? (paceUngrouped?.spendUsd ?? 0) : null,
         projectSpendLoaded: true,
         projectSpendUsd: null,
         rollupSpendLoaded: rollup.isComplete,
@@ -726,6 +760,8 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           rollupMemberCount: mergedRollupMemberCount,
           spendLoaded: combinedLoaded,
           spendUsd: combinedLoaded ? combinedSpend : null,
+          paceSpendLoaded: false,
+          paceSpendUsd: null,
           projectSpendLoaded,
           projectSpendUsd: projectSpendLoaded ? projectSpendUsd : null,
           rollupSpendLoaded: rollup.isComplete,
@@ -1199,6 +1235,7 @@ router.get("/summary", async (req, res): Promise<void> => {
         }
 
         const billing = getBillingPeriod();
+        const pacePeriod = getBillingPeriodMetadata();
         const allAlerts = await db.select().from(alertsTable);
         const periodStart = billing.start ? new Date(billing.start) : null;
         const alertsSentThisPeriod = allAlerts.filter(
@@ -1230,6 +1267,10 @@ router.get("/summary", async (req, res): Promise<void> => {
             groupsOver100: over100,
             alertsSentThisPeriod,
             billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
+            pacePeriodStart: pacePeriod.start,
+            pacePeriodEnd: pacePeriod.end,
+            pacePeriodLabel: pacePeriod.label,
+            pacePeriodIsFallback: pacePeriod.isFallback,
             isComplete:
               pending === 0 &&
               summaryExtraComplete,
@@ -1952,6 +1993,7 @@ router.post(
 router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
   const health = getApiHealth();
   const emailConfigured = await isEmailConfigured();
+  const billingPeriod = getBillingPeriodMetadata();
   res.json(
     GetStatusResponse.parse({
       enterpriseApiConfigured: isConfigured(),
@@ -1960,9 +2002,43 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
       emailConfigured,
       checkerIntervalMinutes: CHECK_INTERVAL_MINUTES,
       lastCheckAt: getLastCheckAt()?.toISOString() ?? null,
+      billingPeriodStart: billingPeriod.start,
+      billingPeriodEnd: billingPeriod.end,
+      billingPeriodLabel: billingPeriod.label,
+      billingPeriodFetchedAt: billingPeriod.fetchedAt,
+      billingPeriodFresh: billingPeriod.isFresh,
+      billingPeriodFallback: billingPeriod.isFallback,
+      billingPeriodDiffersFromReportingCutoff: billingPeriod.differsFromReportingCutoff,
+      reportingCutoff: SPEND_DATA_CUTOFF_ISO,
     }),
   );
 });
+
+router.post(
+  "/usage/ranges/rebuild",
+  requireAccountAdmin,
+  async (req, res): Promise<void> => {
+    const parsed = RebuildUsageRangeBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid usage range" });
+      return;
+    }
+    let range: UsageRange;
+    try {
+      range = resolveRange(
+        parsed.data.rangeType,
+        parsed.data.startDate,
+        parsed.data.endDate,
+      );
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    const dir = await getDirectory();
+    queueFullRangeRebuild(range, dir.groups, [...dir.workspaces.keys()]);
+    res.status(202).json(RebuildUsageRangeResponse.parse({ ok: true }));
+  },
+);
 
 // ---------- Trends: bucketed spend over time ----------
 

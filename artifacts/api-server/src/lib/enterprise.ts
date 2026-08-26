@@ -2,6 +2,7 @@ import { logger } from "./logger";
 import { db } from "@workspace/db";
 import {
   apiDirectoryCacheTable,
+  apiBillingPeriodCacheTable,
   apiSpendCacheTable,
   usageSyncChunksTable,
   usageSyncStateTable,
@@ -78,6 +79,8 @@ async function rawFetch(
 export const SPEND_DATA_CUTOFF_ISO = "2026-05-20T00:00:00.000Z";
 export const SPEND_DATA_CUTOFF_MS = new Date(SPEND_DATA_CUTOFF_ISO).getTime();
 export const SPEND_DATA_CUTOFF_LABEL = "May 2026-present";
+export const PACE_FALLBACK_END_ISO = "2027-05-17T00:00:00.000Z";
+const BILLING_PERIOD_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export type RangeType = "billing" | "mtd" | "ytd" | "custom";
 
@@ -224,6 +227,128 @@ interface UsageData {
   pagination: { cursor: string | null; hasMore: boolean };
 }
 
+export interface BillingPeriodMetadata {
+  start: string;
+  end: string;
+  fetchedAt: string | null;
+  isFresh: boolean;
+  isFallback: boolean;
+  differsFromReportingCutoff: boolean;
+  label: string;
+}
+
+interface StoredBillingPeriod {
+  start: string;
+  end: string;
+  fetchedAt: number;
+}
+
+let billingPeriodCache: StoredBillingPeriod | null = null;
+let billingPeriodRefreshTimer: NodeJS.Timeout | null = null;
+
+function formatPeriodLabel(startIso: string, endIso: string): string {
+  const format = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  return `${format(startIso)} – ${format(endIso)}`;
+}
+
+function validateBillingInterval(interval: UsageData["interval"]): StoredBillingPeriod {
+  const start = new Date(interval.startTime);
+  const end = new Date(interval.endTime);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+    throw new Error("Enterprise API returned an invalid current billing interval");
+  }
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    fetchedAt: Date.now(),
+  };
+}
+
+async function persistBillingPeriod(period: StoredBillingPeriod): Promise<void> {
+  await db.insert(apiBillingPeriodCacheTable)
+    .values({
+      id: "current",
+      periodStart: new Date(period.start),
+      periodEnd: new Date(period.end),
+      fetchedAt: new Date(period.fetchedAt),
+    })
+    .onConflictDoUpdate({
+      target: apiBillingPeriodCacheTable.id,
+      set: {
+        periodStart: new Date(period.start),
+        periodEnd: new Date(period.end),
+        fetchedAt: new Date(period.fetchedAt),
+      },
+    });
+}
+
+export function getBillingPeriodMetadata(): BillingPeriodMetadata {
+  const cached = billingPeriodCache;
+  const start = cached?.start ?? SPEND_DATA_CUTOFF_ISO;
+  const end = cached?.end ?? PACE_FALLBACK_END_ISO;
+  return {
+    start,
+    end,
+    fetchedAt: cached ? new Date(cached.fetchedAt).toISOString() : null,
+    isFresh: !!cached && Date.now() - cached.fetchedAt < BILLING_PERIOD_REFRESH_MS,
+    isFallback: !cached,
+    differsFromReportingCutoff: start !== SPEND_DATA_CUTOFF_ISO,
+    label: formatPeriodLabel(start, end),
+  };
+}
+
+export function resolvePaceUsageRange(): UsageRange | null {
+  const period = getBillingPeriodMetadata();
+  const start = new Date(Math.max(
+    new Date(period.start).getTime(),
+    SPEND_DATA_CUTOFF_MS,
+  ));
+  const end = new Date(Math.min(
+    Date.now(),
+    new Date(period.end).getTime(),
+  ));
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+    return null;
+  }
+  return {
+    key: `pace:${start.toISOString().slice(0, 10)}:${period.end.slice(0, 10)}`,
+    label: period.label,
+    params: {
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+    },
+  };
+}
+
+export function refreshBillingPeriodMetadata(priority = 1): Promise<boolean> {
+  if (!isConfigured()) return Promise.resolve(false);
+  if (billingPeriodCache && Date.now() - billingPeriodCache.fetchedAt < BILLING_PERIOD_REFRESH_MS) {
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    const queued = enqueueUsage("billing-period:current", priority, async () => {
+      try {
+        const data = await usageFetch({ billingPeriod: "current" });
+        const next = validateBillingInterval(data.interval);
+        await persistBillingPeriod(next);
+        billingPeriodCache = next;
+        logger.info({ start: next.start, end: next.end }, "Current billing interval refreshed");
+      } catch (err) {
+        logger.warn({ err }, "Failed to refresh current billing interval; retaining prior metadata");
+      } finally {
+        resolve(true);
+      }
+    });
+    if (!queued) resolve(false);
+  });
+}
+
 async function usageFetch(
   params: Record<string, string | undefined>,
 ): Promise<UsageData> {
@@ -282,7 +407,8 @@ interface SyncMetadata {
   isClosed: boolean;
 }
 
-const RECONCILIATION_OVERLAP_MS = 48 * 60 * 60 * 1000;
+export const RECONCILIATION_OVERLAP_MS = 7 * 24 * 60 * 60 * 1000;
+export const CUSTOM_RANGE_CLOSURE_GRACE_MS = 24 * 60 * 60 * 1000;
 const MAX_USAGE_PAGES = 200;
 /** Closed custom snapshots are retained long enough for normal reporting needs. */
 export const CUSTOM_RANGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -361,15 +487,19 @@ async function maybePruneExpiredCustomUsage(): Promise<void> {
   }
 }
 
-function rangeBounds(range: UsageRange): { start: Date; end: Date; isClosed: boolean } {
+function rangeBounds(
+  range: UsageRange,
+  now = Date.now(),
+): { start: Date; end: Date; isClosed: boolean } {
   const start = new Date(range.params.startTime);
   const end = new Date(range.params.endTime);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
     throw new EnterpriseApiError(400, "Usage range must have valid startTime/endTime boundaries");
   }
-  // MTD/YTD/default ranges expand while their key remains stable. Custom ranges
-  // whose exclusive end has passed are immutable after one complete sync.
-  const isClosed = range.key.startsWith("custom:") && end.getTime() <= Date.now();
+  // Late-posted charges may arrive after a requested custom range ends. Keep it
+  // mutable through a 24-hour grace window before treating it as immutable.
+  const isClosed = range.key.startsWith("custom:") &&
+    end.getTime() + CUSTOM_RANGE_CLOSURE_GRACE_MS <= now;
   return { start, end, isClosed };
 }
 
@@ -381,15 +511,30 @@ function utcDayStart(ms: number): number {
 function planSyncChunks(
   range: UsageRange,
   previous: SyncMetadata | undefined,
+  now = Date.now(),
 ): { replacementStart: Date; chunks: Array<{ start: Date; end: Date }>; isClosed: boolean } {
-  const { start, end, isClosed } = rangeBounds(range);
-  if (previous?.isClosed || (previous && previous.syncedThrough >= end.getTime() &&
-      Date.now() - previous.completedAt < USAGE_TTL_MS)) {
+  const { start, end, isClosed } = rangeBounds(range, now);
+  if (previous?.isClosed) {
     return { replacementStart: end, chunks: [], isClosed: previous.isClosed };
   }
 
+  // Once grace expires, immediately perform the final complete sync and mark
+  // the range closed even if its last mutable sync is still inside the TTL.
   if (isClosed) {
     return { replacementStart: start, chunks: [{ start, end }], isClosed: true };
+  }
+
+  if (previous && previous.syncedThrough >= end.getTime() &&
+      now - previous.completedAt < USAGE_TTL_MS) {
+    return { replacementStart: end, chunks: [], isClosed: false };
+  }
+
+  // Pace is a small, workspace-authoritative projection snapshot. Replace its
+  // whole interval on refresh instead of splitting it into daily mutable chunks;
+  // this keeps the high-priority dashboard calculation fast and still captures
+  // every late-posted/restated charge on each refresh.
+  if (range.key.startsWith("pace:")) {
+    return { replacementStart: start, chunks: [{ start, end }], isClosed: false };
   }
 
   const overlapAnchor = previous
@@ -462,6 +607,7 @@ async function synchronizeUsage(
   scopeKey: string,
   baseParams: Record<string, string | undefined>,
   force = false,
+  fullRebuild = false,
 ): Promise<UsageSyncChunk[]> {
   await maybePruneExpiredCustomUsage();
   const id = syncId(mode, range.key, scopeKey);
@@ -485,7 +631,9 @@ async function synchronizeUsage(
           isClosed: storedState.isClosed,
         }
       : undefined;
-    const previous = force && storedPrevious && !storedPrevious.isClosed
+    const previous = fullRebuild
+      ? undefined
+      : force && storedPrevious && !storedPrevious.isClosed
       ? { ...storedPrevious, completedAt: 0 }
       : storedPrevious;
     const plan = planSyncChunks(range, previous);
@@ -980,8 +1128,11 @@ function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend):
 export async function initCache(): Promise<void> {
   try {
     await maybePruneExpiredCustomUsage();
-    const [dirRow, spendRows, durable] = await Promise.all([
+    const [dirRow, billingPeriodRow, spendRows, durable] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
+      db.query.apiBillingPeriodCacheTable.findFirst({
+        where: eq(apiBillingPeriodCacheTable.id, "current"),
+      }),
       db.select().from(apiSpendCacheTable),
       db.transaction(async (tx) => {
         await tx.execute(sql`set transaction isolation level repeatable read read only`);
@@ -991,6 +1142,14 @@ export async function initCache(): Promise<void> {
       }),
     ]);
     const { states, chunks } = durable;
+
+    if (billingPeriodRow) {
+      billingPeriodCache = {
+        start: billingPeriodRow.periodStart.toISOString(),
+        end: billingPeriodRow.periodEnd.toISOString(),
+        fetchedAt: billingPeriodRow.fetchedAt.getTime(),
+      };
+    }
 
     if (dirRow) {
       try {
@@ -1037,6 +1196,13 @@ export async function initCache(): Promise<void> {
     }
   } catch (err) {
     logger.warn({ err }, "Failed to hydrate caches from DB — will fetch fresh on first request");
+  }
+  await refreshBillingPeriodMetadata(0);
+  if (!billingPeriodRefreshTimer) {
+    billingPeriodRefreshTimer = setInterval(() => {
+      void refreshBillingPeriodMetadata(1);
+    }, BILLING_PERIOD_REFRESH_MS);
+    billingPeriodRefreshTimer.unref();
   }
 }
 
@@ -1263,18 +1429,9 @@ export function getSpend(groupId: string, rangeKey = "billing:from-cutoff"): Gro
   return spendCache.get(`${rangeKey}|${groupId}`);
 }
 
-export function getBillingPeriod(): { start: string | null; label: string } {
-  for (const [k, s] of spendCache) {
-    if (!k.startsWith("billing:from-cutoff|")) continue;
-    return {
-      start: s.periodStart,
-      label: SPEND_DATA_CUTOFF_LABEL,
-    };
-  }
-  return {
-    start: null,
-    label: SPEND_DATA_CUTOFF_LABEL,
-  };
+export function getBillingPeriod(): { start: string; end: string; label: string } {
+  const period = getBillingPeriodMetadata();
+  return { start: period.start, end: period.end, label: period.label };
 }
 
 /**
@@ -1406,6 +1563,207 @@ export function queueAccountUsageFetch(
       accountUsageCache.set(range.key, aggregateAccountUsage(rows));
     } catch (err) {
       logger.error({ err, range: range.key }, "Failed to fetch account usage");
+    }
+  });
+}
+
+interface FullRebuildScope {
+  mode: UsageSyncMode;
+  scopeKey: string;
+  params: Record<string, string | undefined>;
+}
+
+interface FullRebuildResult {
+  scope: FullRebuildScope;
+  rows: UsageSyncChunk[];
+  metadata: SyncMetadata;
+}
+
+async function rebuildUsageRangeAtomically(
+  range: UsageRange,
+  scopes: FullRebuildScope[],
+): Promise<FullRebuildResult[]> {
+  await maybePruneExpiredCustomUsage();
+  return db.transaction(async (tx) => {
+    const existingStates = await tx
+      .select({
+        mode: usageSyncStateTable.mode,
+        rangeKey: usageSyncStateTable.rangeKey,
+        scopeKey: usageSyncStateTable.scopeKey,
+      })
+      .from(usageSyncStateTable)
+      .where(eq(usageSyncStateTable.rangeKey, range.key));
+    const lockIds = new Set([
+      ...existingStates.map((state) =>
+        syncId(state.mode as UsageSyncMode, state.rangeKey, state.scopeKey)
+      ),
+      ...scopes.map((scope) => syncId(scope.mode, range.key, scope.scopeKey)),
+    ]);
+    // Stable lock ordering prevents two concurrent rebuilds from deadlocking.
+    for (const id of [...lockIds].sort()) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${id}))`);
+    }
+
+    const staged: Array<{
+      scope: FullRebuildScope;
+      chunks: Array<{ start: Date; end: Date; payload: StoredUsagePayload }>;
+      isClosed: boolean;
+    }> = [];
+    for (const scope of scopes) {
+      const plan = planSyncChunks(range, undefined);
+      const chunks: Array<{ start: Date; end: Date; payload: StoredUsagePayload }> = [];
+      for (const chunk of plan.chunks) {
+        if (chunks.length > 0 || staged.length > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+        }
+        chunks.push({
+          ...chunk,
+          payload: await fetchUsageChunk(
+            scope.mode,
+            scope.params,
+            chunk.start,
+            chunk.end,
+          ),
+        });
+      }
+      staged.push({ scope, chunks, isClosed: plan.isClosed });
+    }
+
+    // Nothing is removed until every upstream fetch succeeds. Any thrown error
+    // rolls back the whole selected range, not just the currently fetched scope.
+    await tx.delete(usageSyncChunksTable)
+      .where(eq(usageSyncChunksTable.rangeKey, range.key));
+    await tx.delete(usageSyncStateTable)
+      .where(eq(usageSyncStateTable.rangeKey, range.key));
+
+    const completedAt = new Date();
+    const { start: rangeStart, end: syncedThrough } = rangeBounds(range);
+    const chunkValues = staged.flatMap(({ scope, chunks }) =>
+      chunks.map((chunk) => ({
+        mode: scope.mode,
+        rangeKey: range.key,
+        scopeKey: scope.scopeKey,
+        chunkStart: chunk.start,
+        chunkEnd: chunk.end,
+        payloadJson: chunk.payload,
+        completedAt,
+      }))
+    );
+    // Keep each insert below PostgreSQL's bind-parameter limit for large accounts.
+    for (let offset = 0; offset < chunkValues.length; offset += 500) {
+      await tx.insert(usageSyncChunksTable).values(chunkValues.slice(offset, offset + 500));
+    }
+    if (staged.length > 0) {
+      await tx.insert(usageSyncStateTable).values(staged.map(({ scope, isClosed }) => ({
+        mode: scope.mode,
+        rangeKey: range.key,
+        scopeKey: scope.scopeKey,
+        rangeStart,
+        syncedThrough,
+        isClosed,
+        completedAt,
+      })));
+    }
+
+    return staged.map(({ scope, chunks, isClosed }) => ({
+      scope,
+      rows: chunks.map((chunk) => ({
+        mode: scope.mode,
+        rangeKey: range.key,
+        scopeKey: scope.scopeKey,
+        chunkStart: chunk.start,
+        chunkEnd: chunk.end,
+        payloadJson: chunk.payload,
+        completedAt,
+      })),
+      metadata: {
+        syncedThrough: syncedThrough.getTime(),
+        completedAt: completedAt.getTime(),
+        isClosed,
+      },
+    }));
+  });
+}
+
+/**
+ * Queue a complete rebuild of every durable usage scope for one selected range.
+ * Every upstream response is staged before one transaction replaces the range,
+ * so any failure preserves the complete prior snapshot.
+ */
+export function queueFullRangeRebuild(
+  range: UsageRange,
+  groups: readonly EnterpriseGroup[],
+  workspaceIds: readonly string[],
+): boolean {
+  return enqueueUsage(`full-range-rebuild:${range.key}`, 0, async () => {
+    try {
+      const scopes: FullRebuildScope[] = [
+        { mode: "account_total", scopeKey: ACCOUNT_USAGE_SCOPE, params: {} },
+        ...groups.flatMap((group): FullRebuildScope[] => {
+          const params = { workspaceId: group.workspaceId, groupId: group.id };
+          return [
+            { mode: "group_total", scopeKey: group.id, params },
+            { mode: "group_member", scopeKey: group.id, params },
+            { mode: "group_project", scopeKey: group.id, params },
+          ];
+        }),
+        ...workspaceIds.map((workspaceId): FullRebuildScope => ({
+          mode: "workspace_member",
+          scopeKey: workspaceId,
+          params: { workspaceId },
+        })),
+      ];
+      const rebuilt = await rebuildUsageRangeAtomically(range, scopes);
+
+      accountUsageCache.delete(range.key);
+      for (const key of spendCache.keys()) {
+        if (key.startsWith(`${range.key}|`)) spendCache.delete(key);
+      }
+      for (const key of memberUsageCache.keys()) {
+        if (key.startsWith(`${range.key}|`)) memberUsageCache.delete(key);
+      }
+      for (const key of projectUsageCache.keys()) {
+        if (key.startsWith(`${range.key}|`)) projectUsageCache.delete(key);
+      }
+      for (const key of wsSpendCache.keys()) {
+        if (key.startsWith(`${range.key}|`)) wsSpendCache.delete(key);
+      }
+      for (const key of wsSpendCachedAt.keys()) {
+        if (key.startsWith(`${range.key}|`)) wsSpendCachedAt.delete(key);
+      }
+      for (const key of syncMetadata.keys()) {
+        if (key.includes(`|${range.key}|`)) syncMetadata.delete(key);
+      }
+
+      for (const result of rebuilt) {
+        const { mode, scopeKey } = result.scope;
+        syncMetadata.set(syncId(mode, range.key, scopeKey), result.metadata);
+        if (mode === "account_total") {
+          accountUsageCache.set(range.key, aggregateAccountUsage(result.rows));
+        } else if (mode === "group_total") {
+          const spend = aggregateGroupSpend(result.rows);
+          spendCache.set(`${range.key}|${scopeKey}`, spend);
+          persistSpendToDb(range.key, scopeKey, spend);
+        } else if (mode === "group_member") {
+          memberUsageCache.set(
+            `${range.key}|${scopeKey}`,
+            aggregateMemberUsage(result.rows),
+          );
+        } else if (mode === "group_project") {
+          projectUsageCache.set(
+            `${range.key}|${scopeKey}`,
+            aggregateProjectUsage(result.rows),
+          );
+        } else if (mode === "workspace_member") {
+          const cacheKey = `${range.key}|${scopeKey}`;
+          const usage = aggregateWorkspaceMemberUsage(result.rows);
+          wsSpendCache.set(cacheKey, usage);
+          wsSpendCachedAt.set(cacheKey, usage.fetchedAt);
+        }
+      }
+      logger.info({ range: range.key }, "Full usage range rebuild completed");
+    } catch (err) {
+      logger.error({ err, range: range.key }, "Full usage range rebuild failed");
     }
   });
 }
@@ -2082,4 +2440,56 @@ export function __resetDurableUsageCachesForTests(): void {
   wsSpendCachedAt.clear();
   projectUsageCache.clear();
   syncMetadata.clear();
+  billingPeriodCache = null;
+}
+
+export function __setBillingPeriodForTests(period: StoredBillingPeriod | null): void {
+  billingPeriodCache = period;
+}
+
+export function __planSyncChunksForTests(
+  range: UsageRange,
+  previous: SyncMetadata | undefined,
+  now: number,
+): { replacementStart: string; chunks: Array<{ start: string; end: string }>; isClosed: boolean } {
+  const plan = planSyncChunks(range, previous, now);
+  return {
+    replacementStart: plan.replacementStart.toISOString(),
+    chunks: plan.chunks.map((chunk) => ({
+      start: chunk.start.toISOString(),
+      end: chunk.end.toISOString(),
+    })),
+    isClosed: plan.isClosed,
+  };
+}
+
+export function __rebuildAccountUsageForTests(range: UsageRange): Promise<UsageSyncChunk[]> {
+  return rebuildUsageRangeAtomically(range, [{
+    mode: "account_total",
+    scopeKey: ACCOUNT_USAGE_SCOPE,
+    params: {},
+  }]).then(([result]) => result?.rows ?? []);
+}
+
+export function __rebuildAccountAndWorkspaceUsageForTests(
+  range: UsageRange,
+  workspaceId: string,
+): Promise<FullRebuildResult[]> {
+  return rebuildUsageRangeAtomically(range, [
+    { mode: "account_total", scopeKey: ACCOUNT_USAGE_SCOPE, params: {} },
+    { mode: "workspace_member", scopeKey: workspaceId, params: { workspaceId } },
+  ]);
+}
+
+export async function __getDurableRangeRowsForTests(
+  rangeKey: string,
+): Promise<UsageSyncChunk[]> {
+  return db.select()
+    .from(usageSyncChunksTable)
+    .where(eq(usageSyncChunksTable.rangeKey, rangeKey))
+    .orderBy(
+      usageSyncChunksTable.mode,
+      usageSyncChunksTable.scopeKey,
+      usageSyncChunksTable.chunkStart,
+    );
 }

@@ -43,5 +43,12 @@ export interface Summary {
   groupsOver100: number;
   alertsSentThisPeriod: number;
   billingPeriodLabel: string;
+  /** Inclusive period start used for dashboard pace projections */
+  pacePeriodStart: string;
+  /** Exclusive period end used for dashboard pace projections */
+  pacePeriodEnd: string;
+  pacePeriodLabel: string;
+  /** True when pace uses the fixed safe fallback because no discovered interval is available */
+  pacePeriodIsFallback: boolean;
   isComplete: boolean;
 }

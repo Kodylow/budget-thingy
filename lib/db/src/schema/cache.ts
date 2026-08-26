@@ -9,6 +9,16 @@ export const apiDirectoryCacheTable = pgTable("api_directory_cache", {
 
 export type ApiDirectoryCache = typeof apiDirectoryCacheTable.$inferSelect;
 
+/** Last successfully resolved Enterprise billingPeriod=current interval. */
+export const apiBillingPeriodCacheTable = pgTable("api_billing_period_cache", {
+  id: text("id").primaryKey().default("current"),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+});
+
+export type ApiBillingPeriodCache = typeof apiBillingPeriodCacheTable.$inferSelect;
+
 // One row per (range_key, group_id) — stores the spend value + when it was fetched.
 export const apiSpendCacheTable = pgTable(
   "api_spend_cache",

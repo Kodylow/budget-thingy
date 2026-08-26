@@ -137,6 +137,8 @@ export const ListGroupsResponse = zod.object({
   "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
   "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
+  "paceSpendLoaded": zod.boolean().describe('Whether usage bounded to the discovered pace period is complete'),
+  "paceSpendUsd": zod.number().nullish().describe('Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend'),
   "projectSpendLoaded": zod.boolean().optional().describe('Whether project usage for every visible custom group is loaded'),
   "projectSpendUsd": zod.number().nullish().describe('Deduplicated project spend attributed to this group, null while project usage is loading'),
   "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
@@ -193,6 +195,8 @@ export const GetGroupDetailResponse = zod.object({
   "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
   "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
   "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
+  "paceSpendLoaded": zod.boolean().describe('Whether usage bounded to the discovered pace period is complete'),
+  "paceSpendUsd": zod.number().nullish().describe('Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend'),
   "projectSpendLoaded": zod.boolean().optional().describe('Whether project usage for every visible custom group is loaded'),
   "projectSpendUsd": zod.number().nullish().describe('Deduplicated project spend attributed to this group, null while project usage is loading'),
   "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
@@ -357,6 +361,10 @@ export const GetSummaryResponse = zod.object({
   "groupsOver100": zod.number(),
   "alertsSentThisPeriod": zod.number(),
   "billingPeriodLabel": zod.string(),
+  "pacePeriodStart": zod.string().describe('Inclusive period start used for dashboard pace projections'),
+  "pacePeriodEnd": zod.string().describe('Exclusive period end used for dashboard pace projections'),
+  "pacePeriodLabel": zod.string(),
+  "pacePeriodIsFallback": zod.boolean().describe('True when pace uses the fixed safe fallback because no discovered interval is available'),
   "isComplete": zod.boolean()
 })
 
@@ -721,7 +729,30 @@ export const GetStatusResponse = zod.object({
   "enterpriseApiError": zod.string().nullish().describe('Last Enterprise API error message, if any'),
   "emailConfigured": zod.boolean().describe('Whether the email connector is set up'),
   "checkerIntervalMinutes": zod.number(),
-  "lastCheckAt": zod.string().nullish()
+  "lastCheckAt": zod.string().nullish(),
+  "billingPeriodStart": zod.string(),
+  "billingPeriodEnd": zod.string(),
+  "billingPeriodLabel": zod.string(),
+  "billingPeriodFetchedAt": zod.string().nullable(),
+  "billingPeriodFresh": zod.boolean(),
+  "billingPeriodFallback": zod.boolean(),
+  "billingPeriodDiffersFromReportingCutoff": zod.boolean(),
+  "reportingCutoff": zod.string()
+})
+
+
+/**
+ * Account-admin-only control that queues a complete, transaction-safe rebuild of the selected range without changing any other cached range.
+ * @summary Rebuild one usage range
+ */
+export const RebuildUsageRangeBody = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']),
+  "startDate": zod.string().optional(),
+  "endDate": zod.string().optional()
+})
+
+export const RebuildUsageRangeResponse = zod.object({
+  "ok": zod.boolean()
 })
 
 
