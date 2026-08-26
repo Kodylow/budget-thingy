@@ -934,6 +934,81 @@ function clearOtProject() {
   __setProjectUsageForTests(OT_G2.id, RANGE, null);
 }
 
+test("closed weekly and monthly trend totals reconcile with the identical canonical custom range", async () => {
+  const TEAM = "OT-Trend-Team";
+  const startDate = "2026-06-03";
+  const endDate = "2026-07-04";
+  const headlineRange = resolveRange("custom", startDate, endDate);
+  const monthlyFixtures = [
+    ["2026-06-03", "2026-06-30", 40],
+    ["2026-07-01", "2026-07-04", 35],
+  ];
+  const weeklyFixtures = [
+    ["2026-06-03", "2026-06-07", 10],
+    ["2026-06-08", "2026-06-14", 20],
+    ["2026-06-15", "2026-06-21", 15],
+    ["2026-06-22", "2026-06-28", 20],
+    ["2026-06-29", "2026-07-04", 10],
+  ];
+  const seededRangeKeys = new Set();
+  const seedCanonicalRange = (range, total) => {
+    seededRangeKeys.add(range.key);
+    const alice = total * 0.6;
+    const carol = total * 0.2;
+    const bob = total * 0.2;
+    __setMemberUsageForTests(OT_G1.id, range.key, new Map([["alice", alice], ["carol", carol]]));
+    __setMemberUsageForTests(OT_G2.id, range.key, new Map([["alice", alice], ["bob", bob]]));
+    __setWsSpendForTests("ws-main", range.key, new Map([["alice", alice], ["carol", carol], ["bob", bob]]));
+  };
+
+  setOtDir();
+  await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+  await db.insert(groupTeamsTable).values([
+    { groupName: OT_G1.name, teamName: TEAM },
+    { groupName: OT_G2.name, teamName: TEAM },
+  ]);
+  seedCanonicalRange(headlineRange, 75);
+  for (const [start, end, total] of [...monthlyFixtures, ...weeklyFixtures]) {
+    seedCanonicalRange(resolveRange("custom", start, end), total);
+  }
+
+  try {
+    const summary = await req(
+      `/summary?rangeType=custom&startDate=${startDate}&endDate=${endDate}`,
+    );
+    assert.equal(summary.isComplete, true);
+    assert.equal(summary.totalSpendUsd, 75);
+
+    for (const granularity of ["week", "month"]) {
+      const trends = await req(
+        `/trends?granularity=${granularity}&rangeType=custom&startDate=${startDate}&endDate=${endDate}`,
+      );
+      assert.equal(trends.isComplete, true);
+      assert.ok(trends.bucketRanges.every((bucket) => bucket.isPartial === false));
+      assert.equal(
+        trends.totals.reduce((sum, value) => sum + value, 0),
+        summary.totalSpendUsd,
+        `${granularity} bucket totals must equal the canonical headline`,
+      );
+      const team = trends.series.find((series) => series.type === "team" && series.name === TEAM);
+      assert.ok(team, `${granularity} response must contain the selected team`);
+      assert.deepEqual(
+        team.data,
+        trends.totals,
+        "overlapping alice membership must be deduped before team buckets are emitted",
+      );
+    }
+  } finally {
+    await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
+    for (const rangeKey of seededRangeKeys) {
+      __setMemberUsageForTests(OT_G1.id, rangeKey, null);
+      __setMemberUsageForTests(OT_G2.id, rangeKey, null);
+      __setWsSpendForTests("ws-main", rangeKey, null);
+    }
+    restoreOtDir();
+  }
+});
+
 test("summary: unassigned group over 75% shows in groupsOver75 and totalRemainingUsd reconciles", async () => {
   // OT-Alpha ($100 budget) at 80% utilisation → over-75. OT-Beta has no budget.
   // $10 residual (unattributed) project spend must NOT reduce remaining.

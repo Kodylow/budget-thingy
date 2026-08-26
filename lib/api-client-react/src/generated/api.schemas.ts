@@ -229,12 +229,16 @@ export interface TrendSeries {
 export interface TrendBucketRange {
   start: string;
   end: string;
+  /** True only for an open bucket containing the current UTC day */
+  isPartial: boolean;
 }
 
 export interface TrendsResponse {
   /** ISO date for the start of each bucket */
   buckets: string[];
   bucketRanges: TrendBucketRange[];
+  /** Canonical scoped spend for each bucket; null while loading */
+  totals: (number | null)[];
   series: TrendSeries[];
   isComplete: boolean;
   loadedCount: number;
@@ -712,6 +716,18 @@ endDate?: EndDateParameter;
 };
 
 export type GetTrendsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
 granularity: GetTrendsGranularity;
 teamNames?: string[];
 groupIds?: string[];

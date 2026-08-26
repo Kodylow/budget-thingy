@@ -370,10 +370,13 @@ export const GetSummaryResponse = zod.object({
 
 
 /**
- * Returns weekly or monthly spend buckets from the May 20, 2026 data cutoff through today. Usage loads progressively; poll while isComplete is false.
+ * Returns weekly or monthly canonical spend buckets for the selected range. Buckets use UTC boundaries and the current bucket is marked partial. Usage loads progressively; poll while isComplete is false.
  * @summary Group and team spending trends
  */
 export const GetTrendsQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
   "granularity": zod.enum(['week', 'month']),
   "teamNames": zod.array(zod.coerce.string()).optional(),
   "groupIds": zod.array(zod.coerce.string()).optional()
@@ -383,8 +386,10 @@ export const GetTrendsResponse = zod.object({
   "buckets": zod.array(zod.string()).describe('ISO date for the start of each bucket'),
   "bucketRanges": zod.array(zod.object({
   "start": zod.string(),
-  "end": zod.string()
+  "end": zod.string(),
+  "isPartial": zod.boolean().describe('True only for an open bucket containing the current UTC day')
 })),
+  "totals": zod.array(zod.number().nullable()).describe('Canonical scoped spend for each bucket; null while loading'),
   "series": zod.array(zod.object({
   "name": zod.string(),
   "type": zod.enum(['team', 'group']),

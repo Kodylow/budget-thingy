@@ -12,6 +12,8 @@ export interface TrendsResponse {
   /** ISO date for the start of each bucket */
   buckets: string[];
   bucketRanges: TrendBucketRange[];
+  /** Canonical scoped spend for each bucket; null while loading */
+  totals: (number | null)[];
   series: TrendSeries[];
   isComplete: boolean;
   loadedCount: number;

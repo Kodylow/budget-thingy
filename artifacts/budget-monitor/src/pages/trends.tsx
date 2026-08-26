@@ -1,8 +1,13 @@
 import TrendsTab from '@/pages/trends-tab';
 import { useListGroups } from '@workspace/api-client-react';
+import { useRange } from '@/components/range-context';
 
 export default function Trends() {
-  const { data } = useListGroups({ rangeType: 'billing' });
+  const { rangeType, startDate, endDate } = useRange();
+  const { data } = useListGroups({
+    rangeType,
+    ...(rangeType === 'custom' ? { startDate, endDate } : {}),
+  });
   const groups = data?.groups ?? [];
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">

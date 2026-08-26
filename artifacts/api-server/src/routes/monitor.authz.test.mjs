@@ -302,6 +302,63 @@ test("custom range uses inclusive UTC days and all visible workspaces without ov
   assert.equal(ws1.json.isComplete, true);
 });
 
+test("trend ranges preserve workspace-admin scope and selected custom dates", async () => {
+  const range = resolveRange("custom", "2026-06-01", "2026-06-30");
+  __setMemberUsageForTests(
+    range.key,
+    new Map([
+      ["g-ws1-a", new Map([["ws1admin", 40], ["plain", 10]])],
+      ["g-ws2-a", new Map([["ws2user", 60]])],
+    ]),
+    new Map([
+      ["g-ws1-a", 3],
+      ["g-ws2-a", 4],
+    ]),
+  );
+  __setWsSpendForTests(
+    "ws-1",
+    range.key,
+    new Map([["ws1admin", 40], ["plain", 10]]),
+    { unattributableTotalCostUsd: 3 },
+  );
+  __setWsSpendForTests(
+    "ws-2",
+    range.key,
+    new Map([["ws2user", 60]]),
+    { unattributableTotalCostUsd: 4 },
+  );
+  try {
+    const account = await req(
+      "/trends?granularity=month&rangeType=custom&startDate=2026-06-01&endDate=2026-06-30",
+      { user: "acct" },
+    );
+    assert.equal(account.status, 200);
+    assert.deepEqual(account.json.bucketRanges, [
+      { start: "2026-06-01", end: "2026-06-30", isPartial: false },
+    ]);
+    assert.deepEqual(account.json.totals, [117]);
+
+    const scoped = await req(
+      "/trends?granularity=month&rangeType=custom&startDate=2026-06-01&endDate=2026-06-30",
+      { user: "ws1admin" },
+    );
+    assert.equal(scoped.status, 200);
+    assert.deepEqual(scoped.json.totals, [53]);
+    assert.deepEqual(
+      scoped.json.series.filter((series) => series.type === "group").map((series) => series.name),
+      ["Alpha"],
+    );
+    assert.deepEqual(
+      scoped.json.series.filter((series) => series.type === "team").map((series) => series.name),
+      ["Team One"],
+    );
+  } finally {
+    __setMemberUsageForTests(range.key, null);
+    __setWsSpendForTests("ws-1", range.key, null);
+    __setWsSpendForTests("ws-2", range.key, null);
+  }
+});
+
 test("cross-scope group detail returns non-disclosing 404", async () => {
   // ws1admin cannot see ws-2's group; response must look like 'not found'.
   const { status, json } = await req("/groups/g-ws2-a", { user: "ws1admin" });

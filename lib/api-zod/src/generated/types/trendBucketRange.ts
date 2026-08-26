@@ -9,4 +9,6 @@
 export interface TrendBucketRange {
   start: string;
   end: string;
+  /** True only for an open bucket containing the current UTC day */
+  isPartial: boolean;
 }

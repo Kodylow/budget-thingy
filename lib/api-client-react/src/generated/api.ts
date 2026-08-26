@@ -1269,7 +1269,7 @@ export const getGetTrendsUrl = (params: GetTrendsParams,) => {
 }
 
 /**
- * Returns weekly or monthly spend buckets from the May 20, 2026 data cutoff through today. Usage loads progressively; poll while isComplete is false.
+ * Returns weekly or monthly canonical spend buckets for the selected range. Buckets use UTC boundaries and the current bucket is marked partial. Usage loads progressively; poll while isComplete is false.
  * @summary Group and team spending trends
  */
 export const getTrends = async (params: GetTrendsParams, options?: RequestInit): Promise<TrendsResponse> => {

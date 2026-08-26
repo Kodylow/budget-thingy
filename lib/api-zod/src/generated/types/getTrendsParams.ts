@@ -5,9 +5,24 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EndDateParameter } from './endDateParameter';
 import type { GetTrendsGranularity } from './getTrendsGranularity';
+import type { RangeTypeParameter } from './rangeTypeParameter';
+import type { StartDateParameter } from './startDateParameter';
 
 export type GetTrendsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
 granularity: GetTrendsGranularity;
 teamNames?: string[];
 groupIds?: string[];

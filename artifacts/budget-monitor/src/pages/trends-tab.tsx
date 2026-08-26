@@ -26,6 +26,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useRange } from '@/components/range-context';
+import { buildTrendsParams, PARTIAL_BUCKET_EXPLANATION } from '@/lib/trends-ui';
 
 const SERIES_COLORS = [
   '#0f3d62',
@@ -353,6 +354,7 @@ function UserActivityCard() {
 // ---------- TrendsTab ----------
 
 export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
+  const { rangeType, startDate, endDate } = useRange();
   const [granularity, setGranularity] = useState<GetTrendsGranularity>('week');
   const [viewBy, setViewBy] = useState<ViewBy>('team');
   // An empty set means "all", which preserves that default even if teams load later.
@@ -368,12 +370,15 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
     [groups],
   );
   const params = useMemo(
-    () => ({
+    () => buildTrendsParams({
       granularity,
-      ...(selectedTeams.size > 0 ? { teamNames: [...selectedTeams].sort() } : {}),
-      ...(selectedGroupIds.size > 0 ? { groupIds: [...selectedGroupIds].sort() } : {}),
+      rangeType,
+      startDate,
+      endDate,
+      selectedTeams,
+      selectedGroupIds,
     }),
-    [granularity, selectedTeams, selectedGroupIds],
+    [granularity, rangeType, startDate, endDate, selectedTeams, selectedGroupIds],
   );
   const { data, isLoading, isFetching, isError } = useGetTrends(params, {
     query: {
@@ -400,6 +405,7 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
         bucket,
         rangeStart: data?.bucketRanges[bucketIndex]?.start ?? bucket,
         rangeEnd: data?.bucketRanges[bucketIndex]?.end ?? bucket,
+        isPartial: data?.bucketRanges[bucketIndex]?.isPartial ? 'yes' : 'no',
       };
       for (const series of visibleSeries) point[series.name] = series.data[bucketIndex] ?? null;
       return point;
@@ -415,6 +421,7 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
   const selectedGroupsLabel = selectedGroupIds.size === 0
     ? 'All groups'
     : `${selectedGroupIds.size} group${selectedGroupIds.size === 1 ? '' : 's'}`;
+  const hasPartialBucket = data?.bucketRanges.some((bucket) => bucket.isPartial) ?? false;
 
   return (
     <div className="space-y-4">
@@ -551,6 +558,16 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
             </div>
           </div>
 
+          {hasPartialBucket && (
+            <div
+              className="flex items-start gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+              data-testid="partial-bucket-disclosure"
+            >
+              <Badge variant="outline" className="border-amber-400 text-amber-800 dark:text-amber-200">Partial</Badge>
+              <span>{PARTIAL_BUCKET_EXPLANATION}</span>
+            </div>
+          )}
+
           {isLoading && !data ? (
             <div className="h-80 animate-pulse-glow rounded-lg bg-muted" data-testid="trends-skeleton" />
           ) : isError ? (
@@ -598,6 +615,9 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
                       <div className="min-w-48 rounded-lg border bg-background p-3 text-xs shadow-xl">
                         <p className="mb-2 font-medium">
                           {formatDate(point.rangeStart)} – {formatDate(point.rangeEnd)}
+                           {point.isPartial === 'yes' && (
+                             <span className="ml-1 text-amber-600 dark:text-amber-400">(Partial)</span>
+                           )}
                         </p>
                         <div className="space-y-1.5">
                           {payload.filter((item) => item.value != null).map((item) => (

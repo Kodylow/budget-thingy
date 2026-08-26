@@ -102,6 +102,7 @@ import {
   type Authorization,
 } from "../lib/authz";
 import { getHistoryForGroups, projectEndOfPeriod } from "../lib/history";
+import { generateTrendBuckets } from "../lib/trend-buckets";
 
 const router: IRouter = Router();
 
@@ -2042,53 +2043,6 @@ router.post(
 
 // ---------- Trends: bucketed spend over time ----------
 
-interface TrendBucket {
-  startDate: string;
-  endDate: string;
-}
-
-function generateMonthlyBuckets(): TrendBucket[] {
-  const cutoff = new Date(SPEND_DATA_CUTOFF_ISO);
-  const now = new Date();
-  const buckets: TrendBucket[] = [];
-
-  let monthStart = new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth(), 1));
-  while (monthStart <= now) {
-    const y = monthStart.getUTCFullYear();
-    const m = monthStart.getUTCMonth();
-
-    const bucketStartMs = Math.max(monthStart.getTime(), cutoff.getTime());
-    const lastDayOfMonth = new Date(Date.UTC(y, m + 1, 0)).getTime();
-    const bucketEndMs = Math.min(lastDayOfMonth, now.getTime());
-
-    const startDate = new Date(bucketStartMs).toISOString().slice(0, 10);
-    const endDate = new Date(bucketEndMs).toISOString().slice(0, 10);
-
-    buckets.push({ startDate, endDate });
-
-    monthStart = new Date(Date.UTC(y, m + 1, 1));
-  }
-  return buckets;
-}
-
-function generateWeeklyBuckets(): TrendBucket[] {
-  const cutoff = new Date(SPEND_DATA_CUTOFF_ISO);
-  const now = new Date();
-  const buckets: TrendBucket[] = [];
-
-  let weekStart = new Date(cutoff.getTime());
-  while (weekStart < now) {
-    const weekEndMs = Math.min(weekStart.getTime() + 6 * 86_400_000, now.getTime());
-    const startDate = weekStart.toISOString().slice(0, 10);
-    const endDate = new Date(weekEndMs).toISOString().slice(0, 10);
-
-    buckets.push({ startDate, endDate });
-
-    weekStart = new Date(weekStart.getTime() + 7 * 86_400_000);
-  }
-  return buckets;
-}
-
 router.get("/trends", async (req, res): Promise<void> => {
   const normalizeArrayQuery = (value: unknown): unknown[] | undefined =>
     value == null ? undefined : Array.isArray(value) ? value : [value];
@@ -2102,8 +2056,14 @@ router.get("/trends", async (req, res): Promise<void> => {
     return;
   }
   const { granularity, teamNames, groupIds } = parsed.data;
-
-  const buckets = granularity === "week" ? generateWeeklyBuckets() : generateMonthlyBuckets();
+  let selectedRange: UsageRange;
+  try {
+    selectedRange = rangeFromQuery(parsed.data);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  const buckets = generateTrendBuckets(selectedRange, granularity);
 
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
@@ -2129,7 +2089,7 @@ router.get("/trends", async (req, res): Promise<void> => {
     const ranges = buckets.map((bucket) =>
       resolveRange("custom", bucket.startDate, bucket.endDate),
     );
-    const totalCount = groups.length * ranges.length;
+    const totalCount = ranges.length;
     const accountWide = isAccountWide(req.authz);
     const scopedWorkspaceIds = accountWide
       ? new Set([...dir.workspaces.keys(), ...visible.map((group) => group.workspaceId)])
@@ -2157,7 +2117,7 @@ router.get("/trends", async (req, res): Promise<void> => {
       ]),
     );
     const loadedCount = ranges.reduce(
-      (count, range) => count + (canonicalByRange.get(range.key)!.isComplete ? groups.length : 0),
+      (count, range) => count + (canonicalByRange.get(range.key)!.isComplete ? 1 : 0),
       0,
     );
 
@@ -2205,13 +2165,25 @@ router.get("/trends", async (req, res): Promise<void> => {
         }),
       }));
 
+    const totals = ranges.map((range) => {
+      const canonical = canonicalByRange.get(range.key)!;
+      if (!canonical.isComplete) return null;
+      if (!requestedTeams && !requestedGroups) return canonical.totalSpendUsd;
+      return groups.reduce(
+        (sum, group) => sum + (canonical.spendByPrimaryGroup.get(group.id) ?? 0),
+        0,
+      );
+    });
+
     res.json(
       GetTrendsResponse.parse({
         buckets: buckets.map((bucket) => bucket.startDate),
         bucketRanges: buckets.map((bucket) => ({
           start: bucket.startDate,
           end: bucket.endDate,
+          isPartial: bucket.isPartial,
         })),
+        totals,
         series: [...teamSeries, ...groupSeries],
         isComplete: loadedCount === totalCount,
         loadedCount,
