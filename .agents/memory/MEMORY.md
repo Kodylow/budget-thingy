@@ -2,3 +2,4 @@
 - [Workspace-aware rollups](overlapping-group-rollups.md) — workspace usage is authoritative; stable group attribution plus synthetic No group rows preserves every workspace charge.
 - [Group spend display model](group-spend-display-model.md) — dashboard accounting uses deduped projects; member drill-downs and legacy alerts intentionally retain member/raw spend.
 - [Allocated pool access](allocated-pool-access.md) — editors use stable Replit IDs; true admins manage access; shared-team alerts never reveal out-of-scope spend.
+- [Historical membership attribution](historical-membership-attribution.md) — immutable UTC rosters require complete fresh reads; current day stays live and pre-snapshot dates are not reconstructed.

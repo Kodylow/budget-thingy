@@ -101,8 +101,17 @@ import {
   scopeGroups,
   type Authorization,
 } from "../lib/authz";
-import { getHistoryForGroups, projectEndOfPeriod } from "../lib/history";
+import {
+  getHistoryForGroups,
+  getRosterHistory,
+  projectEndOfPeriod,
+} from "../lib/history";
 import { generateTrendBuckets } from "../lib/trend-buckets";
+import {
+  attributeHistoricalDay,
+  mergeHistoricalGroupSpend,
+  partitionTrendBucket,
+} from "../lib/historical-attribution";
 
 const router: IRouter = Router();
 
@@ -2086,40 +2095,125 @@ router.get("/trends", async (req, res): Promise<void> => {
       return !requestedTeams || (teamName !== null && requestedTeams.has(teamName));
     });
 
-    const ranges = buckets.map((bucket) =>
-      resolveRange("custom", bucket.startDate, bucket.endDate),
-    );
-    const totalCount = ranges.length;
     const accountWide = isAccountWide(req.authz);
     const scopedWorkspaceIds = accountWide
       ? new Set([...dir.workspaces.keys(), ...visible.map((group) => group.workspaceId)])
       : new Set([...req.authz!.workspaceIds, ...visible.map((group) => group.workspaceId)]);
-    for (const group of visible) {
-      for (const range of ranges) {
-        queueMemberUsageFetch(group, range, 1);
+    const rosterHistory = await getRosterHistory(
+      visible.map((group) => group.id),
+      buckets[0]!.startDate,
+      buckets.at(-1)!.endDate,
+    );
+    const currentUtcDay = new Date().toISOString().slice(0, 10);
+    const bucketPlans = buckets.map((bucket) => ({
+      bucket,
+      components: partitionTrendBucket(
+        bucket.startDate,
+        bucket.endDate,
+        rosterHistory.completedDays,
+        currentUtcDay,
+      ).map((component) => ({
+        ...component,
+        range: resolveRange("custom", component.startDate, component.endDate),
+      })),
+    }));
+
+    const queuedLiveRanges = new Set<string>();
+    const queuedWorkspaceRanges = new Set<string>();
+    for (const { components } of bucketPlans) {
+      for (const component of components) {
+        if (!queuedWorkspaceRanges.has(component.range.key)) {
+          for (const workspaceId of scopedWorkspaceIds) {
+            queueWsSpendFetch(workspaceId, component.range, 1);
+          }
+          queuedWorkspaceRanges.add(component.range.key);
+        }
+        if (component.rosterDate === null && !queuedLiveRanges.has(component.range.key)) {
+          for (const group of visible) {
+            queueMemberUsageFetch(group, component.range, 1);
+          }
+          queuedLiveRanges.add(component.range.key);
+        }
       }
     }
-    for (const workspaceId of scopedWorkspaceIds) {
-      for (const range of ranges) queueWsSpendFetch(workspaceId, range, 1);
+
+    interface TrendUsageResult {
+      spendByPrimaryGroup: Map<string, number>;
+      totalSpendUsd: number;
+      isComplete: boolean;
     }
-    const canonicalByRange = new Map(
-      ranges.map((range) => [
-        range.key,
-        getCanonicalUsage(
+
+    const resultByRange = new Map<string, TrendUsageResult>();
+    for (const { components } of bucketPlans) {
+      for (const component of components) {
+        if (resultByRange.has(component.range.key)) continue;
+        if (component.rosterDate === null) {
+          const canonical = getCanonicalUsage(
+            visible,
+            component.range.key,
+            scopedWorkspaceIds,
+            dir.groupMembers,
+            dir.members,
+            teamNameMap,
+            dir.workspaces,
+          );
+          resultByRange.set(component.range.key, {
+            spendByPrimaryGroup: new Map(canonical.spendByPrimaryGroup),
+            totalSpendUsd: canonical.totalSpendUsd,
+            isComplete: canonical.isComplete,
+          });
+          continue;
+        }
+
+        const usageByWorkspace = new Map(
+          [...scopedWorkspaceIds].flatMap((workspaceId) => {
+            const usage = getWorkspaceMemberUsage(workspaceId, component.range.key);
+            return usage
+              ? [[workspaceId, {
+                byUser: usage.byUser,
+                unattributableTotalCostUsd: usage.unattributableTotalCostUsd,
+              }] as const]
+              : [];
+          }),
+        );
+        const historical = attributeHistoricalDay(
           visible,
-          range.key,
+          rosterHistory.membersByDate.get(component.rosterDate) ?? new Map(),
           scopedWorkspaceIds,
-          dir.groupMembers,
-          dir.members,
-          teamNameMap,
-          dir.workspaces,
-        ),
-      ]),
-    );
-    const loadedCount = ranges.reduce(
-      (count, range) => count + (canonicalByRange.get(range.key)!.isComplete ? 1 : 0),
-      0,
-    );
+          usageByWorkspace,
+        );
+        const spendByPrimaryGroup = mergeHistoricalGroupSpend(
+          displayGroups.map((group) => group.id),
+          mergePlan.mergeMap,
+          historical.spendByGroup,
+        );
+        resultByRange.set(component.range.key, {
+          spendByPrimaryGroup,
+          totalSpendUsd: historical.totalSpendUsd,
+          isComplete: historical.isComplete,
+        });
+      }
+    }
+
+    const bucketResults = bucketPlans.map(({ components }): TrendUsageResult => {
+      const spendByPrimaryGroup = new Map<string, number>();
+      let totalSpendUsd = 0;
+      let isComplete = true;
+      for (const component of components) {
+        const result = resultByRange.get(component.range.key)!;
+        isComplete &&= result.isComplete;
+        totalSpendUsd += result.totalSpendUsd;
+        for (const [groupId, spendUsd] of result.spendByPrimaryGroup) {
+          spendByPrimaryGroup.set(
+            groupId,
+            (spendByPrimaryGroup.get(groupId) ?? 0) + spendUsd,
+          );
+        }
+      }
+      return { spendByPrimaryGroup, totalSpendUsd, isComplete };
+    });
+    const totalCount = bucketResults.length;
+    const loadedCount = bucketResults.filter((result) => result.isComplete).length;
 
     const duplicateGroupNames = new Set(
       groups
@@ -2133,10 +2227,9 @@ router.get("/trends", async (req, res): Promise<void> => {
         ? `${group.name} (${dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId})`
         : group.name,
       type: "group" as const,
-      data: ranges.map((range) => {
-        const canonical = canonicalByRange.get(range.key)!;
-        return canonical.isComplete
-          ? (canonical.spendByPrimaryGroup.get(group.id) ?? 0)
+      data: bucketResults.map((result) => {
+        return result.isComplete
+          ? (result.spendByPrimaryGroup.get(group.id) ?? 0)
           : null;
       }),
     }));
@@ -2154,23 +2247,21 @@ router.get("/trends", async (req, res): Promise<void> => {
       .map(([name, teamGroups]) => ({
         name,
         type: "team" as const,
-        data: ranges.map((range) => {
-          const canonical = canonicalByRange.get(range.key)!;
-          return canonical.isComplete
+        data: bucketResults.map((result) => {
+          return result.isComplete
             ? teamGroups.reduce(
-                (sum, group) => sum + (canonical.spendByPrimaryGroup.get(group.id) ?? 0),
+                (sum, group) => sum + (result.spendByPrimaryGroup.get(group.id) ?? 0),
                 0,
               )
             : null;
         }),
       }));
 
-    const totals = ranges.map((range) => {
-      const canonical = canonicalByRange.get(range.key)!;
-      if (!canonical.isComplete) return null;
-      if (!requestedTeams && !requestedGroups) return canonical.totalSpendUsd;
+    const totals = bucketResults.map((result) => {
+      if (!result.isComplete) return null;
+      if (!requestedTeams && !requestedGroups) return result.totalSpendUsd;
       return groups.reduce(
-        (sum, group) => sum + (canonical.spendByPrimaryGroup.get(group.id) ?? 0),
+        (sum, group) => sum + (result.spendByPrimaryGroup.get(group.id) ?? 0),
         0,
       );
     });

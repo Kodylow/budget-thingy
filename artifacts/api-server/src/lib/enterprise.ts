@@ -1206,7 +1206,7 @@ export async function initCache(): Promise<void> {
   }
 }
 
-interface DirectoryCache {
+export interface DirectoryCache {
   fetchedAt: number;
   workspaces: Map<string, EnterpriseWorkspace>;
   groups: EnterpriseGroup[]; // custom/SCIM groups exposed by the dashboard
@@ -1412,6 +1412,30 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
     }
   })();
   return directoryPromise;
+}
+
+/**
+ * A roster snapshot is immutable, so it must never be based on the durable
+ * directory cache or on a refresh where one group's membership fetch failed.
+ * Force a live refresh and reject the whole observation unless every custom
+ * group has an explicit membership result (including successful empty lists).
+ */
+export function assertCompleteRosterDirectory(
+  directory: DirectoryCache,
+): DirectoryCache {
+  const missingGroupIds = directory.groups
+    .filter((group) => !directory.groupMembers.has(group.id))
+    .map((group) => group.id);
+  if (missingGroupIds.length > 0) {
+    throw new Error(
+      `Roster directory refresh incomplete for ${missingGroupIds.length} group(s)`,
+    );
+  }
+  return directory;
+}
+
+export async function getCompleteDirectoryForRosterSnapshot(): Promise<DirectoryCache> {
+  return assertCompleteRosterDirectory(await getDirectory(true));
 }
 
 // ---------- Group spend cache (keyed by groupId + range) ----------
