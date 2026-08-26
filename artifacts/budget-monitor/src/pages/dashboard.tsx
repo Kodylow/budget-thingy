@@ -90,6 +90,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import TrendsTab from './trends-tab';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
 import { isCanonicalSummaryPending } from '@/lib/dashboard-reconciliation';
+import { filterGroupsForView } from '@/lib/rbac-view';
 
 interface TeamSection {
   teamName: string;
@@ -108,8 +109,7 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const canWrite = useCanWrite();
-  const { isAccountAdmin, isAccountEditor } = useAuthContext();
-  const isAccountWide = isAccountAdmin || isAccountEditor;
+  const { isAccountWide, role, preview, isPreviewing } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [byGroupSearch, setByGroupSearch] = useState('');
@@ -161,14 +161,14 @@ export default function Dashboard() {
 
   const groups = useMemo(
     () =>
-      (groupsData?.groups ?? []).map((group) => {
+      filterGroupsForView(groupsData?.groups ?? [], role, preview).map((group) => {
         return {
           ...group,
           spendUsd: group.rollupSpendUsd,
           spendLoaded: group.rollupSpendLoaded,
         };
       }),
-    [groupsData?.groups],
+    [groupsData?.groups, role, preview],
   );
   const isComplete = groupsData?.isComplete ?? false;
   const pendingCount = groupsData?.pendingCount ?? 0;
@@ -204,8 +204,12 @@ export default function Dashboard() {
       // Financial values remain server-owned. Missing canonical data stays in a
       // loading state instead of being re-derived from partial browser data.
       const serverTeamSpend = groupsData?.teamRawSpend?.[teamName];
-      const spendUsd = serverTeamSpend?.spendUsd ?? 0;
-      const spendLoaded = serverTeamSpend?.spendLoaded ?? false;
+      const spendUsd = isPreviewing
+        ? teamGroups.reduce((sum, group) => sum + (group.spendUsd ?? 0), 0)
+        : (serverTeamSpend?.spendUsd ?? 0);
+      const spendLoaded = isPreviewing
+        ? teamGroups.every((group) => group.spendLoaded)
+        : (serverTeamSpend?.spendLoaded ?? false);
       const paceSpendLoaded = teamGroups.every((group) => group.paceSpendLoaded);
       const paceSpendUsd = teamGroups.reduce(
         (sum, group) => sum + (group.paceSpendUsd ?? 0),
@@ -234,7 +238,7 @@ export default function Dashboard() {
     teamSections.sort((a, b) => a.teamName.localeCompare(b.teamName));
 
     return { teamSections, unassigned };
-  }, [groups, teamBudgetMap, groupsData]);
+  }, [groups, teamBudgetMap, groupsData, isPreviewing]);
 
   // Financial summary cards and the table footer must reconcile to the same
   // visible top-level rows: each team pool once, plus each unassigned group.
@@ -333,10 +337,14 @@ export default function Dashboard() {
   const statCards = [
     {
       title: 'Total Spend',
-      value: summary ? `$${summary.totalSpendUsd.toFixed(2)}` : '—',
+      value: role === 'workspace_admin' && isPreviewing
+        ? `$${tableTotals.totalSpendUsd.toFixed(2)}`
+        : summary ? `$${summary.totalSpendUsd.toFixed(2)}` : '—',
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
-      loading: isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
+      loading: role === 'workspace_admin' && isPreviewing
+        ? groupsLoading || !isComplete
+        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
     },
     {
       title: 'Total Budget',
@@ -347,18 +355,30 @@ export default function Dashboard() {
     },
     {
       title: 'Remaining',
-      value: summary?.totalRemainingUsd != null ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
+      value: role === 'workspace_admin' && isPreviewing
+        ? `$${tableTotals.totalRemainingUsd.toFixed(2)}`
+        : summary?.totalRemainingUsd != null ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
       description: 'Across visible budgeted pools',
       icon: Wallet,
-      loading: isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
-      valueClassName: (summary?.totalRemainingUsd ?? 0) < 0 ? 'text-destructive' : '',
+      loading: role === 'workspace_admin' && isPreviewing
+        ? groupsLoading || !isComplete
+        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
+      valueClassName: (role === 'workspace_admin' && isPreviewing
+        ? tableTotals.totalRemainingUsd
+        : (summary?.totalRemainingUsd ?? 0)) < 0 ? 'text-destructive' : '',
     },
     {
       title: 'Over Threshold',
-      value: summary ? summary.groupsOver75.toString() : '—',
-      description: `${summary?.groupsOver100 ?? 0} over budget`,
+      value: role === 'workspace_admin' && isPreviewing
+        ? groups.filter((group) => (group.percentUsed ?? 0) >= 75).length.toString()
+        : summary ? summary.groupsOver75.toString() : '—',
+      description: role === 'workspace_admin' && isPreviewing
+        ? `${groups.filter((group) => (group.percentUsed ?? 0) >= 100).length} over budget`
+        : `${summary?.groupsOver100 ?? 0} over budget`,
       icon: AlertTriangle,
-      loading: isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
+      loading: role === 'workspace_admin' && isPreviewing
+        ? groupsLoading || !isComplete
+        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
     },
     {
       title: 'Alerts Sent',
@@ -367,7 +387,7 @@ export default function Dashboard() {
       icon: RefreshCw,
       loading: summaryLoading,
     },
-  ];
+  ].filter((card) => !(role === 'workspace_admin' && card.title === 'Alerts Sent'));
 
   const renderGroupRow = (group: (typeof groups)[0]) => (
     <tr
@@ -680,11 +700,13 @@ export default function Dashboard() {
             {groupsData?.billingPeriodLabel || 'Loading...'}
           </p>
           <p className="text-[10px] md:text-xs text-muted-foreground mt-1" data-testid="text-reconciliation-scope">
-            All workspaces you can access · Custom dates use inclusive UTC days
+            {role === 'workspace_admin'
+              ? `${preview?.groupName ? `Group admin preview · ${preview.groupName}` : 'Your authorized group scope'} · Custom dates use inclusive UTC days`
+              : 'All workspaces you can access · Custom dates use inclusive UTC days'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <a
+          {isAccountWide && <a
             href="/api/export/users.csv"
             download
             className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
@@ -692,7 +714,7 @@ export default function Dashboard() {
             <Download className="h-4 w-4" />
             <span className="hidden sm:inline">Export Users</span>
             <span className="sm:hidden">Export</span>
-          </a>
+          </a>}
           <RangeFilter />
           {!isComplete && (
             <Badge
@@ -747,12 +769,19 @@ export default function Dashboard() {
         })}
       </div>
 
+      {role === 'workspace_admin' && isPreviewing && (
+        <div className="rounded-md border border-amber-500/50 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid="banner-rbac-preview">
+          Previewing Group admin access for {preview?.groupName}. Data remains limited by your real server authorization.
+        </div>
+      )}
       <Tabs defaultValue="groups" className="space-y-4">
+        {isAccountWide && (
         <TabsList aria-label="Dashboard views">
           <TabsTrigger value="groups">Groups</TabsTrigger>
           <TabsTrigger value="by-group">By Group</TabsTrigger>
           <TabsTrigger value="trends">Trends</TabsTrigger>
         </TabsList>
+        )}
         <TabsContent value="groups">
       <Card>
         <CardHeader>
@@ -823,7 +852,7 @@ export default function Dashboard() {
                   ) : (
                     groups.map((group) => renderGroupRow(group))
                   )}
-                  {summary?.reconciliationSpendUsd != null &&
+                  {!isPreviewing && summary?.reconciliationSpendUsd != null &&
                     (isAccountWide || summary.reconciliationSpendUsd > 0) && (
                     <tr
                       className="border-b border-border bg-muted/10"
@@ -874,9 +903,9 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete && summary ? (
+                        {isComplete && (summary || isPreviewing) ? (
                           <span className="text-sm font-mono tabular-nums">
-                            ${summary.totalSpendUsd.toFixed(2)}
+                            ${(isPreviewing ? tableTotals.totalSpendUsd : summary!.totalSpendUsd).toFixed(2)}
                           </span>
                         ) : (
                           <div className="flex justify-end"><LoadingCell /></div>
@@ -943,7 +972,7 @@ export default function Dashboard() {
         </CardContent>
       </Card>
         </TabsContent>
-        <TabsContent value="by-group">
+        {isAccountWide && <TabsContent value="by-group">
           <Card>
             <CardHeader>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1076,8 +1105,8 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-        <TabsContent value="trends">
+        </TabsContent>}
+        {isAccountWide && <TabsContent value="trends">
           <TrendsTab
             teamNames={teamSections.map((team) => team.teamName)}
             groups={groups.map((group) => ({
@@ -1086,7 +1115,7 @@ export default function Dashboard() {
               teamName: group.teamName ?? null,
             }))}
           />
-        </TabsContent>
+        </TabsContent>}
       </Tabs>
     </div>
   );

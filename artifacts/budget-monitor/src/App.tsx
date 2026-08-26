@@ -14,6 +14,8 @@ import WorkspaceAdmins from '@/pages/workspace-admins';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
+import { Redirect, useRoute } from 'wouter';
+import { canOpenGroupInView } from '@/lib/rbac-view';
 
 const queryClient = new QueryClient();
 
@@ -21,18 +23,25 @@ function Router() {
   // Account-only routes (settings) are removed for workspace admins so a
   // direct URL cannot render the account-admin surface. The server still
   // enforces authorization on the underlying data.
-  const { isAccountAdmin } = useAuthContext();
+  const { isAccountAdmin, isAccountWide, role, preview } = useAuthContext();
+
+  function ScopedGroupRoute() {
+    const [, params] = useRoute('/groups/:groupId');
+    return canOpenGroupInView(params?.groupId ?? '', role, preview)
+      ? <GroupDetail />
+      : <Redirect to="/" />;
+  }
 
   return (
     <AppShell>
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/alerts" component={Alerts} />
-        <Route path="/trends" component={Trends} />
+        {isAccountWide && <Route path="/trends" component={Trends} />}
         {isAccountAdmin && <Route path="/settings" component={Settings} />}
         {isAccountAdmin && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
-        <Route path="/groups/:groupId" component={GroupDetail} />
-        <Route path="/clusters" component={ClusterDetail} />
+        <Route path="/groups/:groupId" component={ScopedGroupRoute} />
+        {isAccountWide && <Route path="/clusters" component={ClusterDetail} />}
         <Route component={NotFound} />
       </Switch>
     </AppShell>

@@ -14,6 +14,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuthContext } from '@/components/auth-context';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { getListGroupsQueryKey, useListGroups } from '@workspace/api-client-react';
 
 interface AppShellProps {
   children: ReactNode;
@@ -21,8 +29,13 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const [location] = useLocation();
-  const { user, isAccountAdmin, isAccountEditor, isWorkspaceAdmin, workspaceIds, logout } =
-    useAuthContext();
+  const {
+    user, isAccountAdmin, isAccountEditor, isWorkspaceAdmin, workspaceIds, logout,
+    preview, canPreviewRbac, setPreview, resetPreview, isPreviewing,
+  } = useAuthContext();
+  const { data: previewGroups } = useListGroups({}, {
+    query: { enabled: canPreviewRbac, queryKey: getListGroupsQueryKey({}) },
+  });
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -86,11 +99,32 @@ export function AppShell({ children }: AppShellProps) {
       ? 'Workspace admin'
       : 'Member';
 
-  const scopeLabel = isAccountAdmin || isAccountEditor
-    ? 'All workspaces'
-    : workspaceIds.length > 0
-      ? `${workspaceIds.length} workspace${workspaceIds.length === 1 ? '' : 's'}`
-      : 'No workspaces';
+  const scopeLabel = preview?.role === 'workspace_admin'
+    ? preview.groupName
+    : isAccountAdmin || isAccountEditor
+      ? 'All workspaces'
+      : workspaceIds.length > 0
+        ? `${workspaceIds.length} workspace${workspaceIds.length === 1 ? '' : 's'}`
+        : 'No workspaces';
+
+  const previewValue = preview?.role === 'workspace_admin'
+    ? `group:${preview.groupId}`
+    : preview?.role ?? 'real';
+  const selectableGroups = (previewGroups?.groups ?? []).filter(
+    (group) => !group.groupId.startsWith('synthetic:'),
+  );
+
+  const handlePreviewChange = (value: string) => {
+    if (value === 'real') {
+      resetPreview();
+    } else if (value === 'account_admin' || value === 'account_editor') {
+      setPreview({ role: value, groupId: null, groupName: null });
+    } else if (value.startsWith('group:')) {
+      const groupId = value.slice('group:'.length);
+      const group = selectableGroups.find((candidate) => candidate.groupId === groupId);
+      if (group) setPreview({ role: 'workspace_admin', groupId, groupName: group.name });
+    }
+  };
 
   return (
     <div className="flex min-h-[100dvh] bg-background flex-col md:flex-row">
@@ -227,6 +261,46 @@ export function AppShell({ children }: AppShellProps) {
                   {scopeLabel}
                 </span>
               </div>
+              {canPreviewRbac && (
+                <div className="space-y-1.5 border-t border-sidebar-border pt-2" data-testid="rbac-preview-control">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      RBAC preview
+                    </span>
+                    {isPreviewing && (
+                      <Badge variant="outline" className="text-[9px] border-amber-500 text-amber-700 dark:text-amber-300">
+                        Simulated
+                      </Badge>
+                    )}
+                  </div>
+                  <Select value={previewValue} onValueChange={handlePreviewChange}>
+                    <SelectTrigger className="h-8 text-xs" data-testid="select-rbac-preview">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="real">My real access</SelectItem>
+                      <SelectItem value="account_admin">Account admin</SelectItem>
+                      <SelectItem value="account_editor">Account editor</SelectItem>
+                      {selectableGroups.map((group) => (
+                        <SelectItem key={group.groupId} value={`group:${group.groupId}`}>
+                          Group admin · {group.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {isPreviewing && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-full justify-start px-2 text-xs"
+                      onClick={resetPreview}
+                      data-testid="button-reset-rbac-preview"
+                    >
+                      Reset to my real view
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
             <Button
               variant="outline"

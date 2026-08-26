@@ -19,11 +19,16 @@ export default function Alerts() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const canWrite = useCanWrite();
-  const { isAccountAdmin } = useAuthContext();
+  const { isAccountAdmin, preview } = useAuthContext();
   const [runningCheck, setRunningCheck] = useState(false);
   const [testingAlertId, setTestingAlertId] = useState<number | null>(null);
 
   const { data: alerts, isLoading } = useListAlerts({ limit: 100 });
+  const visibleAlerts = preview?.role === 'workspace_admin'
+    ? (alerts ?? []).filter(
+        (alert) => alert.entityType === 'group' && alert.entityId === preview.groupId,
+      )
+    : (alerts ?? []);
   const runCheck = useRunAlertCheck();
   const sendTest = useSendTestAlert();
 
@@ -124,9 +129,9 @@ export default function Alerts() {
                 <div key={i} className="h-16 bg-muted animate-pulse-glow rounded" />
               ))}
             </div>
-          ) : alerts && alerts.length > 0 ? (
+          ) : visibleAlerts.length > 0 ? (
             <div className="space-y-3">
-              {alerts.map((alert) => (
+              {visibleAlerts.map((alert) => (
                 <div
                   key={alert.id}
                   className="flex flex-wrap sm:flex-nowrap items-start gap-3 md:gap-4 p-3 md:p-4 rounded-lg border border-border hover:bg-muted/50 transition-colors"

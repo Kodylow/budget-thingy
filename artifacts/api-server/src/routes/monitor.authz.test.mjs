@@ -262,6 +262,20 @@ test("workspace admin only sees in-scope groups", async () => {
   );
 });
 
+test("client-crafted RBAC preview headers cannot broaden server authorization", async () => {
+  const res = await fetch(`${baseUrl}/api/groups`, {
+    headers: {
+      "x-test-user": "ws1admin",
+      "x-rbac-preview-role": "account_admin",
+      "x-rbac-preview-workspace-ids": "ws-2",
+    },
+  });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  const ids = json.groups.filter((group) => !group.isSynthetic).map((group) => group.groupId);
+  assert.deepEqual(ids, ["g-ws1-a"]);
+});
+
 test("summary totalGroups reflects the scoped group set", async () => {
   const acct = await req("/summary", { user: "acct" });
   assert.equal(acct.json.totalGroups, 2);

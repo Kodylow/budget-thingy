@@ -1,10 +1,16 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   useAuth as useReplitAuth,
   type AuthUser,
   type AuthAuthorization,
   type AuthAuthorizationRole,
 } from '@workspace/replit-auth-web';
+import {
+  canUseRbacPreview,
+  isAccountWideView,
+  sanitizePreview,
+  type PreviewSelection,
+} from '@/lib/rbac-view';
 
 export type { AuthUser, AuthAuthorization, AuthAuthorizationRole };
 
@@ -19,6 +25,14 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   /** Resolved role, or null when signed out / unknown. */
   role: ResolvedRole | null;
+  /** The immutable role returned by the server for this session. */
+  realRole: ResolvedRole | null;
+  preview: PreviewSelection | null;
+  canPreviewRbac: boolean;
+  setPreview: (preview: PreviewSelection | null) => void;
+  resetPreview: () => void;
+  isPreviewing: boolean;
+  isAccountWide: boolean;
   /** Full account-wide access. */
   isAccountAdmin: boolean;
   /** Managed account-wide operational access without settings/access management. */
@@ -36,20 +50,62 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const PREVIEW_STORAGE_PREFIX = 'budget-monitor:rbac-preview:';
+
+function readStoredPreview(
+  userId: string | undefined,
+  role: AuthAuthorizationRole | undefined,
+): PreviewSelection | null {
+  if (!userId || typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(`${PREVIEW_STORAGE_PREFIX}${userId}`);
+    return sanitizePreview(role, raw ? JSON.parse(raw) as PreviewSelection : null);
+  } catch {
+    return null;
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { user, auth, isLoading, isAuthenticated, login, logout } = useReplitAuth();
+  const [requestedPreview, setRequestedPreview] = useState<{
+    userId: string;
+    value: PreviewSelection | null;
+  } | null>(null);
+  const requestedForCurrentUser =
+    requestedPreview && requestedPreview.userId === user?.id
+      ? requestedPreview.value
+      : readStoredPreview(user?.id, auth?.role);
+  const preview = sanitizePreview(auth?.role, requestedForCurrentUser);
+
+  useEffect(() => {
+    if (!user?.id || canUseRbacPreview(auth?.role)) return;
+    window.sessionStorage.removeItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`);
+  }, [user?.id, auth?.role]);
+
+  const setPreview = useCallback((next: PreviewSelection | null) => {
+    if (!user?.id) return;
+    const safe = sanitizePreview(auth?.role, next);
+    setRequestedPreview({ userId: user.id, value: safe });
+    if (safe) {
+      window.sessionStorage.setItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`, JSON.stringify(safe));
+    } else {
+      window.sessionStorage.removeItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`);
+    }
+  }, [auth?.role, user?.id]);
+  const resetPreview = useCallback(() => {
+    if (!user?.id) return;
+    setRequestedPreview({ userId: user.id, value: null });
+    window.sessionStorage.removeItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`);
+  }, [user?.id]);
 
   const value = useMemo<AuthContextValue>(() => {
     // `auth === null` while signed in means access-denied.
-    const isAccountAdmin =
-      auth?.role === 'account_admin' || auth?.role === 'account_delegate';
-    const isAccountEditor = auth?.role === 'account_editor';
-    const isWorkspaceAdmin = auth?.role === 'workspace_admin';
+    const realRole: ResolvedRole | null = !isAuthenticated ? null : (auth?.role ?? 'denied');
+    const role: ResolvedRole | null = preview?.role ?? realRole;
+    const isAccountAdmin = role === 'account_admin' || role === 'account_delegate';
+    const isAccountEditor = role === 'account_editor';
+    const isWorkspaceAdmin = role === 'workspace_admin';
     const isDenied = isAuthenticated && auth == null;
-    const role: ResolvedRole | null = !isAuthenticated
-      ? null
-      : (auth?.role ?? 'denied');
 
     return {
       user,
@@ -57,6 +113,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       isAuthenticated,
       role,
+      realRole,
+      preview,
+      canPreviewRbac: canUseRbacPreview(auth?.role),
+      setPreview,
+      resetPreview,
+      isPreviewing: preview !== null,
+      isAccountWide: isAccountWideView(role),
       isAccountAdmin,
       isAccountEditor,
       isWorkspaceAdmin,
@@ -68,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
     };
-  }, [user, auth, isLoading, isAuthenticated, login, logout]);
+  }, [user, auth, isLoading, isAuthenticated, login, logout, preview, setPreview, resetPreview]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
