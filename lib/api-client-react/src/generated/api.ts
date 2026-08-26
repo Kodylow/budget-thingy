@@ -1433,7 +1433,7 @@ export const getGetUserActivityUrl = (params?: GetUserActivityParams,) => {
 }
 
 /**
- * Returns one row per visible member using the same workspace-aware, all-metric attributed usage shown in group and cluster member tables. Each user-workspace pair is counted once and distinct workspaces are summed. Replit's in-product per-user table is Agent-only and may be lower.
+ * Returns one row per visible member using the same canonical split shown in group and cluster member tables: deduplicated member-grouped AI plus non-AI project cost attributed to each current creator.
  * @summary List canonical per-user activity
  */
 export const getUserActivity = async (params?: GetUserActivityParams, options?: RequestInit): Promise<UserActivityResponse> => {
@@ -1518,7 +1518,7 @@ export const getExportUsersCsvUrl = (params?: ExportUsersCsvParams,) => {
 }
 
 /**
- * Exports the same selected-range, all-metric attributed per-user values returned by User Activity. Values include AI, deployments, storage, and other attributed metrics; Replit's in-product per-user table is Agent-only.
+ * Exports the same selected-range per-user values returned by User Activity, with separate AI, hosting/non-AI, and total spend columns.
  * @summary Export canonical per-user activity as CSV
  */
 export const exportUsersCsv = async (params?: ExportUsersCsvParams, options?: RequestInit): Promise<string> => {
@@ -2926,4 +2926,3 @@ export const useRebuildUsageRange = <TError = ErrorType<ApiError | UnauthorizedR
       > => {
       return useMutation(getRebuildUsageRangeMutationOptions(options));
     }
-

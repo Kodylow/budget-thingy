@@ -297,12 +297,20 @@ router.get("/groups", async (req, res): Promise<void> => {
     // cannot render until every visible group has it. Queue it interactively so
     // it preempts checker/snapshot group-total work already waiting at startup.
     // Once synchronized, these entries are durable and hydrate before listen.
-    for (const group of scoped) queueMemberUsageFetch(group, range, 0);
-    for (const group of scoped) queueProjectUsageFetch(group, range, 0);
+    for (const group of scoped) {
+      queueMemberUsageFetch(group, range, 0);
+      queueProjectUsageFetch(group, range, 0);
+      queueProjectTitlesFetch(group.workspaceId, 0);
+    }
     for (const workspaceId of scopedWorkspaceIds) {
       queueWsSpendFetch(workspaceId, range, 0);
+      queueProjectTitlesFetch(workspaceId, 0);
     }
     if (paceRange) {
+      for (const group of scoped) {
+        queueMemberUsageFetch(group, paceRange, -20);
+        queueProjectUsageFetch(group, paceRange, -20);
+      }
       for (const workspaceId of scopedWorkspaceIds) {
         queueWsSpendFetch(workspaceId, paceRange, -20);
       }
@@ -551,10 +559,15 @@ router.get("/groups", async (req, res): Promise<void> => {
     res.json(
       ListGroupsResponse.parse({
         groups,
-        isComplete: sync.status === "complete",
-        syncStatus: sync.status,
+        isComplete: sync.status === "complete" && canonical.isComplete,
+        syncStatus:
+          sync.status === "complete" && !canonical.isComplete
+            ? "syncing"
+            : sync.status,
         syncError: sync.error,
-        pendingCount: sync.pendingCount,
+        // Durable sync status covers API usage scopes, while canonical readiness
+        // also waits for creator metadata when non-AI attribution needs it.
+        pendingCount: Math.max(sync.pendingCount, canonical.pendingCount),
         failedCount: sync.failedCount,
         partialCount: sync.partialCount,
         billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
@@ -647,6 +660,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       undefined,
       dir.workspaces,
       isAccountAdmin,
+      true,
     );
     const rollup = canonical;
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
@@ -719,7 +733,15 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       // Every per-user surface uses the same canonical all-metric total for the
       // caller's selected range and visible workspaces.
       const spendLoaded = canonical.isComplete;
-      const spendUsd = spendLoaded ? (canonical.byUser.get(userId) ?? 0) : null;
+      const aiSpendUsd = sourceIds.reduce(
+        (sum, id) => sum + (canonical.aiSpendByGroup.get(id)?.get(userId) ?? 0),
+        0,
+      );
+      const nonAiSpendUsd = sourceIds.reduce(
+        (sum, id) => sum + (canonical.nonAiSpendByGroup.get(id)?.get(userId) ?? 0),
+        0,
+      );
+      const spendUsd = spendLoaded ? aiSpendUsd + nonAiSpendUsd : null;
       return {
         userId,
         username: m?.username ?? null,
@@ -731,6 +753,8 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         budgetSource: null,
         spendLoaded,
         spendUsd,
+        aiSpendUsd: spendLoaded ? aiSpendUsd : null,
+        nonAiSpendUsd: spendLoaded ? nonAiSpendUsd : null,
         remainingUsd: null,
         percentUsed: null,
       };
@@ -740,11 +764,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // toward group spend (they are captured in the rollup).  unattributedSpendUsd
     // surfaces that residual so the cluster page can show an accurate attributed total.
     const combinedSpend = attributed.spendUsd;
-    const combinedLoaded = rollup.isComplete;
+    const combinedLoaded = canonical.isComplete;
     let listedMembersSpend = 0;
     if (canonical.isComplete) {
       for (const userId of userIds) {
-        listedMembersSpend += canonical.byUser.get(userId) ?? 0;
+        listedMembersSpend += attributed.byUser.get(userId) ?? 0;
       }
     }
     // Unattributed spend = spend from members removed from the group since the last sync
@@ -842,18 +866,37 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
     const titleMap = getProjectTitles(group.workspaceId);
     const groupSpend = getSpend(group.id, range.key);
 
-    const isComplete = !!projectUsage;
+    const isComplete = !!projectUsage && hasProjectInfo(group.workspaceId);
 
     const projects = projectUsage
       ? Array.from(projectUsage.byProject.values())
-          .map((p) => ({
-            projectId: p.projectId,
-            title: titleMap.get(p.projectId) ?? null,
-            totalCostUsd: p.totalCostUsd,
-            metrics: p.metrics,
-            workspaceId: p.workspaceId,
-            workspaceName: p.workspaceId ? (dir.workspaces.get(p.workspaceId)?.name ?? null) : null,
-          }))
+          .map((p) => {
+            const info = getProjectInfo(group.workspaceId, p.projectId);
+            const aiSpendUsd = Math.min(
+              p.totalCostUsd,
+              Math.max(0, p.metrics
+                .filter((metric) => metric.category.toLowerCase() === "ai")
+                .reduce((sum, metric) => sum + metric.costUsd, 0)),
+            );
+            const creatorId = info?.creatorId ?? null;
+            return {
+              projectId: p.projectId,
+              title: titleMap.get(p.projectId) ?? null,
+              totalCostUsd: p.totalCostUsd,
+              aiSpendUsd,
+              nonAiSpendUsd: Math.max(0, p.totalCostUsd - aiSpendUsd),
+              creatorId,
+              creatorName: creatorId
+                ? (dir.members.get(creatorId)?.name ?? dir.members.get(creatorId)?.username ?? null)
+                : null,
+              creatorIsCurrentMember:
+                creatorId !== null &&
+                (dir.groupMembers.get(group.id) ?? []).includes(creatorId),
+              metrics: p.metrics,
+              workspaceId: p.workspaceId,
+              workspaceName: p.workspaceId ? (dir.workspaces.get(p.workspaceId)?.name ?? null) : null,
+            };
+          })
           .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
       : [];
 
@@ -907,7 +950,11 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
     const scopedWorkspaceIds = isAccountWide(req.authz)
       ? new Set([...dir.workspaces.keys(), ...scoped.map((group) => group.workspaceId)])
       : new Set([...req.authz!.workspaceIds, ...scoped.map((group) => group.workspaceId)]);
-    for (const group of scoped) queueMemberUsageFetch(group, range, 0);
+    for (const group of scoped) {
+      queueMemberUsageFetch(group, range, 0);
+      queueProjectUsageFetch(group, range, 0);
+      queueProjectTitlesFetch(group.workspaceId, 0);
+    }
     for (const workspaceId of scopedWorkspaceIds) queueWsSpendFetch(workspaceId, range, 0);
     const canonical = getCanonicalUsage(
       scoped,
@@ -991,7 +1038,11 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
     // which would inflate the figure.
     const projectMap = new Map<
       string,
-      { entry: { projectId: string; totalCostUsd: number; metrics: ProjectUsageMetric[] }; workspaceId: string }
+      {
+        entry: { projectId: string; totalCostUsd: number; metrics: ProjectUsageMetric[] };
+        workspaceId: string;
+        groupId: string;
+      }
     >();
     let allGroupsLoaded = true;
 
@@ -1003,8 +1054,19 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
       }
       for (const entry of usage.byProject.values()) {
         const existing = projectMap.get(entry.projectId);
-        if (!existing || entry.totalCostUsd > existing.entry.totalCostUsd) {
-          projectMap.set(entry.projectId, { entry, workspaceId: g.workspaceId });
+        if (
+          !existing ||
+          entry.totalCostUsd > existing.entry.totalCostUsd ||
+          (
+            entry.totalCostUsd === existing.entry.totalCostUsd &&
+            g.id.localeCompare(existing.groupId) < 0
+          )
+        ) {
+          projectMap.set(entry.projectId, {
+            entry,
+            workspaceId: g.workspaceId,
+            groupId: g.id,
+          });
         }
       }
     }
@@ -1017,6 +1079,11 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
       projectId: string;
       title: string | null;
       totalCostUsd: number;
+      aiSpendUsd: number;
+      nonAiSpendUsd: number;
+      creatorId: string | null;
+      creatorName: string | null;
+      creatorIsCurrentMember: boolean;
       metrics: ProjectUsageMetric[];
       workspaceId: string | null;
       workspaceName: string | null;
@@ -1026,17 +1093,31 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
     for (const { entry, workspaceId } of projectMap.values()) {
       const info = getProjectInfo(workspaceId, entry.projectId);
       const creatorId = info?.creatorId ?? null;
-      if (creatorId !== null && memberSet.has(creatorId)) {
-        attributed.push({
-          projectId: entry.projectId,
-          title: info?.title ?? null,
-          totalCostUsd: entry.totalCostUsd,
-          metrics: entry.metrics,
-          workspaceId,
-          workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
-        });
-      } else {
-        unattributedSpendUsd += entry.totalCostUsd;
+      const aiSpendUsd = Math.min(
+        entry.totalCostUsd,
+        Math.max(0, entry.metrics
+          .filter((metric) => metric.category.toLowerCase() === "ai")
+          .reduce((sum, metric) => sum + metric.costUsd, 0)),
+      );
+      const nonAiSpendUsd = Math.max(0, entry.totalCostUsd - aiSpendUsd);
+      const creatorIsCurrentMember = creatorId !== null && memberSet.has(creatorId);
+      attributed.push({
+        projectId: entry.projectId,
+        title: info?.title ?? null,
+        totalCostUsd: entry.totalCostUsd,
+        aiSpendUsd,
+        nonAiSpendUsd,
+        creatorId,
+        creatorName: creatorId
+          ? (dir.members.get(creatorId)?.name ?? dir.members.get(creatorId)?.username ?? null)
+          : null,
+        creatorIsCurrentMember,
+        metrics: entry.metrics,
+        workspaceId,
+        workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
+      });
+      if (!creatorIsCurrentMember) {
+        unattributedSpendUsd += nonAiSpendUsd;
       }
     }
 
@@ -1183,6 +1264,7 @@ router.get("/summary", async (req, res): Promise<void> => {
             }
             for (const workspaceId of scopedWorkspaceIds) {
               queueWsSpendFetch(workspaceId, range, 1);
+              queueProjectTitlesFetch(workspaceId, 1);
             }
             const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
             const canonical = getCanonicalUsage(
@@ -1603,6 +1685,7 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
     const projectMap = new Map<string, {
       entry: { projectId: string; totalCostUsd: number; metrics: ProjectUsageMetric[] };
       workspaceId: string;
+      winnerGroupId: string;
       groupNames: Set<string>;
     }>();
 
@@ -1615,13 +1698,21 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
           projectMap.set(entry.projectId, {
             entry,
             workspaceId: g.workspaceId,
+            winnerGroupId: g.id,
             groupNames: new Set([g.name]),
           });
         } else {
           existing.groupNames.add(g.name);
-          if (entry.totalCostUsd > existing.entry.totalCostUsd) {
+          if (
+            entry.totalCostUsd > existing.entry.totalCostUsd ||
+            (
+              entry.totalCostUsd === existing.entry.totalCostUsd &&
+              g.id.localeCompare(existing.winnerGroupId) < 0
+            )
+          ) {
             existing.entry = entry;
             existing.workspaceId = g.workspaceId;
+            existing.winnerGroupId = g.id;
           }
         }
       }
@@ -1640,11 +1731,21 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
       hostingUsd: number;
       storageUsd: number;
       otherUsd: number;
+      creatorIsCurrentMember: boolean;
+      attributedGroup: string;
+      attributedNonAiUsd: number;
+      unattributedNonAiUsd: number;
       totalUsd: number;
     };
 
     const rows: ExportRow[] = [];
 
+    const orderedGroups = [...groups].sort(
+      (a, b) =>
+        a.workspaceId.localeCompare(b.workspaceId) ||
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+        a.id.localeCompare(b.id),
+    );
     for (const { entry, workspaceId, groupNames } of projectMap.values()) {
       const info = getProjectInfo(workspaceId, entry.projectId);
       const creatorId = info?.creatorId ?? null;
@@ -1666,9 +1767,23 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
       const storageUsd = entry.metrics
         .filter((m) => m.category === "storage")
         .reduce((s, m) => s + m.costUsd, 0);
-      const otherUsd = entry.metrics
-        .filter((m) => !["ai", "hosting", "storage"].includes(m.category))
-        .reduce((s, m) => s + m.costUsd, 0);
+      // totalCostUsd is authoritative even when the API omits or introduces a
+      // metric category, so the non-AI breakdown always reconciles to it.
+      const otherUsd = Math.max(0, entry.totalCostUsd - aiUsd - hostingUsd - storageUsd);
+      const nonAiUsd = Math.max(0, entry.totalCostUsd - aiUsd);
+      const creatorOwner = creatorId
+        ? orderedGroups.find(
+          (group) =>
+            group.workspaceId === workspaceId &&
+            (dir.groupMembers.get(group.id) ?? []).includes(creatorId),
+        )
+        : undefined;
+      const creatorIsCurrentMember = creatorOwner !== undefined;
+      // This is the canonical stable member owner, not necessarily the
+      // highest-total project observation's winning group.
+      const attributedGroup = creatorOwner?.name ?? "";
+      const attributedNonAiUsd = creatorOwner ? nonAiUsd : 0;
+      const unattributedNonAiUsd = creatorOwner ? 0 : nonAiUsd;
 
       rows.push({
         projectId: entry.projectId,
@@ -1682,6 +1797,10 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
         hostingUsd,
         storageUsd,
         otherUsd,
+        creatorIsCurrentMember,
+        attributedGroup,
+        attributedNonAiUsd,
+        unattributedNonAiUsd,
         totalUsd: entry.totalCostUsd,
       });
     }
@@ -1698,12 +1817,16 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
       "Workspace",
       "Owner Name",
       "Owner Username",
+      "Creator Is Current Member",
+      "Attributed Group",
       "Team(s)",
       "Group(s)",
       "AI ($)",
       "Hosting ($)",
       "Storage ($)",
       "Other ($)",
+      "Attributed Non-AI ($)",
+      "Unattributed Non-AI Residual ($)",
       "Total ($)",
     ];
 
@@ -1716,12 +1839,16 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
           esc(r.workspaceName),
           esc(r.ownerName),
           esc(r.ownerUsername),
+          esc(r.creatorIsCurrentMember ? "Yes" : "No"),
+          esc(r.attributedGroup),
           esc(r.teams),
           esc(r.groups),
           fmt(r.aiUsd),
           fmt(r.hostingUsd),
           fmt(r.storageUsd),
           fmt(r.otherUsd),
+          fmt(r.attributedNonAiUsd),
+          fmt(r.unattributedNonAiUsd),
           fmt(r.totalUsd),
         ].join(","),
       );
@@ -1917,7 +2044,11 @@ router.get("/alerts", async (req, res): Promise<void> => {
     const workspaceIds = accountWide
       ? new Set([...dir.workspaces.keys(), ...scoped.map((group) => group.workspaceId)])
       : new Set([...authz.workspaceIds, ...scoped.map((group) => group.workspaceId)]);
-    for (const group of scoped) queueMemberUsageFetch(group, range, 1);
+    for (const group of scoped) {
+      queueMemberUsageFetch(group, range, 1);
+      queueProjectUsageFetch(group, range, 1);
+      queueProjectTitlesFetch(group.workspaceId, 1);
+    }
     for (const workspaceId of workspaceIds) queueWsSpendFetch(workspaceId, range, 1);
     const canonical = getCanonicalUsage(
       scoped,
@@ -2194,6 +2325,8 @@ router.get("/trends", async (req, res): Promise<void> => {
         if (component.rosterDate === null && !queuedLiveRanges.has(component.range.key)) {
           for (const group of visible) {
             queueMemberUsageFetch(group, component.range, 1);
+            queueProjectUsageFetch(group, component.range, 1);
+            queueProjectTitlesFetch(group.workspaceId, 1);
           }
           queuedLiveRanges.add(component.range.key);
         }
@@ -2379,6 +2512,11 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
   // payloads are authoritative for canonical per-user totals.
   queueAllWorkspacesFetch(dir, range, 1);
   const workspaceIds = new Set(dir.workspaces.keys());
+  for (const group of dir.groups) {
+    queueMemberUsageFetch(group, range, 1);
+    queueProjectUsageFetch(group, range, 1);
+  }
+  for (const workspaceId of workspaceIds) queueProjectTitlesFetch(workspaceId, 1);
   const canonical = getCanonicalUsage(
     dir.groups,
     range.key,
@@ -2387,6 +2525,7 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     dir.members,
     teamNameMap,
     dir.workspaces,
+    true,
     true,
   );
 
@@ -2410,7 +2549,7 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
   // Pass 2: emit one row per enterprise member (covers users not in any custom group).
   // Extra-workspace spend (workspaces without custom groups) is added for every user
   // so cross-workspace totals stay complete.
-  const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; spendUsd: number }[] = [];
+  const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; aiSpendUsd: number; nonAiSpendUsd: number; spendUsd: number }[] = [];
   for (const [userId, m] of dir.members) {
     const attr = userGroupAttr.get(userId);
     const wsNames = [...m.workspaces.keys()]
@@ -2425,6 +2564,8 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
       group: attr?.groupName ?? "",
       team: attr?.teamName ?? "",
       workspaces: wsNames,
+      aiSpendUsd: canonical.aiSpendByUser.get(userId) ?? 0,
+      nonAiSpendUsd: canonical.nonAiSpendByUser.get(userId) ?? 0,
       spendUsd,
     });
   }
@@ -2434,9 +2575,9 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
 
   // Build CSV
   const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-  const header = ["Email", "Name", "Username", "Workspace(s)", "Group", "Team", "Spend (USD)"].map(escape).join(",");
+  const header = ["Email", "Name", "Username", "Workspace(s)", "Group", "Team", "AI Spend (USD)", "Hosting / Non-AI Spend (USD)", "Spend (USD)"].map(escape).join(",");
   const lines = rows.map((r) =>
-    [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.spendUsd.toFixed(2)].map(escape).join(","),
+    [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.aiSpendUsd.toFixed(2), r.nonAiSpendUsd.toFixed(2), r.spendUsd.toFixed(2)].map(escape).join(","),
   );
 
   const isComplete = canonical.isComplete;
@@ -2507,6 +2648,11 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
   for (const workspaceId of scopedWorkspaceIds) {
     queueWsSpendFetch(workspaceId, range, 1);
+    queueProjectTitlesFetch(workspaceId, 1);
+  }
+  for (const group of orderedGroups) {
+    queueMemberUsageFetch(group, range, 1);
+    queueProjectUsageFetch(group, range, 1);
   }
 
   const visibleUserIds = new Set<string>();
@@ -2525,6 +2671,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     teamNameMap,
     dir.workspaces,
     callerIsAccountAdmin,
+    true,
   );
   const userGroupAttr = canonicalUserAttribution(
     canonical,
@@ -2542,6 +2689,8 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     teamName: string;
     groupName: string;
     spendUsd: number;
+    aiSpendUsd: number;
+    nonAiSpendUsd: number;
     workspaceRole: string;
   }[] = [];
 
@@ -2567,6 +2716,8 @@ router.get("/users/activity", async (req, res): Promise<void> => {
       teamName: attr?.teamName ?? "",
       groupName: attr?.groupName ?? "",
       spendUsd: canonical.byUser.get(userId) ?? 0,
+      aiSpendUsd: canonical.aiSpendByUser.get(userId) ?? 0,
+      nonAiSpendUsd: canonical.nonAiSpendByUser.get(userId) ?? 0,
       workspaceRole,
     });
   }

@@ -2272,12 +2272,14 @@ export interface ProjectUsage {
 }
 
 const projectUsageCache = new Map<string, ProjectUsage>(); // `${rangeKey}|${groupId}`
-
-const PRIMARY_COMCAST_WORKSPACE_ID = "1awqan";
-
 export interface ProjectAttribution {
   projectToGroup: Map<string, string>;
   spendByGroup: Map<string, number>;
+  aiSpendByProject: Map<string, number>;
+  nonAiSpendByProject: Map<string, number>;
+  creatorByProject: Map<string, string | null>;
+  creatorNonAiSpendByUser: Map<string, number>;
+  creatorNonAiSpendByGroup: Map<string, Map<string, number>>;
   unattributedSpendUsd: number;
   totalSpendUsd: number;
   isComplete: boolean;
@@ -2291,18 +2293,22 @@ export function getProjectUsage(groupId: string, rangeKey: string): ProjectUsage
 /**
  * Attribute every project to one custom group.
  *
- * Projects reported in both the primary Comcast workspace and a sub-workspace
- * belong to the sub-workspace. Otherwise the group reporting the highest spend
- * wins, with a stable group-ID tie break. Spend that the API includes in a
- * group's total without a project ID cannot be matched and is surfaced as
- * enterprise-level unattributed project spend.
+ * When several group filters report the same project, the highest-total
+ * observation wins, with a stable group-ID tie break. Spend that the API
+ * includes in a group's total without a project ID cannot be matched and is
+ * surfaced as enterprise-level unattributed project spend.
  */
 export function getProjectAttribution(
   rangeKey: string,
   groups: readonly EnterpriseGroup[],
   _workspaces: ReadonlyMap<string, EnterpriseWorkspace>,
+  groupMembers?: ReadonlyMap<string, readonly string[]>,
 ): ProjectAttribution {
-  const candidates = new Map<string, Array<{ group: EnterpriseGroup; spendUsd: number }>>();
+  const candidates = new Map<string, Array<{
+    group: EnterpriseGroup;
+    project: ProjectUsageEntry;
+    spendUsd: number;
+  }>>();
   let unattributedSpendUsd = 0;
   let loadedCount = 0;
 
@@ -2315,7 +2321,7 @@ export function getProjectAttribution(
     for (const project of usage.byProject.values()) {
       identifiedSpendUsd += project.totalCostUsd;
       const projectCandidates = candidates.get(project.projectId) ?? [];
-      projectCandidates.push({ group, spendUsd: project.totalCostUsd });
+      projectCandidates.push({ group, project, spendUsd: project.totalCostUsd });
       candidates.set(project.projectId, projectCandidates);
     }
     unattributedSpendUsd += Math.max(0, usage.totalCostUsd - identifiedSpendUsd);
@@ -2323,15 +2329,19 @@ export function getProjectAttribution(
 
   const projectToGroup = new Map<string, string>();
   const spendByGroup = new Map<string, number>();
+  const aiSpendByProject = new Map<string, number>();
+  const nonAiSpendByProject = new Map<string, number>();
+  const creatorByProject = new Map<string, string | null>();
+  const creatorNonAiSpendByUser = new Map<string, number>();
+  const creatorNonAiSpendByGroup = new Map<string, Map<string, number>>();
   let attributedSpendUsd = 0;
+  const missingProjectInfoWorkspaces = new Set<string>();
+  const unidentifiedProjectSpendUsd = unattributedSpendUsd;
 
   for (const [projectId, projectCandidates] of candidates) {
-    const subWorkspaceCandidates = projectCandidates.filter(
-      ({ group }) => group.workspaceId !== PRIMARY_COMCAST_WORKSPACE_ID,
-    );
-    const eligible =
-      subWorkspaceCandidates.length > 0 ? subWorkspaceCandidates : projectCandidates;
-    const winner = eligible.slice().sort(
+    // The same project can be reported by several group filters. The single
+    // highest-total observation is authoritative; a stable ID resolves ties.
+    const winner = projectCandidates.slice().sort(
       (a, b) => b.spendUsd - a.spendUsd || a.group.id.localeCompare(b.group.id),
     )[0]!;
 
@@ -2341,15 +2351,65 @@ export function getProjectAttribution(
       (spendByGroup.get(winner.group.id) ?? 0) + winner.spendUsd,
     );
     attributedSpendUsd += winner.spendUsd;
+
+    const aiSpendUsd = Math.min(
+      winner.spendUsd,
+      Math.max(0, winner.project.metrics
+        .filter((metric) => metric.category.toLowerCase() === "ai")
+        .reduce((sum, metric) => sum + metric.costUsd, 0)),
+    );
+    const nonAiSpendUsd = Math.max(0, winner.spendUsd - aiSpendUsd);
+    aiSpendByProject.set(projectId, aiSpendUsd);
+    nonAiSpendByProject.set(projectId, nonAiSpendUsd);
+
+    const info = getProjectInfo(winner.group.workspaceId, projectId);
+    if (
+      groupMembers &&
+      nonAiSpendUsd > 1e-9 &&
+      !hasProjectInfo(winner.group.workspaceId)
+    ) {
+      missingProjectInfoWorkspaces.add(winner.group.workspaceId);
+    }
+    const creatorId = info?.creatorId ?? null;
+    creatorByProject.set(projectId, creatorId);
+    const creatorOwner = creatorId === null
+      ? undefined
+      : [...groups]
+        .filter((group) => group.workspaceId === winner.group.workspaceId)
+        .sort(
+          (a, b) =>
+            a.workspaceId.localeCompare(b.workspaceId) ||
+            a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+            a.id.localeCompare(b.id),
+        )
+        .find((group) => (groupMembers?.get(group.id) ?? []).includes(creatorId));
+    if (!groupMembers) {
+      continue;
+    } else if (creatorOwner && creatorId !== null) {
+      creatorNonAiSpendByUser.set(
+        creatorId,
+        (creatorNonAiSpendByUser.get(creatorId) ?? 0) + nonAiSpendUsd,
+      );
+      const groupByUser = creatorNonAiSpendByGroup.get(creatorOwner.id) ?? new Map();
+      groupByUser.set(creatorId, (groupByUser.get(creatorId) ?? 0) + nonAiSpendUsd);
+      creatorNonAiSpendByGroup.set(creatorOwner.id, groupByUser);
+    } else {
+      unattributedSpendUsd += nonAiSpendUsd;
+    }
   }
 
   return {
     projectToGroup,
     spendByGroup,
+    aiSpendByProject,
+    nonAiSpendByProject,
+    creatorByProject,
+    creatorNonAiSpendByUser,
+    creatorNonAiSpendByGroup,
     unattributedSpendUsd,
-    totalSpendUsd: attributedSpendUsd + unattributedSpendUsd,
-    isComplete: loadedCount === groups.length,
-    pendingCount: groups.length - loadedCount,
+    totalSpendUsd: attributedSpendUsd + unidentifiedProjectSpendUsd,
+    isComplete: loadedCount === groups.length && missingProjectInfoWorkspaces.size === 0,
+    pendingCount: groups.length - loadedCount + missingProjectInfoWorkspaces.size,
   };
 }
 
@@ -2458,6 +2518,14 @@ export function getProjectInfo(workspaceId: string, projectId: string): ProjectI
   return infoMap.get(projectId) ?? { title: null, creatorId: null };
 }
 
+/** Test-only seam for creator-attribution fixtures. */
+export function __setProjectInfoForTests(
+  workspaceId: string,
+  projects: ReadonlyMap<string, ProjectInfo> | null,
+): void {
+  if (projects) projectInfoCache.set(workspaceId, new Map(projects));
+  else projectInfoCache.delete(workspaceId);
+}
 /** Returns true if project info (titles + creatorIds) has been fetched for this workspace. */
 export function hasProjectInfo(workspaceId: string): boolean {
   return projectInfoCache.has(workspaceId);
@@ -2678,6 +2746,13 @@ export interface CanonicalUsageResult extends DedupedUsageRollup {
   accountUsage: AccountUsage | null;
   accountReconciliationSpendUsd: number | null;
   projectAttribution: ProjectAttribution | null;
+  aiSpendByUser: ReadonlyMap<string, number>;
+  nonAiSpendByUser: ReadonlyMap<string, number>;
+  aiSpendByGroup: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  nonAiSpendByGroup: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  residualSpendByGroup: ReadonlyMap<string, number>;
+  residualSpendUsd: number;
+  creatorAttributionRequired: boolean;
 }
 
 export interface CanonicalGroupMergePlan {
@@ -2779,6 +2854,136 @@ export function getCanonicalUsage(
     groupMembers,
     directoryMembers,
   );
+  const projectAttribution = getProjectAttribution(
+    rangeKey,
+    groups,
+    workspaces,
+    groupMembers,
+  );
+
+  // Member-grouped usage is the canonical AI observation. Deduplicate a
+  // user/workspace across overlapping groups, then add only creator-attributed
+  // project non-AI. Group/account totals remain the authoritative workspace
+  // rollup above; any genuine gap is retained as residual instead of changing it.
+  const orderedGroups = [...groups].sort(
+    (a, b) =>
+      a.workspaceId.localeCompare(b.workspaceId) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+      a.id.localeCompare(b.id),
+  );
+  const aiSpendByUser = new Map<string, number>();
+  const nonAiSpendByUser = new Map<string, number>();
+  const aiSpendByGroup = new Map<string, Map<string, number>>();
+  const nonAiSpendByGroup = new Map<string, Map<string, number>>();
+  const attributedByGroup = new Map<string, Map<string, number>>();
+  for (const group of orderedGroups) {
+    attributedByGroup.set(group.id, new Map());
+    aiSpendByGroup.set(group.id, new Map());
+    nonAiSpendByGroup.set(group.id, new Map());
+  }
+  const remainingGroupCapacity = (groupId: string): number => {
+    const groupTotal = rollup.byGroup.get(groupId)?.spendUsd ?? 0;
+    const attributed = [...(attributedByGroup.get(groupId)?.values() ?? [])]
+      .reduce((sum, value) => sum + value, 0);
+    return Math.max(0, groupTotal - attributed);
+  };
+  for (const workspaceId of new Set(orderedGroups.map((group) => group.workspaceId))) {
+    const workspaceGroups = orderedGroups.filter((group) => group.workspaceId === workspaceId);
+    const users = new Set<string>();
+    for (const group of workspaceGroups) {
+      for (const userId of getMemberUsage(group.id, rangeKey)?.byUser.keys() ?? []) users.add(userId);
+    }
+    for (const userId of users) {
+      const owner = workspaceGroups.find((group) =>
+        (groupMembers?.get(group.id) ?? []).includes(userId),
+      );
+      if (!owner) continue;
+      const observedAiSpendUsd = workspaceGroups.reduce(
+        (max, group) => Math.max(max, getMemberUsage(group.id, rangeKey)?.byUser.get(userId) ?? 0),
+        0,
+      );
+      // A member table must never exceed its authoritative group rollup. This
+      // is an allocation guard (not residual clamping): any observation which
+      // cannot fit remains an explicit residual.
+      const aiSpendUsd = Math.min(observedAiSpendUsd, remainingGroupCapacity(owner.id));
+      aiSpendByUser.set(userId, (aiSpendByUser.get(userId) ?? 0) + aiSpendUsd);
+      attributedByGroup.get(owner.id)!.set(userId, aiSpendUsd);
+      aiSpendByGroup.get(owner.id)!.set(userId, aiSpendUsd);
+    }
+  }
+  for (const [winnerGroupId, nonAiByUser] of projectAttribution.creatorNonAiSpendByGroup) {
+    const winnerGroup = orderedGroups.find((group) => group.id === winnerGroupId);
+    if (!winnerGroup) continue;
+    const workspaceGroups = orderedGroups.filter(
+      (group) => group.workspaceId === winnerGroup.workspaceId,
+    );
+    for (const [userId, nonAiSpendUsd] of nonAiByUser) {
+      // Project deduplication selects the highest-total winning observation,
+      // but per-user ownership follows the same stable member owner as AI.
+      // Otherwise an overlapping creator can be counted in both their stable
+      // owner group and the winning project's group.
+      const owner = workspaceGroups.find((group) =>
+        (groupMembers?.get(group.id) ?? []).includes(userId),
+      );
+      if (!owner) continue;
+      const groupByUser = attributedByGroup.get(owner.id)!;
+      const attributedNonAiSpendUsd = Math.min(
+        nonAiSpendUsd,
+        remainingGroupCapacity(owner.id),
+      );
+      nonAiSpendByUser.set(
+        userId,
+        (nonAiSpendByUser.get(userId) ?? 0) + attributedNonAiSpendUsd,
+      );
+      groupByUser.set(
+        userId,
+        (groupByUser.get(userId) ?? 0) + attributedNonAiSpendUsd,
+      );
+      const nonAiGroupByUser = nonAiSpendByGroup.get(owner.id)!;
+      nonAiGroupByUser.set(
+        userId,
+        (nonAiGroupByUser.get(userId) ?? 0) + attributedNonAiSpendUsd,
+      );
+    }
+  }
+  const canonicalByUser = new Map<string, number>();
+  const residualSpendByGroup = new Map<string, number>();
+  for (const group of orderedGroups) {
+    const groupByUser = attributedByGroup.get(group.id)!;
+    const groupTotal = rollup.byGroup.get(group.id)?.spendUsd ?? 0;
+    let userTotal = 0;
+    for (const [userId, spendUsd] of groupByUser) {
+      userTotal += spendUsd;
+      canonicalByUser.set(userId, (canonicalByUser.get(userId) ?? 0) + spendUsd);
+    }
+    const residualSpendUsd = groupTotal - userTotal;
+    if (residualSpendUsd < -1e-9) {
+      throw new Error(`Canonical attribution exceeded authoritative total for group ${group.id}`);
+    }
+    residualSpendByGroup.set(group.id, Math.max(0, residualSpendUsd));
+    const rollupGroup = rollup.byGroup.get(group.id);
+    if (rollupGroup) {
+      (rollupGroup as { byUser: ReadonlyMap<string, number> }).byUser = groupByUser;
+    }
+  }
+  rollup.byUser = canonicalByUser;
+  const residualSpendUsd = [...residualSpendByGroup.values()].reduce((sum, value) => sum + value, 0) +
+    [...rollup.ungroupedByWorkspace.values()].reduce((sum, value) => sum + value.spendUsd, 0);
+  const aiSpendUsd = [...aiSpendByUser.values()].reduce((sum, value) => sum + value, 0);
+  const knownUngroupedResidualUsd = [...rollup.ungroupedByWorkspace.values()]
+    .reduce((sum, value) => sum + value.spendUsd, 0);
+  const loadedProjectNonAiSpendUsd = [...projectAttribution.nonAiSpendByProject.values()]
+    .reduce((sum, value) => sum + value, 0);
+  // Project inputs are required only when the authoritative totals contain a
+  // non-AI gap (or loaded project rows explicitly contain non-AI). This lets a
+  // fully-known AI-only range complete while project synchronization is cold,
+  // without declaring a range complete when hosting still needs a creator.
+  const creatorAttributionRequired =
+    loadedProjectNonAiSpendUsd > 1e-9 ||
+    rollup.totalSpendUsd - knownUngroupedResidualUsd - aiSpendUsd > 1e-9;
+  const effectiveProjectPendingCount = creatorAttributionRequired
+    ? projectAttribution.pendingCount
+    : 0;
   const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces);
   const displayGroups = groups.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
   const spendByPrimaryGroup = new Map<string, number>();
@@ -2806,8 +3011,14 @@ export function getCanonicalUsage(
     : 0;
   return {
     ...rollup,
-    isComplete: rollup.isComplete && missingMemberUsageCount === 0,
-    pendingCount: rollup.pendingCount + missingMemberUsageCount,
+    isComplete:
+      rollup.isComplete &&
+      missingMemberUsageCount === 0 &&
+      (!creatorAttributionRequired || projectAttribution.isComplete),
+    pendingCount:
+      rollup.pendingCount +
+      missingMemberUsageCount +
+      effectiveProjectPendingCount,
     rangeKey,
     mergePlan,
     displayGroups,
@@ -2817,7 +3028,14 @@ export function getCanonicalUsage(
     accountReconciliationSpendUsd: accountUsage
       ? accountUsage.totalCostUsd - rollup.totalSpendUsd
       : null,
-    projectAttribution: getProjectAttribution(rangeKey, groups, workspaces),
+    projectAttribution,
+    aiSpendByUser,
+    nonAiSpendByUser,
+    aiSpendByGroup,
+    nonAiSpendByGroup,
+    residualSpendByGroup,
+    residualSpendUsd,
+    creatorAttributionRequired,
   };
 }
 

@@ -468,10 +468,9 @@ paths:
       tags: [groups]
       summary: List canonical per-user activity
       description: >
-        Returns one row per visible member using the same workspace-aware,
-        all-metric attributed usage shown in group and cluster member tables.
-        Each user-workspace pair is counted once and distinct workspaces are
-        summed. Replit's in-product per-user table is Agent-only and may be lower.
+        Returns one row per visible member using the same canonical split shown
+        in group and cluster member tables: deduplicated member-grouped AI plus
+        non-AI project cost attributed to each current creator.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -505,9 +504,8 @@ paths:
       tags: [groups]
       summary: Export canonical per-user activity as CSV
       description: >
-        Exports the same selected-range, all-metric attributed per-user values
-        returned by User Activity. Values include AI, deployments, storage, and
-        other attributed metrics; Replit's in-product per-user table is Agent-only.
+        Exports the same selected-range per-user values returned by User Activity,
+        with separate AI, hosting/non-AI, and total spend columns.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -1273,7 +1271,7 @@ components:
           type: integer
         pendingCount:
           type: integer
-          description: Number of outstanding raw group-spend and member-usage fetches
+          description: Number of outstanding workspace, member, project-usage, or project-metadata inputs
         billingPeriodLabel:
           type: string
           description: Human label of the selected range, e.g. "Jul 2026" or "Year to date"
@@ -1282,7 +1280,7 @@ components:
           description: True when project usage for every visible custom group is loaded
         unattributedProjectSpendUsd:
           type: number
-          description: Project-level spend that could not be matched to a project ID and group
+          description: True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members
         teamRawSpend:
           type: object
           additionalProperties:
@@ -1362,7 +1360,7 @@ components:
           type: integer
     GroupMember:
       type: object
-      required: [userId, spendLoaded]
+      required: [userId, spendLoaded, aiSpendUsd, nonAiSpendUsd]
       properties:
         userId:
           type: string
@@ -1389,7 +1387,13 @@ components:
           type: boolean
         spendUsd:
           type: ["number", "null"]
-          description: Canonical all-metric attributed usage for this user across the caller's visible workspaces in the selected range
+          description: Canonical total of member-grouped AI plus creator-attributed project non-AI for this group
+        aiSpendUsd:
+          type: ["number", "null"]
+          description: Deduplicated member-grouped AI spend for this user in the group
+        nonAiSpendUsd:
+          type: ["number", "null"]
+          description: Non-AI project spend attributed to projects this current member created
         remainingUsd:
           type: ["number", "null"]
         percentUsed:
@@ -1409,7 +1413,7 @@ components:
           type: number
     GroupProject:
       type: object
-      required: [projectId, title, totalCostUsd, metrics, workspaceId, workspaceName]
+      required: [projectId, title, totalCostUsd, aiSpendUsd, nonAiSpendUsd, creatorId, creatorName, creatorIsCurrentMember, metrics, workspaceId, workspaceName]
       properties:
         projectId:
           type: string
@@ -1418,6 +1422,19 @@ components:
           description: Project title, or null if untitled
         totalCostUsd:
           type: number
+        aiSpendUsd:
+          type: number
+          description: AI-category metrics included in this project's total
+        nonAiSpendUsd:
+          type: number
+          description: Authoritative project total minus AI-category metrics
+        creatorId:
+          type: ["string", "null"]
+        creatorName:
+          type: ["string", "null"]
+        creatorIsCurrentMember:
+          type: boolean
+          description: Whether this project's non-AI cost can be attributed to its creator
         metrics:
           type: array
           items:
@@ -1457,7 +1474,7 @@ components:
           description: Sum of canonical per-user rows currently listed; informational and not a group budget accounting total
         unattributedSpendUsd:
           type: number
-          description: Group spend not attributable to a listed member (deleted users, shared costs)
+          description: True residual from rows without a project ID, missing creators, and creators who are no longer current group members
         isComplete:
           type: boolean
           description: False while member usage is still loading; poll every ~8s until true
@@ -1465,7 +1482,7 @@ components:
           type: string
     UserActivityEntry:
       type: object
-      required: [userId, username, email, teamName, groupName, spendUsd, workspaceRole]
+      required: [userId, username, email, teamName, groupName, spendUsd, aiSpendUsd, nonAiSpendUsd, workspaceRole]
       properties:
         userId:
           type: string
@@ -1479,7 +1496,13 @@ components:
           type: string
         spendUsd:
           type: number
-          description: Canonical all-metric attributed usage for the selected range
+          description: Canonical member AI plus creator-attributed project non-AI for the selected range
+        aiSpendUsd:
+          type: number
+          description: Deduplicated member-grouped AI spend
+        nonAiSpendUsd:
+          type: number
+          description: Non-AI spend from deduplicated projects created by this current member
         workspaceRole:
           type: string
     UserActivityResponse:

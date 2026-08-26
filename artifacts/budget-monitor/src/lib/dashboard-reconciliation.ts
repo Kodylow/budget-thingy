@@ -40,8 +40,9 @@ export function reconcileDashboardSpend({
 
   return {
     residualSpendUsd: projectSpendLoaded ? unattributedProjectSpendUsd : null,
-    totalSpendUsd:
-      visibleRollupSpendUsd + (projectSpendLoaded ? unattributedProjectSpendUsd : 0),
+    // The authoritative visible rollup already contains this residual. It is
+    // exposed as a distribution/reconciliation line, never added a second time.
+    totalSpendUsd: visibleRollupSpendUsd,
     isTotalLoaded: projectSpendLoaded,
   };
 }

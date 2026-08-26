@@ -12,7 +12,11 @@ export interface UserActivityEntry {
   email: string;
   teamName: string;
   groupName: string;
-  /** Canonical all-metric attributed usage for the selected range */
+  /** Canonical member AI plus creator-attributed project non-AI for the selected range */
   spendUsd: number;
+  /** Deduplicated member-grouped AI spend */
+  aiSpendUsd: number;
+  /** Non-AI spend from deduplicated projects created by this current member */
+  nonAiSpendUsd: number;
   workspaceRole: string;
 }

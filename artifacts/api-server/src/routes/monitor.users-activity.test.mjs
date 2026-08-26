@@ -17,11 +17,14 @@ import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
 import {
   __setDirectoryCacheForTests,
   __setMemberUsageForTests,
+  __setProjectUsageForTests,
+  __setProjectInfoForTests,
   __setWsSpendForTests,
 } from "../lib/enterprise.ts";
 
 const RANGE = "billing:from-cutoff";
 const CUSTOM_RANGE = "custom:2026-06-01:2026-06-30";
+const READINESS_RANGE = "custom:2026-07-01:2026-07-31";
 
 function m(userId, isAccountAdmin, workspaces = {}) {
   return {
@@ -92,13 +95,22 @@ test.before(async () => {
 });
 
 test.after(async () => {
-  for (const g of groups) __setMemberUsageForTests(g.id, RANGE, null);
+  for (const g of groups) {
+    __setMemberUsageForTests(g.id, RANGE, null);
+    __setMemberUsageForTests(g.id, CUSTOM_RANGE, null);
+    __setMemberUsageForTests(g.id, READINESS_RANGE, null);
+  }
   __setWsSpendForTests("ws-1", RANGE, null);
   __setWsSpendForTests("ws-2", RANGE, null);
   __setWsSpendForTests("ws-extra", RANGE, null);
   __setWsSpendForTests("ws-1", CUSTOM_RANGE, null);
   __setWsSpendForTests("ws-2", CUSTOM_RANGE, null);
   __setWsSpendForTests("ws-extra", CUSTOM_RANGE, null);
+  __setWsSpendForTests("ws-1", READINESS_RANGE, null);
+  __setWsSpendForTests("ws-2", READINESS_RANGE, null);
+  __setWsSpendForTests("ws-extra", READINESS_RANGE, null);
+  for (const group of groups) __setProjectUsageForTests(group.id, READINESS_RANGE, null);
+  __setProjectInfoForTests("ws-1", null);
   __setDirectoryCacheForTests(null);
   setAuthorizationResolver(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
@@ -112,6 +124,65 @@ async function activity(user = "acct", query = "") {
   assert.equal(res.status, 200);
   return res.json();
 }
+
+test("per-user API and CSV wait for member usage after workspace and project inputs are ready", async () => {
+  __setWsSpendForTests("ws-1", READINESS_RANGE, new Map([["denise", 60]]));
+  __setWsSpendForTests("ws-2", READINESS_RANGE, new Map([["denise", 40]]));
+  __setWsSpendForTests("ws-extra", READINESS_RANGE, new Map());
+  __setProjectUsageForTests("sg-admins-ws1", READINESS_RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 20,
+    byProject: new Map([["hosting", {
+      projectId: "hosting",
+      totalCostUsd: 20,
+      metrics: [],
+    }]]),
+  });
+  for (const groupId of ["sg-devs-ws1", "sg-admins-ws2"]) {
+    __setProjectUsageForTests(groupId, READINESS_RANGE, {
+      fetchedAt: Date.now(),
+      totalCostUsd: 0,
+      byProject: new Map(),
+    });
+  }
+  __setProjectInfoForTests("ws-1", new Map([
+    ["hosting", { title: "Hosting", creatorId: "denise" }],
+  ]));
+  for (const group of groups) {
+    __setMemberUsageForTests(group.id, READINESS_RANGE, null);
+  }
+  const query = "?rangeType=custom&startDate=2026-07-01&endDate=2026-07-31";
+
+  const coldActivity = await activity("acct", query);
+  assert.equal(coldActivity.isComplete, false);
+  const coldCsv = await fetch(`${baseUrl}/api/export/users.csv${query}`, {
+    headers: { "x-test-user": "acct" },
+  });
+  assert.equal(coldCsv.status, 200);
+  assert.equal(coldCsv.headers.get("x-export-complete"), "false");
+
+  __setMemberUsageForTests("sg-admins-ws1", READINESS_RANGE, new Map([["denise", 40]]));
+  __setMemberUsageForTests("sg-devs-ws1", READINESS_RANGE, new Map());
+  __setMemberUsageForTests("sg-admins-ws2", READINESS_RANGE, new Map([["denise", 40]]));
+
+  const warmActivity = await activity("acct", query);
+  assert.equal(warmActivity.isComplete, true);
+  const denise = warmActivity.users.find((user) => user.username === "denise");
+  assert.equal(denise.aiSpendUsd, 80);
+  assert.equal(denise.nonAiSpendUsd, 20);
+  assert.equal(denise.spendUsd, 100);
+
+  const warmCsv = await fetch(`${baseUrl}/api/export/users.csv${query}`, {
+    headers: { "x-test-user": "acct" },
+  });
+  assert.equal(warmCsv.status, 200);
+  assert.equal(warmCsv.headers.get("x-export-complete"), "true");
+  const csvRows = parseCsv(await warmCsv.text());
+  const csvDenise = csvRows.find((row) => row.Username === "denise");
+  assert.equal(csvDenise["AI Spend (USD)"], "80.00");
+  assert.equal(csvDenise["Hosting / Non-AI Spend (USD)"], "20.00");
+  assert.equal(csvDenise["Spend (USD)"], "100.00");
+});
 
 test("canonical by-user totals count each workspace once and sum distinct workspaces", async () => {
   __setMemberUsageForTests("sg-admins-ws1", RANGE, new Map([["denise", 100]]));
@@ -128,10 +199,10 @@ test("canonical by-user totals count each workspace once and sum distinct worksp
   assert.ok(denise, "denise must appear");
   // ws-1 is one authoritative observation despite overlapping groups.
   // ws-2: 700
-  // extra: 25
-  // Total: 100 + 700 + 25 = 825.
-  assert.equal(denise.spendUsd, 825,
-    "spend = one observation per workspace: ws-1=100 + ws-2=700 + extra=25");
+  // Extra-workspace spend without a custom-group project remains in the
+  // explicit workspace residual rather than being assigned to Denise.
+  assert.equal(denise.spendUsd, 800,
+    "spend = deduplicated member-grouped AI: ws-1=100 + ws-2=700");
   // Displayed group = highest single-group spend (Admins in ws-2, $700).
   assert.equal(denise.groupName, "Admins");
   // workspaceRole reflects the attributed (highest-spend) group's workspace: ws-2 member.
@@ -141,10 +212,11 @@ test("canonical by-user totals count each workspace once and sum distinct worksp
   assert.equal(eve.spendUsd, 20);
   assert.equal(eve.groupName, "Devs");
 
-  // dave has NO custom group — extra-workspace spend still shows for account admins.
+  // Dave has no custom group, so his extra-workspace amount remains in the
+  // explicit workspace residual instead of canonical per-user attribution.
   const dave = json.users.find((u) => u.username === "dave");
   assert.ok(dave, "ungrouped extra-workspace user must appear for account admins");
-  assert.equal(dave.spendUsd, 40, "ungrouped user's extra-workspace spend must be included");
+  assert.equal(dave.spendUsd, 0);
   assert.equal(dave.groupName, "");
 });
 
@@ -183,12 +255,15 @@ test("selected custom range has API, group-detail, cluster-source, and CSV parit
   __setWsSpendForTests("ws-1", CUSTOM_RANGE, new Map([["denise", 40], ["eve", 5]]));
   __setWsSpendForTests("ws-2", CUSTOM_RANGE, new Map([["denise", 40]]));
   __setWsSpendForTests("ws-extra", CUSTOM_RANGE, new Map([["denise", 15], ["dave", 7]]));
+  __setMemberUsageForTests("sg-admins-ws1", CUSTOM_RANGE, new Map([["denise", 40]]));
+  __setMemberUsageForTests("sg-devs-ws1", CUSTOM_RANGE, new Map([["eve", 5]]));
+  __setMemberUsageForTests("sg-admins-ws2", CUSTOM_RANGE, new Map([["denise", 40]]));
 
   const query = "?rangeType=custom&startDate=2026-06-01&endDate=2026-06-30";
   const activityJson = await activity("acct", query);
   assert.equal(activityJson.isComplete, true);
   const activityDenise = activityJson.users.find((user) => user.username === "denise");
-  assert.equal(activityDenise.spendUsd, 95, "40 + 40 + 15; equal values are not deduplicated across workspaces");
+  assert.equal(activityDenise.spendUsd, 80, "equal AI values in separate grouped workspaces are both retained");
 
   const detailRes = await fetch(`${baseUrl}/api/groups/sg-admins-ws1${query}`, {
     headers: { "x-test-user": "acct" },
@@ -198,7 +273,7 @@ test("selected custom range has API, group-detail, cluster-source, and CSV parit
   const detailDenise = detail.members.find((member) => member.username === "denise");
   assert.equal(detailDenise.spendUsd, activityDenise.spendUsd);
   // Cluster member tables merge these same group-detail member rows.
-  assert.equal(detailDenise.spendUsd, 95);
+  assert.equal(detailDenise.spendUsd, 80);
 
   const csvRes = await fetch(`${baseUrl}/api/export/users.csv${query}`, {
     headers: { "x-test-user": "acct" },

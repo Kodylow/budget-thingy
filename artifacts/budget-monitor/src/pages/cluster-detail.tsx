@@ -32,6 +32,8 @@ interface MergedMember {
   role: string;
   allRoles: string[];
   spendUsd: number;
+  aiSpendUsd: number;
+  nonAiSpendUsd: number;
   spendLoaded: boolean;
 }
 
@@ -145,6 +147,8 @@ export default function ClusterDetail() {
               role: subRole,
               allRoles: [subRole],
               spendUsd: spend,
+              aiSpendUsd: m.aiSpendUsd ?? 0,
+              nonAiSpendUsd: m.nonAiSpendUsd ?? 0,
               spendLoaded: m.spendLoaded,
             });
             seenUserIds.add(m.userId);
@@ -155,6 +159,9 @@ export default function ClusterDetail() {
             if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
             existing.role = bestRole;
             existing.spendLoaded = existing.spendLoaded && m.spendLoaded;
+            existing.spendUsd += spend;
+            existing.aiSpendUsd += m.aiSpendUsd ?? 0;
+            existing.nonAiSpendUsd += m.nonAiSpendUsd ?? 0;
           }
         }
       }
@@ -307,9 +314,8 @@ export default function ClusterDetail() {
           <CardTitle>Members</CardTitle>
           <CardDescription>
             Each person appears once. Role shows their highest privilege across{' '}
-            {sortedRoleLabels.join(' / ')} sub-groups. Spend includes AI, deployments,
-            storage, and other attributed metrics for the selected range; Replit&apos;s
-            in-product per-user table is Agent-only and may be lower.
+            {sortedRoleLabels.join(' / ')} sub-groups. Spend combines member AI with
+            creator-attributed project hosting and other non-AI costs.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -320,6 +326,8 @@ export default function ClusterDetail() {
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Role</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting / Non-AI</th>
                 </tr>
               </thead>
               <tbody>
@@ -367,6 +375,12 @@ export default function ClusterDetail() {
                         </span>
                       )}
                     </td>
+                    <td className="py-3 px-4 text-right text-sm font-mono tabular-nums">
+                      {member.spendLoaded ? `$${member.aiSpendUsd.toFixed(2)}` : '—'}
+                    </td>
+                    <td className="py-3 px-4 text-right text-sm font-mono tabular-nums">
+                      {member.spendLoaded ? `$${member.nonAiSpendUsd.toFixed(2)}` : '—'}
+                    </td>
                   </tr>
                 ))}
 
@@ -374,8 +388,8 @@ export default function ClusterDetail() {
                   <tr className="border-b border-border/50 bg-muted/10">
                     <td className="py-3 px-4">
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium italic">Unattributed Spend</span>
-                        <span className="text-xs text-muted-foreground">Deleted users or shared costs</span>
+                        <span className="text-sm font-medium italic">Unattributed residual</span>
+                        <span className="text-xs text-muted-foreground">No project ID, missing creator, or creator no longer a member</span>
                       </div>
                     </td>
                     <td className="py-3 px-4" />
@@ -384,6 +398,8 @@ export default function ClusterDetail() {
                         ${totalUnattributedSpend.toFixed(2)}
                       </span>
                     </td>
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
                   </tr>
                 )}
               </tbody>
@@ -396,6 +412,8 @@ export default function ClusterDetail() {
                       ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
                     </span>
                   </td>
+                  <td className="py-3 px-4" />
+                  <td className="py-3 px-4" />
                 </tr>
               </tfoot>
             </table>
@@ -522,7 +540,7 @@ export default function ClusterDetail() {
                   ))}
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
-                      ${(mergedProjects.reduce((s, p) => s + p.totalCostUsd, 0) + projectsUnattributedSpend).toFixed(2)}
+                      ${mergedProjects.reduce((s, p) => s + p.totalCostUsd, 0).toFixed(2)}
                     </span>
                   </td>
                 </tr>

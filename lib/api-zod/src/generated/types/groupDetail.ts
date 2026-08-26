@@ -13,7 +13,7 @@ export interface GroupDetail {
   members: GroupMember[];
   /** Sum of canonical per-user rows currently listed; informational and not a group budget accounting total */
   membersSpendUsd: number;
-  /** Group spend not attributable to a listed member (deleted users, shared costs) */
+  /** True residual from rows without a project ID, missing creators, and creators who are no longer current group members */
   unattributedSpendUsd: number;
   /** False while member usage is still loading; poll every ~8s until true */
   isComplete: boolean;

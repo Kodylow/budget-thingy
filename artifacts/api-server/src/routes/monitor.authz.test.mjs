@@ -98,7 +98,7 @@ test.before(async () => {
       byProject: new Map([[`${groupId}-project`, {
         projectId: `${groupId}-project`,
         totalCostUsd: spend,
-        metrics: [],
+        metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: spend }],
       }]]),
     });
   }

@@ -214,13 +214,13 @@ export interface GroupsResponse {
   syncError?: string | null;
   failedCount: number;
   partialCount: number;
-  /** Number of outstanding raw group-spend and member-usage fetches */
+  /** Number of outstanding workspace, member, project-usage, or project-metadata inputs */
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
   /** True when project usage for every visible custom group is loaded */
   projectSpendLoaded: boolean;
-  /** Project-level spend that could not be matched to a project ID and group */
+  /** True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members */
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */
   teamRawSpend: GroupsResponseTeamRawSpend;
@@ -303,10 +303,20 @@ export interface GroupMember {
   budgetSource?: string | null;
   spendLoaded: boolean;
   /**
-     * Canonical all-metric attributed usage for this user across the caller's visible workspaces in the selected range
+     * Canonical total of member-grouped AI plus creator-attributed project non-AI for this group
      * @nullable
      */
   spendUsd?: number | null;
+  /**
+     * Deduplicated member-grouped AI spend for this user in the group
+     * @nullable
+     */
+  aiSpendUsd: number | null;
+  /**
+     * Non-AI project spend attributed to projects this current member created
+     * @nullable
+     */
+  nonAiSpendUsd: number | null;
   /** @nullable */
   remainingUsd?: number | null;
   /** @nullable */
@@ -329,6 +339,16 @@ export interface GroupProject {
      */
   title: string | null;
   totalCostUsd: number;
+  /** AI-category metrics included in this project's total */
+  aiSpendUsd: number;
+  /** Authoritative project total minus AI-category metrics */
+  nonAiSpendUsd: number;
+  /** @nullable */
+  creatorId: string | null;
+  /** @nullable */
+  creatorName: string | null;
+  /** Whether this project's non-AI cost can be attributed to its creator */
+  creatorIsCurrentMember: boolean;
   metrics: ProjectMetric[];
   /**
      * Workspace the project belongs to, null when unknown
@@ -355,7 +375,7 @@ export interface GroupDetail {
   members: GroupMember[];
   /** Sum of canonical per-user rows currently listed; informational and not a group budget accounting total */
   membersSpendUsd: number;
-  /** Group spend not attributable to a listed member (deleted users, shared costs) */
+  /** True residual from rows without a project ID, missing creators, and creators who are no longer current group members */
   unattributedSpendUsd: number;
   /** False while member usage is still loading; poll every ~8s until true */
   isComplete: boolean;
@@ -368,8 +388,12 @@ export interface UserActivityEntry {
   email: string;
   teamName: string;
   groupName: string;
-  /** Canonical all-metric attributed usage for the selected range */
+  /** Canonical member AI plus creator-attributed project non-AI for the selected range */
   spendUsd: number;
+  /** Deduplicated member-grouped AI spend */
+  aiSpendUsd: number;
+  /** Non-AI spend from deduplicated projects created by this current member */
+  nonAiSpendUsd: number;
   workspaceRole: string;
 }
 

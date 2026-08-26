@@ -16,6 +16,7 @@ import {
   __setAccountUsageForTests,
   __setMemberUsageForTests,
   __setProjectUsageForTests,
+  __setProjectInfoForTests,
   __setWsSpendForTests,
   __setBillingPeriodForTests,
   resolvePaceUsageRange,
@@ -79,7 +80,7 @@ function setProjectSpend(alpha, beta, alphaResidual = 0) {
           ? [[`${groupId}-project`, {
               projectId: `${groupId}-project`,
               totalCostUsd: spend,
-              metrics: [],
+              metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: spend }],
             }]]
           : [],
       ),
@@ -283,6 +284,158 @@ async function getCsv() {
   });
 }
 
+test("project export identifies stable creator attribution and non-AI residuals", async () => {
+  __setProjectUsageForTests("sg-alpha", RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 60,
+    byProject: new Map([["owned", {
+      projectId: "owned",
+      totalCostUsd: 60,
+      metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: 20 }],
+    }]]),
+  });
+  __setProjectUsageForTests("sg-beta", RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 90,
+    byProject: new Map([
+      ["owned", {
+        projectId: "owned",
+        totalCostUsd: 80,
+        metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: 20 }],
+      }],
+      ["former", { projectId: "former", totalCostUsd: 10, metrics: [] }],
+    ]),
+  });
+  __setProjectInfoForTests("ws-main", new Map([
+    ["owned", { title: "Owned", creatorId: "alice" }],
+    ["former", { title: "Former", creatorId: "former-creator" }],
+  ]));
+  try {
+    const res = await fetch(`${baseUrl}/api/projects/export`, {
+      headers: { "x-test-user": "acct" },
+    });
+    assert.equal(res.status, 200);
+    const lines = (await res.text()).trim().split(/\r?\n/);
+    const unquote = (value) => value.trim().replace(/^"|"$/g, "").replace(/""/g, '"');
+    const header = lines[0].split(",").map(unquote);
+    const rows = lines.slice(1).map((line) => Object.fromEntries(
+      line.split(",").map(unquote).map((value, index) => [header[index], value]),
+    ));
+    const owned = rows.find((row) => row["Project ID"] === "owned");
+    assert.equal(owned["Creator Is Current Member"], "Yes");
+    assert.equal(owned["Attributed Group"], "Alpha");
+    assert.equal(owned["Attributed Non-AI ($)"], "60.0000");
+    assert.equal(owned["Unattributed Non-AI Residual ($)"], "0.0000");
+    const former = rows.find((row) => row["Project ID"] === "former");
+    assert.equal(former["Creator Is Current Member"], "No");
+    assert.equal(former["Attributed Group"], "");
+    assert.equal(former["Attributed Non-AI ($)"], "0.0000");
+    assert.equal(former["Unattributed Non-AI Residual ($)"], "10.0000");
+  } finally {
+    __setProjectInfoForTests("ws-main", null);
+    setProjectSpend(0, 0);
+  }
+});
+
+test("project export uses canonical group-ID tie breaking for equal project observations", async () => {
+  __setDirectoryCacheForTests({
+    workspaces: wsExtra,
+    groups: [groups[1], groups[0]],
+    members,
+    groupMembers: new Map([
+      ["sg-alpha", ["alice", "carol"]],
+      ["sg-beta", ["alice", "bob"]],
+    ]),
+  });
+  __setProjectUsageForTests("sg-alpha", RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 50,
+    byProject: new Map([["tied", {
+      projectId: "tied",
+      totalCostUsd: 50,
+      metrics: [{ id: "ai-alpha", name: "AI", category: "ai", costUsd: 10 }],
+    }]]),
+  });
+  __setProjectUsageForTests("sg-beta", RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 50,
+    byProject: new Map([["tied", {
+      projectId: "tied",
+      totalCostUsd: 50,
+      metrics: [{ id: "ai-beta", name: "AI", category: "ai", costUsd: 20 }],
+    }]]),
+  });
+  __setProjectInfoForTests("ws-main", new Map([
+    ["tied", { title: "Tied", creatorId: "alice" }],
+  ]));
+  try {
+    const res = await fetch(`${baseUrl}/api/projects/export`, {
+      headers: { "x-test-user": "acct" },
+    });
+    assert.equal(res.status, 200);
+    const lines = (await res.text()).trim().split(/\r?\n/);
+    const unquote = (value) => value.trim().replace(/^"|"$/g, "").replace(/""/g, '"');
+    const header = lines[0].split(",").map(unquote);
+    const row = lines.slice(1)
+      .map((line) => Object.fromEntries(line.split(",").map(unquote).map((value, index) => [header[index], value])))
+      .find((candidate) => candidate["Project ID"] === "tied");
+    assert.equal(row["AI ($)"], "10.0000");
+    assert.equal(row["Attributed Non-AI ($)"], "40.0000");
+  } finally {
+    __setProjectInfoForTests("ws-main", null);
+    setProjectSpend(0, 0);
+    restoreDir();
+  }
+});
+
+test("cluster project ties are deterministic in either cluster group order", async () => {
+  __setProjectUsageForTests("sg-alpha", RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 50,
+    byProject: new Map([["cluster-tied", {
+      projectId: "cluster-tied",
+      totalCostUsd: 50,
+      metrics: [{ id: "ai-alpha", name: "Alpha AI", category: "ai", costUsd: 10 }],
+    }]]),
+  });
+  __setProjectUsageForTests("sg-beta", RANGE, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 50,
+    byProject: new Map([["cluster-tied", {
+      projectId: "cluster-tied",
+      totalCostUsd: 50,
+      metrics: [{ id: "ai-beta", name: "Beta AI", category: "ai", costUsd: 20 }],
+    }]]),
+  });
+  __setProjectInfoForTests("ws-main", new Map([
+    ["cluster-tied", { title: "Cluster Tied", creatorId: "alice" }],
+  ]));
+  try {
+    const requestOrder = async (clusterKey) => {
+      const res = await fetch(`${baseUrl}/api/clusters/${clusterKey}/projects`, {
+        headers: { "x-test-user": "acct" },
+      });
+      assert.equal(res.status, 200);
+      return res.json();
+    };
+    const alphaFirst = await requestOrder("sg-alpha,sg-beta");
+    const betaFirst = await requestOrder("sg-beta,sg-alpha");
+    assert.deepEqual(betaFirst, alphaFirst);
+    assert.equal(alphaFirst.projects.length, 1);
+    assert.deepEqual(alphaFirst.projects[0].metrics, [
+      { id: "ai-alpha", name: "Alpha AI", category: "ai", costUsd: 10 },
+    ]);
+    assert.equal(alphaFirst.projects[0].aiSpendUsd, 10);
+    assert.equal(alphaFirst.projects[0].nonAiSpendUsd, 40);
+    assert.equal(alphaFirst.projects[0].creatorId, "alice");
+    assert.equal(alphaFirst.projects[0].creatorName, "alice");
+    assert.equal(alphaFirst.projects[0].creatorIsCurrentMember, true);
+  } finally {
+    __setProjectInfoForTests("ws-main", null);
+    setProjectSpend(0, 0);
+  }
+});
+
 test("CSV: users always have group/team even on a cold cache (zero spend)", async () => {
   // Cold cache: neither authoritative workspace usage nor fallback member usage loaded.
   // Every grouped member must still appear with their group/team.
@@ -348,8 +501,9 @@ test("CSV attribution matches dashboard even when API returns groups in reverse 
   assert.ok(alice, "alice must appear in CSV");
   // alice's group must be Alpha (not Beta) regardless of directory order
   assert.equal(alice["Group"], "Alpha", `alice must be attributed to Alpha; got ${alice["Group"]}`);
-  // ws-main: 30. Extra-ws: 5. Combined: 35.
-  assert.equal(alice["Spend (USD)"], "35.00", `alice spend must be $35; got ${alice["Spend (USD)"]}`);
+  // Canonical user attribution includes member-grouped AI; the ungrouped
+  // extra-workspace observation remains in the explicit workspace residual.
+  assert.equal(alice["Spend (USD)"], "30.00", `alice spend must be $30; got ${alice["Spend (USD)"]}`);
 
   restoreDir();
 });
@@ -397,8 +551,8 @@ test("CSV: user with $0 in first group gets full combined spend in CSV row for t
   assert.ok(alice, "alice must appear in CSV");
   // Canonical stable attribution assigns overlapping members to Alpha.
   assert.equal(alice["Group"], "Alpha");
-  // alice: $10 ws-main + $5 extra = $15
-  assert.equal(alice["Spend (USD)"], "15.00", `alice spend must be $15; got ${alice["Spend (USD)"]}`);
+  // Extra-workspace spend without a custom-group project remains residual.
+  assert.equal(alice["Spend (USD)"], "10.00", `alice spend must be $10; got ${alice["Spend (USD)"]}`);
 });
 
 // ── Dedup correctness: shared user + missing earlier group ─────────────────────────
@@ -500,7 +654,7 @@ test("same-name migration aliases reconcile groups, summary pools, and cluster h
       byProject: new Map([[`${group.id}-project`, {
         projectId: `${group.id}-project`,
         totalCostUsd: 1,
-        metrics: [],
+        metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: 1 }],
       }]]),
     });
   }
@@ -600,6 +754,16 @@ test("trends use canonical workspace rollups for every bucket", async () => {
     __setMemberUsageForTests("sg-beta", range.key, new Map([["alice", 20], ["bob", 15]]));
     __setWsSpendForTests("ws-main", range.key, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
     __setWsSpendForTests("ws-extra", range.key, new Map());
+    __setProjectUsageForTests("sg-alpha", range.key, {
+      fetchedAt: Date.now(),
+      totalCostUsd: 0,
+      byProject: new Map(),
+    });
+    __setProjectUsageForTests("sg-beta", range.key, {
+      fetchedAt: Date.now(),
+      totalCostUsd: 0,
+      byProject: new Map(),
+    });
     cursor = new Date(Date.UTC(year, month + 1, 1));
   }
 
@@ -656,7 +820,7 @@ test("five team route percentages reconcile with the checker canonical fixture",
       byProject: new Map([[`${group.id}-project`, {
         projectId: `${group.id}-project`,
         totalCostUsd: 1,
-        metrics: [],
+        metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: 1 }],
       }]]),
     });
   }
@@ -791,10 +955,12 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
   // can become true without the admin first visiting /groups or /summary.
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
-  __setWsSpendForTests("ws-main", RANGE, null);
-  __setWsSpendForTests("ws-extra", RANGE, null);
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
+  __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20]]));
+  setProjectSpend(0, 0);
 
-  // First request: caches cold — spendLoaded must be false (rollup not complete).
+  // Workspace and project inputs are ready, but creator-attributed member
+  // splits must remain incomplete until every member-usage payload arrives.
   const cold = await req("/groups/sg-beta");
   assert.equal(cold.isComplete, false, "detail is incomplete while member usage caches are cold");
   assert.equal(cold.group.spendLoaded, false, "group card spendLoaded must be false on cold cache");
@@ -802,10 +968,7 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
   // Warm all caches as the background queue would do after the first request.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
-  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
-  __setWsSpendForTests("ws-extra", RANGE, new Map([["alice", 20]]));
-
-  // Second request: caches warm — spendLoaded must be true and spend correct.
+  // Second request: member inputs are now warm — spendLoaded is final.
   const warm = await req("/groups/sg-beta");
   assert.equal(warm.isComplete, true, "detail must be complete once all caches are warm");
   assert.equal(warm.group.spendLoaded, true, "group card spendLoaded must be true once complete");
@@ -944,7 +1107,11 @@ function seedOtProject(groupId, spend, residual = 0) {
     totalCostUsd: spend + residual,
     byProject: new Map(
       spend > 0
-        ? [[`${groupId}-proj`, { projectId: `${groupId}-proj`, totalCostUsd: spend, metrics: [] }]]
+        ? [[`${groupId}-proj`, {
+            projectId: `${groupId}-proj`,
+            totalCostUsd: spend,
+            metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: spend }],
+          }]]
         : [],
     ),
   });
@@ -1171,6 +1338,16 @@ test("group pace spend excludes usage before a later discovered billing start", 
   __setMemberUsageForTests("sg-beta", paceRange.key, new Map([["alice", 2], ["bob", 3]]));
   __setWsSpendForTests("ws-main", paceRange.key, new Map([["alice", 7], ["carol", 1], ["bob", 3]]));
   __setWsSpendForTests("ws-extra", paceRange.key, new Map([["alice", 4], ["carol", 0.5], ["dave", 1]]));
+  __setProjectUsageForTests("sg-alpha", paceRange.key, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 0,
+    byProject: new Map(),
+  });
+  __setProjectUsageForTests("sg-beta", paceRange.key, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 0,
+    byProject: new Map(),
+  });
 
   try {
     const json = await req("/groups");
@@ -1186,6 +1363,8 @@ test("group pace spend excludes usage before a later discovered billing start", 
     __setMemberUsageForTests("sg-beta", paceRange.key, null);
     __setWsSpendForTests("ws-main", paceRange.key, null);
     __setWsSpendForTests("ws-extra", paceRange.key, null);
+    __setProjectUsageForTests("sg-alpha", paceRange.key, null);
+    __setProjectUsageForTests("sg-beta", paceRange.key, null);
     __setBillingPeriodForTests(null);
   }
 });

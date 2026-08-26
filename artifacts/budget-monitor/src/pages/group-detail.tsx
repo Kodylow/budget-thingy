@@ -195,9 +195,8 @@ export default function GroupDetail() {
         <CardHeader>
           <CardTitle>Members</CardTitle>
           <CardDescription>
-            Per-user values include AI, deployments, storage, and other attributed metrics
-            for the selected range. Replit&apos;s in-product per-user table is Agent-only
-            and may be lower.
+            Each total combines deduplicated member AI usage with non-AI hosting,
+            storage, and other project costs attributed to that project&apos;s creator.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -208,6 +207,8 @@ export default function GroupDetail() {
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Allocated Budget</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting / Non-AI</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Remaining</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Usage</th>
                 </tr>
@@ -244,6 +245,12 @@ export default function GroupDetail() {
                         <span className="text-sm font-mono tabular-nums">${member.spendUsd?.toFixed(2) ?? '0.00'}</span>
                       )}
                     </td>
+                    <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
+                      {member.spendLoaded ? `$${(member.aiSpendUsd ?? 0).toFixed(2)}` : '—'}
+                    </td>
+                    <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
+                      {member.spendLoaded ? `$${(member.nonAiSpendUsd ?? 0).toFixed(2)}` : '—'}
+                    </td>
                     <td className="py-3 px-4 text-right">
                       {!member.spendLoaded || member.allocatedBudgetUsd === null || member.allocatedBudgetUsd === undefined ? <span className="text-sm text-muted-foreground">—</span> : (
                         <span className={`text-sm font-mono tabular-nums ${member.remainingUsd !== undefined && member.remainingUsd !== null && member.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
@@ -265,8 +272,8 @@ export default function GroupDetail() {
                   <tr className="border-b border-border/50 bg-muted/10">
                     <td className="py-3 px-4">
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium italic">Unattributed Spend</span>
-                        <span className="text-xs text-muted-foreground">Deleted users or shared costs</span>
+                        <span className="text-sm font-medium italic">Unattributed residual</span>
+                        <span className="text-xs text-muted-foreground">No project ID, missing creator, or creator no longer a member</span>
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right">
@@ -275,6 +282,8 @@ export default function GroupDetail() {
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm font-mono tabular-nums">${unattributedSpendUsd.toFixed(2)}</span>
                     </td>
+                    <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+                    <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm text-muted-foreground">—</span>
                     </td>
@@ -296,6 +305,12 @@ export default function GroupDetail() {
                     <span className="text-sm font-mono tabular-nums">
                       {displaySpendLoaded && displaySpend !== null ? `$${displaySpend.toFixed(2)}` : '—'}
                     </span>
+                  </td>
+                  <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
+                    {isComplete ? `$${members.reduce((sum, member) => sum + (member.aiSpendUsd ?? 0), 0).toFixed(2)}` : '—'}
+                  </td>
+                  <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
+                    {isComplete ? `$${members.reduce((sum, member) => sum + (member.nonAiSpendUsd ?? 0), 0).toFixed(2)}` : '—'}
                   </td>
                   <td className="py-3 px-4 text-right">
                     <span className={`text-sm font-mono tabular-nums ${group.remainingUsd !== undefined && group.remainingUsd !== null && group.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
@@ -346,11 +361,11 @@ export default function GroupDetail() {
                   ))
                 ) : (
                   projectsData?.projects.map((project) => {
-                    const aiSpend = project.metrics.filter(m => m.category === 'ai').reduce((s, m) => s + m.costUsd, 0);
+                    const aiSpend = project.aiSpendUsd;
                     const hostingSpend = project.metrics.filter(m => m.category === 'hosting').reduce((s, m) => s + m.costUsd, 0);
                     const storageSpend = project.metrics.filter(m => m.category === 'storage').reduce((s, m) => s + m.costUsd, 0);
                     // Remainder so the breakdown always sums to the total, regardless of API metric coverage.
-                    const otherSpend = Math.max(0, project.totalCostUsd - aiSpend - hostingSpend - storageSpend);
+                    const otherSpend = Math.max(0, project.nonAiSpendUsd - hostingSpend - storageSpend);
                     return (
                       <tr key={project.projectId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                         <td className="py-3 px-4">
@@ -360,6 +375,10 @@ export default function GroupDetail() {
                             {project.workspaceName && (
                               <span className="text-xs text-muted-foreground mt-0.5">{project.workspaceName}</span>
                             )}
+                            <span className="text-xs text-muted-foreground mt-0.5">
+                              Creator: {project.creatorName ?? 'Unknown'}
+                              {!project.creatorIsCurrentMember && ' (not currently attributable)'}
+                            </span>
                           </div>
                         </td>
                         <td className="py-3 px-4 text-right">
@@ -394,8 +413,8 @@ export default function GroupDetail() {
                   <tr className="border-b border-border/50 bg-muted/10">
                     <td className="py-3 px-4">
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium italic">Unattributed Spend</span>
-                        <span className="text-xs text-muted-foreground">Not linked to a specific project</span>
+                        <span className="text-sm font-medium italic">Unattributed project residual</span>
+                        <span className="text-xs text-muted-foreground">No project ID, missing creator, or creator no longer a member</span>
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>

@@ -86,6 +86,7 @@ vi.mock("./enterprise", () => ({
   },
   queueMemberUsageFetch: () => false,
   queueProjectUsageFetch: () => false,
+  queueProjectTitlesFetch: () => false,
   queueAllWorkspacesFetch: () => undefined,
   queueExtraWorkspacesFetch: (
     _dir: unknown,

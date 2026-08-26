@@ -925,13 +925,13 @@ export default function Dashboard() {
                         <div className="flex flex-col">
                           <span className="text-sm font-medium italic">
                             {isAccountWide
-                              ? 'Not in any group / unattributed / former members'
-                              : 'Unattributed projects'}
+                              ? 'True unattributed residual'
+                              : 'Unattributed project residual'}
                           </span>
                           <span className="text-xs text-muted-foreground">
                             {isAccountWide
-                              ? 'Difference between account usage and the groups shown above'
-                              : 'Project spend with no matching group'}
+                              ? 'No group/project ID, missing creator, or creator no longer a member'
+                              : 'No project ID, missing creator, or creator no longer a member'}
                           </span>
                         </div>
                       </td>

@@ -324,7 +324,7 @@ test("failed project metadata is not hydrated as complete and remains retryable"
   assert.equal(enterprise.hasProjectInfo(failedWorkspace), true);
 });
 
-test("project attribution prefers sub-workspaces, then highest spend, and reports unattributed residual", () => {
+test("project attribution uses highest cross-group total and reports unattributed residual", () => {
   const attributionRange = `custom:project-attribution-${crypto.randomUUID()}`;
   const groups = [
     { id: "comcast-a", workspaceId: "1awqan", name: "Comcast A", type: "custom" },
@@ -364,13 +364,13 @@ test("project attribution prefers sub-workspaces, then highest spend, and report
     new Map(),
   );
 
-  assert.equal(result.projectToGroup.get("shared"), "freewheel");
+  assert.equal(result.projectToGroup.get("shared"), "comcast-a");
   assert.equal(result.projectToGroup.get("primary-only"), "comcast-b");
-  assert.equal(result.projectToGroup.get("tie"), "freewheel");
-  assert.equal(result.spendByGroup.get("freewheel"), 4);
-  assert.equal(result.spendByGroup.get("comcast-b"), 8);
+  assert.equal(result.projectToGroup.get("tie"), "comcast-b");
+  assert.equal(result.spendByGroup.get("comcast-a"), 10);
+  assert.equal(result.spendByGroup.get("comcast-b"), 9);
   assert.equal(result.unattributedSpendUsd, 2);
-  assert.equal(result.totalSpendUsd, 14);
+  assert.equal(result.totalSpendUsd, 21);
   assert.equal(result.isComplete, true);
   assert.equal(result.pendingCount, 0);
 
@@ -386,6 +386,267 @@ test("project attribution prefers sub-workspaces, then highest spend, and report
   for (const group of groups) {
     enterprise.__setProjectUsageForTests(group.id, attributionRange, null);
   }
+});
+
+test("creator non-AI attribution reconciles users plus true residual to authoritative total", () => {
+  const rangeKey = `custom:creator-reconciliation-${crypto.randomUUID()}`;
+  const workspaceId = `workspace-${crypto.randomUUID()}`;
+  const group = { id: `group-${crypto.randomUUID()}`, workspaceId, name: "Creators", type: "custom" };
+  const currentCreator = "current-creator";
+  const formerCreator = "former-creator";
+
+  enterprise.__setMemberUsageForTests(group.id, rangeKey, new Map([[currentCreator, 40]]));
+  enterprise.__setWsSpendForTests(
+    workspaceId,
+    rangeKey,
+    new Map([[currentCreator, 100]]),
+    { totalCostUsd: 100, attributableTotalCostUsd: 100 },
+  );
+  enterprise.__setProjectUsageForTests(group.id, rangeKey, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 60,
+    byProject: new Map([
+      ["owned", {
+        projectId: "owned",
+        workspaceId,
+        totalCostUsd: 50,
+        metrics: [{ id: "agent", name: "Agent", category: "ai", costUsd: 10 }],
+      }],
+      ["former", {
+        projectId: "former",
+        workspaceId,
+        totalCostUsd: 10,
+        metrics: [],
+      }],
+    ]),
+  });
+  enterprise.__setProjectInfoForTests(workspaceId, new Map([
+    ["owned", { title: "Owned", creatorId: currentCreator }],
+    ["former", { title: "Former", creatorId: formerCreator }],
+  ]));
+
+  const canonical = enterprise.getCanonicalUsage(
+    [group],
+    rangeKey,
+    new Set([workspaceId]),
+    new Map([[group.id, [currentCreator]]]),
+    undefined,
+    undefined,
+    new Map([[workspaceId, { id: workspaceId, name: "Workspace" }]]),
+  );
+
+  assert.equal(canonical.aiSpendByUser.get(currentCreator), 40);
+  assert.equal(canonical.nonAiSpendByUser.get(currentCreator), 40);
+  assert.equal(canonical.byUser.get(currentCreator), 80);
+  assert.equal(canonical.residualSpendByGroup.get(group.id), 20);
+  assert.equal(canonical.totalSpendUsd, 100);
+  assert.equal(
+    [...canonical.byUser.values()].reduce((sum, value) => sum + value, 0) +
+      canonical.residualSpendUsd,
+    canonical.totalSpendUsd,
+  );
+  assert.equal(canonical.projectAttribution.unattributedSpendUsd, 10);
+  assert.equal(canonical.isComplete, true);
+
+  enterprise.__setMemberUsageForTests(group.id, rangeKey, null);
+  enterprise.__setWsSpendForTests(workspaceId, rangeKey, null);
+  enterprise.__setProjectUsageForTests(group.id, rangeKey, null);
+  enterprise.__setProjectInfoForTests(workspaceId, null);
+});
+
+test("canonical readiness waives cold project inputs only for a proven AI-only total", () => {
+  const rangeKey = `custom:project-readiness-${crypto.randomUUID()}`;
+  const workspaceId = `workspace-${crypto.randomUUID()}`;
+  const group = { id: `group-${crypto.randomUUID()}`, workspaceId, name: "AI Only", type: "custom" };
+  const userId = "ai-user";
+  const groupMembers = new Map([[group.id, [userId]]]);
+  const workspaces = new Map([[workspaceId, { id: workspaceId, name: "Workspace" }]]);
+
+  enterprise.__setMemberUsageForTests(group.id, rangeKey, new Map([[userId, 40]]));
+  enterprise.__setWsSpendForTests(
+    workspaceId,
+    rangeKey,
+    new Map([[userId, 40]]),
+    { totalCostUsd: 40, attributableTotalCostUsd: 40 },
+  );
+
+  const aiOnly = enterprise.getCanonicalUsage(
+    [group],
+    rangeKey,
+    new Set([workspaceId]),
+    groupMembers,
+    undefined,
+    undefined,
+    workspaces,
+  );
+  assert.equal(aiOnly.creatorAttributionRequired, false);
+  assert.equal(aiOnly.isComplete, true);
+  assert.equal(aiOnly.pendingCount, 0);
+
+  enterprise.__setWsSpendForTests(
+    workspaceId,
+    rangeKey,
+    new Map([[userId, 50]]),
+    { totalCostUsd: 50, attributableTotalCostUsd: 50 },
+  );
+  const unexplainedNonAiGap = enterprise.getCanonicalUsage(
+    [group],
+    rangeKey,
+    new Set([workspaceId]),
+    groupMembers,
+    undefined,
+    undefined,
+    workspaces,
+  );
+  assert.equal(unexplainedNonAiGap.creatorAttributionRequired, true);
+  assert.equal(unexplainedNonAiGap.isComplete, false);
+  assert.equal(unexplainedNonAiGap.pendingCount, 1);
+
+  enterprise.__setMemberUsageForTests(group.id, rangeKey, null);
+  enterprise.__setWsSpendForTests(workspaceId, rangeKey, null);
+});
+
+test("overlapping creator project winners use the stable owner and retain former or missing creators as winner residual", () => {
+  const rangeKey = `custom:overlap-project-owner-${crypto.randomUUID()}`;
+  const workspaceId = `workspace-${crypto.randomUUID()}`;
+  const alpha = { id: `alpha-${crypto.randomUUID()}`, workspaceId, name: "Alpha", type: "custom" };
+  const beta = { id: `beta-${crypto.randomUUID()}`, workspaceId, name: "Beta", type: "custom" };
+  const creatorId = "overlapping-creator";
+  const otherId = "beta-member";
+  const formerCreatorId = "former-creator";
+  const groupMembers = new Map([
+    [alpha.id, [creatorId]],
+    [beta.id, [creatorId, otherId]],
+  ]);
+  const workspaces = new Map([[workspaceId, { id: workspaceId, name: "Workspace" }]]);
+
+  enterprise.__setMemberUsageForTests(alpha.id, rangeKey, new Map([[creatorId, 10]]));
+  enterprise.__setMemberUsageForTests(beta.id, rangeKey, new Map([[creatorId, 10], [otherId, 0]]));
+  enterprise.__setWsSpendForTests(
+    workspaceId,
+    rangeKey,
+    new Map([[creatorId, 120], [otherId, 20]]),
+    { totalCostUsd: 140, attributableTotalCostUsd: 140 },
+  );
+  enterprise.__setProjectUsageForTests(alpha.id, rangeKey, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 80,
+    byProject: new Map([["current", { projectId: "current", totalCostUsd: 80, metrics: [] }]]),
+  });
+  enterprise.__setProjectUsageForTests(beta.id, rangeKey, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 110,
+    byProject: new Map([
+      ["current", { projectId: "current", totalCostUsd: 90, metrics: [] }],
+      ["former", { projectId: "former", totalCostUsd: 10, metrics: [] }],
+      ["missing", { projectId: "missing", totalCostUsd: 10, metrics: [] }],
+    ]),
+  });
+  enterprise.__setProjectInfoForTests(workspaceId, new Map([
+    ["current", { title: "Current", creatorId }],
+    ["former", { title: "Former", creatorId: formerCreatorId }],
+  ]));
+
+  const canonical = enterprise.getCanonicalUsage(
+    [alpha, beta],
+    rangeKey,
+    new Set([workspaceId]),
+    groupMembers,
+    undefined,
+    undefined,
+    workspaces,
+  );
+  assert.equal(canonical.byGroup.get(alpha.id)?.byUser.get(creatorId), 100);
+  assert.equal(canonical.byGroup.get(beta.id)?.byUser.get(creatorId) ?? 0, 0);
+  assert.equal(canonical.residualSpendByGroup.get(alpha.id), 20);
+  assert.equal(canonical.residualSpendByGroup.get(beta.id), 20);
+  assert.equal(canonical.projectAttribution.unattributedSpendUsd, 20);
+  for (const group of [alpha, beta]) {
+    const users = [...(canonical.byGroup.get(group.id)?.byUser.values() ?? [])]
+      .reduce((sum, value) => sum + value, 0);
+    assert.equal(
+      users + (canonical.residualSpendByGroup.get(group.id) ?? 0),
+      canonical.byGroup.get(group.id)?.spendUsd,
+    );
+  }
+  assert.equal(
+    [...canonical.byUser.values()].reduce((sum, value) => sum + value, 0) +
+      canonical.residualSpendUsd,
+    canonical.totalSpendUsd,
+  );
+  assert.equal(canonical.isComplete, true);
+
+  for (const group of [alpha, beta]) {
+    enterprise.__setMemberUsageForTests(group.id, rangeKey, null);
+    enterprise.__setProjectUsageForTests(group.id, rangeKey, null);
+  }
+  enterprise.__setWsSpendForTests(workspaceId, rangeKey, null);
+  enterprise.__setProjectInfoForTests(workspaceId, null);
+});
+
+test("project winner may exclude the creator while same-workspace stable ownership remains attributable", () => {
+  const rangeKey = `custom:winner-excludes-creator-${crypto.randomUUID()}`;
+  const workspaceId = `workspace-${crypto.randomUUID()}`;
+  const alpha = { id: `alpha-${crypto.randomUUID()}`, workspaceId, name: "Alpha", type: "custom" };
+  const beta = { id: `beta-${crypto.randomUUID()}`, workspaceId, name: "Beta", type: "custom" };
+  const creatorId = "creator";
+  const betaMemberId = "beta-member";
+  const groupMembers = new Map([
+    [alpha.id, [creatorId]],
+    [beta.id, [betaMemberId]],
+  ]);
+  const workspaces = new Map([[workspaceId, { id: workspaceId, name: "Workspace" }]]);
+  enterprise.__setMemberUsageForTests(alpha.id, rangeKey, new Map([[creatorId, 10]]));
+  enterprise.__setMemberUsageForTests(beta.id, rangeKey, new Map([[betaMemberId, 0]]));
+  enterprise.__setWsSpendForTests(
+    workspaceId,
+    rangeKey,
+    new Map([[creatorId, 100], [betaMemberId, 20]]),
+    { totalCostUsd: 120, attributableTotalCostUsd: 120 },
+  );
+  enterprise.__setProjectUsageForTests(alpha.id, rangeKey, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 80,
+    byProject: new Map([["project", { projectId: "project", totalCostUsd: 80, metrics: [] }]]),
+  });
+  enterprise.__setProjectUsageForTests(beta.id, rangeKey, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 90,
+    byProject: new Map([["project", { projectId: "project", totalCostUsd: 90, metrics: [] }]]),
+  });
+  enterprise.__setProjectInfoForTests(workspaceId, new Map([
+    ["project", { title: "Project", creatorId }],
+  ]));
+
+  const canonical = enterprise.getCanonicalUsage(
+    [alpha, beta],
+    rangeKey,
+    new Set([workspaceId]),
+    groupMembers,
+    undefined,
+    undefined,
+    workspaces,
+  );
+  assert.equal(canonical.projectAttribution.projectToGroup.get("project"), beta.id);
+  assert.equal(canonical.projectAttribution.creatorNonAiSpendByGroup.get(alpha.id)?.get(creatorId), 90);
+  assert.equal(canonical.byGroup.get(alpha.id)?.byUser.get(creatorId), 100);
+  assert.equal(canonical.byGroup.get(beta.id)?.byUser.get(creatorId) ?? 0, 0);
+  for (const group of [alpha, beta]) {
+    const users = [...(canonical.byGroup.get(group.id)?.byUser.values() ?? [])]
+      .reduce((sum, value) => sum + value, 0);
+    assert.equal(users + (canonical.residualSpendByGroup.get(group.id) ?? 0), canonical.byGroup.get(group.id)?.spendUsd);
+  }
+  assert.equal(
+    [...canonical.byUser.values()].reduce((sum, value) => sum + value, 0) + canonical.residualSpendUsd,
+    canonical.totalSpendUsd,
+  );
+
+  for (const group of [alpha, beta]) {
+    enterprise.__setMemberUsageForTests(group.id, rangeKey, null);
+    enterprise.__setProjectUsageForTests(group.id, rangeKey, null);
+  }
+  enterprise.__setWsSpendForTests(workspaceId, rangeKey, null);
+  enterprise.__setProjectInfoForTests(workspaceId, null);
 });
 
 test("billing period discovery exposes freshness, mismatch, fallback, and restart hydration", async () => {

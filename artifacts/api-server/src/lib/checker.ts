@@ -17,6 +17,7 @@ import {
   queueGroupSpendFetch,
   queueMemberUsageFetch,
   queueProjectUsageFetch,
+  queueProjectTitlesFetch,
   queueExtraWorkspacesFetch,
   queueAllWorkspacesFetch,
   getCanonicalUsage,
@@ -456,7 +457,11 @@ async function runCheckInternal(
   // this run defers and a later scheduled/manual run retries it.
   if (groups.length > 0 || teamsConfigured) {
     const range = resolveRange("billing");
-    for (const g of dir.groups) queueMemberUsageFetch(g, range, force ? 0 : 1, force);
+    for (const g of dir.groups) {
+      queueMemberUsageFetch(g, range, force ? 0 : 1, force);
+      queueProjectUsageFetch(g, range, force ? 0 : 1, force);
+      queueProjectTitlesFetch(g.workspaceId, force ? 0 : 1);
+    }
     queueExtraWorkspacesFetch(dir, range, force ? 0 : 1, force);
     queueAllWorkspacesFetch(dir, range, force ? 0 : 1, force);
     const canonical = getStrictCheckerCanonicalUsage(dir, teamByGroupName);
@@ -525,6 +530,7 @@ export function startChecker(): void {
       for (const g of ordered) {
         queueMemberUsageFetch(g, dashboardRange, 1);
         queueProjectUsageFetch(g, dashboardRange, 1);
+        queueProjectTitlesFetch(g.workspaceId, 1);
       }
       // Queue workspace_member fetches for ALL workspaces so the dashboard can use
       // MAX(group_member, workspace_member) to capture non-agent spend (compute etc.)

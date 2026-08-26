@@ -13,8 +13,14 @@ All headline group, team, budget, trend, cluster, and threshold-alert surfaces m
 
 Workspace-scoped callers must never receive the account anchor or its residual. Their dashboard retains the canonical rollup recomputed only over their visible workspace scope.
 
+For overlapping memberships, project observation ownership and creator ownership are separate decisions: choose the highest reported project total once, then assign its non-AI portion to the creator's stable canonical group in that workspace. A project winner that excludes the creator does not make the cost unattributable if another current same-workspace group owns that creator.
+
 **Why:**
 One server-owned attribution model prevents percentages and remaining budget from disagreeing between dashboard, trends, clusters, and alerts. The unfiltered account total guarantees every dollar is represented, while scoped admins remain isolated from enterprise-wide figures.
 
+Keeping creator ownership aligned with member ownership prevents one overlapping group from being over-allocated while another shows a false residual. Missing creators and former members remain true residuals.
+
 **How to apply:**
 Use canonical group/team maps for every row, rollup, budget, trend, and alert calculation; defer rather than calculate from incomplete usage. For account-wide headline/footer totals, use the gross anchor and render gross minus canonical as the residual row. Expose neither field to scoped viewers. Label stored alert values as send-time snapshots and project tables as attribution.
+
+Use the same stable tie-breaks in APIs and exports. Assert per group and aggregate that attributed users plus residual equal the authoritative total, including duplicate projects, tied observations, overlapping memberships, and winner groups that do not contain the creator.

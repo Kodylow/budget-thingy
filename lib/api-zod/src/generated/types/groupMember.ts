@@ -39,10 +39,20 @@ export interface GroupMember {
   budgetSource?: string | null;
   spendLoaded: boolean;
   /**
-     * Canonical all-metric attributed usage for this user across the caller's visible workspaces in the selected range
+     * Canonical total of member-grouped AI plus creator-attributed project non-AI for this group
      * @nullable
      */
   spendUsd?: number | null;
+  /**
+     * Deduplicated member-grouped AI spend for this user in the group
+     * @nullable
+     */
+  aiSpendUsd: number | null;
+  /**
+     * Non-AI project spend attributed to projects this current member created
+     * @nullable
+     */
+  nonAiSpendUsd: number | null;
   /** @nullable */
   remainingUsd?: number | null;
   /** @nullable */

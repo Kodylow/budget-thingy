@@ -160,10 +160,10 @@ export const ListGroupsResponse = zod.object({
   "syncError": zod.string().nullish(),
   "failedCount": zod.number(),
   "partialCount": zod.number(),
-  "pendingCount": zod.number().describe('Number of outstanding raw group-spend and member-usage fetches'),
+  "pendingCount": zod.number().describe('Number of outstanding workspace, member, project-usage, or project-metadata inputs'),
   "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"'),
   "projectSpendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded'),
-  "unattributedProjectSpendUsd": zod.number().describe('Project-level spend that could not be matched to a project ID and group'),
+  "unattributedProjectSpendUsd": zod.number().describe('True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members'),
   "teamRawSpend": zod.record(zod.string(), zod.object({
   "spendUsd": zod.number().describe('Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)'),
   "spendLoaded": zod.boolean().describe('True when member-level usage for every visible custom group is loaded')
@@ -227,12 +227,14 @@ export const GetGroupDetailResponse = zod.object({
   "allocatedBudgetUsd": zod.number().nullish().describe('Not used; always null (budgets are tracked at team level from the spreadsheet)'),
   "budgetSource": zod.string().nullish().describe('Not used; always null'),
   "spendLoaded": zod.boolean(),
-  "spendUsd": zod.number().nullish().describe('Canonical all-metric attributed usage for this user across the caller\'s visible workspaces in the selected range'),
+  "spendUsd": zod.number().nullish().describe('Canonical total of member-grouped AI plus creator-attributed project non-AI for this group'),
+  "aiSpendUsd": zod.number().nullable().describe('Deduplicated member-grouped AI spend for this user in the group'),
+  "nonAiSpendUsd": zod.number().nullable().describe('Non-AI project spend attributed to projects this current member created'),
   "remainingUsd": zod.number().nullish(),
   "percentUsed": zod.number().nullish()
 })),
   "membersSpendUsd": zod.number().describe('Sum of canonical per-user rows currently listed; informational and not a group budget accounting total'),
-  "unattributedSpendUsd": zod.number().describe('Group spend not attributable to a listed member (deleted users, shared costs)'),
+  "unattributedSpendUsd": zod.number().describe('True residual from rows without a project ID, missing creators, and creators who are no longer current group members'),
   "isComplete": zod.boolean().describe('False while member usage is still loading; poll every ~8s until true'),
   "rangeLabel": zod.string()
 })
@@ -257,6 +259,11 @@ export const GetGroupProjectsResponse = zod.object({
   "projectId": zod.string(),
   "title": zod.string().nullable().describe('Project title, or null if untitled'),
   "totalCostUsd": zod.number(),
+  "aiSpendUsd": zod.number().describe('AI-category metrics included in this project\'s total'),
+  "nonAiSpendUsd": zod.number().describe('Authoritative project total minus AI-category metrics'),
+  "creatorId": zod.string().nullable(),
+  "creatorName": zod.string().nullable(),
+  "creatorIsCurrentMember": zod.boolean().describe('Whether this project\'s non-AI cost can be attributed to its creator'),
   "metrics": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -290,6 +297,11 @@ export const GetClusterProjectsResponse = zod.object({
   "projectId": zod.string(),
   "title": zod.string().nullable().describe('Project title, or null if untitled'),
   "totalCostUsd": zod.number(),
+  "aiSpendUsd": zod.number().describe('AI-category metrics included in this project\'s total'),
+  "nonAiSpendUsd": zod.number().describe('Authoritative project total minus AI-category metrics'),
+  "creatorId": zod.string().nullable(),
+  "creatorName": zod.string().nullable(),
+  "creatorIsCurrentMember": zod.boolean().describe('Whether this project\'s non-AI cost can be attributed to its creator'),
   "metrics": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -425,7 +437,7 @@ export const GetTrendsResponse = zod.object({
 
 
 /**
- * Returns one row per visible member using the same workspace-aware, all-metric attributed usage shown in group and cluster member tables. Each user-workspace pair is counted once and distinct workspaces are summed. Replit's in-product per-user table is Agent-only and may be lower.
+ * Returns one row per visible member using the same canonical split shown in group and cluster member tables: deduplicated member-grouped AI plus non-AI project cost attributed to each current creator.
  * @summary List canonical per-user activity
  */
 export const GetUserActivityQueryParams = zod.object({
@@ -444,14 +456,16 @@ export const GetUserActivityResponse = zod.object({
   "email": zod.string(),
   "teamName": zod.string(),
   "groupName": zod.string(),
-  "spendUsd": zod.number().describe('Canonical all-metric attributed usage for the selected range'),
+  "spendUsd": zod.number().describe('Canonical member AI plus creator-attributed project non-AI for the selected range'),
+  "aiSpendUsd": zod.number().describe('Deduplicated member-grouped AI spend'),
+  "nonAiSpendUsd": zod.number().describe('Non-AI spend from deduplicated projects created by this current member'),
   "workspaceRole": zod.string()
 }))
 })
 
 
 /**
- * Exports the same selected-range, all-metric attributed per-user values returned by User Activity. Values include AI, deployments, storage, and other attributed metrics; Replit's in-product per-user table is Agent-only.
+ * Exports the same selected-range per-user values returned by User Activity, with separate AI, hosting/non-AI, and total spend columns.
  * @summary Export canonical per-user activity as CSV
  */
 export const ExportUsersCsvQueryParams = zod.object({

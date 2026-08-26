@@ -42,7 +42,7 @@ test("an unavailable account anchor remains loading instead of rendering zero", 
   assert.equal(result.isTotalLoaded, false);
 });
 
-test("scoped dashboards retain only their project residual accounting", () => {
+test("scoped dashboards expose project residual without double counting it", () => {
   const result = reconcileDashboardSpend({
     isAccountWide: false,
     visibleRollupSpendUsd: 50,
@@ -53,6 +53,6 @@ test("scoped dashboards retain only their project residual accounting", () => {
   });
 
   assert.equal(result.residualSpendUsd, 3);
-  assert.equal(result.totalSpendUsd, 53);
+  assert.equal(result.totalSpendUsd, 50);
   assert.equal(result.isTotalLoaded, true);
 });

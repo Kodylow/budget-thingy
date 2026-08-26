@@ -15,6 +15,16 @@ export interface GroupProject {
      */
   title: string | null;
   totalCostUsd: number;
+  /** AI-category metrics included in this project's total */
+  aiSpendUsd: number;
+  /** Authoritative project total minus AI-category metrics */
+  nonAiSpendUsd: number;
+  /** @nullable */
+  creatorId: string | null;
+  /** @nullable */
+  creatorName: string | null;
+  /** Whether this project's non-AI cost can be attributed to its creator */
+  creatorIsCurrentMember: boolean;
   metrics: ProjectMetric[];
   /**
      * Workspace the project belongs to, null when unknown

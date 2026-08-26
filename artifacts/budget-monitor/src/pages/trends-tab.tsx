@@ -175,9 +175,8 @@ function UserActivityCard() {
           <div>
             <CardTitle>User Activity</CardTitle>
             <CardDescription className="mt-1">
-              Workspace members ranked by all-metric attributed usage for the selected range.
-              Values include AI, deployments, storage, and other attributed metrics;
-              Replit&apos;s in-product per-user table is Agent-only and may be lower.
+              Workspace members ranked by member AI plus creator-attributed project
+              hosting and other non-AI costs for the selected range.
               {!data?.isComplete && data && (
                 <span className="text-amber-600 dark:text-amber-400">
                   {' '}Data is loading — updates as each group completes.
@@ -318,9 +317,14 @@ function UserActivityCard() {
                           </td>
                         </>
                       ) : (
-                        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
-                          {fmtUsd(user.spendUsd)}
-                        </td>
+                        <>
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
+                            <div>{fmtUsd(user.spendUsd)}</div>
+                            <div className="text-[10px] font-normal text-muted-foreground">
+                              AI {fmtUsd(user.aiSpendUsd)} · Hosting {fmtUsd(user.nonAiSpendUsd)}
+                            </div>
+                          </td>
+                        </>
                       )}
                     </tr>
                   ))}

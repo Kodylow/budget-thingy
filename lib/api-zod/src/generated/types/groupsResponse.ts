@@ -18,13 +18,13 @@ export interface GroupsResponse {
   syncError?: string | null;
   failedCount: number;
   partialCount: number;
-  /** Number of outstanding raw group-spend and member-usage fetches */
+  /** Number of outstanding workspace, member, project-usage, or project-metadata inputs */
   pendingCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
   /** True when project usage for every visible custom group is loaded */
   projectSpendLoaded: boolean;
-  /** Project-level spend that could not be matched to a project ID and group */
+  /** True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members */
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */
   teamRawSpend: GroupsResponseTeamRawSpend;
