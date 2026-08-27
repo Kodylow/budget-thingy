@@ -2658,6 +2658,19 @@ export function queueProjectTitlesFetch(
 }
 
 /**
+ * Returns the workspace ID whose name matches "Comcast" (case-insensitive),
+ * or null if no such workspace is found.
+ */
+export function getComcastWorkspaceId(
+  workspaces: ReadonlyMap<string, { name: string }>,
+): string | null {
+  for (const [wsId, ws] of workspaces) {
+    if (ws.name.trim().toLowerCase() === "comcast") return wsId;
+  }
+  return null;
+}
+
+/**
  * Workspace-aware dashboard rollup.
  *
  * A workspace_member payload is the authoritative observation for each
@@ -2670,6 +2683,15 @@ export function queueProjectTitlesFetch(
  * directory or usage membership contains the user. Unmatched workspace members,
  * usage users, and no-user workspace charges are retained in a synthetic
  * per-workspace "No group" bucket.
+ *
+ * When a `workspaces` map is provided, Comcast workspace spend re-attribution
+ * is applied:
+ *  - Each user's Comcast-workspace spend is re-homed to their primary
+ *    non-Comcast workspace's group (the workspace with the highest actual spend
+ *    per wsSpendCache; stable workspace-ID order breaks ties).
+ *  - Non-Comcast workspace spend is always attributed to that workspace's own
+ *    groups (or ungrouped if the workspace has no custom groups).
+ *  - Comcast-only users (no non-Comcast workspace spend) are unchanged.
  */
 export function getDedupedUsageRollup(
   groups: EnterpriseGroup[],
@@ -2677,6 +2699,7 @@ export function getDedupedUsageRollup(
   workspaceIds?: ReadonlySet<string>,
   groupMembers?: ReadonlyMap<string, readonly string[]>,
   directoryMembers?: ReadonlyMap<string, EnterpriseMember>,
+  workspaces?: ReadonlyMap<string, { name: string }>,
 ): DedupedUsageRollup {
   const ordered: EnterpriseGroup[] = [...groups].sort(
     (a, b) =>
@@ -2702,11 +2725,66 @@ export function getDedupedUsageRollup(
   for (const group of ordered) byGroup.set(group.id, { spendUsd: 0, memberCount: 0, byUser: new Map() });
   const byUser = new Map<string, number>();
   const ungroupedByWorkspace = new Map<string, DedupedGroupRollup>();
+  const crossWorkspaceAttributedUsersByGroup = new Map<string, Set<string>>();
   const scopedWorkspaceIds =
     workspaceIds ?? new Set(ordered.map((group) => group.workspaceId));
 
   let totalMemberCount = 0;
   let totalSpendUsd = 0;
+
+  // Step 1: Identify the Comcast workspace by name.
+  const comcastWorkspaceId = workspaces ? getComcastWorkspaceId(workspaces) : null;
+  if (workspaces && !comcastWorkspaceId) {
+    logger.warn("No workspace named 'Comcast' found; extra-workspace re-attribution skipped");
+  }
+
+  // Step 2: Build a mapping from each non-Comcast workspace ID to matching
+  // Comcast-workspace groups. Prefer an exact normalized team-name match. When
+  // none exists, allow the full workspace name as a bounded parent prefix so a
+  // parent workspace such as "Strategic Development" can map to child teams
+  // such as "Strategic Development LIFT Labs" and "Strategic Development
+  // Mosaic". Using the full normalized name (rather than the first token)
+  // prevents "Talent" from accidentally matching "Talent Learning" whenever
+  // an exact "Talent" team exists.
+  const normalizeTeamName = (s: string): string =>
+    s.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  const comcastGroupsByWorkspace = new Map<string, EnterpriseGroup[]>();
+  const parentWorkspaceIds = new Set<string>();
+  if (comcastWorkspaceId && workspaces) {
+    const comcastGroups = ordered.filter((g) => g.workspaceId === comcastWorkspaceId);
+    const normalizedTeamNameByGroupId = new Map<string, string>();
+    for (const group of comcastGroups) {
+      const body = group.name
+        .replace(/^az[-–\s]+replit[-–\s]+/i, "")
+        .replace(/[-–\s]+(admin|member|creator|viewer|owner|manager)$/i, "")
+        .trim();
+      normalizedTeamNameByGroupId.set(group.id, normalizeTeamName(body));
+    }
+    for (const [wsId, ws] of workspaces) {
+      if (wsId === comcastWorkspaceId) continue;
+      const normalizedWsName = normalizeTeamName(ws.name);
+      if (normalizedWsName.length < 2) continue;
+      const exact = comcastGroups.filter(
+        (group) => normalizedTeamNameByGroupId.get(group.id) === normalizedWsName,
+      );
+      const matching = exact.length > 0
+        ? exact
+        : comcastGroups.filter((group) =>
+          normalizedTeamNameByGroupId.get(group.id)?.startsWith(`${normalizedWsName} `),
+        );
+      if (matching.length > 0) {
+        comcastGroupsByWorkspace.set(wsId, matching);
+        if (exact.length === 0) parentWorkspaceIds.add(wsId);
+      }
+    }
+  }
+
+  // Tracking state for Comcast spend re-homing.
+  // userId → the Comcast-workspace group they were attributed to.
+  const userComcastGroupId = new Map<string, string>();
+  // userId → their spend amount in the Comcast workspace.
+  const userComcastSpend = new Map<string, number>();
 
   for (const workspaceId of [...scopedWorkspaceIds].sort()) {
     const workspaceGroups = ordered.filter((group) => group.workspaceId === workspaceId);
@@ -2740,19 +2818,107 @@ export function getDedupedUsageRollup(
         }
       }
 
-      const owner = workspaceGroups.find(
+      // Parent extra workspaces can own several Comcast team families. If this
+      // user already belongs to one of those Comcast groups, that membership is
+      // the deterministic owner for spend in the parent workspace. This is what
+      // distinguishes LIFT Labs members from Mosaic members inside the shared
+      // Strategic Development workspace. This explicit parent-team ownership
+      // takes precedence over incidental local groups such as PREPROD.
+      const parentComcastOwner =
+        comcastWorkspaceId &&
+        workspaceId !== comcastWorkspaceId &&
+        parentWorkspaceIds.has(workspaceId)
+          ? (comcastGroupsByWorkspace.get(workspaceId) ?? []).find(
+          (group) =>
+            (groupMembers?.get(group.id) ?? []).includes(userId) ||
+            usageByGroup.get(group.id)?.byUser.has(userId),
+          )
+          : undefined;
+
+      // Otherwise find the first group in this workspace (stable order) whose
+      // directory or usage membership contains the user.
+      let owner = parentComcastOwner ?? workspaceGroups.find(
         (group) =>
           (groupMembers?.get(group.id) ?? []).includes(userId) ||
           usageByGroup.get(group.id)?.byUser.has(userId),
       );
+
+      // Workspace-admin fallback: workspace admins often lack explicit Comcast
+      // group membership but their spend belongs to the team they administer.
+      // • Extra workspace: if the user is an admin of THIS workspace, attribute
+      //   them to the matching Comcast group (e.g. LIFT Labs admin → LIFT Labs group).
+      // • Comcast workspace: if still unmatched, check whether the user is an
+      //   admin of any extra workspace with a matching Comcast group and use that
+      //   group (prefer the workspace with the highest wsSpendCache spend).
+      if (!owner && comcastWorkspaceId && comcastGroupsByWorkspace.size > 0) {
+        const member = directoryMembers?.get(userId);
+        if (member) {
+          if (workspaceId !== comcastWorkspaceId) {
+            // Extra workspace: attribute only if user is an admin of this workspace.
+            // Applies regardless of whether the workspace has custom groups — a
+            // workspace admin with no group membership belongs to the mapped
+            // Comcast group even if the workspace contains other custom groups.
+            if (member.workspaces.get(workspaceId)?.role === "admin") {
+              const matchingGroups = comcastGroupsByWorkspace.get(workspaceId) ?? [];
+              const teamNames = new Set(
+                matchingGroups.map((group) =>
+                  normalizeTeamName(
+                    group.name
+                      .replace(/^az[-–\s]+replit[-–\s]+/i, "")
+                      .replace(/[-–\s]+(admin|member|creator|viewer|owner|manager)$/i, "")
+                      .trim(),
+                  ),
+                ),
+              );
+              // A no-membership admin fallback is safe only when the workspace
+              // maps to one team family. Parent workspaces with multiple child
+              // teams require explicit group membership to disambiguate.
+              if (teamNames.size === 1) owner = matchingGroups[0];
+            }
+          } else if (workspaceId === comcastWorkspaceId) {
+            // Comcast workspace: pick the extra workspace they admin with most spend.
+            let bestWsId: string | null = null;
+            let bestSpend = -1;
+            for (const [wsId] of comcastGroupsByWorkspace) {
+              if (member.workspaces.get(wsId)?.role !== "admin") continue;
+              const wsSpend = wsSpendCache.get(`${rangeKey}|${wsId}`)?.byUser.get(userId) ?? 0;
+              if (wsSpend > bestSpend || (wsSpend === bestSpend && bestWsId && wsId < bestWsId)) {
+                bestSpend = wsSpend;
+                bestWsId = wsId;
+              }
+            }
+            if (bestWsId) owner = comcastGroupsByWorkspace.get(bestWsId)?.[0];
+          }
+        }
+      }
+
       const target = owner ? byGroup.get(owner.id)! : ungrouped;
+      if (owner && owner.workspaceId !== workspaceId) {
+        const users = crossWorkspaceAttributedUsersByGroup.get(owner.id) ?? new Set<string>();
+        users.add(userId);
+        crossWorkspaceAttributedUsersByGroup.set(owner.id, users);
+      }
       const targetByUser = target.byUser as Map<string, number>;
-      targetByUser.set(userId, spendUsd);
+      // Accumulate: a workspace admin may appear in the same Comcast group from
+      // both the extra workspace and the Comcast workspace iterations.
+      // Use has() for the first-entry guard — prevSpend may be $0 on first
+      // contribution (e.g. Comcast $0 then extra-workspace $N) and testing
+      // prevSpend === 0 would double-count the memberCount in that case.
+      if (!targetByUser.has(userId)) {
+        (target as { memberCount: number }).memberCount += 1;
+      }
+      const prevSpend = targetByUser.get(userId) ?? 0;
+      targetByUser.set(userId, prevSpend + spendUsd);
       byUser.set(userId, (byUser.get(userId) ?? 0) + spendUsd);
       (target as { spendUsd: number }).spendUsd += spendUsd;
-      (target as { memberCount: number }).memberCount += 1;
-      totalMemberCount += 1;
+      totalMemberCount += 1; // counts user-workspace pairs (unchanged semantics)
       totalSpendUsd += spendUsd;
+
+      // Track Comcast-workspace attribution for re-homing step below.
+      if (comcastWorkspaceId && workspaceId === comcastWorkspaceId && owner) {
+        userComcastGroupId.set(userId, owner.id);
+        userComcastSpend.set(userId, (userComcastSpend.get(userId) ?? 0) + spendUsd);
+      }
     }
 
     if (ungrouped.memberCount > 0 || ungrouped.spendUsd !== 0) {
@@ -2772,10 +2938,105 @@ export function getDedupedUsageRollup(
     }
   }
 
+  // Steps 5–6: Re-home each user's Comcast-workspace spend to their primary
+  // non-Comcast workspace's group. Primary = highest attributed non-Comcast spend;
+  // stable workspace-ID order breaks ties. Comcast-only users are unchanged.
+  // totalSpendUsd and the global byUser map are unchanged — dollars only move
+  // between group buckets, never created or destroyed.
+  if (comcastWorkspaceId) {
+    // Build per-user non-Comcast workspace spend directly from the loaded
+    // workspace caches. Using raw workspace totals (not attributed group spend)
+    // ensures the primary-workspace calculation reflects actual spend location.
+    const userNonComcastSpendByWorkspace = new Map<string, Map<string, number>>();
+    for (const wsId of scopedWorkspaceIds) {
+      if (wsId === comcastWorkspaceId) continue;
+      const wsUsage = wsSpendCache.get(`${rangeKey}|${wsId}`);
+      if (!wsUsage) continue;
+      for (const [userId, spend] of wsUsage.byUser) {
+        if (spend <= 0) continue;
+        const wsMap = userNonComcastSpendByWorkspace.get(userId) ?? new Map<string, number>();
+        wsMap.set(wsId, (wsMap.get(wsId) ?? 0) + spend);
+        userNonComcastSpendByWorkspace.set(userId, wsMap);
+      }
+    }
+
+    for (const [userId, comcastGroupId] of userComcastGroupId) {
+      const nonComcastByWs = userNonComcastSpendByWorkspace.get(userId);
+      if (!nonComcastByWs || nonComcastByWs.size === 0) continue;
+
+      // Step 5: Find primary workspace (highest spend; stable wsId tiebreak).
+      let primaryWsId: string | null = null;
+      let primaryWsSpend = -Infinity;
+      for (const [wsId, spend] of nonComcastByWs) {
+        if (
+          spend > primaryWsSpend ||
+          (spend === primaryWsSpend && primaryWsId !== null && wsId < primaryWsId)
+        ) {
+          primaryWsSpend = spend;
+          primaryWsId = wsId;
+        }
+      }
+      if (!primaryWsId) continue;
+
+      // Find the Comcast group matching the primary workspace. Use the first group
+      // in stable sort order (Admin before Member) — no membership check needed;
+      // the destination is determined structurally by workspace name, not by
+      // whether the user is already a member of that group.
+      const primaryMatchingGroups = comcastGroupsByWorkspace.get(primaryWsId) ?? [];
+      const primaryComcastOwner =
+        primaryMatchingGroups.find(
+          (group) =>
+            (groupMembers?.get(group.id) ?? []).includes(userId) ||
+            usageByGroup.get(group.id)?.byUser.has(userId),
+        ) ??
+        primaryMatchingGroups[0];
+      // Nothing to move if: no matching group exists, or the spend is already
+      // in the right group.
+      if (!primaryComcastOwner || primaryComcastOwner.id === comcastGroupId) continue;
+
+      // Step 6: Move user's Comcast spend from their current group to the primary's.
+      const comcastSpend = userComcastSpend.get(userId) ?? 0;
+      if (comcastSpend <= 0) continue;
+
+      const sourceGroup = byGroup.get(comcastGroupId);
+      const destGroup = byGroup.get(primaryComcastOwner.id);
+      if (!sourceGroup || !destGroup) continue;
+
+      const sourceByUser = sourceGroup.byUser as Map<string, number>;
+      const destByUser = destGroup.byUser as Map<string, number>;
+
+      // Debit source group.
+      const sourceUserSpend = sourceByUser.get(userId) ?? 0;
+      const newSourceSpend = Math.max(0, sourceUserSpend - comcastSpend);
+      (sourceGroup as { spendUsd: number }).spendUsd = Math.max(
+        0,
+        sourceGroup.spendUsd - comcastSpend,
+      );
+      if (newSourceSpend <= 0) {
+        sourceByUser.delete(userId);
+        (sourceGroup as { memberCount: number }).memberCount = Math.max(
+          0,
+          sourceGroup.memberCount - 1,
+        );
+      } else {
+        sourceByUser.set(userId, newSourceSpend);
+      }
+
+      // Credit destination group.
+      const destUserSpend = destByUser.get(userId) ?? 0;
+      if (destUserSpend === 0) {
+        (destGroup as { memberCount: number }).memberCount += 1;
+      }
+      destByUser.set(userId, destUserSpend + comcastSpend);
+      (destGroup as { spendUsd: number }).spendUsd += comcastSpend;
+    }
+  }
+
   return {
     byGroup,
     byUser,
     ungroupedByWorkspace,
+    crossWorkspaceAttributedUsersByGroup,
     totalSpendUsd,
     totalMemberCount,
     pendingCount,
@@ -2905,6 +3166,7 @@ export function getCanonicalUsage(
     workspaceIds,
     groupMembers,
     directoryMembers,
+    workspaces,
   );
   const projectAttribution = getProjectAttribution(
     rangeKey,
@@ -2944,16 +3206,49 @@ export function getCanonicalUsage(
     const users = new Set<string>();
     for (const group of workspaceGroups) {
       for (const userId of getMemberUsage(group.id, rangeKey)?.byUser.keys() ?? []) users.add(userId);
+      // Also include users attributed via rollup re-homing or workspace-admin
+      // fallback: they may not appear in any group's member-usage API.
+      for (const userId of rollup.byGroup.get(group.id)?.byUser.keys() ?? []) users.add(userId);
     }
     for (const userId of users) {
-      const owner = workspaceGroups.find((group) =>
+      // Prefer the rollup's ownership over groupMembers: the rollup already
+      // incorporates Comcast spend re-homing and workspace-admin attribution,
+      // so its byUser map is the authoritative record of which group owns
+      // each user for this range. Fall back to groupMembers only when the
+      // rollup has no entry (e.g. member with $0 spend not yet cached).
+      const owner =
+        workspaceGroups.find((group) => rollup.byGroup.get(group.id)?.byUser.has(userId)) ??
+        workspaceGroups.find((group) =>
+          (groupMembers?.get(group.id) ?? []).includes(userId),
+        );
+      if (!owner) continue;
+      // Observed AI spend comes from per-group member-usage APIs.
+      // Exception: users attributed via the workspace-admin fallback are absent
+      // from all group member-usage APIs (they are not formal group members),
+      // so their spend would be silently zeroed out and classified as residual.
+      // For these users only — those absent from every group's groupMembers —
+      // fall back to the rollup's per-user total (workspace spend from
+      // wsSpendCache). Regular members with $0 AI spend intentionally stay
+      // as residual; the inGroupMembers guard preserves that invariant.
+      const inGroupMembers = workspaceGroups.some((group) =>
         (groupMembers?.get(group.id) ?? []).includes(userId),
       );
-      if (!owner) continue;
-      const observedAiSpendUsd = workspaceGroups.reduce(
-        (max, group) => Math.max(max, getMemberUsage(group.id, rangeKey)?.byUser.get(userId) ?? 0),
-        0,
-      );
+      const observedAiSpendUsd = (() => {
+        const fromApi = workspaceGroups.reduce(
+          (max, group) => Math.max(max, getMemberUsage(group.id, rangeKey)?.byUser.get(userId) ?? 0),
+          0,
+        );
+        if (rollup.crossWorkspaceAttributedUsersByGroup?.get(owner.id)?.has(userId)) {
+          return Math.max(
+            fromApi,
+            rollup.byGroup.get(owner.id)?.byUser.get(userId) ?? 0,
+          );
+        }
+        if (fromApi > 0) return fromApi;
+        // Only fall back to rollup spend for non-members (workspace-admin path).
+        if (inGroupMembers) return 0;
+        return rollup.byGroup.get(owner.id)?.byUser.get(userId) ?? 0;
+      })();
       // A member table must never exceed its authoritative group rollup. This
       // is an allocation guard (not residual clamping): any observation which
       // cannot fit remains an explicit residual.
@@ -2974,9 +3269,15 @@ export function getCanonicalUsage(
       // but per-user ownership follows the same stable member owner as AI.
       // Otherwise an overlapping creator can be counted in both their stable
       // owner group and the winning project's group.
-      const owner = workspaceGroups.find((group) =>
-        (groupMembers?.get(group.id) ?? []).includes(userId),
-      );
+      // Mirror the AI-loop ownership rule: prefer the rollup's byUser (which
+      // already encodes Comcast re-homing and workspace-admin attribution) over
+      // groupMembers, so re-homed users' non-AI spend lands in the destination
+      // group rather than the (now zero-capacity) source group.
+      const owner =
+        workspaceGroups.find((group) => rollup.byGroup.get(group.id)?.byUser.has(userId)) ??
+        workspaceGroups.find((group) =>
+          (groupMembers?.get(group.id) ?? []).includes(userId),
+        );
       if (!owner) continue;
       const groupByUser = attributedByGroup.get(owner.id)!;
       const attributedNonAiSpendUsd = Math.min(
