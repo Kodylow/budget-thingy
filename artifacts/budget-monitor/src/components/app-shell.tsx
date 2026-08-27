@@ -11,6 +11,7 @@ import {
   X,
   Users,
   TrendingUp,
+  BookUser,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -78,8 +79,9 @@ export function AppShell({ children }: AppShellProps) {
       label: 'Administration',
       items: [
         { path: '/settings', label: 'Settings', icon: Settings, show: isAccountAdmin, testId: 'nav-settings' },
-        { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
         { path: '/trends', label: 'Trends', icon: TrendingUp, show: isAccountWide, testId: 'nav-trends' },
+        { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
+        { path: '/workspace-directory', label: 'Workspace Directory', icon: BookUser, show: isAccountAdmin, testId: 'nav-workspace-directory' },
       ],
     },
   ].map((section) => ({

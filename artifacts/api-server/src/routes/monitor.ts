@@ -2737,4 +2737,49 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   });
 });
 
+// ---------- Directory members ----------
+
+router.get("/directory/members", requireAccountAdmin, async (req, res): Promise<void> => {
+  if (!isConfigured()) {
+    res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
+    return;
+  }
+  let range: UsageRange;
+  try {
+    range = rangeFromQuery(req.query as Record<string, unknown>);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  try {
+    const dir = await getDirectory();
+    if (!dir) {
+      res.status(503).json({ error: "Directory not yet available" });
+      return;
+    }
+
+    const members = [...dir.members.values()].map((m) => ({
+      userId: m.userId,
+      username: m.username,
+      name: m.name,
+      email: m.email,
+      isAccountAdmin: m.isAccountAdmin,
+      workspaces: [...m.workspaces.entries()].map(([workspaceId, ws]) => ({
+        workspaceId,
+        workspaceName: dir.workspaces.get(workspaceId)?.name ?? workspaceId,
+        role: ws.role,
+        isDisabled: ws.isDisabled,
+        spendUsd: getWsSpendByUser(workspaceId, range.key)?.get(m.userId) ?? 0,
+      })),
+    }));
+
+    members.sort((a, b) => a.username.localeCompare(b.username, undefined, { sensitivity: "base" }));
+
+    res.json(members);
+  } catch (err) {
+    req.log.error({ err }, "listDirectoryMembers failed");
+    res.status(503).json({ error: "Directory unavailable" });
+  }
+});
+
 export default router;

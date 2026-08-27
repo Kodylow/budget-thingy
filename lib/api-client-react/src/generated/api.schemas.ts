@@ -535,6 +535,25 @@ export interface GroupAdminMember {
   name?: string | null;
 }
 
+export interface DirectoryMemberWorkspace {
+  workspaceId: string;
+  workspaceName: string;
+  role: string;
+  isDisabled: boolean;
+  /** Member's spend in this workspace for the selected range; 0 when no data is loaded yet */
+  spendUsd: number;
+}
+
+export interface DirectoryMember {
+  userId: string;
+  username: string;
+  /** @nullable */
+  name: string | null;
+  email: string;
+  isAccountAdmin: boolean;
+  workspaces: DirectoryMemberWorkspace[];
+}
+
 export interface GroupAdminsItem {
   groupId: string;
   groupName: string;
@@ -843,6 +862,21 @@ startDate?: StartDateParameter;
 endDate?: EndDateParameter;
 };
 
+export type ListDirectoryMembersParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+};
+
 export type ListAlertsParams = {
 /**
  * @minimum 1
@@ -850,3 +884,4 @@ export type ListAlertsParams = {
  */
 limit?: number;
 };
+

@@ -657,6 +657,33 @@ export const DeleteEditorResponse = zod.object({
 
 
 /**
+ * Returns every enterprise member from the directory cache — not just those with recorded spend. Available only to account administrators. Includes per-workspace spend for the selected date range when usage data is available.
+ * @summary List all enterprise workspace members
+ */
+export const ListDirectoryMembersQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const ListDirectoryMembersResponseItem = zod.object({
+  "userId": zod.string(),
+  "username": zod.string(),
+  "name": zod.string().nullable(),
+  "email": zod.string(),
+  "isAccountAdmin": zod.boolean(),
+  "workspaces": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string(),
+  "role": zod.string(),
+  "isDisabled": zod.boolean(),
+  "spendUsd": zod.number().describe('Member\'s spend in this workspace for the selected range; 0 when no data is loaded yet')
+}))
+})
+export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersResponseItem)
+
+
+/**
  * Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
  * @summary List admins per group
  */
@@ -798,3 +825,5 @@ export const RebuildUsageRangeBody = zod.object({
 export const RebuildUsageRangeResponse = zod.object({
   "ok": zod.boolean()
 })
+
+

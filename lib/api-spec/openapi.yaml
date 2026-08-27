@@ -22,6 +22,8 @@ tags:
     description: Alert history and checks
   - name: status
     description: App/system status
+  - name: directory
+    description: Workspace directory
   - name: Auth
     description: Browser and mobile authentication endpoints.
 paths:
@@ -825,6 +827,38 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/members:
+    get:
+      operationId: listDirectoryMembers
+      tags: [directory]
+      summary: List all enterprise workspace members
+      description: >
+        Returns every enterprise member from the directory cache — not just those with
+        recorded spend. Available only to account administrators. Includes per-workspace
+        spend for the selected date range when usage data is available.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Directory member list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DirectoryMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
           content:
             application/json:
               schema:
@@ -1702,6 +1736,39 @@ components:
           type: ["string", "null"]
         name:
           type: ["string", "null"]
+    DirectoryMemberWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, role, isDisabled, spendUsd]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        role:
+          type: string
+        isDisabled:
+          type: boolean
+        spendUsd:
+          type: number
+          description: Member's spend in this workspace for the selected range; 0 when no data is loaded yet
+    DirectoryMember:
+      type: object
+      required: [userId, username, name, email, isAccountAdmin, workspaces]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        name:
+          type: ["string", "null"]
+        email:
+          type: string
+        isAccountAdmin:
+          type: boolean
+        workspaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/DirectoryMemberWorkspace"
     GroupAdminsItem:
       type: object
       required: [groupId, groupName, workspaceId, workspaceName, admins]

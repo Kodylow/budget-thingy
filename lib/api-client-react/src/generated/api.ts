@@ -30,6 +30,7 @@ import type {
   BeginBrowserLoginParams,
   CheckResult,
   ClusterHeadline,
+  DirectoryMember,
   ErrorEnvelope,
   ExportUsersCsvParams,
   ForbiddenResponse,
@@ -49,6 +50,7 @@ import type {
   HandleBrowserLoginCallbackParams,
   HealthStatus,
   ListAlertsParams,
+  ListDirectoryMembersParams,
   ListGroupsParams,
   LogoutBrowserSessionParams,
   LogoutSuccess,
@@ -2470,6 +2472,91 @@ export const useDeleteEditor = <TError = ErrorType<UnauthorizedResponse | Forbid
       return useMutation(getDeleteEditorMutationOptions(options));
     }
 
+export const getListDirectoryMembersUrl = (params?: ListDirectoryMembersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/directory/members?${stringifiedParams}` : `/api/directory/members`
+}
+
+/**
+ * Returns every enterprise member from the directory cache — not just those with recorded spend. Available only to account administrators. Includes per-workspace spend for the selected date range when usage data is available.
+ * @summary List all enterprise workspace members
+ */
+export const listDirectoryMembers = async (params?: ListDirectoryMembersParams, options?: RequestInit): Promise<DirectoryMember[]> => {
+
+  return customFetch<DirectoryMember[]>(getListDirectoryMembersUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDirectoryMembersQueryKey = (params?: ListDirectoryMembersParams,) => {
+    return [
+    `/api/directory/members`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListDirectoryMembersQueryOptions = <TData = Awaited<ReturnType<typeof listDirectoryMembers>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(params?: ListDirectoryMembersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDirectoryMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDirectoryMembersQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDirectoryMembers>>> = ({ signal }) => listDirectoryMembers(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDirectoryMembers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDirectoryMembersQueryResult = NonNullable<Awaited<ReturnType<typeof listDirectoryMembers>>>
+export type ListDirectoryMembersQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary List all enterprise workspace members
+ */
+
+export function useListDirectoryMembers<TData = Awaited<ReturnType<typeof listDirectoryMembers>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ params?: ListDirectoryMembersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDirectoryMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDirectoryMembersQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getListWorkspaceAdminsUrl = () => {
 
 
@@ -2926,3 +3013,4 @@ export const useRebuildUsageRange = <TError = ErrorType<ApiError | UnauthorizedR
       > => {
       return useMutation(getRebuildUsageRangeMutationOptions(options));
     }
+
