@@ -622,6 +622,11 @@ test("cluster headline uses the canonical rollup instead of project attribution"
 });
 
 test("same-name migration aliases reconcile groups, summary pools, and cluster headline", async () => {
+  // Concurrent test files (history-rosters) may write snapshot days after our
+  // test.before clears them, causing partitionTrendBucket to produce unseeded
+  // historical components. Clear defensively at the start of each trend-sensitive test.
+  await db.delete(groupRosterSnapshotsTable);
+  await db.delete(groupRosterSnapshotDaysTable);
   const primary = {
     id: "merge-primary",
     workspaceId: "ws-main",
@@ -749,6 +754,9 @@ test("same-name migration aliases reconcile groups, summary pools, and cluster h
 });
 
 test("trends use canonical workspace rollups for every bucket", async () => {
+  // Same concurrent-file isolation as the alias trend test above.
+  await db.delete(groupRosterSnapshotsTable);
+  await db.delete(groupRosterSnapshotDaysTable);
   const now = new Date();
   let cursor = new Date(Date.UTC(2026, 4, 20));
   while (cursor < now) {
