@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Download, Search, ChevronsUpDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Download } from 'lucide-react';
 
 import { useAuthContext, useCanWrite } from '@/components/auth-context';
 
@@ -112,11 +112,8 @@ export default function Dashboard() {
   const { isAccountWide, role, preview, isPreviewing } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
-  const [byGroupSearch, setByGroupSearch] = useState('');
   const [retryingSync, setRetryingSync] = useState(false);
   const [retryPollingStartedAt, setRetryPollingStartedAt] = useState<number | null>(null);
-  type ByGroupSortCol = 'name' | 'team' | 'workspace' | 'members' | 'spend';
-  const [byGroupSort, setByGroupSort] = useState<{ col: ByGroupSortCol; dir: 'asc' | 'desc' }>({ col: 'spend', dir: 'desc' });
 
   const queryParams = useMemo(
     () => ({
@@ -341,31 +338,6 @@ export default function Dashboard() {
       budgetedPools,
     };
   }, [teamSections, unassigned]);
-
-  const byGroupRows = useMemo(() => {
-    const q = byGroupSearch.trim().toLowerCase();
-    const filtered = groups.filter((g) =>
-      !q ||
-      g.name.toLowerCase().includes(q) ||
-      (g.teamName ?? '').toLowerCase().includes(q) ||
-      (g.workspaceName ?? '').toLowerCase().includes(q),
-    );
-    return [...filtered].sort((a, b) => {
-      let cmp = 0;
-      if (byGroupSort.col === 'spend') cmp = (a.spendUsd ?? 0) - (b.spendUsd ?? 0);
-      else if (byGroupSort.col === 'name') cmp = a.name.localeCompare(b.name);
-      else if (byGroupSort.col === 'team') cmp = (a.teamName ?? '').localeCompare(b.teamName ?? '');
-      else if (byGroupSort.col === 'workspace') cmp = (a.workspaceName ?? '').localeCompare(b.workspaceName ?? '');
-      else if (byGroupSort.col === 'members') cmp = (a.memberCount ?? 0) - (b.memberCount ?? 0);
-      return byGroupSort.dir === 'asc' ? cmp : -cmp;
-    });
-  }, [groups, byGroupSearch, byGroupSort]);
-
-  const handleByGroupSort = (col: ByGroupSortCol) => {
-    setByGroupSort((prev) =>
-      prev.col === col ? { col, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: col === 'spend' || col === 'members' ? 'desc' : 'asc' },
-    );
-  };
 
   const toggleTeam = (teamName: string) => {
     setExpandedTeams((prev) => {
@@ -843,7 +815,6 @@ export default function Dashboard() {
         {isAccountWide && (
         <TabsList aria-label="Dashboard views">
           <TabsTrigger value="groups">Groups</TabsTrigger>
-          <TabsTrigger value="by-group">By Group</TabsTrigger>
           <TabsTrigger value="trends">Trends</TabsTrigger>
         </TabsList>
         )}
@@ -1037,140 +1008,6 @@ export default function Dashboard() {
         </CardContent>
       </Card>
         </TabsContent>
-        {isAccountWide && <TabsContent value="by-group">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <CardTitle>Spend by Group</CardTitle>
-                  <CardDescription>Canonical workspace-aware rollup spend used for budgets and alerts</CardDescription>
-                </div>
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-                  <input
-                    type="text"
-                    placeholder="Filter groups or teams…"
-                    value={byGroupSearch}
-                    onChange={(e) => setByGroupSearch(e.target.value)}
-                    className="w-full pl-8 pr-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border">
-                      {(
-                        [
-                          { col: 'name' as ByGroupSortCol, label: 'Group', align: 'left' },
-                          { col: 'team' as ByGroupSortCol, label: 'Team', align: 'left' },
-                          { col: 'workspace' as ByGroupSortCol, label: 'Workspace', align: 'left' },
-                          { col: 'members' as ByGroupSortCol, label: 'Members', align: 'right' },
-                          { col: 'spend' as ByGroupSortCol, label: 'Canonical Spend', align: 'right' },
-                        ] as const
-                      ).map(({ col, label, align }) => (
-                        <th
-                          key={col}
-                          className={`text-${align} text-xs font-medium text-muted-foreground py-3 px-4 cursor-pointer select-none hover:text-foreground transition-colors`}
-                          onClick={() => handleByGroupSort(col)}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            {label}
-                            {byGroupSort.col === col ? (
-                              byGroupSort.dir === 'asc' ? (
-                                <ChevronUp className="h-3 w-3 opacity-70" />
-                              ) : (
-                                <ChevronDown className="h-3 w-3 opacity-70" />
-                              )
-                            ) : (
-                              <ChevronsUpDown className="h-3 w-3 opacity-30" />
-                            )}
-                          </span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupsLoading ? (
-                      [1, 2, 3, 4, 5].map((i) => (
-                        <tr key={i} className="border-b border-border/50">
-                          {[1, 2, 3, 4, 5].map((j) => (
-                            <td key={j} className="py-3 px-4">
-                              <div className="h-4 bg-muted animate-pulse-glow rounded w-3/4" />
-                            </td>
-                          ))}
-                        </tr>
-                      ))
-                    ) : byGroupRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-12 text-center text-muted-foreground text-sm">
-                          {byGroupSearch ? 'No groups match your filter.' : 'No groups found.'}
-                        </td>
-                      </tr>
-                    ) : (
-                      byGroupRows.map((group, idx) => (
-                        <tr
-                          key={group.groupId}
-                          className={`border-b border-border/50 transition-colors ${
-                            group.isSynthetic ? 'bg-muted/10' : 'hover:bg-muted/30 cursor-pointer'
-                          }`}
-                          onClick={() => {
-                            if (!group.isSynthetic) setLocation(`/groups/${group.groupId}`);
-                          }}
-                        >
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground w-6 text-right tabular-nums">{idx + 1}</span>
-                              <span className="text-sm font-medium">{group.name}</span>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className="text-sm text-muted-foreground">{group.teamName ?? <span className="italic opacity-50">—</span>}</span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className="text-sm text-muted-foreground">{group.workspaceName ?? '—'}</span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <span className="text-sm tabular-nums">{group.memberCount ?? '—'}</span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            {!group.spendLoaded ? (
-                              <div className="flex justify-end"><LoadingCell /></div>
-                            ) : (
-                              <span className="text-sm font-mono font-medium tabular-nums">
-                                ${(group.spendUsd ?? 0).toFixed(2)}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                  {!groupsLoading && byGroupRows.length > 0 && (
-                    <tfoot>
-                      <tr className="bg-muted/30 border-t border-border font-medium">
-                        <td className="py-3 px-4 text-sm" colSpan={3}>
-                          {byGroupRows.length} group{byGroupRows.length !== 1 ? 's' : ''}
-                          {byGroupSearch ? ' (filtered)' : ''}
-                        </td>
-                        <td className="py-3 px-4 text-right text-sm tabular-nums">
-                          {byGroupRows.reduce((s, g) => s + (g.memberCount ?? 0), 0)}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-sm tabular-nums">
-                          {isComplete
-                            ? `$${byGroupRows.reduce((s, g) => s + (g.spendUsd ?? 0), 0).toFixed(2)}`
-                            : '—'}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>}
         {isAccountWide && <TabsContent value="trends">
           <TrendsTab
             teamNames={teamSections.map((team) => team.teamName)}
