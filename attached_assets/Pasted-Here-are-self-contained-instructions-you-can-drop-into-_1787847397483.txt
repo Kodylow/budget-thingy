@@ -1,0 +1,208 @@
+Here are self-contained instructions you can drop into any project.
+
+---
+
+## Building a Replit Enterprise Workspace Directory
+
+### What it does
+
+Fetches your enterprise's workspaces, groups, group memberships, and members from the Replit API, caches them in a single DB row, and serves them in-memory with a 15-minute TTL. A failed refresh falls back to the last good cache rather than throwing.
+
+---
+
+### Prerequisites
+
+| Requirement | Detail |
+|---|---|
+| `REPLIT_ENTERPRISE_API_KEY` | Enterprise API key — set as a secret, never in code |
+| PostgreSQL database | One table for the directory cache, one for identity history |
+| Node.js / TypeScript | The patterns below use async/await and `Map` |
+
+---
+
+### 1. Database schema
+
+Two tables. The directory is a **singleton row** (always one record, upserted on every refresh):
+
+```sql
+-- Main directory cache
+CREATE TABLE api_directory_cache (
+  id          TEXT PRIMARY KEY DEFAULT 'singleton',
+  directory_json JSONB NOT NULL,
+  fetched_at  TIMESTAMPTZ NOT NULL
+);
+
+-- Identity history — lets you resolve departed members by userId later
+CREATE TABLE member_identity_cache (
+  user_id     TEXT PRIMARY KEY,
+  username    TEXT NOT NULL,
+  name        TEXT NOT NULL DEFAULT '',
+  email       TEXT NOT NULL DEFAULT '',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+### 2. API client
+
+All requests go to `https://api.replit.com/v1` with a bearer token:
+
+```ts
+const BASE_URL = "https://api.replit.com/v1";
+
+async function rawFetch(path: string, params?: Record<string, string>) {
+  const url = new URL(BASE_URL + path);
+  if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${process.env.REPLIT_ENTERPRISE_API_KEY}` },
+  });
+
+  if (res.status === 429) {
+    const retryAfter = res.headers.get("Retry-After");
+    throw Object.assign(new Error("Rate limited"), { retryAfterMs: Number(retryAfter ?? 5) * 1000 });
+  }
+  if (!res.ok) throw new Error(`API error ${res.status} on ${path}`);
+  return res.json();
+}
+
+// Cursor-based pagination — works for all list endpoints
+async function paginate<T>(path: string, params: Record<string, string> = {}): Promise<T[]> {
+  const results: T[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 200; page++) {
+    const p = cursor ? { ...params, limit: "100", cursor } : { ...params, limit: "100" };
+    const data = await rawFetch(path, p);
+    results.push(...(data.items ?? data.users ?? data.members ?? []));
+    cursor = data.nextCursor;
+    if (!cursor) break;
+  }
+  return results;
+}
+```
+
+---
+
+### 3. Data structures
+
+```ts
+interface EnterpriseWorkspace {
+  id: string; name: string; slug: string; memberCount: number;
+}
+
+interface EnterpriseGroup {
+  id: string; workspaceId: string; name: string;
+  type: "custom" | "scim" | "admin" | "member" | "guest";
+}
+
+interface EnterpriseMember {
+  userId: string; username: string; email: string; name: string;
+  isAccountAdmin: boolean;
+  workspaces: Map<string, { role: string; isDisabled: boolean }>;
+}
+
+interface DirectoryCache {
+  workspaces: Map<string, EnterpriseWorkspace>;
+  groups: EnterpriseGroup[];          // custom/SCIM groups only (your dashboard groups)
+  allGroups: EnterpriseGroup[];       // every group including built-ins
+  groupMembers: Map<string, string[]>; // groupId → userId[]
+  members: Map<string, EnterpriseMember>; // userId → member
+  fetchedAt: Date;
+}
+```
+
+---
+
+### 4. Fetch sequence
+
+Call these endpoints in order — each step depends on data from the previous one:
+
+```
+GET /workspaces                          → list of workspaces
+GET /groups?workspaceId=<id>            → for each workspace (paginated)
+GET /groups/<urlencoded-groupId>/users  → for each custom/SCIM group (paginated)
+GET /members                            → full enterprise member list (paginated)
+```
+
+**Custom vs. built-in groups:** filter by `type` — only `"custom"` and `"scim"` are your named teams. Types `"admin"`, `"member"`, and `"guest"` are Replit system groups; skip them for group membership fetches (they have no useful per-user spend breakdown).
+
+---
+
+### 5. In-memory cache with TTL
+
+```ts
+const DIRECTORY_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+let cache: DirectoryCache | null = null;
+let directoryPromise: Promise<DirectoryCache> | null = null;
+
+export async function getDirectory(force = false): Promise<DirectoryCache> {
+  const age = cache ? Date.now() - cache.fetchedAt.getTime() : Infinity;
+  if (!force && age < DIRECTORY_TTL_MS && cache) return cache;
+
+  // Coalesce concurrent callers — only one fetch in flight at a time
+  if (!directoryPromise) {
+    directoryPromise = fetchDirectory()
+      .then((fresh) => { cache = fresh; return fresh; })
+      .catch((err) => {
+        if (cache) return cache;  // serve stale on failure rather than throwing
+        throw err;
+      })
+      .finally(() => { directoryPromise = null; });
+  }
+  return directoryPromise;
+}
+```
+
+---
+
+### 6. Persistence (startup hydration + refresh)
+
+On server startup, hydrate the singleton from DB so you survive restarts without a cold API call:
+
+```ts
+export async function initCache(db: Database) {
+  const row = await db.query("SELECT directory_json, fetched_at FROM api_directory_cache WHERE id = 'singleton'");
+  if (row) {
+    cache = deserializeDirectory(row.directory_json, row.fetched_at);
+  }
+}
+
+async function fetchDirectory(): Promise<DirectoryCache> {
+  const fresh = await buildDirectoryFromApi(); // calls the sequence in step 4
+  await db.query(
+    `INSERT INTO api_directory_cache (id, directory_json, fetched_at)
+     VALUES ('singleton', $1, NOW())
+     ON CONFLICT (id) DO UPDATE SET directory_json = $1, fetched_at = NOW()`,
+    [serializeDirectory(fresh)]
+  );
+  await upsertIdentityCache(db, fresh.members); // keeps departed-member names resolvable
+  return fresh;
+}
+```
+
+**Serialization note:** `Map` doesn't round-trip through JSON. Serialize maps as plain objects (`Object.fromEntries(map)`) and deserialize with `new Map(Object.entries(obj))`.
+
+---
+
+### 7. Refresh strategy
+
+| Trigger | How |
+|---|---|
+| Lazy / TTL | Call `getDirectory()` — refreshes automatically when stale |
+| Forced (admin action) | Call `getDirectory(true)` |
+| Background warmup | Call `getDirectory()` once at server startup after `initCache()` |
+| Scheduled | Optional: call `getDirectory()` on a timer (e.g. every 10 min) — TTL prevents redundant fetches |
+
+No special rate-limit queue is needed for the directory itself — it's a low-frequency, sequential fetch. Rate limiting (`429` / `Retry-After`) only becomes relevant if you're fetching spend data per-group at volume (that needs a dedicated serial queue with pacing).
+
+---
+
+### 8. Key gotchas
+
+- **`/members` is account-wide.** It returns every enterprise member regardless of workspace or group. `isAccountAdmin: true` means they have account-level admin rights.
+- **Group membership is workspace-scoped.** The same user ID can appear as a member of groups in multiple workspaces — that's expected, not duplication.
+- **Departed members disappear from the API immediately.** Once removed from the enterprise, they won't appear in `/members` or group user lists. The `member_identity_cache` table lets you resolve their name/username from a stored `userId` even after they're gone.
+- **Built-in group user lists are huge and useless for spend.** Don't paginate the `"member"` system group — it's every enterprise user. Only fetch membership for `"custom"` and `"scim"` groups.
+- **The directory fetch is not queued.** Concurrent calls are coalesced (`directoryPromise` pattern above), but there's no per-call rate limiting. If your application makes heavy concurrent use, the coalescing is sufficient.
