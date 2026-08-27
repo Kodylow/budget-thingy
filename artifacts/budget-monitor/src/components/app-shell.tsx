@@ -10,6 +10,7 @@ import {
   Menu,
   X,
   Users,
+  TrendingUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,7 +31,7 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const [location] = useLocation();
   const {
-    user, isAccountAdmin, isAccountEditor, isWorkspaceAdmin, workspaceIds, logout,
+    user, isAccountAdmin, isAccountEditor, isWorkspaceAdmin, isAccountWide, workspaceIds, logout,
     preview, canPreviewRbac, setPreview, resetPreview, isPreviewing,
   } = useAuthContext();
   const { data: previewGroups } = useListGroups({}, {
@@ -78,6 +79,7 @@ export function AppShell({ children }: AppShellProps) {
       items: [
         { path: '/settings', label: 'Settings', icon: Settings, show: isAccountAdmin, testId: 'nav-settings' },
         { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
+        { path: '/trends', label: 'Trends', icon: TrendingUp, show: isAccountWide, testId: 'nav-trends' },
       ],
     },
   ].map((section) => ({
