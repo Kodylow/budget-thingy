@@ -7,7 +7,11 @@ export interface DashboardReconciliation {
 export function isCanonicalSummaryPending(
   isLoading: boolean,
   isComplete: boolean | null | undefined,
+  syncStatus?: string | null,
 ): boolean {
+  // Data that won't improve from further polling should be shown immediately.
+  if (syncStatus === 'partial' || syncStatus === 'failed') return false;
+  // Otherwise preserve the original canonical-completeness check.
   return isLoading || isComplete !== true;
 }
 

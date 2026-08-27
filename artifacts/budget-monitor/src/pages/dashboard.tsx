@@ -146,9 +146,11 @@ export default function Dashboard() {
       refetchInterval: (query) => {
         const status = query.state.data?.syncStatus;
         const retryPolling = retryPollingStartedAt !== null;
-        return retryPolling ? 2000 : status === 'failed' || status === 'partial' || query.state.data?.isComplete
-          ? false
-          : 8000;
+        if (retryPolling) return 2000;
+        if (status === 'failed') return false;
+        if (query.state.data?.isComplete) return false;
+        if (status === 'partial') return 30000;
+        return 8000;
       },
     },
   });
@@ -379,12 +381,12 @@ export default function Dashboard() {
       title: 'Total Spend',
       value: role === 'workspace_admin' && isPreviewing
         ? `$${tableTotals.totalSpendUsd.toFixed(2)}`
-        : summary ? `$${summary.totalSpendUsd.toFixed(2)}` : '—',
+        : `$${(summary?.totalSpendUsd ?? tableTotals.totalSpendUsd).toFixed(2)}`,
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
       loading: role === 'workspace_admin' && isPreviewing
         ? groupsLoading || !isComplete
-        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
+        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete, summary?.syncStatus),
     },
     {
       title: 'Total Budget',
@@ -397,12 +399,12 @@ export default function Dashboard() {
       title: 'Remaining',
       value: role === 'workspace_admin' && isPreviewing
         ? `$${tableTotals.totalRemainingUsd.toFixed(2)}`
-        : summary?.totalRemainingUsd != null ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
+        : `$${(summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd).toFixed(2)}`,
       description: 'Across visible budgeted pools',
       icon: Wallet,
       loading: role === 'workspace_admin' && isPreviewing
         ? groupsLoading || !isComplete
-        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
+        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete, summary?.syncStatus),
       valueClassName: (role === 'workspace_admin' && isPreviewing
         ? tableTotals.totalRemainingUsd
         : (summary?.totalRemainingUsd ?? 0)) < 0 ? 'text-destructive' : '',
@@ -418,7 +420,7 @@ export default function Dashboard() {
       icon: AlertTriangle,
       loading: role === 'workspace_admin' && isPreviewing
         ? groupsLoading || !isComplete
-        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete),
+        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete, summary?.syncStatus),
     },
     {
       title: 'Alerts Sent',
