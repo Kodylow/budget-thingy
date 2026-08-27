@@ -2670,6 +2670,54 @@ export function getComcastWorkspaceId(
   return null;
 }
 
+export interface WorkspaceSpendAttribution {
+  spendByWorkspace: Map<string, number>;
+  reAttributedSpendByWorkspace: Map<string, number>;
+}
+
+/**
+ * Apply the dashboard's Comcast re-attribution rule to one user's workspace
+ * spend. The highest-spend non-Comcast workspace is the primary destination;
+ * workspace ID breaks ties deterministically. Comcast-only users are unchanged.
+ *
+ * The returned maps contain every input workspace, including zero-spend rows,
+ * so callers can preserve membership rows independently from spend visibility.
+ */
+export function applyComcastReAttribution(
+  workspaces: ReadonlyMap<string, { name: string }>,
+  perUserWsSpend: ReadonlyMap<string, number>,
+  comcastWsId: string | null = getComcastWorkspaceId(workspaces),
+): WorkspaceSpendAttribution {
+  const spendByWorkspace = new Map(perUserWsSpend);
+  const reAttributedSpendByWorkspace = new Map<string, number>();
+
+  if (!comcastWsId) return { spendByWorkspace, reAttributedSpendByWorkspace };
+
+  const comcastSpend = perUserWsSpend.get(comcastWsId) ?? 0;
+  if (comcastSpend <= 0) return { spendByWorkspace, reAttributedSpendByWorkspace };
+
+  let primaryWsId: string | null = null;
+  let primarySpend = -Infinity;
+  for (const [workspaceId, spend] of perUserWsSpend) {
+    if (workspaceId === comcastWsId || spend <= 0) continue;
+    if (
+      spend > primarySpend ||
+      (spend === primarySpend && primaryWsId !== null && workspaceId < primaryWsId)
+    ) {
+      primaryWsId = workspaceId;
+      primarySpend = spend;
+    }
+  }
+
+  if (!primaryWsId) return { spendByWorkspace, reAttributedSpendByWorkspace };
+
+  spendByWorkspace.set(comcastWsId, 0);
+  spendByWorkspace.set(primaryWsId, (spendByWorkspace.get(primaryWsId) ?? 0) + comcastSpend);
+  reAttributedSpendByWorkspace.set(primaryWsId, comcastSpend);
+
+  return { spendByWorkspace, reAttributedSpendByWorkspace };
+}
+
 /**
  * Workspace-aware dashboard rollup.
  *

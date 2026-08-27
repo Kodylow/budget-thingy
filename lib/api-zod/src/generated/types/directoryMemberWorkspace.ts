@@ -13,4 +13,6 @@ export interface DirectoryMemberWorkspace {
   isDisabled: boolean;
   /** Member's spend in this workspace for the selected range; 0 when no data is loaded yet */
   spendUsd: number;
+  /** Comcast spend folded into this workspace for the selected member and range */
+  reAttributedSpendUsd?: number;
 }

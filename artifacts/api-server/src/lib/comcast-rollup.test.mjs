@@ -6,9 +6,60 @@ import {
   __setWsSpendForTests,
   __setProjectUsageForTests,
   __setProjectInfoForTests,
+  applyComcastReAttribution,
   getDedupedUsageRollup,
   getCanonicalUsage,
 } from "./enterprise.ts";
+
+const directoryWorkspaces = new Map([
+  ["ws-comcast", { name: "Comcast" }],
+  ["ws-freewheel", { name: "Freewheel" }],
+  ["ws-talent", { name: "Talent" }],
+]);
+
+test("workspace spend attribution keeps Comcast-only spend on Comcast", () => {
+  const result = applyComcastReAttribution(directoryWorkspaces, new Map([
+    ["ws-comcast", 50],
+    ["ws-freewheel", 0],
+  ]));
+
+  assert.deepEqual(result.spendByWorkspace, new Map([
+    ["ws-comcast", 50],
+    ["ws-freewheel", 0],
+  ]));
+  assert.deepEqual(result.reAttributedSpendByWorkspace, new Map());
+});
+
+test("workspace spend attribution folds Comcast into the primary workspace", () => {
+  const result = applyComcastReAttribution(directoryWorkspaces, new Map([
+    ["ws-comcast", 20],
+    ["ws-freewheel", 40],
+  ]));
+
+  assert.deepEqual(result.spendByWorkspace, new Map([
+    ["ws-comcast", 0],
+    ["ws-freewheel", 60],
+  ]));
+  assert.deepEqual(result.reAttributedSpendByWorkspace, new Map([
+    ["ws-freewheel", 20],
+  ]));
+});
+
+test("workspace spend attribution chooses the higher-spend workspace", () => {
+  const result = applyComcastReAttribution(directoryWorkspaces, new Map([
+    ["ws-comcast", 20],
+    ["ws-freewheel", 40],
+    ["ws-talent", 10],
+  ]));
+
+  assert.deepEqual(result.spendByWorkspace, new Map([
+    ["ws-comcast", 0],
+    ["ws-freewheel", 60],
+    ["ws-talent", 10],
+  ]));
+  assert.equal(result.reAttributedSpendByWorkspace.get("ws-freewheel"), 20);
+  assert.equal(result.spendByWorkspace.get("ws-talent"), 10);
+});
 
 // ---------------------------------------------------------------------------
 // Fixture helpers

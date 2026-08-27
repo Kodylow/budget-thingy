@@ -677,7 +677,8 @@ export const ListDirectoryMembersResponseItem = zod.object({
   "workspaceName": zod.string(),
   "role": zod.string(),
   "isDisabled": zod.boolean(),
-  "spendUsd": zod.number().describe('Member\'s spend in this workspace for the selected range; 0 when no data is loaded yet')
+  "spendUsd": zod.number().describe('Member\'s spend in this workspace for the selected range; 0 when no data is loaded yet'),
+  "reAttributedSpendUsd": zod.number().optional().describe('Comcast spend folded into this workspace for the selected member and range')
 }))
 })
 export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersResponseItem)

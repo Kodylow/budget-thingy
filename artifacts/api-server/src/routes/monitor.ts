@@ -62,6 +62,7 @@ import {
   queueAllWorkspacesFetch,
   queueWsSpendFetch,
   getWsSpendByUser,
+  applyComcastReAttribution,
   getWorkspaceMemberUsage,
   queueProjectUsageFetch,
   getProjectUsage,
@@ -2758,20 +2759,37 @@ router.get("/directory/members", requireAccountAdmin, async (req, res): Promise<
       return;
     }
 
-    const members = [...dir.members.values()].map((m) => ({
-      userId: m.userId,
-      username: m.username,
-      name: m.name,
-      email: m.email,
-      isAccountAdmin: m.isAccountAdmin,
-      workspaces: [...m.workspaces.entries()].map(([workspaceId, ws]) => ({
-        workspaceId,
-        workspaceName: dir.workspaces.get(workspaceId)?.name ?? workspaceId,
-        role: ws.role,
-        isDisabled: ws.isDisabled,
-        spendUsd: getWsSpendByUser(workspaceId, range.key)?.get(m.userId) ?? 0,
-      })),
-    }));
+    const members = [...dir.members.values()].map((m) => {
+      const rawSpendByWorkspace = new Map(
+        [...m.workspaces.keys()].map((workspaceId) => [
+          workspaceId,
+          getWsSpendByUser(workspaceId, range.key)?.get(m.userId) ?? 0,
+        ]),
+      );
+      const {
+        spendByWorkspace,
+        reAttributedSpendByWorkspace,
+      } = applyComcastReAttribution(dir.workspaces, rawSpendByWorkspace);
+
+      return {
+        userId: m.userId,
+        username: m.username,
+        name: m.name,
+        email: m.email,
+        isAccountAdmin: m.isAccountAdmin,
+        workspaces: [...m.workspaces.entries()].map(([workspaceId, ws]) => {
+          const reAttributedSpendUsd = reAttributedSpendByWorkspace.get(workspaceId) ?? 0;
+          return {
+            workspaceId,
+            workspaceName: dir.workspaces.get(workspaceId)?.name ?? workspaceId,
+            role: ws.role,
+            isDisabled: ws.isDisabled,
+            spendUsd: spendByWorkspace.get(workspaceId) ?? 0,
+            ...(reAttributedSpendUsd > 0 ? { reAttributedSpendUsd } : {}),
+          };
+        }),
+      };
+    });
 
     members.sort((a, b) => a.username.localeCompare(b.username, undefined, { sensitivity: "base" }));
 

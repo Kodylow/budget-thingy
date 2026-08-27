@@ -1751,6 +1751,9 @@ components:
         spendUsd:
           type: number
           description: Member's spend in this workspace for the selected range; 0 when no data is loaded yet
+        reAttributedSpendUsd:
+          type: number
+          description: Comcast spend folded into this workspace for the selected member and range
     DirectoryMember:
       type: object
       required: [userId, username, name, email, isAccountAdmin, workspaces]
