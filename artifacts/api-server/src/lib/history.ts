@@ -11,6 +11,7 @@ import {
   getCompleteDirectoryForRosterSnapshot,
   getSpend,
   queueGroupSpendFetch,
+  resolveRange,
   type GroupSpend,
   type EnterpriseGroup,
 } from "./enterprise";
@@ -125,16 +126,16 @@ export async function snapshotAllGroups(now = Date.now()): Promise<void> {
   if (!isConfigured()) return;
   const dir = await getCompleteDirectoryForRosterSnapshot();
   await recordDailyRosters(dir.groups, dir.groupMembers, now);
+  const range = resolveRange("billing");
   for (const g of dir.groups) {
-    // Default range = the cutoff-anchored billing period, matching getSpend().
     const result = queueGroupSpendFetch(g, 1, false, (spend) => {
       void recordSnapshot(g.id, spend);
-    });
+    }, range);
     if (result === "fresh_cache") {
       // Cache is fresh — record the cached value now. For "queued" and
       // "duplicate_queued" the callback fires when the in-flight fetch lands,
       // so we never persist a stale value.
-      const spend = getSpend(g.id);
+      const spend = getSpend(g.id, range.key);
       if (spend) void recordSnapshot(g.id, spend);
     }
   }

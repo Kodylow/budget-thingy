@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import {
   apiDirectoryCacheTable,
   apiBillingPeriodCacheTable,
+  apiAccountTotalVerificationTable,
   apiSpendCacheTable,
   apiProjectMetadataTable,
   apiProjectMetadataStateTable,
@@ -10,7 +11,7 @@ import {
   usageSyncStateTable,
   type UsageSyncChunk,
 } from "@workspace/db/schema";
-import { and, eq, gte, like, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, like, lt, lte, sql } from "drizzle-orm";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
@@ -83,6 +84,9 @@ export const SPEND_DATA_CUTOFF_MS = new Date(SPEND_DATA_CUTOFF_ISO).getTime();
 export const SPEND_DATA_CUTOFF_LABEL = "May 2026-present";
 export const PACE_FALLBACK_END_ISO = "2027-05-17T00:00:00.000Z";
 const BILLING_PERIOD_REFRESH_MS = 24 * 60 * 60 * 1000;
+const VERIFICATION_HEAL_THRESHOLD_USD = 1;
+const VERIFICATION_RETRY_BASE_MS = 60 * 1000;
+const VERIFICATION_RETRY_MAX_MS = 60 * 60 * 1000;
 
 export type RangeType = "billing" | "mtd" | "ytd" | "custom";
 
@@ -144,9 +148,34 @@ export function resolveRange(
       };
     }
     default:
+      {
+        const activePeriod = getActiveBillingPeriod(now.getTime());
+        if (activePeriod) {
+        const periodStartMs = new Date(activePeriod.start).getTime();
+        const periodEndMs = new Date(activePeriod.end).getTime();
+        const effectiveStart = new Date(Math.max(periodStartMs, SPEND_DATA_CUTOFF_MS));
+        const effectiveEnd = new Date(Math.min(now.getTime(), periodEndMs));
+        if (
+          Number.isFinite(effectiveStart.getTime()) &&
+          Number.isFinite(effectiveEnd.getTime()) &&
+          effectiveEnd > effectiveStart
+        ) {
+          return {
+            // The discovered interval bounds are immutable material identity. The
+            // moving reporting end is deliberately excluded so polling reuses cache.
+            key: `billing:${activePeriod.start}:${activePeriod.end}:from:${effectiveStart.toISOString()}`,
+            label: formatPeriodLabel(effectiveStart.toISOString(), effectiveEnd.toISOString()),
+            params: {
+              startTime: effectiveStart.toISOString(),
+              endTime: effectiveEnd.toISOString(),
+            },
+          };
+        }
+      }
+      }
       return {
         key: "billing:from-cutoff",
-        label: SPEND_DATA_CUTOFF_LABEL,
+        label: formatPeriodLabel(SPEND_DATA_CUTOFF_ISO, now.toISOString()),
         params: { startTime: SPEND_DATA_CUTOFF_ISO, endTime: now.toISOString() },
       };
   }
@@ -247,6 +276,38 @@ interface StoredBillingPeriod {
 
 let billingPeriodCache: StoredBillingPeriod | null = null;
 let billingPeriodRefreshTimer: NodeJS.Timeout | null = null;
+let accountVerificationRetryTimer: NodeJS.Timeout | null = null;
+let accountVerificationFailureCount = 0;
+
+export type AccountTotalVerificationOutcome = "success" | "healed" | "failed";
+
+export interface AccountTotalVerificationState {
+  verifiedAt: string;
+  outcome: AccountTotalVerificationOutcome;
+  error: string | null;
+  rangeKey: string;
+  rangeStart: string;
+  rangeEnd: string;
+  upstreamTotalUsd: number | null;
+  storedTotalUsd: number | null;
+  deltaUsd: number | null;
+}
+
+let accountTotalVerificationState: AccountTotalVerificationState | null = null;
+
+export function getAccountTotalVerificationState(): AccountTotalVerificationState | null {
+  return accountTotalVerificationState ? { ...accountTotalVerificationState } : null;
+}
+
+function getActiveBillingPeriod(now = Date.now()): StoredBillingPeriod | null {
+  if (!billingPeriodCache) return null;
+  const start = new Date(billingPeriodCache.start).getTime();
+  const end = new Date(billingPeriodCache.end).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end <= now) {
+    return null;
+  }
+  return billingPeriodCache;
+}
 
 function formatPeriodLabel(startIso: string, endIso: string): string {
   const format = (iso: string) =>
@@ -291,7 +352,7 @@ async function persistBillingPeriod(period: StoredBillingPeriod): Promise<void> 
 }
 
 export function getBillingPeriodMetadata(): BillingPeriodMetadata {
-  const cached = billingPeriodCache;
+  const cached = getActiveBillingPeriod();
   const start = cached?.start ?? SPEND_DATA_CUTOFF_ISO;
   const end = cached?.end ?? PACE_FALLBACK_END_ISO;
   return {
@@ -300,7 +361,8 @@ export function getBillingPeriodMetadata(): BillingPeriodMetadata {
     fetchedAt: cached ? new Date(cached.fetchedAt).toISOString() : null,
     isFresh: !!cached && Date.now() - cached.fetchedAt < BILLING_PERIOD_REFRESH_MS,
     isFallback: !cached,
-    differsFromReportingCutoff: start !== SPEND_DATA_CUTOFF_ISO,
+    differsFromReportingCutoff:
+      Math.max(new Date(start).getTime(), SPEND_DATA_CUTOFF_MS) !== SPEND_DATA_CUTOFF_MS,
     label: formatPeriodLabel(start, end),
   };
 }
@@ -328,9 +390,13 @@ export function resolvePaceUsageRange(): UsageRange | null {
   };
 }
 
-export function refreshBillingPeriodMetadata(priority = 1): Promise<boolean> {
+export function refreshBillingPeriodMetadata(priority = 1, force = false): Promise<boolean> {
   if (!isConfigured()) return Promise.resolve(false);
-  if (billingPeriodCache && Date.now() - billingPeriodCache.fetchedAt < BILLING_PERIOD_REFRESH_MS) {
+  if (
+    !force &&
+    billingPeriodCache &&
+    Date.now() - billingPeriodCache.fetchedAt < BILLING_PERIOD_REFRESH_MS
+  ) {
     return Promise.resolve(false);
   }
   return new Promise((resolve) => {
@@ -433,6 +499,9 @@ const MAX_CURSORLESS_SHARD_DEPTH = 4;
 export const CUSTOM_RANGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const syncMetadata = new Map<string, SyncMetadata>();
+const accountUsageRetryAt = new Map<string, number>();
+const accountUsageFailureCount = new Map<string, number>();
+const accountUsageRetryTimers = new Map<string, NodeJS.Timeout>();
 let lastCleanupAt = 0;
 
 function syncId(mode: UsageSyncMode, rangeKey: string, scopeKey: string): string {
@@ -688,7 +757,6 @@ async function synchronizeUsage(
   scopeKey: string,
   baseParams: Record<string, string | undefined>,
   force = false,
-  fullRebuild = false,
 ): Promise<UsageSyncChunk[]> {
   await maybePruneExpiredCustomUsage();
   const id = syncId(mode, range.key, scopeKey);
@@ -730,9 +798,7 @@ async function synchronizeUsage(
           error: storedState.errorMessage,
         }
       : undefined;
-    const previous = fullRebuild
-      ? undefined
-      : force && storedPrevious && !storedPrevious.isClosed
+    const previous = force && storedPrevious && !storedPrevious.isClosed
       ? { ...storedPrevious, completedAt: 0 }
       : storedPrevious;
     const plan = planSyncChunks(range, previous);
@@ -775,7 +841,7 @@ async function synchronizeUsage(
         eq(usageSyncChunksTable.mode, mode),
         eq(usageSyncChunksTable.rangeKey, range.key),
         eq(usageSyncChunksTable.scopeKey, scopeKey),
-        gte(usageSyncChunksTable.chunkStart, plan.replacementStart),
+        gt(usageSyncChunksTable.chunkEnd, plan.replacementStart),
       ));
     if (fetched.length > 0) {
       await tx.insert(usageSyncChunksTable).values(fetched.map((chunk) => ({
@@ -995,7 +1061,10 @@ function isDurablyFresh(
   force: boolean,
 ): boolean {
   const metadata = syncMetadata.get(syncId(mode, rangeKey, scopeKey));
-  if (!force && (metadata?.status === "failed" || metadata?.status === "partial")) return true;
+  if (!force && (metadata?.status === "failed" || metadata?.status === "partial")) {
+    if (mode !== "account_total") return true;
+    return Date.now() < (accountUsageRetryAt.get(rangeKey) ?? metadata.completedAt);
+  }
   if (metadata?.isClosed && metadata.status === "success") return true;
   return !force && fetchedAt !== undefined && Date.now() - fetchedAt < USAGE_TTL_MS;
 }
@@ -1394,10 +1463,21 @@ function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend):
 export async function initCache(): Promise<void> {
   try {
     await maybePruneExpiredCustomUsage();
-    const [dirRow, billingPeriodRow, spendRows, projectRows, projectStates, durable] = await Promise.all([
+    const [
+      dirRow,
+      billingPeriodRow,
+      verificationRow,
+      spendRows,
+      projectRows,
+      projectStates,
+      durable,
+    ] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
       db.query.apiBillingPeriodCacheTable.findFirst({
         where: eq(apiBillingPeriodCacheTable.id, "current"),
+      }),
+      db.query.apiAccountTotalVerificationTable.findFirst({
+        where: eq(apiAccountTotalVerificationTable.id, "singleton"),
       }),
       db.select().from(apiSpendCacheTable),
       db.select().from(apiProjectMetadataTable),
@@ -1416,6 +1496,19 @@ export async function initCache(): Promise<void> {
         start: billingPeriodRow.periodStart.toISOString(),
         end: billingPeriodRow.periodEnd.toISOString(),
         fetchedAt: billingPeriodRow.fetchedAt.getTime(),
+      };
+    }
+    if (verificationRow) {
+      accountTotalVerificationState = {
+        verifiedAt: verificationRow.verifiedAt.toISOString(),
+        outcome: verificationRow.outcome as AccountTotalVerificationOutcome,
+        error: verificationRow.errorMessage,
+        rangeKey: verificationRow.rangeKey,
+        rangeStart: verificationRow.rangeStart.toISOString(),
+        rangeEnd: verificationRow.rangeEnd.toISOString(),
+        upstreamTotalUsd: verificationRow.upstreamTotalUsd,
+        storedTotalUsd: verificationRow.storedTotalUsd,
+        deltaUsd: verificationRow.deltaUsd,
       };
     }
 
@@ -1489,10 +1582,15 @@ export async function initCache(): Promise<void> {
   } catch (err) {
     logger.warn({ err }, "Failed to hydrate caches from DB — will fetch fresh on first request");
   }
-  await refreshBillingPeriodMetadata(0);
+  // Revalidate on process startup before resolving the account anchor. Hydrated
+  // metadata remains the immediate fallback if this live request fails.
+  await refreshBillingPeriodMetadata(0, true);
+  // Publish the one-call account anchor before hundreds of newly keyed group
+  // warm-up scopes can occupy the serial queue.
+  queueAccountTotalVerification(-10);
   if (!billingPeriodRefreshTimer) {
     billingPeriodRefreshTimer = setInterval(() => {
-      void refreshBillingPeriodMetadata(1);
+      void refreshBillingPeriodMetadata(1).then(() => queueAccountTotalVerification(1));
     }, BILLING_PERIOD_REFRESH_MS);
     billingPeriodRefreshTimer.unref();
   }
@@ -1875,6 +1973,23 @@ export function getAccountUsage(rangeKey: string): AccountUsage | undefined {
   return accountUsageCache.get(rangeKey);
 }
 
+function scheduleAccountUsageRetry(range: UsageRange, priority: number): void {
+  const failures = (accountUsageFailureCount.get(range.key) ?? 0) + 1;
+  accountUsageFailureCount.set(range.key, failures);
+  const delay = Math.min(
+    VERIFICATION_RETRY_MAX_MS,
+    VERIFICATION_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1),
+  );
+  accountUsageRetryAt.set(range.key, Date.now() + delay);
+  if (accountUsageRetryTimers.has(range.key)) return;
+  const timer = setTimeout(() => {
+    accountUsageRetryTimers.delete(range.key);
+    queueAccountUsageFetch(range, priority, true);
+  }, delay);
+  timer.unref();
+  accountUsageRetryTimers.set(range.key, timer);
+}
+
 export function queueAccountUsageFetch(
   range: UsageRange,
   priority = 0,
@@ -1900,12 +2015,221 @@ export function queueAccountUsageFetch(
         force,
       );
       accountUsageCache.set(range.key, aggregateAccountUsage(rows));
+      const metadata = syncMetadata.get(
+        syncId("account_total", range.key, ACCOUNT_USAGE_SCOPE),
+      );
+      if (metadata?.status === "partial") {
+        scheduleAccountUsageRetry(range, priority);
+      } else {
+        accountUsageFailureCount.delete(range.key);
+        accountUsageRetryAt.delete(range.key);
+        const retryTimer = accountUsageRetryTimers.get(range.key);
+        if (retryTimer) clearTimeout(retryTimer);
+        accountUsageRetryTimers.delete(range.key);
+      }
     } catch (err) {
       logger.error({ err, range: range.key }, "Failed to fetch account usage");
+      scheduleAccountUsageRetry(range, priority);
     }
   });
   if (queued) markUsageSyncQueued("account_total", range.key, ACCOUNT_USAGE_SCOPE);
   return queued;
+}
+
+function scheduleAccountVerificationRetry(): void {
+  if (accountVerificationRetryTimer) return;
+  const exponent = Math.max(0, accountVerificationFailureCount - 1);
+  const delay = Math.min(
+    VERIFICATION_RETRY_MAX_MS,
+    VERIFICATION_RETRY_BASE_MS * 2 ** exponent,
+  );
+  accountVerificationRetryTimer = setTimeout(() => {
+    accountVerificationRetryTimer = null;
+    queueAccountTotalVerification(1);
+  }, delay);
+  accountVerificationRetryTimer.unref();
+}
+
+async function verifyAccountTotal(range: UsageRange, scheduleRetry = true): Promise<void> {
+  const { start, end } = rangeBounds(range);
+  const id = syncId("account_total", range.key, ACCOUNT_USAGE_SCOPE);
+  try {
+    const committed = await db.transaction(async (tx) => {
+      // Hold the same cross-replica lock used by incremental synchronization
+      // before fetching. A moving-end verification can therefore never replace
+      // a newer snapshot committed while its upstream response was in flight.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${id}))`);
+      // Account totals are not paginated. This remains exactly one unfiltered
+      // request for the fully resolved reporting interval.
+      const upstream = await usageFetch({
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+      });
+      const payload: StoredUsagePayload = {
+        totalCostUsd: upstream.totalCostUsd,
+        attributableTotalCostUsd: upstream.attributableTotalCostUsd ?? 0,
+        unattributableTotalCostUsd: upstream.unattributableTotalCostUsd ?? 0,
+        groups: upstream.groups ?? [],
+      };
+      const verifiedAt = new Date();
+      const rows = await tx.select().from(usageSyncChunksTable).where(and(
+        eq(usageSyncChunksTable.mode, "account_total"),
+        eq(usageSyncChunksTable.rangeKey, range.key),
+        eq(usageSyncChunksTable.scopeKey, ACCOUNT_USAGE_SCOPE),
+      ));
+      const storedTotalUsd = rows.reduce(
+        (sum, row) => sum + storedPayload(row).totalCostUsd,
+        0,
+      );
+      const deltaUsd = upstream.totalCostUsd - storedTotalUsd;
+      const healed = Math.abs(deltaUsd) > VERIFICATION_HEAL_THRESHOLD_USD;
+      if (healed) {
+        await tx.delete(usageSyncChunksTable).where(and(
+          eq(usageSyncChunksTable.mode, "account_total"),
+          eq(usageSyncChunksTable.rangeKey, range.key),
+          eq(usageSyncChunksTable.scopeKey, ACCOUNT_USAGE_SCOPE),
+        ));
+        await tx.delete(usageSyncStateTable).where(and(
+          eq(usageSyncStateTable.mode, "account_total"),
+          eq(usageSyncStateTable.rangeKey, range.key),
+          eq(usageSyncStateTable.scopeKey, ACCOUNT_USAGE_SCOPE),
+        ));
+        await tx.insert(usageSyncChunksTable).values({
+          mode: "account_total",
+          rangeKey: range.key,
+          scopeKey: ACCOUNT_USAGE_SCOPE,
+          chunkStart: start,
+          chunkEnd: end,
+          payloadJson: payload,
+          completedAt: verifiedAt,
+        });
+        await tx.insert(usageSyncStateTable).values({
+          mode: "account_total",
+          rangeKey: range.key,
+          scopeKey: ACCOUNT_USAGE_SCOPE,
+          rangeStart: start,
+          syncedThrough: end,
+          isClosed: false,
+          status: "success",
+          errorMessage: null,
+          startedAt: verifiedAt,
+          completedAt: verifiedAt,
+        });
+      }
+      const outcome: AccountTotalVerificationOutcome = healed ? "healed" : "success";
+      await tx.insert(apiAccountTotalVerificationTable).values({
+        id: "singleton",
+        verifiedAt,
+        outcome,
+        errorMessage: null,
+        rangeKey: range.key,
+        rangeStart: start,
+        rangeEnd: end,
+        upstreamTotalUsd: upstream.totalCostUsd,
+        storedTotalUsd,
+        deltaUsd,
+      }).onConflictDoUpdate({
+        target: apiAccountTotalVerificationTable.id,
+        set: {
+          verifiedAt,
+          outcome,
+          errorMessage: null,
+          rangeKey: range.key,
+          rangeStart: start,
+          rangeEnd: end,
+          upstreamTotalUsd: upstream.totalCostUsd,
+          storedTotalUsd,
+          deltaUsd,
+        },
+      });
+      return { outcome, storedTotalUsd, deltaUsd, healed, upstream, payload, verifiedAt };
+    });
+    accountTotalVerificationState = {
+      verifiedAt: committed.verifiedAt.toISOString(),
+      outcome: committed.outcome,
+      error: null,
+      rangeKey: range.key,
+      rangeStart: start.toISOString(),
+      rangeEnd: end.toISOString(),
+      upstreamTotalUsd: committed.upstream.totalCostUsd,
+      storedTotalUsd: committed.storedTotalUsd,
+      deltaUsd: committed.deltaUsd,
+    };
+    if (committed.healed) {
+      accountUsageCache.set(range.key, {
+        fetchedAt: committed.verifiedAt.getTime(),
+        totalCostUsd: committed.payload.totalCostUsd,
+        attributableTotalCostUsd: committed.payload.attributableTotalCostUsd,
+        unattributableTotalCostUsd: committed.payload.unattributableTotalCostUsd,
+      });
+      syncMetadata.set(id, {
+        syncedThrough: end.getTime(),
+        completedAt: committed.verifiedAt.getTime(),
+        isClosed: false,
+        status: "success",
+        error: null,
+      });
+    }
+    accountVerificationFailureCount = 0;
+  } catch (err) {
+    const verifiedAt = new Date();
+    const error = err instanceof Error ? err.message : String(err);
+    const prior = accountUsageCache.get(range.key);
+    const failedState: AccountTotalVerificationState = {
+      verifiedAt: verifiedAt.toISOString(),
+      outcome: "failed",
+      error,
+      rangeKey: range.key,
+      rangeStart: start.toISOString(),
+      rangeEnd: end.toISOString(),
+      upstreamTotalUsd: null,
+      storedTotalUsd: prior?.totalCostUsd ?? null,
+      deltaUsd: null,
+    };
+    accountTotalVerificationState = failedState;
+    try {
+      await db.insert(apiAccountTotalVerificationTable).values({
+        id: "singleton",
+        verifiedAt,
+        outcome: "failed",
+        errorMessage: error.slice(0, 1000),
+        rangeKey: range.key,
+        rangeStart: start,
+        rangeEnd: end,
+        upstreamTotalUsd: null,
+        storedTotalUsd: failedState.storedTotalUsd,
+        deltaUsd: null,
+      }).onConflictDoUpdate({
+        target: apiAccountTotalVerificationTable.id,
+        set: {
+          verifiedAt,
+          outcome: "failed",
+          errorMessage: error.slice(0, 1000),
+          rangeKey: range.key,
+          rangeStart: start,
+          rangeEnd: end,
+          upstreamTotalUsd: null,
+          storedTotalUsd: failedState.storedTotalUsd,
+          deltaUsd: null,
+        },
+      });
+    } catch (persistErr) {
+      logger.warn({ err: persistErr }, "Failed to persist account-total verification failure");
+    }
+    accountVerificationFailureCount += 1;
+    if (scheduleRetry) scheduleAccountVerificationRetry();
+    logger.warn({ err, range: range.key }, "Account-total verification failed; retained prior cache");
+  }
+}
+
+export function queueAccountTotalVerification(priority = 1): boolean {
+  if (!isConfigured()) return false;
+  const range = resolveRange("billing");
+  return enqueueUsage(
+    `account-total-verification:${range.key}`,
+    priority,
+    () => verifyAccountTotal(range),
+  );
 }
 
 interface FullRebuildScope {
@@ -3458,6 +3782,14 @@ export function __resetDurableUsageCachesForTests(): void {
   projectInfoCache.clear();
   syncMetadata.clear();
   billingPeriodCache = null;
+  accountTotalVerificationState = null;
+  if (accountVerificationRetryTimer) clearTimeout(accountVerificationRetryTimer);
+  accountVerificationRetryTimer = null;
+  accountVerificationFailureCount = 0;
+  accountUsageRetryAt.clear();
+  accountUsageFailureCount.clear();
+  for (const timer of accountUsageRetryTimers.values()) clearTimeout(timer);
+  accountUsageRetryTimers.clear();
 }
 
 export function __setBillingPeriodForTests(period: StoredBillingPeriod | null): void {
@@ -3486,6 +3818,10 @@ export function __rebuildAccountUsageForTests(range: UsageRange): Promise<UsageS
     scopeKey: ACCOUNT_USAGE_SCOPE,
     params: {},
   }]).then(([result]) => result?.rows ?? []);
+}
+
+export async function __verifyAccountTotalForTests(range: UsageRange): Promise<void> {
+  await verifyAccountTotal(range, false);
 }
 
 export function __rebuildAccountAndWorkspaceUsageForTests(

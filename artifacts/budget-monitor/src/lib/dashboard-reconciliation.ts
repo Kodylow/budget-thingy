@@ -15,6 +15,25 @@ export function isCanonicalSummaryPending(
   return isLoading || isComplete !== true;
 }
 
+export function isTotalSpendHeadlinePending({
+  isLoading,
+  isAccountWide,
+  accountUsageTotalSpendUsd,
+  isComplete,
+  syncStatus,
+}: {
+  isLoading: boolean;
+  isAccountWide: boolean;
+  accountUsageTotalSpendUsd: number | null | undefined;
+  isComplete: boolean | null | undefined;
+  syncStatus?: string | null;
+}): boolean {
+  // The account headline is independently anchored by one unfiltered request.
+  // Do not hide it while unrelated group/project scopes continue warming.
+  if (isAccountWide) return isLoading || accountUsageTotalSpendUsd == null;
+  return isCanonicalSummaryPending(isLoading, isComplete, syncStatus);
+}
+
 export function reconcileDashboardSpend({
   isAccountWide,
   visibleRollupSpendUsd,

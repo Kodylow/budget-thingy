@@ -1336,7 +1336,7 @@ test("summary: team pool + unassigned group remaining reconciles with table mode
   }
 });
 
-test("group pace spend excludes usage before a later discovered billing start", async () => {
+test("group reporting and pace spend use the later discovered billing start", async () => {
   restoreDir();
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
@@ -1345,13 +1345,27 @@ test("group pace spend excludes usage before a later discovered billing start", 
   setProjectSpend(85, 15, 8);
 
   __setBillingPeriodForTests({
-    startTime: "2026-08-01T00:00:00.000Z",
-    endTime: "2026-09-01T00:00:00.000Z",
-    fetchedAt: new Date(),
-    source: "api",
+    start: "2026-08-01T00:00:00.000Z",
+    end: "2026-09-01T00:00:00.000Z",
+    fetchedAt: Date.now(),
   });
+  const billingRange = resolveRange("billing");
   const paceRange = resolvePaceUsageRange();
   assert.ok(paceRange);
+  __setMemberUsageForTests("sg-alpha", billingRange.key, new Map([["alice", 5], ["carol", 1]]));
+  __setMemberUsageForTests("sg-beta", billingRange.key, new Map([["alice", 2], ["bob", 3]]));
+  __setWsSpendForTests("ws-main", billingRange.key, new Map([["alice", 7], ["carol", 1], ["bob", 3]]));
+  __setWsSpendForTests("ws-extra", billingRange.key, new Map([["alice", 4], ["carol", 0.5], ["dave", 1]]));
+  __setProjectUsageForTests("sg-alpha", billingRange.key, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 0,
+    byProject: new Map(),
+  });
+  __setProjectUsageForTests("sg-beta", billingRange.key, {
+    fetchedAt: Date.now(),
+    totalCostUsd: 0,
+    byProject: new Map(),
+  });
   __setMemberUsageForTests("sg-alpha", paceRange.key, new Map([["alice", 5], ["carol", 1]]));
   __setMemberUsageForTests("sg-beta", paceRange.key, new Map([["alice", 2], ["bob", 3]]));
   __setWsSpendForTests("ws-main", paceRange.key, new Map([["alice", 7], ["carol", 1], ["bob", 3]]));
@@ -1371,12 +1385,18 @@ test("group pace spend excludes usage before a later discovered billing start", 
     const json = await req("/groups");
     const alpha = json.groups.find((group) => group.groupId === "sg-alpha");
     const beta = json.groups.find((group) => group.groupId === "sg-beta");
-    assert.equal(alpha.rollupSpendUsd, 60, "reporting spend still includes May through July");
+    assert.equal(alpha.rollupSpendUsd, 8, "reporting spend starts with the verified billing window");
     assert.equal(alpha.paceSpendUsd, 8, "pace spend contains only August usage");
-    assert.equal(beta.rollupSpendUsd, 15);
+    assert.equal(beta.rollupSpendUsd, 3);
     assert.equal(beta.paceSpendUsd, 3);
     assert.equal(alpha.paceSpendLoaded, true);
   } finally {
+    __setMemberUsageForTests("sg-alpha", billingRange.key, null);
+    __setMemberUsageForTests("sg-beta", billingRange.key, null);
+    __setWsSpendForTests("ws-main", billingRange.key, null);
+    __setWsSpendForTests("ws-extra", billingRange.key, null);
+    __setProjectUsageForTests("sg-alpha", billingRange.key, null);
+    __setProjectUsageForTests("sg-beta", billingRange.key, null);
     __setMemberUsageForTests("sg-alpha", paceRange.key, null);
     __setMemberUsageForTests("sg-beta", paceRange.key, null);
     __setWsSpendForTests("ws-main", paceRange.key, null);

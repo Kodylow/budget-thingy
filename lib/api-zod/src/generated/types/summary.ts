@@ -44,6 +44,12 @@ export interface Summary {
   groupsOver100: number;
   alertsSentThisPeriod: number;
   billingPeriodLabel: string;
+  /** Inclusive UTC start represented by the summary total */
+  reportingRangeStart: string;
+  /** Exclusive UTC end represented by the summary total */
+  reportingRangeEnd: string;
+  /** True when verified billing metadata materially changes the default cutoff-based reporting assumption */
+  billingPeriodDiffersFromReportingCutoff: boolean;
   /** Inclusive period start used for dashboard pace projections */
   pacePeriodStart: string;
   /** Exclusive period end used for dashboard pace projections */

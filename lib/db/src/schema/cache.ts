@@ -19,6 +19,23 @@ export const apiBillingPeriodCacheTable = pgTable("api_billing_period_cache", {
 
 export type ApiBillingPeriodCache = typeof apiBillingPeriodCacheTable.$inferSelect;
 
+/** Last account-wide exact-range verification of the durable usage aggregate. */
+export const apiAccountTotalVerificationTable = pgTable("api_account_total_verification", {
+  id: text("id").primaryKey().default("singleton"),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull(),
+  outcome: text("outcome").notNull(),
+  errorMessage: text("error_message"),
+  rangeKey: text("range_key").notNull(),
+  rangeStart: timestamp("range_start", { withTimezone: true }).notNull(),
+  rangeEnd: timestamp("range_end", { withTimezone: true }).notNull(),
+  upstreamTotalUsd: doublePrecision("upstream_total_usd"),
+  storedTotalUsd: doublePrecision("stored_total_usd"),
+  deltaUsd: doublePrecision("delta_usd"),
+});
+
+export type ApiAccountTotalVerification =
+  typeof apiAccountTotalVerificationTable.$inferSelect;
+
 // One row per (range_key, group_id) — stores the spend value + when it was fetched.
 export const apiSpendCacheTable = pgTable(
   "api_spend_cache",

@@ -205,6 +205,9 @@ export default function Settings() {
                       <p className="text-sm font-medium">Enterprise Billing Period</p>
                       <p className="text-xs text-muted-foreground">{status.billingPeriodLabel}</p>
                       <p className="text-xs text-muted-foreground mt-1">
+                        Reporting range: {status.reportingRangeLabel}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
                         {status.billingPeriodFallback
                           ? 'Using the safe fallback until Enterprise billing metadata is available.'
                           : status.billingPeriodFresh
@@ -220,10 +223,66 @@ export default function Settings() {
                 {status.billingPeriodDiffersFromReportingCutoff && (
                   <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs">
                     The Enterprise billing period starts on{' '}
-                    {new Date(status.billingPeriodStart).toLocaleDateString()} while spend reporting remains
-                    fixed to the May 20 data-availability cutoff.
+                    {new Date(status.billingPeriodStart).toLocaleDateString()}. The default dashboard
+                    now starts there instead of using the earlier May 20 data-availability cutoff.
                   </div>
                 )}
+              </div>
+
+              <div
+                className="flex flex-col gap-3 p-3 rounded-lg border border-border"
+                data-testid="status-account-total-verification"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    {!status.accountTotalVerification ||
+                    status.accountTotalVerification.outcome === 'failed' ? (
+                      <AlertCircle className="h-5 w-5 text-chart-2 shrink-0 mt-0.5" />
+                    ) : (
+                      <CheckCircle className="h-5 w-5 text-chart-1 shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <p className="text-sm font-medium">Account Total Verification</p>
+                      {!status.accountTotalVerification ? (
+                        <p className="text-xs text-muted-foreground">Not yet verified</p>
+                      ) : (
+                        <>
+                          <p className="text-xs text-muted-foreground">
+                            Checked{' '}
+                            {formatDistanceToNow(
+                              new Date(status.accountTotalVerification.verifiedAt),
+                              { addSuffix: true },
+                            )}
+                            {status.accountTotalVerification.deltaUsd != null
+                              ? ` · Delta $${status.accountTotalVerification.deltaUsd.toFixed(2)}`
+                              : ''}
+                          </p>
+                          {status.accountTotalVerification.error && (
+                            <p className="text-xs text-destructive mt-1">
+                              {status.accountTotalVerification.error}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <Badge
+                    variant={
+                      !status.accountTotalVerification ||
+                      status.accountTotalVerification.outcome === 'failed'
+                        ? 'secondary'
+                        : 'default'
+                    }
+                  >
+                    {!status.accountTotalVerification
+                      ? 'Pending'
+                      : status.accountTotalVerification.outcome === 'healed'
+                        ? 'Healed'
+                        : status.accountTotalVerification.outcome === 'success'
+                          ? 'Verified'
+                          : 'Failed'}
+                  </Badge>
+                </div>
               </div>
 
               {(!status.enterpriseApiConfigured || !status.enterpriseApiOk) && (

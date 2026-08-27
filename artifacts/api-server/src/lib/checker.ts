@@ -32,19 +32,16 @@ import { resolveAlertRecipients } from "./alert-recipients";
 export const THRESHOLDS = [50, 75, 90, 100];
 export const CHECK_INTERVAL_MINUTES = 10;
 
-// Team spend is always evaluated against the same cutoff-anchored billing range
-// the dashboard uses for its deduped team rollups.
-const TEAM_RANGE_KEY = "billing:from-cutoff";
-
 type CheckerDirectory = Awaited<ReturnType<typeof getDirectory>>;
 
 function getStrictCheckerCanonicalUsage(
   dir: CheckerDirectory,
   teamByGroupName?: ReadonlyMap<string, string>,
 ) {
+  const rangeKey = resolveRange("billing").key;
   return getCanonicalUsage(
     dir.groups,
-    TEAM_RANGE_KEY,
+    rangeKey,
     new Set(dir.workspaces.keys()),
     dir.groupMembers,
     dir.members,
@@ -373,7 +370,7 @@ async function evaluateTeamsOnceInternal(): Promise<{ checkedTeams: number; aler
 }
 
 async function evaluateTeamsOnce(): Promise<{ checkedTeams: number; alerts: Alert[] }> {
-  const key = TEAM_RANGE_KEY;
+  const key = resolveRange("billing").key;
   const existing = teamChecksInFlight.get(key);
   if (existing) return existing;
   const evaluation = evaluateTeamsOnceInternal().finally(() => {

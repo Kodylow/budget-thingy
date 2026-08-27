@@ -88,7 +88,10 @@ import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
-import { isCanonicalSummaryPending } from '@/lib/dashboard-reconciliation';
+import {
+  isCanonicalSummaryPending,
+  isTotalSpendHeadlinePending,
+} from '@/lib/dashboard-reconciliation';
 import { filterGroupsForView } from '@/lib/rbac-view';
 
 interface TeamSection {
@@ -358,7 +361,13 @@ export default function Dashboard() {
       icon: DollarSign,
       loading: role === 'workspace_admin' && isPreviewing
         ? groupsLoading || !isComplete
-        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete, summary?.syncStatus),
+        : isTotalSpendHeadlinePending({
+            isLoading: summaryLoading,
+            isAccountWide,
+            accountUsageTotalSpendUsd: summary?.accountUsageTotalSpendUsd,
+            isComplete: summary?.isComplete,
+            syncStatus: summary?.syncStatus,
+          }),
     },
     {
       title: 'Total Budget',
@@ -820,6 +829,16 @@ export default function Dashboard() {
           Pace period: {summary.pacePeriodLabel}
           {summary.pacePeriodIsFallback ? ' (safe fallback)' : ''}
         </p>
+      )}
+      {rangeType === 'billing' && summary?.billingPeriodDiffersFromReportingCutoff && (
+        <div
+          className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm"
+          data-testid="billing-window-banner"
+        >
+          Total Spend uses the verified Enterprise billing window shown above, beginning{' '}
+          {new Date(summary.reportingRangeStart).toLocaleDateString()}, rather than the earlier
+          data-availability cutoff.
+        </div>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">

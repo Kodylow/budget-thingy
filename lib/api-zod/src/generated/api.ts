@@ -393,6 +393,9 @@ export const GetSummaryResponse = zod.object({
   "groupsOver100": zod.number(),
   "alertsSentThisPeriod": zod.number(),
   "billingPeriodLabel": zod.string(),
+  "reportingRangeStart": zod.string().describe('Inclusive UTC start represented by the summary total'),
+  "reportingRangeEnd": zod.string().describe('Exclusive UTC end represented by the summary total'),
+  "billingPeriodDiffersFromReportingCutoff": zod.boolean().describe('True when verified billing metadata materially changes the default cutoff-based reporting assumption'),
   "pacePeriodStart": zod.string().describe('Inclusive period start used for dashboard pace projections'),
   "pacePeriodEnd": zod.string().describe('Exclusive period end used for dashboard pace projections'),
   "pacePeriodLabel": zod.string(),
@@ -809,7 +812,22 @@ export const GetStatusResponse = zod.object({
   "billingPeriodFresh": zod.boolean(),
   "billingPeriodFallback": zod.boolean(),
   "billingPeriodDiffersFromReportingCutoff": zod.boolean(),
-  "reportingCutoff": zod.string()
+  "reportingCutoff": zod.string(),
+  "reportingRangeKey": zod.string().describe('Stable cache identity for the effective default reporting window'),
+  "reportingRangeStart": zod.string().describe('Effective inclusive reporting start after applying the spend cutoff'),
+  "reportingRangeEnd": zod.string().describe('Effective exclusive reporting end, capped at now and the billing-period end'),
+  "reportingRangeLabel": zod.string().describe('Label that describes the effective reporting bounds'),
+  "accountTotalVerification": zod.union([zod.object({
+  "verifiedAt": zod.string(),
+  "outcome": zod.enum(['success', 'healed', 'failed']),
+  "error": zod.string().nullable(),
+  "rangeKey": zod.string(),
+  "rangeStart": zod.string(),
+  "rangeEnd": zod.string(),
+  "upstreamTotalUsd": zod.number().nullable(),
+  "storedTotalUsd": zod.number().nullable(),
+  "deltaUsd": zod.number().nullable()
+}),zod.null()])
 })
 
 

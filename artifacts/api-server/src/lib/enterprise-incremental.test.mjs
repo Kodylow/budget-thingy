@@ -16,6 +16,7 @@ let failAtFetchCount = null;
 let noCursorProjectMode = false;
 let projectMetadataFetchCount = 0;
 let failNextProjectMetadataFetch = false;
+let accountTotalUsd = 25;
 const usageRequestUrls = [];
 
 globalThis.fetch = async (input) => {
@@ -91,7 +92,7 @@ globalThis.fetch = async (input) => {
       : [{ key: { userId: "member-1" }, totalCostUsd: 3 }];
     totalCostUsd = 5;
   } else if (!url.searchParams.has("workspaceId") && !url.searchParams.has("groupId")) {
-    totalCostUsd = 25;
+    totalCostUsd = accountTotalUsd;
     pagination.hasMore = false;
     pagination.cursor = null;
   } else {
@@ -116,8 +117,8 @@ globalThis.fetch = async (input) => {
               endTime: url.searchParams.get("endTime"),
             },
         totalCostUsd,
-        attributableTotalCostUsd: totalCostUsd === 25 ? 20 : totalCostUsd,
-        unattributableTotalCostUsd: totalCostUsd === 25 ? 5 : 0,
+        attributableTotalCostUsd: totalCostUsd === accountTotalUsd ? totalCostUsd - 5 : totalCostUsd,
+        unattributableTotalCostUsd: totalCostUsd === accountTotalUsd ? 5 : 0,
         groups,
         pagination,
       },
@@ -126,6 +127,7 @@ globalThis.fetch = async (input) => {
 };
 
 const enterprise = await import("./enterprise.ts");
+const { pool } = await import("@workspace/db");
 const range = enterprise.resolveRange("custom", "2026-06-01", "2026-06-01");
 const accountRange = {
   ...range,
@@ -687,6 +689,10 @@ test("billing period discovery exposes freshness, mismatch, fallback, and restar
   const fallback = enterprise.getBillingPeriodMetadata();
   assert.equal(fallback.isFallback, true);
   assert.equal(fallback.start, enterprise.SPEND_DATA_CUTOFF_ISO);
+  const fallbackRange = enterprise.resolveRange("billing");
+  assert.equal(fallbackRange.key, "billing:from-cutoff");
+  assert.equal(fallbackRange.params.startTime, enterprise.SPEND_DATA_CUTOFF_ISO);
+  assert.match(fallbackRange.label, /May 20, 2026/);
 
   await enterprise.refreshBillingPeriodMetadata(0);
   await waitForQueue();
@@ -696,10 +702,106 @@ test("billing period discovery exposes freshness, mismatch, fallback, and restar
   assert.equal(discovered.isFallback, false);
   assert.equal(discovered.isFresh, true);
   assert.equal(discovered.differsFromReportingCutoff, true);
+  const resolved = enterprise.resolveRange("billing");
+  assert.match(resolved.key, /2026-08-01T00:00:00\.000Z.*2026-09-01T00:00:00\.000Z/);
+  assert.equal(resolved.params.startTime, discovered.start);
+  assert.ok(new Date(resolved.params.endTime) <= new Date(discovered.end));
+  assert.equal(
+    resolved.label,
+    `${new Date(resolved.params.startTime).toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+    })} – ${new Date(resolved.params.endTime).toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+    })}`,
+  );
 
   enterprise.__setBillingPeriodForTests(null);
   await enterprise.initCache();
   assert.equal(enterprise.getBillingPeriodMetadata().start, discovered.start);
+});
+
+test("expired metadata falls back and pre-cutoff billing does not trigger a window banner", () => {
+  enterprise.__setBillingPeriodForTests({
+    start: "2026-07-01T00:00:00.000Z",
+    end: "2026-08-01T00:00:00.000Z",
+    fetchedAt: Date.now() - 48 * 60 * 60 * 1000,
+  });
+  const expiredMetadata = enterprise.getBillingPeriodMetadata();
+  const expiredRange = enterprise.resolveRange("billing");
+  assert.equal(expiredMetadata.isFallback, true);
+  assert.equal(expiredMetadata.differsFromReportingCutoff, false);
+  assert.equal(expiredRange.key, "billing:from-cutoff");
+  assert.equal(expiredRange.params.startTime, enterprise.SPEND_DATA_CUTOFF_ISO);
+
+  enterprise.__setBillingPeriodForTests({
+    start: "2026-05-01T00:00:00.000Z",
+    end: "2026-09-01T00:00:00.000Z",
+    fetchedAt: Date.now(),
+  });
+  const clamped = enterprise.getBillingPeriodMetadata();
+  const clampedRange = enterprise.resolveRange("billing");
+  assert.equal(clamped.differsFromReportingCutoff, false);
+  assert.equal(clampedRange.params.startTime, enterprise.SPEND_DATA_CUTOFF_ISO);
+  enterprise.__setBillingPeriodForTests(null);
+});
+
+test("account-total verification records no-op, heals drift, and preserves cache on failure", async () => {
+  const verificationRange = {
+    key: `custom:verification-${crypto.randomUUID()}`,
+    label: "Verification",
+    params: {
+      startTime: "2026-08-01T00:00:00.000Z",
+      endTime: "2026-08-02T00:00:00.000Z",
+    },
+  };
+  accountTotalUsd = 25;
+  await enterprise.__rebuildAccountUsageForTests(verificationRange);
+  await enterprise.__verifyAccountTotalForTests(verificationRange);
+  assert.equal(enterprise.getAccountTotalVerificationState()?.outcome, "success");
+  assert.equal(enterprise.getAccountUsage(verificationRange.key)?.totalCostUsd, undefined);
+
+  accountTotalUsd = 30;
+  await enterprise.__verifyAccountTotalForTests(verificationRange);
+  assert.equal(enterprise.getAccountTotalVerificationState()?.outcome, "healed");
+  assert.equal(enterprise.getAccountUsage(verificationRange.key)?.totalCostUsd, 30);
+  const beforeFailure = enterprise.getAccountUsage(verificationRange.key);
+
+  failNextUsageFetch = true;
+  await enterprise.__verifyAccountTotalForTests(verificationRange);
+  assert.equal(enterprise.getAccountTotalVerificationState()?.outcome, "failed");
+  assert.deepEqual(enterprise.getAccountUsage(verificationRange.key), beforeFailure);
+  accountTotalUsd = 25;
+});
+
+test("account verification acquires the cross-replica lock before its upstream fetch", async () => {
+  const lockedRange = {
+    key: `custom:verification-lock-${crypto.randomUUID()}`,
+    label: "Verification lock",
+    params: {
+      startTime: "2026-08-01T00:00:00.000Z",
+      endTime: "2026-08-01T02:00:00.000Z",
+    },
+  };
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [
+      `account_total|${lockedRange.key}|enterprise`,
+    ]);
+    const requestsBefore = usageRequestUrls.length;
+    const verification = enterprise.__verifyAccountTotalForTests(lockedRange);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(
+      usageRequestUrls.length,
+      requestsBefore,
+      "verification must not fetch while another replica holds the account lock",
+    );
+    await client.query("rollback");
+    await verification;
+    assert.equal(usageRequestUrls.length, requestsBefore + 1);
+  } finally {
+    client.release();
+  }
 });
 
 test("open ranges reconcile seven days and custom ranges close only after the grace window", () => {

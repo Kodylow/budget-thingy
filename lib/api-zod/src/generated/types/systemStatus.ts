@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AccountTotalVerification } from './accountTotalVerification';
 
 export interface SystemStatus {
   /** Whether REPLIT_ENTERPRISE_API_KEY is set */
@@ -30,4 +31,13 @@ export interface SystemStatus {
   billingPeriodFallback: boolean;
   billingPeriodDiffersFromReportingCutoff: boolean;
   reportingCutoff: string;
+  /** Stable cache identity for the effective default reporting window */
+  reportingRangeKey: string;
+  /** Effective inclusive reporting start after applying the spend cutoff */
+  reportingRangeStart: string;
+  /** Effective exclusive reporting end, capped at now and the billing-period end */
+  reportingRangeEnd: string;
+  /** Label that describes the effective reporting bounds */
+  reportingRangeLabel: string;
+  accountTotalVerification: AccountTotalVerification | null;
 }

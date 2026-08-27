@@ -1576,6 +1576,9 @@ components:
           groupsOver100,
           alertsSentThisPeriod,
           billingPeriodLabel,
+          reportingRangeStart,
+          reportingRangeEnd,
+          billingPeriodDiffersFromReportingCutoff,
           pacePeriodStart,
           pacePeriodEnd,
           pacePeriodLabel,
@@ -1627,6 +1630,15 @@ components:
           type: integer
         billingPeriodLabel:
           type: string
+        reportingRangeStart:
+          type: string
+          description: Inclusive UTC start represented by the summary total
+        reportingRangeEnd:
+          type: string
+          description: Exclusive UTC end represented by the summary total
+        billingPeriodDiffersFromReportingCutoff:
+          type: boolean
+          description: True when verified billing metadata materially changes the default cutoff-based reporting assumption
         pacePeriodStart:
           type: string
           description: Inclusive period start used for dashboard pace projections
@@ -1884,6 +1896,11 @@ components:
           billingPeriodFallback,
           billingPeriodDiffersFromReportingCutoff,
           reportingCutoff,
+          reportingRangeKey,
+          reportingRangeStart,
+          reportingRangeEnd,
+          reportingRangeLabel,
+          accountTotalVerification,
         ]
       properties:
         enterpriseApiConfigured:
@@ -1918,3 +1935,53 @@ components:
           type: boolean
         reportingCutoff:
           type: string
+        reportingRangeKey:
+          type: string
+          description: Stable cache identity for the effective default reporting window
+        reportingRangeStart:
+          type: string
+          description: Effective inclusive reporting start after applying the spend cutoff
+        reportingRangeEnd:
+          type: string
+          description: Effective exclusive reporting end, capped at now and the billing-period end
+        reportingRangeLabel:
+          type: string
+          description: Label that describes the effective reporting bounds
+        accountTotalVerification:
+          oneOf:
+            - $ref: "#/components/schemas/AccountTotalVerification"
+            - type: "null"
+    AccountTotalVerification:
+      type: object
+      required:
+        [
+          verifiedAt,
+          outcome,
+          error,
+          rangeKey,
+          rangeStart,
+          rangeEnd,
+          upstreamTotalUsd,
+          storedTotalUsd,
+          deltaUsd,
+        ]
+      properties:
+        verifiedAt:
+          type: string
+        outcome:
+          type: string
+          enum: [success, healed, failed]
+        error:
+          type: ["string", "null"]
+        rangeKey:
+          type: string
+        rangeStart:
+          type: string
+        rangeEnd:
+          type: string
+        upstreamTotalUsd:
+          type: ["number", "null"]
+        storedTotalUsd:
+          type: ["number", "null"]
+        deltaUsd:
+          type: ["number", "null"]

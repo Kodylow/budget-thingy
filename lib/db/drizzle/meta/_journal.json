@@ -71,6 +71,13 @@
       "when": 1787775894753,
       "tag": "0009_magenta_cerise",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787776000000,
+      "tag": "0010_account_total_verification",
+      "breakpoints": true
     }
   ]
 }

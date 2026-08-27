@@ -52,6 +52,7 @@ import {
   getSpend,
   getBillingPeriod,
   getBillingPeriodMetadata,
+  getAccountTotalVerificationState,
   resolvePaceUsageRange,
   queueFullRangeRebuild,
   queueGroupSpendFetch,
@@ -290,7 +291,7 @@ router.get("/groups", async (req, res): Promise<void> => {
     const paceMetadata = getBillingPeriodMetadata();
     // Pace is meaningful only on the current billing view. When discovery is
     // unavailable, the reporting range already matches the safe cutoff fallback.
-    const paceRange = range.key === "billing:from-cutoff"
+    const paceRange = range.key.startsWith("billing:")
       ? (paceMetadata.isFallback ? range : resolvePaceUsageRange())
       : null;
 
@@ -571,7 +572,7 @@ router.get("/groups", async (req, res): Promise<void> => {
         pendingCount: Math.max(sync.pendingCount, canonical.pendingCount),
         failedCount: sync.failedCount,
         partialCount: sync.partialCount,
-        billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
+        billingPeriodLabel: range.label,
         projectSpendLoaded: projectAttribution.isComplete,
         unattributedProjectSpendUsd: projectAttribution.unattributedSpendUsd,
         teamRawSpend,
@@ -696,7 +697,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const budget = effectiveGroupBudget(mergedBudget?.amountUsd);
     const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
     const billingPeriodStart = getBillingPeriod().start;
-    const billingSpend = getSpend(group.id, "billing:from-cutoff");
+    const billingSpend = getSpend(group.id, resolveRange("billing").key);
     const fired =
       billingPeriodStart && budget.amountUsd != null
         ? await getFiredThresholds(group.id, billingPeriodStart)
@@ -1193,6 +1194,8 @@ router.post("/usage/retry", async (req, res): Promise<void> => {
 });
 
 router.get("/summary", async (req, res): Promise<void> => {
+  const selectedRangeType =
+    typeof req.query["rangeType"] === "string" ? req.query["rangeType"] : "billing";
   let range: UsageRange;
   try {
     range = rangeFromQuery(req.query as Record<string, unknown>);
@@ -1418,7 +1421,11 @@ router.get("/summary", async (req, res): Promise<void> => {
             groupsOver90: over90,
             groupsOver100: over100,
             alertsSentThisPeriod,
-            billingPeriodLabel: range.key === "billing:from-cutoff" ? billing.label : range.label,
+            billingPeriodLabel: range.label,
+            reportingRangeStart: range.params.startTime,
+            reportingRangeEnd: range.params.endTime,
+            billingPeriodDiffersFromReportingCutoff:
+              selectedRangeType === "billing" && pacePeriod.differsFromReportingCutoff,
             pacePeriodStart: pacePeriod.start,
             pacePeriodEnd: pacePeriod.end,
             pacePeriodLabel: pacePeriod.label,
@@ -2202,6 +2209,7 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
   const health = getApiHealth();
   const emailConfigured = await isEmailConfigured();
   const billingPeriod = getBillingPeriodMetadata();
+  const reportingRange = resolveRange("billing");
   res.json(
     GetStatusResponse.parse({
       enterpriseApiConfigured: isConfigured(),
@@ -2218,6 +2226,11 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
       billingPeriodFallback: billingPeriod.isFallback,
       billingPeriodDiffersFromReportingCutoff: billingPeriod.differsFromReportingCutoff,
       reportingCutoff: SPEND_DATA_CUTOFF_ISO,
+      reportingRangeKey: reportingRange.key,
+      reportingRangeStart: reportingRange.params.startTime,
+      reportingRangeEnd: reportingRange.params.endTime,
+      reportingRangeLabel: reportingRange.label,
+      accountTotalVerification: getAccountTotalVerificationState(),
     }),
   );
 });

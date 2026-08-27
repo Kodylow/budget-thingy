@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   isCanonicalSummaryPending,
+  isTotalSpendHeadlinePending,
   reconcileDashboardSpend,
 } from "./dashboard-reconciliation.ts";
 
@@ -25,6 +26,23 @@ test("partial or failed syncStatus resolves cards immediately without waiting fo
   // no syncStatus: original behaviour preserved
   assert.equal(isCanonicalSummaryPending(false, false, undefined), true);
   assert.equal(isCanonicalSummaryPending(false, false, null), true);
+});
+
+test("account headline renders as soon as its unfiltered anchor is available", () => {
+  assert.equal(isTotalSpendHeadlinePending({
+    isLoading: false,
+    isAccountWide: true,
+    accountUsageTotalSpendUsd: 123,
+    isComplete: false,
+    syncStatus: "syncing",
+  }), false);
+  assert.equal(isTotalSpendHeadlinePending({
+    isLoading: false,
+    isAccountWide: true,
+    accountUsageTotalSpendUsd: null,
+    isComplete: true,
+    syncStatus: "complete",
+  }), true);
 });
 
 test("account rows plus reconciliation equal the unfiltered account anchor", () => {

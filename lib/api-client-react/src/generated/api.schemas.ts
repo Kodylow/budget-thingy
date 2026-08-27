@@ -455,6 +455,12 @@ export interface Summary {
   groupsOver100: number;
   alertsSentThisPeriod: number;
   billingPeriodLabel: string;
+  /** Inclusive UTC start represented by the summary total */
+  reportingRangeStart: string;
+  /** Exclusive UTC end represented by the summary total */
+  reportingRangeEnd: string;
+  /** True when verified billing metadata materially changes the default cutoff-based reporting assumption */
+  billingPeriodDiffersFromReportingCutoff: boolean;
   /** Inclusive period start used for dashboard pace projections */
   pacePeriodStart: string;
   /** Exclusive period end used for dashboard pace projections */
@@ -625,6 +631,31 @@ export interface CheckResult {
   alerts?: Alert[];
 }
 
+export type AccountTotalVerificationOutcome = typeof AccountTotalVerificationOutcome[keyof typeof AccountTotalVerificationOutcome];
+
+
+export const AccountTotalVerificationOutcome = {
+  success: 'success',
+  healed: 'healed',
+  failed: 'failed',
+} as const;
+
+export interface AccountTotalVerification {
+  verifiedAt: string;
+  outcome: AccountTotalVerificationOutcome;
+  /** @nullable */
+  error: string | null;
+  rangeKey: string;
+  rangeStart: string;
+  rangeEnd: string;
+  /** @nullable */
+  upstreamTotalUsd: number | null;
+  /** @nullable */
+  storedTotalUsd: number | null;
+  /** @nullable */
+  deltaUsd: number | null;
+}
+
 export interface SystemStatus {
   /** Whether REPLIT_ENTERPRISE_API_KEY is set */
   enterpriseApiConfigured: boolean;
@@ -649,6 +680,15 @@ export interface SystemStatus {
   billingPeriodFallback: boolean;
   billingPeriodDiffersFromReportingCutoff: boolean;
   reportingCutoff: string;
+  /** Stable cache identity for the effective default reporting window */
+  reportingRangeKey: string;
+  /** Effective inclusive reporting start after applying the spend cutoff */
+  reportingRangeStart: string;
+  /** Effective exclusive reporting end, capped at now and the billing-period end */
+  reportingRangeEnd: string;
+  /** Label that describes the effective reporting bounds */
+  reportingRangeLabel: string;
+  accountTotalVerification: AccountTotalVerification | null;
 }
 
 /**

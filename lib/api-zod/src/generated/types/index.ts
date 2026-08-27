@@ -8,6 +8,8 @@
 
 export * from './accountEditor';
 export * from './accountEditorInput';
+export * from './accountTotalVerification';
+export * from './accountTotalVerificationOutcome';
 export * from './adminEmail';
 export * from './adminEmailInput';
 export * from './alert';
