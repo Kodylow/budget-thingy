@@ -28,6 +28,8 @@ import {
   groupTeamsTable,
   teamBudgetsTable,
   alertsTable,
+  groupRosterSnapshotDaysTable,
+  groupRosterSnapshotsTable,
 } from "@workspace/db";
 
 function m(userId, isAccountAdmin, workspaces = {}) {
@@ -109,6 +111,14 @@ let baseUrl;
 
 test.before(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key";
+  // Roster snapshot days are written by the server's scheduled snapshot job and
+  // persist across test runs. Any completed day causes partitionTrendBucket to
+  // split the current-month trend bucket into per-day historical components that
+  // the trend tests don't pre-seed data for, making the last bucket incomplete.
+  // Clear them here so all trend buckets remain live (rosterDate: null) during
+  // this suite.
+  await db.delete(groupRosterSnapshotsTable);
+  await db.delete(groupRosterSnapshotDaysTable);
   __setDirectoryCacheForTests({
     workspaces: wsExtra,
     groups,
