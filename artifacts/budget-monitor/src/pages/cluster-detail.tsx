@@ -250,10 +250,10 @@ export default function ClusterDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
+      <div className="grid grid-cols-2 gap-3 md:gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Canonical Rollup Spend</CardTitle>
+            <CardTitle className="text-sm font-medium">Group Spend</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -265,26 +265,7 @@ export default function ClusterDetail() {
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">
-              Workspace-aware member rollup used for budgets and alerts
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Member Actual Usage</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {!allComplete || !clusterSpendLoaded ? (
-              <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
-            ) : (
-              <div className="text-2xl font-bold font-mono tabular-nums">
-                ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Member rows plus explicit residual; matches canonical rollup
+              Total spend used for budgets and alerts
             </p>
           </CardContent>
         </Card>
