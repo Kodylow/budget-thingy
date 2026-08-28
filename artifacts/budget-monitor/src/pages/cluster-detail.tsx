@@ -307,8 +307,6 @@ export default function ClusterDetail() {
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Role</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting / Non-AI</th>
                 </tr>
               </thead>
               <tbody>
@@ -356,12 +354,6 @@ export default function ClusterDetail() {
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-right text-sm font-mono tabular-nums">
-                      {member.spendLoaded ? `$${member.aiSpendUsd.toFixed(2)}` : '—'}
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm font-mono tabular-nums">
-                      {member.spendLoaded ? `$${member.nonAiSpendUsd.toFixed(2)}` : '—'}
-                    </td>
                   </tr>
                 ))}
 
@@ -381,8 +373,6 @@ export default function ClusterDetail() {
                         ${totalUnattributedSpend.toFixed(2)}
                       </span>
                     </td>
-                    <td className="py-3 px-4" />
-                    <td className="py-3 px-4" />
                   </tr>
                 )}
               </tbody>
@@ -401,8 +391,6 @@ export default function ClusterDetail() {
                       </span>
                     )}
                   </td>
-                  <td className="py-3 px-4" />
-                  <td className="py-3 px-4" />
                 </tr>
               </tfoot>
             </table>
