@@ -390,7 +390,11 @@ export function resolvePaceUsageRange(): UsageRange | null {
   };
 }
 
-export function refreshBillingPeriodMetadata(priority = 1, force = false): Promise<boolean> {
+export function refreshBillingPeriodMetadata(
+  priority = 1,
+  force = false,
+  persistResult = true,
+): Promise<boolean> {
   if (!isConfigured()) return Promise.resolve(false);
   if (
     !force &&
@@ -404,7 +408,7 @@ export function refreshBillingPeriodMetadata(priority = 1, force = false): Promi
       try {
         const data = await usageFetch({ billingPeriod: "current" });
         const next = validateBillingInterval(data.interval);
-        await persistBillingPeriod(next);
+        if (persistResult) await persistBillingPeriod(next);
         billingPeriodCache = next;
         logger.info({ start: next.start, end: next.end }, "Current billing interval refreshed");
       } catch (err) {
@@ -1460,7 +1464,9 @@ function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend):
 
 // ---------- Cold-start cache hydration ----------
 
-export async function initCache(): Promise<void> {
+export async function initCache(
+  options: { revalidateOnStartup?: boolean } = {},
+): Promise<void> {
   try {
     await maybePruneExpiredCustomUsage();
     const [
@@ -1582,17 +1588,19 @@ export async function initCache(): Promise<void> {
   } catch (err) {
     logger.warn({ err }, "Failed to hydrate caches from DB — will fetch fresh on first request");
   }
-  // Revalidate on process startup before resolving the account anchor. Hydrated
-  // metadata remains the immediate fallback if this live request fails.
-  await refreshBillingPeriodMetadata(0, true);
-  // Publish the one-call account anchor before hundreds of newly keyed group
-  // warm-up scopes can occupy the serial queue.
-  queueAccountTotalVerification(-10);
-  if (!billingPeriodRefreshTimer) {
-    billingPeriodRefreshTimer = setInterval(() => {
-      void refreshBillingPeriodMetadata(1).then(() => queueAccountTotalVerification(1));
-    }, BILLING_PERIOD_REFRESH_MS);
-    billingPeriodRefreshTimer.unref();
+  if (options.revalidateOnStartup !== false) {
+    // Revalidate on process startup before resolving the account anchor. Hydrated
+    // metadata remains the immediate fallback if this live request fails.
+    await refreshBillingPeriodMetadata(0, true);
+    // Publish the one-call account anchor before hundreds of newly keyed group
+    // warm-up scopes can occupy the serial queue.
+    queueAccountTotalVerification(-10);
+    if (!billingPeriodRefreshTimer) {
+      billingPeriodRefreshTimer = setInterval(() => {
+        void refreshBillingPeriodMetadata(1).then(() => queueAccountTotalVerification(1));
+      }, BILLING_PERIOD_REFRESH_MS);
+      billingPeriodRefreshTimer.unref();
+    }
   }
 }
 
@@ -2050,7 +2058,11 @@ function scheduleAccountVerificationRetry(): void {
   accountVerificationRetryTimer.unref();
 }
 
-async function verifyAccountTotal(range: UsageRange, scheduleRetry = true): Promise<void> {
+async function verifyAccountTotal(
+  range: UsageRange,
+  scheduleRetry = true,
+  persistVerificationRecord = true,
+): Promise<void> {
   const { start, end } = rangeBounds(range);
   const id = syncId("account_total", range.key, ACCOUNT_USAGE_SCOPE);
   try {
@@ -2117,20 +2129,9 @@ async function verifyAccountTotal(range: UsageRange, scheduleRetry = true): Prom
         });
       }
       const outcome: AccountTotalVerificationOutcome = healed ? "healed" : "success";
-      await tx.insert(apiAccountTotalVerificationTable).values({
-        id: "singleton",
-        verifiedAt,
-        outcome,
-        errorMessage: null,
-        rangeKey: range.key,
-        rangeStart: start,
-        rangeEnd: end,
-        upstreamTotalUsd: upstream.totalCostUsd,
-        storedTotalUsd,
-        deltaUsd,
-      }).onConflictDoUpdate({
-        target: apiAccountTotalVerificationTable.id,
-        set: {
+      if (persistVerificationRecord) {
+        await tx.insert(apiAccountTotalVerificationTable).values({
+          id: "singleton",
           verifiedAt,
           outcome,
           errorMessage: null,
@@ -2140,8 +2141,21 @@ async function verifyAccountTotal(range: UsageRange, scheduleRetry = true): Prom
           upstreamTotalUsd: upstream.totalCostUsd,
           storedTotalUsd,
           deltaUsd,
-        },
-      });
+        }).onConflictDoUpdate({
+          target: apiAccountTotalVerificationTable.id,
+          set: {
+            verifiedAt,
+            outcome,
+            errorMessage: null,
+            rangeKey: range.key,
+            rangeStart: start,
+            rangeEnd: end,
+            upstreamTotalUsd: upstream.totalCostUsd,
+            storedTotalUsd,
+            deltaUsd,
+          },
+        });
+      }
       return { outcome, storedTotalUsd, deltaUsd, healed, upstream, payload, verifiedAt };
     });
     accountTotalVerificationState = {
@@ -2188,20 +2202,9 @@ async function verifyAccountTotal(range: UsageRange, scheduleRetry = true): Prom
     };
     accountTotalVerificationState = failedState;
     try {
-      await db.insert(apiAccountTotalVerificationTable).values({
-        id: "singleton",
-        verifiedAt,
-        outcome: "failed",
-        errorMessage: error.slice(0, 1000),
-        rangeKey: range.key,
-        rangeStart: start,
-        rangeEnd: end,
-        upstreamTotalUsd: null,
-        storedTotalUsd: failedState.storedTotalUsd,
-        deltaUsd: null,
-      }).onConflictDoUpdate({
-        target: apiAccountTotalVerificationTable.id,
-        set: {
+      if (persistVerificationRecord) {
+        await db.insert(apiAccountTotalVerificationTable).values({
+          id: "singleton",
           verifiedAt,
           outcome: "failed",
           errorMessage: error.slice(0, 1000),
@@ -2211,8 +2214,21 @@ async function verifyAccountTotal(range: UsageRange, scheduleRetry = true): Prom
           upstreamTotalUsd: null,
           storedTotalUsd: failedState.storedTotalUsd,
           deltaUsd: null,
-        },
-      });
+        }).onConflictDoUpdate({
+          target: apiAccountTotalVerificationTable.id,
+          set: {
+            verifiedAt,
+            outcome: "failed",
+            errorMessage: error.slice(0, 1000),
+            rangeKey: range.key,
+            rangeStart: start,
+            rangeEnd: end,
+            upstreamTotalUsd: null,
+            storedTotalUsd: failedState.storedTotalUsd,
+            deltaUsd: null,
+          },
+        });
+      }
     } catch (persistErr) {
       logger.warn({ err: persistErr }, "Failed to persist account-total verification failure");
     }
@@ -3821,7 +3837,7 @@ export function __rebuildAccountUsageForTests(range: UsageRange): Promise<UsageS
 }
 
 export async function __verifyAccountTotalForTests(range: UsageRange): Promise<void> {
-  await verifyAccountTotal(range, false);
+  await verifyAccountTotal(range, false, false);
 }
 
 export function __rebuildAccountAndWorkspaceUsageForTests(

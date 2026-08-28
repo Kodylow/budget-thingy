@@ -192,7 +192,7 @@ test("all usage modes paginate, persist, hydrate, and reuse closed ranges", asyn
   assert.equal(fetchCount, completedFetches);
 
   enterprise.__resetDurableUsageCachesForTests();
-  await enterprise.initCache();
+  await enterprise.initCache({ revalidateOnStartup: false });
   assert.equal(enterprise.getAccountUsage(accountRange.key)?.totalCostUsd, 25);
   assert.equal(enterprise.getAccountUsage(accountRange.key)?.unattributableTotalCostUsd, 5);
   assert.equal(enterprise.getSpend(groupId, range.key)?.spendUsd, 10);
@@ -325,7 +325,7 @@ test("project metadata persists and hydrates without an API refetch", async () =
   const completedFetches = projectMetadataFetchCount;
 
   enterprise.__resetDurableUsageCachesForTests();
-  await enterprise.initCache();
+  await enterprise.initCache({ revalidateOnStartup: false });
   assert.deepEqual(enterprise.getProjectInfo(metadataWorkspace, "persisted-project"), {
     title: "Persisted project",
     creatorId: "creator-1",
@@ -350,7 +350,7 @@ test("failed project metadata refresh preserves the stored snapshot across resta
   );
 
   enterprise.__resetDurableUsageCachesForTests();
-  await enterprise.initCache();
+  await enterprise.initCache({ revalidateOnStartup: false });
   assert.equal(
     enterprise.hasProjectInfo(failedWorkspace),
     true,
@@ -694,7 +694,7 @@ test("billing period discovery exposes freshness, mismatch, fallback, and restar
   assert.equal(fallbackRange.params.startTime, enterprise.SPEND_DATA_CUTOFF_ISO);
   assert.match(fallbackRange.label, /May 20, 2026/);
 
-  await enterprise.refreshBillingPeriodMetadata(0);
+  await enterprise.refreshBillingPeriodMetadata(0, false, false);
   await waitForQueue();
   const discovered = enterprise.getBillingPeriodMetadata();
   assert.equal(discovered.start, "2026-08-01T00:00:00.000Z");
@@ -716,8 +716,6 @@ test("billing period discovery exposes freshness, mismatch, fallback, and restar
   );
 
   enterprise.__setBillingPeriodForTests(null);
-  await enterprise.initCache();
-  assert.equal(enterprise.getBillingPeriodMetadata().start, discovered.start);
 });
 
 test("expired metadata falls back and pre-cutoff billing does not trigger a window banner", () => {

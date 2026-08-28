@@ -83,7 +83,7 @@ test("duplicate-queued callbacks fan out with the fetched (not stale) value", as
   // immediately reconstructs the same complete aggregate from PostgreSQL.
   __resetDurableUsageCachesForTests();
   assert.equal(getSpend(group.id, queueRange.key), undefined);
-  await initCache();
+  await initCache({ revalidateOnStartup: false });
   assert.equal(getSpend(group.id, queueRange.key)?.spendUsd, 10);
 
   // Fresh cache: no fetch, no callback registration.
