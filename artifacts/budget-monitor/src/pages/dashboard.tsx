@@ -342,6 +342,44 @@ export default function Dashboard() {
     };
   }, [teamSections, unassigned]);
 
+  const assignedGroupsSubtotal = useMemo(() => {
+    const memberCount = teamSections.reduce((sum, team) => sum + team.memberCount, 0);
+    const spendUsd = teamSections.reduce((sum, team) => sum + team.spendUsd, 0);
+    const spendLoaded = teamSections.every((team) => team.spendLoaded);
+    const totalBudgetUsd = teamSections.reduce(
+      (sum, team) => sum + (team.budgetUsd != null && team.budgetUsd > 0 ? team.budgetUsd : 0),
+      0,
+    );
+    const budgetedSpendUsd = teamSections.reduce(
+      (sum, team) =>
+        sum + (team.spendLoaded && team.budgetUsd != null && team.budgetUsd > 0 ? team.spendUsd : 0),
+      0,
+    );
+    const budgetedPaceSpendUsd = teamSections.reduce(
+      (sum, team) =>
+        sum + (
+          team.paceSpendLoaded && team.budgetUsd != null && team.budgetUsd > 0
+            ? team.paceSpendUsd
+            : 0
+        ),
+      0,
+    );
+    const paceSpendLoaded = teamSections
+      .filter((team) => team.budgetUsd != null && team.budgetUsd > 0)
+      .every((team) => team.paceSpendLoaded);
+
+    return {
+      memberCount,
+      spendUsd,
+      spendLoaded,
+      totalBudgetUsd,
+      budgetedSpendUsd,
+      budgetedPaceSpendUsd,
+      paceSpendLoaded,
+      totalRemainingUsd: totalBudgetUsd - budgetedSpendUsd,
+    };
+  }, [teamSections]);
+
   const toggleTeam = (teamName: string) => {
     setExpandedTeams((prev) => {
       const next = new Set(prev);
@@ -710,6 +748,77 @@ export default function Dashboard() {
     );
   };
 
+  const renderAssignedGroupsSubtotal = () => (
+    <tr
+      className="border-y-2 border-border bg-muted/40 font-semibold"
+      data-testid="row-assigned-groups-subtotal"
+    >
+      <td className="py-3 px-4 text-sm">Assigned groups subtotal</td>
+      <td className="py-3 px-4" />
+      <td className="py-3 px-4 text-right">
+        <span className="text-sm font-mono tabular-nums">
+          {assignedGroupsSubtotal.memberCount}
+        </span>
+      </td>
+      <td className="py-3 px-4 text-right">
+        {!assignedGroupsSubtotal.spendLoaded && assignedGroupsSubtotal.spendUsd === 0 ? (
+          <div className="flex justify-end"><LoadingCell /></div>
+        ) : (
+          <span className={`text-sm font-mono tabular-nums${!assignedGroupsSubtotal.spendLoaded ? ' text-muted-foreground' : ''}`}>
+            ${assignedGroupsSubtotal.spendUsd.toFixed(2)}
+          </span>
+        )}
+      </td>
+      <td className="py-3 px-4 text-right">
+        <span className="text-sm font-mono tabular-nums">
+          ${assignedGroupsSubtotal.totalBudgetUsd.toFixed(2)}
+        </span>
+      </td>
+      <td className="py-3 px-4 text-right">
+        {assignedGroupsSubtotal.spendLoaded ? (
+          <span className={`text-sm font-mono tabular-nums ${assignedGroupsSubtotal.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
+            ${assignedGroupsSubtotal.totalRemainingUsd.toFixed(2)}
+          </span>
+        ) : (
+          <span className="text-sm text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="py-3 px-4 text-right">
+        {assignedGroupsSubtotal.spendLoaded && assignedGroupsSubtotal.totalBudgetUsd > 0 ? (
+          <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
+            <span className={`text-xs font-mono tabular-nums ${assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd >= 1 ? 'text-destructive' : ''}`}>
+              {((assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd) * 100).toFixed(1)}%
+            </span>
+            <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
+              <div
+                className={`h-full transition-all duration-500 ${assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd >= 1 ? 'bg-destructive' : 'bg-primary'}`}
+                style={{ width: `${Math.min((assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="py-3 px-4 text-right">
+        {assignedGroupsSubtotal.paceSpendLoaded && assignedGroupsSubtotal.totalBudgetUsd > 0 ? (
+          <PaceCell
+            spendUsd={assignedGroupsSubtotal.budgetedPaceSpendUsd}
+            budgetUsd={assignedGroupsSubtotal.totalBudgetUsd}
+            spendLoaded={assignedGroupsSubtotal.paceSpendLoaded}
+            semibold
+            periodStart={summary?.pacePeriodStart ?? ''}
+            periodEnd={summary?.pacePeriodEnd ?? ''}
+            periodLabel={summary?.pacePeriodLabel ?? ''}
+            isFallback={summary?.pacePeriodIsFallback ?? true}
+          />
+        ) : (
+          <span className="text-sm text-muted-foreground">—</span>
+        )}
+      </td>
+    </tr>
+  );
+
   const handleExportUsers = async () => {
     setIsExporting(true);
     try {
@@ -934,6 +1043,7 @@ export default function Dashboard() {
                       ))}
                       {unassigned.length > 0 && (
                         <React.Fragment key="team-section-unassigned">
+                           {renderAssignedGroupsSubtotal()}
                           {renderUnassignedHeader()}
                           {expandedTeams.has('__unassigned__') &&
                             unassigned.map((g) => renderGroupRow(g))}
