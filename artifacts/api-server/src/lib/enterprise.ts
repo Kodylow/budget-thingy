@@ -3466,6 +3466,9 @@ export interface CanonicalUsageResult extends DedupedUsageRollup {
   nonAiSpendByUser: ReadonlyMap<string, number>;
   aiSpendByGroup: ReadonlyMap<string, ReadonlyMap<string, number>>;
   nonAiSpendByGroup: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  authoritativeSpendByGroup: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  authoritativeSpendComplete: boolean;
+  authoritativePendingCount: number;
   residualSpendByGroup: ReadonlyMap<string, number>;
   residualSpendUsd: number;
   creatorAttributionRequired: boolean;
@@ -3572,6 +3575,16 @@ export function getCanonicalUsage(
     groupMembers,
     directoryMembers,
     workspaces,
+  );
+  // Preserve the authoritative workspace-derived per-user allocation before
+  // canonical AI/non-AI attribution replaces rollup.byGroup.byUser below.
+  // Total-spend-only surfaces can render this even when the optional breakdown
+  // inputs are still syncing or have reached a terminal partial state.
+  const authoritativeSpendByGroup = new Map(
+    [...rollup.byGroup].map(([groupId, usage]) => [
+      groupId,
+      new Map(usage.byUser),
+    ]),
   );
   const projectAttribution = getProjectAttribution(
     rangeKey,
@@ -3822,6 +3835,9 @@ export function getCanonicalUsage(
     nonAiSpendByUser,
     aiSpendByGroup,
     nonAiSpendByGroup,
+    authoritativeSpendByGroup,
+    authoritativeSpendComplete: rollup.isComplete,
+    authoritativePendingCount: rollup.pendingCount,
     residualSpendByGroup,
     residualSpendUsd,
     creatorAttributionRequired,

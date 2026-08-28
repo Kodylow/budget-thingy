@@ -767,6 +767,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       // Every per-user surface uses the same canonical all-metric total for the
       // caller's selected range and visible workspaces.
       const spendLoaded = canonical.isComplete;
+      const totalSpendLoaded = canonical.authoritativeSpendComplete;
+      const totalSpendUsd = sourceIds.reduce(
+        (sum, id) => sum + (canonical.authoritativeSpendByGroup.get(id)?.get(userId) ?? 0),
+        0,
+      );
       const aiSpendUsd = sourceIds.reduce(
         (sum, id) => sum + (canonical.aiSpendByGroup.get(id)?.get(userId) ?? 0),
         0,
@@ -775,7 +780,6 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         (sum, id) => sum + (canonical.nonAiSpendByGroup.get(id)?.get(userId) ?? 0),
         0,
       );
-      const spendUsd = spendLoaded ? aiSpendUsd + nonAiSpendUsd : null;
       return {
         userId,
         username: m?.username ?? null,
@@ -786,7 +790,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         allocatedBudgetUsd: null,
         budgetSource: null,
         spendLoaded,
-        spendUsd,
+        spendUsd: totalSpendLoaded ? totalSpendUsd : null,
         aiSpendUsd: spendLoaded ? aiSpendUsd : null,
         nonAiSpendUsd: spendLoaded ? nonAiSpendUsd : null,
         remainingUsd: null,
@@ -799,10 +803,14 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // surfaces that residual so the cluster page can show an accurate attributed total.
     const combinedSpend = attributed.spendUsd;
     const combinedLoaded = canonical.isComplete;
+    const totalSpendLoaded = canonical.authoritativeSpendComplete;
     let listedMembersSpend = 0;
-    if (canonical.isComplete) {
+    if (totalSpendLoaded) {
       for (const userId of userIds) {
-        listedMembersSpend += attributed.byUser.get(userId) ?? 0;
+        listedMembersSpend += sourceIds.reduce(
+          (sum, id) => sum + (canonical.authoritativeSpendByGroup.get(id)?.get(userId) ?? 0),
+          0,
+        );
       }
     }
     // Unattributed spend = spend from members removed from the group since the last sync
@@ -815,7 +823,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // roster. Deriving it from the authoritative total and the exact displayed
     // rows guarantees the response reconciles, including cross-workspace admin
     // and re-homing paths where the owner is not a current group member.
-    const unattributed = combinedLoaded
+    const unattributed = totalSpendLoaded
       ? Math.max(0, combinedSpend - listedMembersSpend)
       : 0;
 
@@ -835,8 +843,8 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           type: group.type,
           memberCount: userIds.length,
           rollupMemberCount: mergedRollupMemberCount,
-          spendLoaded: combinedLoaded,
-          spendUsd: combinedLoaded ? combinedSpend : null,
+          spendLoaded: totalSpendLoaded,
+          spendUsd: totalSpendLoaded ? combinedSpend : null,
           paceSpendLoaded: false,
           paceSpendUsd: null,
           projectSpendLoaded,
@@ -1028,9 +1036,9 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
       0,
     );
     res.json(GetCanonicalClusterHeadlineResponse.parse({
-      spendUsd: canonical.isComplete ? spendUsd : null,
-      isComplete: canonical.isComplete,
-      pendingCount: canonical.pendingCount,
+      spendUsd: canonical.authoritativeSpendComplete ? spendUsd : null,
+      isComplete: canonical.authoritativeSpendComplete,
+      pendingCount: canonical.authoritativePendingCount,
     }));
   } catch (err) {
     req.log.error({ err }, "getClusterHeadline failed");

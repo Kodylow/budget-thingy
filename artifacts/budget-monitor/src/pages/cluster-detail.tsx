@@ -32,8 +32,6 @@ interface MergedMember {
   role: string;
   allRoles: string[];
   spendUsd: number;
-  aiSpendUsd: number;
-  nonAiSpendUsd: number;
   spendLoaded: boolean;
 }
 
@@ -74,7 +72,7 @@ export default function ClusterDetail() {
       getGetGroupDetailQueryOptions(id, queryParams, {
         query: {
           queryKey: getGetGroupDetailQueryKey(id, queryParams),
-          refetchInterval: (q: any) => (q.state.data?.isComplete ? false : 8000),
+          refetchInterval: (q: any) => (q.state.data?.group?.spendLoaded ? false : 8000),
         },
       }),
     ),
@@ -99,7 +97,7 @@ export default function ClusterDetail() {
     },
   });
   const allLoaded = results.every((r) => !r.isLoading);
-  const allComplete = results.every((r) => r.data?.isComplete);
+  const allComplete = results.every((r) => r.data?.group.spendLoaded);
   const projectsComplete = clusterProjectsData?.isComplete ?? false;
 
   // Build a map of groupId → sub-group role by parsing the fetched group names
@@ -137,7 +135,8 @@ export default function ClusterDetail() {
 
         for (const m of members) {
           const existing = memberMap.get(m.userId);
-          const spend = m.spendLoaded ? (m.spendUsd ?? 0) : 0;
+          const spendLoaded = m.spendUsd != null;
+          const spend = m.spendUsd ?? 0;
           if (!existing) {
             memberMap.set(m.userId, {
               userId: m.userId,
@@ -147,9 +146,7 @@ export default function ClusterDetail() {
               role: subRole,
               allRoles: [subRole],
               spendUsd: spend,
-              aiSpendUsd: m.aiSpendUsd ?? 0,
-              nonAiSpendUsd: m.nonAiSpendUsd ?? 0,
-              spendLoaded: m.spendLoaded,
+              spendLoaded,
             });
             seenUserIds.add(m.userId);
           } else {
@@ -158,10 +155,8 @@ export default function ClusterDetail() {
             const bestRole = higherRole(existing.role, subRole);
             if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
             existing.role = bestRole;
-            existing.spendLoaded = existing.spendLoaded && m.spendLoaded;
+            existing.spendLoaded = existing.spendLoaded && spendLoaded;
             existing.spendUsd += spend;
-            existing.aiSpendUsd += m.aiSpendUsd ?? 0;
-            existing.nonAiSpendUsd += m.nonAiSpendUsd ?? 0;
           }
         }
       }

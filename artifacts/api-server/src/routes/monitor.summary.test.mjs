@@ -661,6 +661,39 @@ test("cluster headline and detail use caller-visible ownership with cluster-loca
     );
     assert.equal(detail.membersSpendUsd + detail.unattributedSpendUsd, detail.group.spendUsd);
 
+    __setMemberUsageForTests("sg-beta", RANGE, null);
+    const totalOnlyDetail = await req("/groups/sg-beta?scopeGroupIds=sg-alpha,sg-beta");
+    assert.equal(
+      totalOnlyDetail.isComplete,
+      false,
+      "the optional AI/non-AI member breakdown remains incomplete",
+    );
+    assert.equal(
+      totalOnlyDetail.group.spendLoaded,
+      true,
+      "authoritative total member spend is ready with the workspace rollup",
+    );
+    assert.equal(
+      totalOnlyDetail.members.find((member) => member.userId === "bob")?.spendUsd,
+      15,
+      "total member spend must not wait for the optional breakdown feed",
+    );
+    assert.equal(
+      totalOnlyDetail.membersSpendUsd + totalOnlyDetail.unattributedSpendUsd,
+      totalOnlyDetail.group.spendUsd,
+    );
+    __setProjectUsageForTests("sg-alpha", RANGE, null);
+    __setProjectUsageForTests("sg-beta", RANGE, null);
+    const totalOnlyHeadline = await req("/clusters/sg-alpha,sg-beta/headline");
+    assert.equal(
+      totalOnlyHeadline.isComplete,
+      true,
+      "cluster total readiness must not wait for optional project decomposition",
+    );
+    assert.equal(totalOnlyHeadline.spendUsd, 25);
+    setProjectSpend(1, 2);
+    __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
+
     __setMemberUsageForTests(unrelated.id, RANGE, new Map([["alice", 50]]));
     __setProjectUsageForTests(unrelated.id, RANGE, {
       fetchedAt: Date.now(),
@@ -1138,7 +1171,16 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
   // splits must remain incomplete until every member-usage payload arrives.
   const cold = await req("/groups/sg-beta");
   assert.equal(cold.isComplete, false, "detail is incomplete while member usage caches are cold");
-  assert.equal(cold.group.spendLoaded, false, "group card spendLoaded must be false on cold cache");
+  assert.equal(
+    cold.group.spendLoaded,
+    true,
+    "authoritative total spend is ready even while the optional breakdown is cold",
+  );
+  assert.equal(
+    cold.members.find((member) => member.userId === "bob")?.spendUsd,
+    15,
+    "workspace-derived member totals remain visible on a cold breakdown cache",
+  );
 
   // Warm all caches as the background queue would do after the first request.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
