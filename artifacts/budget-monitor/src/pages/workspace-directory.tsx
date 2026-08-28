@@ -15,7 +15,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
-import { Search, ShieldCheck } from 'lucide-react';
+import { Download, Search, ShieldCheck } from 'lucide-react';
 import { useRange } from '@/components/range-context';
 
 // ---------- helpers ----------
@@ -34,6 +34,61 @@ function initials(member: DirectoryMember): string {
 function fmtUsd(v: number): string {
   if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
   return `$${v.toFixed(2)}`;
+}
+
+function exportDirectoryUsers(
+  members: DirectoryMember[],
+  spendByUser: ReadonlyMap<string, SpendInfo>,
+) {
+  const escape = (value: string | number) =>
+    `"${String(value).replace(/"/g, '""')}"`;
+  const header = [
+    'Email',
+    'Name',
+    'Username',
+    'Account Admin',
+    'Workspace(s)',
+    'Workspace Role(s)',
+    'Workspace Status(es)',
+    'AI Spend (USD)',
+    'Hosting / Non-AI Spend (USD)',
+    'Spend (USD)',
+  ];
+  const rows = [...members]
+    .sort((a, b) => {
+      const spendDifference =
+        (spendByUser.get(b.userId)?.spendUsd ?? 0) -
+        (spendByUser.get(a.userId)?.spendUsd ?? 0);
+      return spendDifference || a.username.localeCompare(b.username);
+    })
+    .map((member) => {
+      const spend = spendByUser.get(member.userId);
+      return [
+        member.email,
+        member.name ?? '',
+        member.username,
+        member.isAccountAdmin ? 'Yes' : 'No',
+        member.workspaces.map((workspace) => workspace.workspaceName).join('; '),
+        member.workspaces.map((workspace) => workspace.role).join('; '),
+        member.workspaces
+          .map((workspace) => workspace.isDisabled ? 'Disabled' : 'Active')
+          .join('; '),
+        (spend?.aiSpendUsd ?? 0).toFixed(2),
+        (spend?.nonAiSpendUsd ?? 0).toFixed(2),
+        (spend?.spendUsd ?? 0).toFixed(2),
+      ];
+    });
+  const csv = [header, ...rows]
+    .map((row) => row.map(escape).join(','))
+    .join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `workspace-directory-users-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ---------- skeleton ----------
@@ -347,11 +402,23 @@ export default function WorkspaceDirectory() {
 
   return (
     <div className="p-4 md:p-8 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Workspace Directory</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          All enterprise members — search by username, name, or email
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Workspace Directory</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            All enterprise members — search by username, name, or email
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={isLoading || !members}
+          onClick={() => exportDirectoryUsers(members ?? [], spendByUser)}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          data-testid="button-export-directory-users"
+        >
+          <Download className="h-4 w-4" />
+          Export Users
+        </button>
       </div>
 
       {/* Search bar */}
