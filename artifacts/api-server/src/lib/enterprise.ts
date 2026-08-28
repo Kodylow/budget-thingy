@@ -225,7 +225,14 @@ function pumpQueue(): void {
 }
 
 function enqueueUsage(key: string, priority: number, run: () => Promise<void>): boolean {
-  if (queuedKeys.has(key)) return false;
+  if (queuedKeys.has(key)) {
+    // An interactive detail request may arrive after the dashboard already
+    // queued the same cold scope in the background. Promote the queued copy
+    // instead of leaving the user behind hundreds of unrelated group fetches.
+    const queued = usageQueue.find((task) => task.key === key);
+    if (queued) queued.priority = Math.min(queued.priority, priority);
+    return false;
+  }
   queuedKeys.add(key);
   usageQueue.push({ key, priority, run });
   pumpQueue();
@@ -2497,17 +2504,21 @@ export function queueMemberUsageFetch(
   if (isDurablyFresh("group_member", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
-  const queued = enqueueUsage(`member-usage:${cacheKey}`, cached ? priority : 0, async () => {
-    try {
-      const rows = await synchronizeUsage("group_member", range, group.id, {
-        workspaceId: group.workspaceId,
-        groupId: group.id,
-      }, force);
-      memberUsageCache.set(cacheKey, aggregateMemberUsage(rows));
-    } catch (err) {
-      logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
-    }
-  });
+  const queued = enqueueUsage(
+    `member-usage:${cacheKey}`,
+    cached ? priority : Math.min(priority, 0),
+    async () => {
+      try {
+        const rows = await synchronizeUsage("group_member", range, group.id, {
+          workspaceId: group.workspaceId,
+          groupId: group.id,
+        }, force);
+        memberUsageCache.set(cacheKey, aggregateMemberUsage(rows));
+      } catch (err) {
+        logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
+      }
+    },
+  );
   if (queued) markUsageSyncQueued("group_member", range.key, group.id);
   return queued;
 }
@@ -2813,17 +2824,21 @@ export function queueProjectUsageFetch(
   if (isDurablyFresh("group_project", range.key, group.id, cached?.fetchedAt, force)) {
     return false;
   }
-  const queued = enqueueUsage(`project-usage:${cacheKey}`, cached ? priority : 0, async () => {
-    try {
-      const rows = await synchronizeUsage("group_project", range, group.id, {
-        workspaceId: group.workspaceId,
-        groupId: group.id,
-      }, force);
-      projectUsageCache.set(cacheKey, aggregateProjectUsage(rows));
-    } catch (err) {
-      logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch project usage");
-    }
-  });
+  const queued = enqueueUsage(
+    `project-usage:${cacheKey}`,
+    cached ? priority : Math.min(priority, 0),
+    async () => {
+      try {
+        const rows = await synchronizeUsage("group_project", range, group.id, {
+          workspaceId: group.workspaceId,
+          groupId: group.id,
+        }, force);
+        projectUsageCache.set(cacheKey, aggregateProjectUsage(rows));
+      } catch (err) {
+        logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch project usage");
+      }
+    },
+  );
   if (queued) markUsageSyncQueued("group_project", range.key, group.id);
   return queued;
 }
@@ -3540,6 +3555,7 @@ export function getCanonicalUsage(
     workspaces: ReadonlyMap<string, EnterpriseWorkspace>,
     includeAccountMetadata?: boolean,
     requireGroupMemberUsage?: boolean,
+    requiredDetailGroupIds?: ReadonlySet<string>,
   ]
 ): CanonicalUsageResult {
   const [
@@ -3547,6 +3563,7 @@ export function getCanonicalUsage(
     workspaces,
     includeAccountMetadata = false,
     requireGroupMemberUsage = false,
+    requiredDetailGroupIds,
   ] = options;
   const rollup = getDedupedUsageRollup(
     groups,
@@ -3719,12 +3736,34 @@ export function getCanonicalUsage(
   // non-AI gap (or loaded project rows explicitly contain non-AI). This lets a
   // fully-known AI-only range complete while project synchronization is cold,
   // without declaring a range complete when hosting still needs a creator.
+  const detailRollupSpendUsd = requiredDetailGroupIds
+    ? groups
+        .filter((group) => requiredDetailGroupIds.has(group.id))
+        .reduce((sum, group) => sum + (rollup.byGroup.get(group.id)?.spendUsd ?? 0), 0)
+    : rollup.totalSpendUsd - knownUngroupedResidualUsd;
+  const detailAiSpendUsd = requiredDetailGroupIds
+    ? groups
+        .filter((group) => requiredDetailGroupIds.has(group.id))
+        .reduce(
+          (sum, group) =>
+            sum + [...(aiSpendByGroup.get(group.id)?.values() ?? [])]
+              .reduce((groupSum, value) => groupSum + value, 0),
+          0,
+        )
+    : aiSpendUsd;
+  const detailLoadedProjectNonAiSpendUsd = requiredDetailGroupIds
+    ? groups
+        .filter((group) => requiredDetailGroupIds.has(group.id))
+        .reduce(
+          (sum, group) =>
+            sum + [...(nonAiSpendByGroup.get(group.id)?.values() ?? [])]
+              .reduce((groupSum, value) => groupSum + value, 0),
+          0,
+        )
+    : loadedProjectNonAiSpendUsd;
   const creatorAttributionRequired =
-    loadedProjectNonAiSpendUsd > 1e-9 ||
-    rollup.totalSpendUsd - knownUngroupedResidualUsd - aiSpendUsd > 1e-9;
-  const effectiveProjectPendingCount = creatorAttributionRequired
-    ? projectAttribution.pendingCount
-    : 0;
+    detailLoadedProjectNonAiSpendUsd > 1e-9 ||
+    detailRollupSpendUsd - detailAiSpendUsd > 1e-9;
   const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces);
   const displayGroups = groups.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
   const spendByPrimaryGroup = new Map<string, number>();
@@ -3747,19 +3786,28 @@ export function getCanonicalUsage(
     }
   }
   const accountUsage = includeAccountMetadata ? (getAccountUsage(rangeKey) ?? null) : null;
+  const requiredDetailGroups = requiredDetailGroupIds
+    ? groups.filter((group) => requiredDetailGroupIds.has(group.id))
+    : groups;
   const missingMemberUsageCount = requireGroupMemberUsage
-    ? groups.filter((group) => !getMemberUsage(group.id, rangeKey)).length
+    ? requiredDetailGroups.filter((group) => !getMemberUsage(group.id, rangeKey)).length
     : 0;
+  const missingProjectUsageCount = requiredDetailGroupIds
+    ? requiredDetailGroups.filter((group) => !getProjectUsage(group.id, rangeKey)).length
+    : projectAttribution.pendingCount;
+  const projectInputsComplete = requiredDetailGroupIds
+    ? missingProjectUsageCount === 0
+    : projectAttribution.isComplete;
   return {
     ...rollup,
     isComplete:
       rollup.isComplete &&
       missingMemberUsageCount === 0 &&
-      (!creatorAttributionRequired || projectAttribution.isComplete),
+      (!creatorAttributionRequired || projectInputsComplete),
     pendingCount:
       rollup.pendingCount +
       missingMemberUsageCount +
-      effectiveProjectPendingCount,
+      (creatorAttributionRequired ? missingProjectUsageCount : 0),
     rangeKey,
     mergePlan,
     displayGroups,

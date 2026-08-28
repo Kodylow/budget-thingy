@@ -15,6 +15,7 @@ let fetchCount = 0;
 let pendingSpend = 10;
 let failAtFetch = null;
 const requestedStarts = [];
+const requestedGroupIds = [];
 globalThis.fetch = async (input) => {
   fetchCount += 1;
   if (fetchCount === failAtFetch) throw new Error("simulated incremental failure");
@@ -26,6 +27,7 @@ globalThis.fetch = async (input) => {
   await new Promise((r) => setTimeout(r, 50));
   const url = new URL(String(input));
   requestedStarts.push(url.searchParams.get("startTime"));
+  requestedGroupIds.push(url.searchParams.get("groupId"));
   return {
     ok: true,
     status: 200,
@@ -44,6 +46,7 @@ globalThis.fetch = async (input) => {
 
 const {
   queueGroupSpendFetch,
+  queueMemberUsageFetch,
   getSpend,
   pendingUsageCount,
   initCache,
@@ -159,4 +162,48 @@ test("daily snapshot lookup uses the same active billing key as its prewarmed fe
   assert.equal(getSpend(snapshotGroup.id, "billing:from-cutoff"), undefined);
   assert.equal(getSpend(snapshotGroup.id, billingRange.key)?.spendUsd, 7);
   __setBillingPeriodForTests(null);
+});
+
+test("an interactive duplicate promotes an already queued cold detail scope", async () => {
+  const suffix = crypto.randomUUID();
+  const makeGroup = (id) => ({
+    id: `${id}-${suffix}`,
+    workspaceId: "test-queue-w1",
+    name: id,
+    type: "custom",
+  });
+  const active = makeGroup("active");
+  const background = makeGroup("background");
+  const promoted = makeGroup("promoted");
+  const range = {
+    key: `custom:promotion-${suffix}`,
+    label: "Queue promotion test",
+    params: {
+      startTime: "2026-08-27T00:00:00.000Z",
+      endTime: "2026-08-28T00:00:00.000Z",
+    },
+  };
+  const startIndex = requestedGroupIds.length;
+
+  assert.equal(queueMemberUsageFetch(active, range, 0, true), true);
+  assert.equal(queueMemberUsageFetch(background, range, 0, true), true);
+  assert.equal(queueMemberUsageFetch(promoted, range, 0, true), true);
+  assert.equal(
+    queueMemberUsageFetch(promoted, range, -10, true),
+    false,
+    "the duplicate reuses and promotes the queued task",
+  );
+
+  while (pendingUsageCount() > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  const groupOrder = requestedGroupIds
+    .slice(startIndex)
+    .filter((groupId) => groupId != null);
+  assert.ok(groupOrder.includes(active.id));
+  assert.ok(
+    groupOrder.indexOf(promoted.id) < groupOrder.indexOf(background.id),
+    "interactive detail runs before the existing background backlog",
+  );
 });

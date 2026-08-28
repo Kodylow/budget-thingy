@@ -609,7 +609,7 @@ test("/groups: correct combined spend once all group caches warm", async () => {
   assert.equal(json.isComplete, true);
 });
 
-test("cluster headline and detail wait for the complete caller-visible canonical scope", async () => {
+test("cluster headline and detail use caller-visible ownership with cluster-local readiness", async () => {
   const customRange = resolveRange("custom", "2026-07-01", "2026-07-31");
   const customQuery = "?rangeType=custom&startDate=2026-07-01&endDate=2026-07-31";
   const unrelated = {
@@ -638,23 +638,28 @@ test("cluster headline and detail wait for the complete caller-visible canonical
     __setMemberUsageForTests(unrelated.id, RANGE, null);
     __setProjectUsageForTests(unrelated.id, RANGE, null);
     __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
-    __setWsSpendForTests("ws-extra", RANGE, null);
+    __setWsSpendForTests("ws-extra", RANGE, new Map());
     setProjectSpend(1, 2);
 
     const headline = await req("/clusters/sg-alpha,sg-beta/headline");
     assert.equal(
       headline.isComplete,
-      false,
-      "caller-visible workspace inputs must be ready before cluster spend is final",
+      true,
+      "unrelated cold group detail must not block a requested cluster headline",
     );
-    assert.equal(headline.spendUsd, null);
+    assert.equal(
+      headline.spendUsd,
+      25,
+      "cluster-local readiness must retain caller-visible ownership",
+    );
 
     const detail = await req("/groups/sg-beta?scopeGroupIds=sg-alpha,sg-beta");
     assert.equal(
       detail.isComplete,
-      false,
-      "detail must wait for the same caller-visible scope as the dashboard",
+      true,
+      "unrelated cold group detail must not block requested cluster members",
     );
+    assert.equal(detail.membersSpendUsd + detail.unattributedSpendUsd, detail.group.spendUsd);
 
     __setMemberUsageForTests(unrelated.id, RANGE, new Map([["alice", 50]]));
     __setProjectUsageForTests(unrelated.id, RANGE, {
@@ -719,7 +724,14 @@ test("cluster headline and detail wait for the complete caller-visible canonical
         ["alice", 20],
         ["bob", 15],
       ]));
-      __setMemberUsageForTests(unrelated.id, rangeKey, new Map([["alice", 50]]));
+      __setMemberUsageForTests(unrelated.id, rangeKey, null);
+      for (const group of [...groups, unrelated]) {
+        __setProjectUsageForTests(group.id, rangeKey, {
+          fetchedAt: Date.now(),
+          totalCostUsd: 0,
+          byProject: new Map(),
+        });
+      }
       __setWsSpendForTests("ws-main", rangeKey, new Map([
         ["alice", 50],
         ["carol", 10],
@@ -737,6 +749,9 @@ test("cluster headline and detail wait for the complete caller-visible canonical
     const customBeta = await req(
       `/groups/sg-beta${customQuery}&scopeGroupIds=sg-alpha,sg-beta`,
     );
+    assert.equal(customHeadline.isComplete, true);
+    assert.equal(customAlpha.isComplete, true);
+    assert.equal(customBeta.isComplete, true);
     const customDashboardClusterSpend = customGroups.groups
       .filter((candidate) => ["sg-alpha", "sg-beta"].includes(candidate.groupId))
       .reduce((sum, candidate) => sum + candidate.spendUsd, 0);

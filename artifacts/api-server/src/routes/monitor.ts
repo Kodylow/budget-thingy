@@ -639,32 +639,38 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       res.status(404).json({ error: "Group not found" });
       return;
     }
+    const detailScopeIds = requestedScopeIds.length > 0
+      ? new Set(
+          requestedScopeIds.flatMap((id) => {
+            const primaryId = mergePlan.primaryByGroupId.get(id) ?? id;
+            return mergePlan.mergeMap.get(primaryId) ?? [id];
+          }),
+        )
+      : undefined;
     // Ownership must be resolved against the same complete caller-visible scope
     // as /groups. scopeGroupIds only validates the cluster requested by the
     // client; narrowing attribution to that cluster changes the owner of shared
     // and cross-workspace users and makes detail totals disagree with dashboard.
     const scoped = accountScoped;
 
-    // Queue the selected group's data at high priority (priority 0) so it loads first.
-    // Also queue member usage for ALL source groups and all other visible groups at lower
-    // priority so the deduped rollup can complete.
+    // Promote the selected group's data ahead of dashboard background work.
+    // Other visible groups continue warming at low priority, but no longer block
+    // this cluster's readiness.
     for (const srcId of sourceIds) {
       const srcGroup = dir.groups.find((g) => g.id === srcId);
       if (srcGroup) {
         queueGroupSpendFetch(srcGroup, 0, false, undefined, range);
-        queueMemberUsageFetch(srcGroup, range, 0);
-        queueProjectUsageFetch(srcGroup, range, 0);
-        queueProjectTitlesFetch(srcGroup.workspaceId, 0);
       }
     }
+    const interactiveDetailIds = detailScopeIds ?? new Set(sourceIds);
     for (const g of scoped) {
-      if (!sourceIds.includes(g.id)) {
-        queueMemberUsageFetch(g, range, 1);
-        // Queue project usage for other groups at lower priority so that
-        // getProjectAttribution eventually reflects full cross-group data here too,
-        // making projectSpendUsd consistent between the detail page and dashboard.
-        queueProjectUsageFetch(g, range, 2);
-      }
+      const isInteractiveDetail = interactiveDetailIds.has(g.id);
+      queueMemberUsageFetch(g, range, isInteractiveDetail ? -10 : 1);
+      // Queue project usage for other groups at lower priority so that
+      // getProjectAttribution eventually reflects full cross-group data here too,
+      // making projectSpendUsd consistent between the detail page and dashboard.
+      queueProjectUsageFetch(g, range, isInteractiveDetail ? -10 : 2);
+      if (isInteractiveDetail) queueProjectTitlesFetch(g.workspaceId, -10);
     }
 
     const spend = getSpend(group.id, range.key);
@@ -688,6 +694,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       dir.workspaces,
       isAccountAdmin,
       true,
+      detailScopeIds,
     );
     const rollup = canonical;
     const rollupMemberCounts = getDedupedMemberCounts(scoped, dir.groupMembers);
@@ -1009,6 +1016,9 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
       dir.members,
       undefined,
       dir.workspaces,
+      false,
+      false,
+      relevantGroupIds,
     );
     const primaryIds = new Set(
       groupIds.map((groupId) => canonical.mergePlan.primaryByGroupId.get(groupId) ?? groupId),

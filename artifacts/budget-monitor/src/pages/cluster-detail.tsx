@@ -244,7 +244,7 @@ export default function ClusterDetail() {
           {!allComplete && (
             <Badge variant="outline" className="flex items-center gap-2 shrink-0">
               <RefreshCw className="h-3 w-3 animate-spin" />
-              Loading usage...
+              Syncing usage…
             </Badge>
           )}
         </div>
@@ -295,7 +295,7 @@ export default function ClusterDetail() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {!allComplete ? (
+            {!allLoaded ? (
               <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
             ) : (
               <div className="text-2xl font-bold font-mono tabular-nums">
@@ -428,7 +428,7 @@ export default function ClusterDetail() {
 
             {mergedMembers.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
-                {allComplete ? 'No members found.' : 'Loading members...'}
+                {allLoaded ? 'No members found.' : 'Loading members...'}
               </div>
             )}
           </div>
