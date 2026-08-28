@@ -448,10 +448,6 @@ export default function ClusterDetail() {
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Project</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Storage</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Other</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Total</th>
                 </tr>
               </thead>
@@ -460,26 +456,13 @@ export default function ClusterDetail() {
                   [1, 2, 3].map((i) => (
                     <tr key={i} className="border-b border-border/50">
                       <td className="py-3 px-4"><LoadingCell /></td>
-                      {[1, 2, 3, 4, 5].map((cell) => (
-                        <td key={cell} className="py-3 px-4 text-right">
-                          <div className="flex justify-end"><LoadingCell /></div>
-                        </td>
-                      ))}
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex justify-end"><LoadingCell /></div>
+                      </td>
                     </tr>
                   ))
                 ) : (
-                  mergedProjects.map((project) => {
-                    const spendForCategory = (category: string) =>
-                      project.metrics
-                        .filter((metric) => metric.category === category)
-                        .reduce((sum, metric) => sum + metric.costUsd, 0);
-                    const aiSpend = spendForCategory('ai');
-                    const hostingSpend = spendForCategory('hosting');
-                    const storageSpend = spendForCategory('storage');
-                    // Compute "other" as the remainder so the breakdown always sums to the total.
-                    const otherSpend = Math.max(0, project.totalCostUsd - aiSpend - hostingSpend - storageSpend);
-
-                    return (
+                  mergedProjects.map((project) => (
                       <tr key={project.projectId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                         <td className="py-3 px-4">
                           <div className="flex flex-col">
@@ -491,34 +474,13 @@ export default function ClusterDetail() {
                             )}
                           </div>
                         </td>
-                        {['ai', 'hosting', 'storage'].map((category) => (
-                          <td key={category} className="py-3 px-4 text-right">
-                            {!projectsComplete ? (
-                              <div className="flex justify-end"><LoadingCell /></div>
-                            ) : (
-                              <span className="text-sm font-mono tabular-nums">
-                                {spendForCategory(category) > 0 ? `$${spendForCategory(category).toFixed(2)}` : '—'}
-                              </span>
-                            )}
-                          </td>
-                        ))}
-                        <td className="py-3 px-4 text-right">
-                          {!projectsComplete ? (
-                            <div className="flex justify-end"><LoadingCell /></div>
-                          ) : (
-                            <span className="text-sm font-mono tabular-nums">
-                              {otherSpend > 0 ? `$${otherSpend.toFixed(2)}` : '—'}
-                            </span>
-                          )}
-                        </td>
                         <td className="py-3 px-4 text-right">
                           <span className="text-sm font-mono tabular-nums font-medium">
                             ${project.totalCostUsd.toFixed(2)}
                           </span>
                         </td>
                       </tr>
-                    );
-                  })
+                    ))
                 )}
 
                 {projectsUnattributedSpend > 0 && (
@@ -529,11 +491,6 @@ export default function ClusterDetail() {
                         <span className="text-xs text-muted-foreground">Creator not in this team or unknown</span>
                       </div>
                     </td>
-                    {[1, 2, 3, 4].map((cell) => (
-                      <td key={cell} className="py-3 px-4 text-right">
-                        <span className="text-sm text-muted-foreground">—</span>
-                      </td>
-                    ))}
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm font-mono tabular-nums">${projectsUnattributedSpend.toFixed(2)}</span>
                     </td>
@@ -543,9 +500,6 @@ export default function ClusterDetail() {
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
                   <td className="py-3 px-4 text-sm">Total</td>
-                  {[1, 2, 3, 4].map((cell) => (
-                    <td key={cell} className="py-3 px-4" />
-                  ))}
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
                       ${mergedProjects.reduce((s, p) => s + p.totalCostUsd, 0).toFixed(2)}
