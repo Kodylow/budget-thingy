@@ -609,21 +609,27 @@ test("/groups: correct combined spend once all group caches warm", async () => {
   assert.equal(json.isComplete, true);
 });
 
-test("cluster headline uses the canonical rollup instead of project attribution", async () => {
+test("cluster headline and detail wait for the complete caller-visible canonical scope", async () => {
+  const customRange = resolveRange("custom", "2026-07-01", "2026-07-31");
+  const customQuery = "?rangeType=custom&startDate=2026-07-01&endDate=2026-07-31";
   const unrelated = {
     id: "sg-unrelated",
     workspaceId: "ws-main",
-    name: "Unrelated",
+    name: "Aardvark sibling",
     type: "custom",
   };
+  const scopedMembers = new Map(members);
+  scopedMembers.set("wsadmin", m("wsadmin", false, {
+    "ws-main": { role: "admin", isDisabled: false },
+  }));
   __setDirectoryCacheForTests({
     workspaces: wsExtra,
     groups: [...groups, unrelated],
-    members,
+    members: scopedMembers,
     groupMembers: new Map([
       ["sg-alpha", ["alice", "carol"]],
       ["sg-beta", ["alice", "bob"]],
-      [unrelated.id, ["dave"]],
+      [unrelated.id, ["alice"]],
     ]),
   });
   try {
@@ -638,20 +644,120 @@ test("cluster headline uses the canonical rollup instead of project attribution"
     const headline = await req("/clusters/sg-alpha,sg-beta/headline");
     assert.equal(
       headline.isComplete,
-      true,
-      "an unrelated cold workspace must not block the requested cluster",
+      false,
+      "caller-visible workspace inputs must be ready before cluster spend is final",
     );
-    assert.equal(headline.spendUsd, 75, "cluster headline must equal canonical group rollup, not $3 of projects");
+    assert.equal(headline.spendUsd, null);
 
     const detail = await req("/groups/sg-beta?scopeGroupIds=sg-alpha,sg-beta");
     assert.equal(
       detail.isComplete,
-      true,
-      "an unrelated cold group in the same workspace must not block team member detail",
+      false,
+      "detail must wait for the same caller-visible scope as the dashboard",
+    );
+
+    __setMemberUsageForTests(unrelated.id, RANGE, new Map([["alice", 50]]));
+    __setProjectUsageForTests(unrelated.id, RANGE, {
+      fetchedAt: Date.now(),
+      totalCostUsd: 0,
+      byProject: new Map(),
+    });
+    __setWsSpendForTests("ws-extra", RANGE, new Map());
+
+    const groupsJson = await req("/groups");
+    const warmHeadline = await req("/clusters/sg-alpha,sg-beta/headline");
+    const warmDetail = await req("/groups/sg-beta?scopeGroupIds=sg-alpha,sg-beta");
+    const dashboardClusterSpend = groupsJson.groups
+      .filter((group) => ["sg-alpha", "sg-beta"].includes(group.groupId))
+      .reduce((sum, group) => sum + group.spendUsd, 0);
+    assert.equal(
+      dashboardClusterSpend,
+      25,
+      "the earlier caller-visible sibling owns Alice, so the requested cluster only keeps Carol and Bob",
+    );
+    assert.equal(warmHeadline.isComplete, true);
+    assert.equal(warmHeadline.spendUsd, dashboardClusterSpend);
+    assert.equal(warmDetail.isComplete, true);
+    assert.equal(
+      warmDetail.membersSpendUsd + warmDetail.unattributedSpendUsd,
+      warmDetail.group.spendUsd,
+      "member rows and residual must exactly reconcile to the dashboard group amount",
+    );
+
+    const scopedGroupsJson = await req("/groups", "wsadmin");
+    const scopedHeadline = await req(
+      "/clusters/sg-alpha,sg-beta/headline",
+      "wsadmin",
+    );
+    const scopedDetail = await req(
+      "/groups/sg-beta?scopeGroupIds=sg-alpha,sg-beta",
+      "wsadmin",
+    );
+    const scopedDashboardBeta = scopedGroupsJson.groups.find(
+      (candidate) => candidate.groupId === "sg-beta",
+    );
+    assert.equal(scopedDetail.group.spendUsd, scopedDashboardBeta.spendUsd);
+    assert.equal(
+      scopedHeadline.spendUsd,
+      scopedGroupsJson.groups
+        .filter((candidate) => ["sg-alpha", "sg-beta"].includes(candidate.groupId))
+        .reduce((sum, candidate) => sum + candidate.spendUsd, 0),
+      "workspace-scoped cluster headlines use the same visible ownership scope as their dashboard",
+    );
+    assert.equal(
+      scopedDetail.membersSpendUsd + scopedDetail.unattributedSpendUsd,
+      scopedDetail.group.spendUsd,
+      "workspace-scoped callers reconcile within their own visible group scope",
+    );
+
+    for (const rangeKey of [customRange.key]) {
+      __setMemberUsageForTests("sg-alpha", rangeKey, new Map([
+        ["alice", 30],
+        ["carol", 10],
+      ]));
+      __setMemberUsageForTests("sg-beta", rangeKey, new Map([
+        ["alice", 20],
+        ["bob", 15],
+      ]));
+      __setMemberUsageForTests(unrelated.id, rangeKey, new Map([["alice", 50]]));
+      __setWsSpendForTests("ws-main", rangeKey, new Map([
+        ["alice", 50],
+        ["carol", 10],
+        ["bob", 15],
+      ]));
+      __setWsSpendForTests("ws-extra", rangeKey, new Map());
+    }
+    const customGroups = await req(`/groups${customQuery}`);
+    const customHeadline = await req(
+      `/clusters/sg-alpha,sg-beta/headline${customQuery}`,
+    );
+    const customAlpha = await req(
+      `/groups/sg-alpha${customQuery}&scopeGroupIds=sg-alpha,sg-beta`,
+    );
+    const customBeta = await req(
+      `/groups/sg-beta${customQuery}&scopeGroupIds=sg-alpha,sg-beta`,
+    );
+    const customDashboardClusterSpend = customGroups.groups
+      .filter((candidate) => ["sg-alpha", "sg-beta"].includes(candidate.groupId))
+      .reduce((sum, candidate) => sum + candidate.spendUsd, 0);
+    assert.equal(customHeadline.spendUsd, customDashboardClusterSpend);
+    assert.equal(
+      customAlpha.membersSpendUsd +
+        customAlpha.unattributedSpendUsd +
+        customBeta.membersSpendUsd +
+        customBeta.unattributedSpendUsd,
+      customHeadline.spendUsd,
+      "custom-range cluster member rows and residuals reconcile to the dashboard",
     );
   } finally {
     __setMemberUsageForTests(unrelated.id, RANGE, null);
     __setProjectUsageForTests(unrelated.id, RANGE, null);
+    for (const group of [...groups, unrelated]) {
+      __setMemberUsageForTests(group.id, customRange.key, null);
+      __setProjectUsageForTests(group.id, customRange.key, null);
+    }
+    __setWsSpendForTests("ws-main", customRange.key, null);
+    __setWsSpendForTests("ws-extra", customRange.key, null);
     __setWsSpendForTests("ws-extra", RANGE, new Map());
     restoreDir();
   }

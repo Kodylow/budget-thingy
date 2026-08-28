@@ -9,7 +9,7 @@ description: Account anchor and reconciliation rules versus scoped and drill-dow
 
 Visible group/team rows use the canonical workspace-aware member rollup. For account-wide callers, Dashboard Total Spend uses the unfiltered Enterprise usage gross total; an explicit residual row bridges canonical rows to that anchor. Keep the account dashboard loading until both models are complete.
 
-All headline group, team, budget, trend, cluster, and threshold-alert surfaces must consume that same range-scoped canonical rollup. Project attribution and per-person usage remain explanatory detail models, never substitutes for budget or alert accounting.
+All headline group, team, budget, trend, cluster, and threshold-alert surfaces must consume that same range-scoped canonical rollup. Group member detail must resolve ownership over the caller's complete visible scope, then slice the requested group; displayed members plus an explicit residual must equal its canonical row. Project attribution remains an explanatory model, never a substitute for budget or alert accounting.
 
 Workspace-scoped callers must never receive the account anchor or its residual. Their dashboard retains the canonical rollup recomputed only over their visible workspace scope.
 
@@ -18,9 +18,9 @@ For overlapping memberships, project observation ownership and creator ownership
 **Why:**
 One server-owned attribution model prevents percentages and remaining budget from disagreeing between dashboard, trends, clusters, and alerts. The unfiltered account total guarantees every dollar is represented, while scoped admins remain isolated from enterprise-wide figures.
 
-Keeping creator ownership aligned with member ownership prevents one overlapping group from being over-allocated while another shows a false residual. Missing creators and former members remain true residuals.
+Keeping creator ownership aligned with member ownership prevents one overlapping group from being over-allocated while another shows a false residual. A narrow detail-only scope can change the owner of a shared user, so detail completeness must wait for every input required by the caller-visible scope.
 
 **How to apply:**
-Use canonical group/team maps for every row, rollup, budget, trend, and alert calculation; defer rather than calculate from incomplete usage. For account-wide headline/footer totals, use the gross anchor and render gross minus canonical as the residual row. Expose neither field to scoped viewers. Label stored alert values as send-time snapshots and project tables as attribution.
+Use canonical group/team maps for every row, rollup, budget, trend, alert, and member-detail calculation; defer rather than calculate from incomplete usage. For account-wide headline/footer totals, use the gross anchor and render gross minus canonical as the residual row. Expose neither field to scoped viewers. Label stored alert values as send-time snapshots and project tables as attribution.
 
 Use the same stable tie-breaks in APIs and exports. Assert per group and aggregate that attributed users plus residual equal the authoritative total, including duplicate projects, tied observations, overlapping memberships, and winner groups that do not contain the creator.

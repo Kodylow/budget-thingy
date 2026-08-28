@@ -639,25 +639,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       res.status(404).json({ error: "Group not found" });
       return;
     }
-    const clusterScopeIds = new Set(
-      requestedScopeIds.flatMap((id) => {
-        const primaryId = mergePlan.primaryByGroupId.get(id) ?? id;
-        return mergePlan.mergeMap.get(primaryId) ?? [id];
-      }),
-    );
-    for (const id of sourceIds) clusterScopeIds.add(id);
-    // A detail page only needs canonical overlap resolution inside the
-    // workspace(s) represented by this merged group. Unrelated account
-    // workspaces must not keep a custom-range detail page loading.
-    const detailWorkspaceIds = new Set(
-      sourceIds.flatMap((id) => {
-        const source = dir.groups.find((candidate) => candidate.id === id);
-        return source ? [source.workspaceId] : [];
-      }),
-    );
-    const scoped = requestedScopeIds.length > 0
-      ? accountScoped.filter((candidate) => clusterScopeIds.has(candidate.id))
-      : accountScoped.filter((candidate) => detailWorkspaceIds.has(candidate.workspaceId));
+    // Ownership must be resolved against the same complete caller-visible scope
+    // as /groups. scopeGroupIds only validates the cluster requested by the
+    // client; narrowing attribution to that cluster changes the owner of shared
+    // and cross-workspace users and makes detail totals disagree with dashboard.
+    const scoped = accountScoped;
 
     // Queue the selected group's data at high priority (priority 0) so it loads first.
     // Also queue member usage for ALL source groups and all other visible groups at lower
@@ -684,9 +670,13 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const spend = getSpend(group.id, range.key);
 
     const isAccountAdmin = isAccountWide(req.authz);
-    const scopedWorkspaceIds = new Set(scoped.map((item) => item.workspaceId));
+    const groupedWorkspaceIds = scoped.map((item) => item.workspaceId);
+    const scopedWorkspaceIds = isAccountAdmin
+      ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
+      : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
     for (const workspaceId of scopedWorkspaceIds) {
       queueWsSpendFetch(workspaceId, range, 0);
+      queueProjectTitlesFetch(workspaceId, 0);
     }
     const canonical = getCanonicalUsage(
       scoped,
@@ -813,12 +803,13 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // Must be computed from attributed.byUser (not raw member spend) so that members
     // whose spend is attributed elsewhere don't inflate this figure — raw spend can
     // exceed the attributed group total for users in multiple groups.
-    let attributedCurrentMembersSpend = 0;
-    for (const userId of userIds) {
-      attributedCurrentMembersSpend += attributed.byUser.get(userId) ?? 0;
-    }
+    // This includes both canonical accounting residuals and spend canonically
+    // owned by this group for people who are no longer in its displayed member
+    // roster. Deriving it from the authoritative total and the exact displayed
+    // rows guarantees the response reconciles, including cross-workspace admin
+    // and re-homing paths where the owner is not a current group member.
     const unattributed = combinedLoaded
-      ? Math.max(0, combinedSpend - attributedCurrentMembersSpend)
+      ? Math.max(0, combinedSpend - listedMembersSpend)
       : 0;
 
     const mergedRollupMemberCount = sourceIds.reduce(
@@ -993,16 +984,14 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
         return accountMergePlan.mergeMap.get(primaryId) ?? [groupId];
       }),
     );
-    const relevantWorkspaceIds = new Set(
-      visible
-        .filter((group) => relevantGroupIds.has(group.id))
-        .map((group) => group.workspaceId),
-    );
-    // A cluster is its own canonical overlap scope. Including unrelated groups
-    // from the same enterprise workspace would keep this team loading while a
-    // large custom-range backfill proceeds.
-    const scoped = visible.filter((group) => relevantGroupIds.has(group.id));
-    const scopedWorkspaceIds = relevantWorkspaceIds;
+    // Match /groups exactly: resolve ownership across every group and workspace
+    // visible to this caller, then return only the requested cluster slice.
+    const scoped = visible;
+    const isAccountAdmin = isAccountWide(req.authz);
+    const groupedWorkspaceIds = scoped.map((group) => group.workspaceId);
+    const scopedWorkspaceIds = isAccountAdmin
+      ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
+      : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
     for (const workspaceId of scopedWorkspaceIds) {
       queueWsSpendFetch(workspaceId, range, -20);
     }

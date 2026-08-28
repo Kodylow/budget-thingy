@@ -99,7 +99,6 @@ export default function ClusterDetail() {
     },
   });
   const allLoaded = results.every((r) => !r.isLoading);
-  const anyComplete = results.some((r) => r.data?.isComplete);
   const allComplete = results.every((r) => r.data?.isComplete);
   const projectsComplete = clusterProjectsData?.isComplete ?? false;
 
@@ -277,7 +276,7 @@ export default function ClusterDetail() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {!anyComplete ? (
+            {!allComplete || !clusterSpendLoaded ? (
               <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
             ) : (
               <div className="text-2xl font-bold font-mono tabular-nums">
@@ -285,7 +284,7 @@ export default function ClusterDetail() {
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">
-              Informational member rows; not the canonical budget total
+              Member rows plus explicit residual; matches canonical rollup
             </p>
           </CardContent>
         </Card>
@@ -296,7 +295,7 @@ export default function ClusterDetail() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {!anyComplete ? (
+            {!allComplete ? (
               <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
             ) : (
               <div className="text-2xl font-bold font-mono tabular-nums">
@@ -385,12 +384,14 @@ export default function ClusterDetail() {
                   </tr>
                 ))}
 
-                {totalUnattributedSpend > 0.005 && (
+                {allComplete && totalUnattributedSpend > 0.005 && (
                   <tr className="border-b border-border/50 bg-muted/10">
                     <td className="py-3 px-4">
                       <div className="flex flex-col">
                         <span className="text-sm font-medium italic">Unattributed residual</span>
-                        <span className="text-xs text-muted-foreground">No project ID, missing creator, or creator no longer a member</span>
+                        <span className="text-xs text-muted-foreground">
+                          Usage not assignable to a current displayed member
+                        </span>
                       </div>
                     </td>
                     <td className="py-3 px-4" />
@@ -409,9 +410,15 @@ export default function ClusterDetail() {
                   <td className="py-3 px-4 text-sm">Combined Total</td>
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
-                    <span className="text-sm font-mono tabular-nums">
-                      ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
-                    </span>
+                    {!allComplete || !clusterSpendLoaded ? (
+                      <div className="flex justify-end">
+                        <LoadingCell />
+                      </div>
+                    ) : (
+                      <span className="text-sm font-mono tabular-nums">
+                        ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4" />
@@ -421,7 +428,7 @@ export default function ClusterDetail() {
 
             {mergedMembers.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
-                {anyComplete ? 'No members found.' : 'Loading members...'}
+                {allComplete ? 'No members found.' : 'Loading members...'}
               </div>
             )}
           </div>
