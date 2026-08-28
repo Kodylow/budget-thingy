@@ -234,6 +234,22 @@ async function req(path, { user, method = "GET", body } = {}) {
   return { status: res.status, json };
 }
 
+async function csvReq(path, user) {
+  const res = await fetch(`${baseUrl}/api${path}`, {
+    headers: user ? { "x-test-user": user } : {},
+  });
+  const text = await res.text();
+  const unquote = (value) => value.trim().replace(/^"|"$/g, "").replace(/""/g, '"');
+  const lines = text.trim().split(/\r?\n/);
+  const headers = res.ok ? lines[0].split(",").map(unquote) : [];
+  const rows = res.ok
+    ? lines.slice(1).map((line) => Object.fromEntries(
+        line.split(",").map(unquote).map((value, index) => [headers[index], value]),
+      ))
+    : [];
+  return { res, text, rows };
+}
+
 test("unauthenticated request to a protected endpoint returns 401", async () => {
   const { status } = await req("/groups");
   assert.equal(status, 401);
@@ -758,6 +774,72 @@ test("account admin sees all members in /users/activity", async () => {
   // while the activity endpoint was exercised.
   __setWsSpendForTests("ws-1", "billing:from-cutoff", null);
   __setWsSpendForTests("ws-2", "billing:from-cutoff", null);
+});
+
+// ── group-scoped user CSV authorization tests ────────────────────────────────
+
+test("user export requires an explicit group scope", async () => {
+  const { res } = await csvReq("/export/users.csv", "acct");
+  assert.equal(res.status, 400);
+});
+
+test("workspace admin exports only an authorized group's members", async () => {
+  const query = "/export/users.csv?groupIds=g-ws1-a&rangeType=custom&startDate=2026-05-20&endDate=2026-08-11";
+  const { res, rows } = await csvReq(query, "ws1admin");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("x-usage-range"), "custom:2026-05-20:2026-08-11");
+  assert.match(
+    res.headers.get("content-disposition") ?? "",
+    /filename="group-users-\d{4}-\d{2}-\d{2}\.csv"/,
+  );
+  assert.deepEqual(
+    rows.map((row) => row.Username).sort(),
+    ["plain", "ws1admin"],
+  );
+  assert.ok(!rows.some((row) => row.Email === "ws2user@example.com"));
+});
+
+test("workspace admin cannot add an out-of-scope group to an export URL", async () => {
+  const outside = await csvReq("/export/users.csv?groupIds=g-ws2-a", "ws1admin");
+  assert.equal(outside.res.status, 404);
+  const mixed = await csvReq("/export/users.csv?groupIds=g-ws1-a,g-ws2-a", "ws1admin");
+  assert.equal(mixed.res.status, 404);
+  assert.ok(!mixed.text.includes("ws2user@example.com"));
+});
+
+test("account admin group export remains scoped to the requested page", async () => {
+  const { res, rows } = await csvReq("/export/users.csv?groupIds=g-ws2-a", "acct");
+  assert.equal(res.status, 200);
+  assert.deepEqual(rows.map((row) => row.Username), ["ws2user"]);
+});
+
+test("cluster export emits one row for overlapping members", async () => {
+  __setDirectoryCacheForTests({
+    groups,
+    members,
+    groupMembers: new Map([
+      ["g-ws1-a", ["ws1admin", "plain"]],
+      ["g-ws2-a", ["ws2user", "plain"]],
+    ]),
+  });
+  try {
+    const { res, rows } = await csvReq(
+      "/export/users.csv?groupIds=g-ws1-a,g-ws2-a&rangeType=custom&startDate=2026-05-20&endDate=2026-08-11",
+      "acct",
+    );
+    assert.equal(res.status, 200);
+    assert.match(
+      res.headers.get("content-disposition") ?? "",
+      /filename="group-cluster-users-\d{4}-\d{2}-\d{2}\.csv"/,
+    );
+    assert.equal(rows.filter((row) => row.Username === "plain").length, 1);
+    assert.deepEqual(
+      rows.map((row) => row.Username).sort(),
+      ["plain", "ws1admin", "ws2user"],
+    );
+  } finally {
+    __setDirectoryCacheForTests({ groups, members, groupMembers });
+  }
 });
 
 // ── parseIsAccountAdmin new-field-shape regression ───────────────────────────

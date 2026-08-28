@@ -2562,10 +2562,8 @@ router.get("/trends", async (req, res): Promise<void> => {
 });
 
 // ── GET /export/users.csv ─────────────────────────────────────────────────────
-// Returns a CSV of all users across all groups.
-// Each user appears once (first custom group wins). Spend is shown where cached;
-// groups whose per-member usage has not loaded yet are included with spend=0 and queued.
-router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
+// Returns one row per unique member of the explicitly requested group(s).
+router.get("/export/users.csv", async (req, res): Promise<void> => {
   let range: UsageRange;
   try {
     range = rangeFromQuery(req.query as Record<string, unknown>);
@@ -2583,39 +2581,75 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     return;
   }
 
+  const requestedIds = String(req.query["groupIds"] ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (requestedIds.length === 0) {
+    res.status(400).json({ error: "At least one group ID is required" });
+    return;
+  }
+  const uniqueRequestedIds = [...new Set(requestedIds)];
+  const requestedGroups = uniqueRequestedIds.map((id) =>
+    dir.groups.find((group) => group.id === id),
+  );
+  // Fail closed without revealing whether an unknown or inaccessible group exists.
+  if (
+    requestedGroups.some((group) => !group) ||
+    requestedGroups.some((group) => group && !canSeeGroup(req.authz!, group))
+  ) {
+    res.status(404).json({ error: "No matching groups found" });
+    return;
+  }
+
+  const visible = visibleGroups(req.authz!, dir.groups);
+  const mergePlan = buildCanonicalGroupMergePlan(visible, dir.workspaces);
+  const primaryIds = uniqueRequestedIds.map(
+    (id) => mergePlan.primaryByGroupId.get(id) ?? id,
+  );
+  const exportGroupIds = [...new Set(
+    primaryIds.flatMap((id) => mergePlan.mergeMap.get(id) ?? [id]),
+  )];
+  const exportGroupIdSet = new Set(exportGroupIds);
+  const exportGroups = visible.filter((group) => exportGroupIdSet.has(group.id));
+
   const groupTeams = await db.select().from(groupTeamsTable);
   const teamNameMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
 
-  // Route is account-wide (true account admins and managed editors). Workspace
-  // payloads are authoritative for canonical per-user totals.
-  queueAllWorkspacesFetch(dir, range, 1);
-  const workspaceIds = new Set(dir.workspaces.keys());
-  for (const group of dir.groups) {
-    queueMemberUsageFetch(group, range, 1);
-    queueProjectUsageFetch(group, range, 1);
+  const callerIsAccountWide = isAccountWide(req.authz);
+  const scopedWorkspaceIds = callerIsAccountWide
+    ? new Set([...dir.workspaces.keys(), ...visible.map((group) => group.workspaceId)])
+    : new Set([...req.authz!.workspaceIds, ...visible.map((group) => group.workspaceId)]);
+  for (const group of visible) {
+    const priority = exportGroupIdSet.has(group.id) ? -10 : 1;
+    queueMemberUsageFetch(group, range, priority);
+    queueProjectUsageFetch(group, range, priority);
   }
-  for (const workspaceId of workspaceIds) queueProjectTitlesFetch(workspaceId, 1);
+  for (const workspaceId of scopedWorkspaceIds) {
+    queueWsSpendFetch(workspaceId, range, -10);
+    queueProjectTitlesFetch(workspaceId, 1);
+  }
   const canonical = getCanonicalUsage(
-    dir.groups,
+    visible,
     range.key,
-    workspaceIds,
+    scopedWorkspaceIds,
     dir.groupMembers,
     dir.members,
     teamNameMap,
     dir.workspaces,
+    callerIsAccountWide,
     true,
-    true,
+    exportGroupIdSet,
   );
 
-  // Pass 1: register every group member with a default (first-membership) group/team,
-  // using the stable sort order (workspaceId → name → id). Attribution is driven by
-  // directory group membership so every member gets a group/team even with $0 spend
-  // or on a cold cache. Spend and the displayed group are finalized in Pass 1.5.
-  const sortedGroupsForCsv = [...dir.groups].sort(
+  const sortedGroupsForCsv = [...exportGroups].sort(
     (a, b) =>
       a.workspaceId.localeCompare(b.workspaceId) ||
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
       a.id.localeCompare(b.id),
+  );
+  const requestedMemberIds = new Set(
+    sortedGroupsForCsv.flatMap((group) => dir.groupMembers.get(group.id) ?? []),
   );
   const userGroupAttr = canonicalUserAttribution(
     canonical,
@@ -2623,28 +2657,29 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
     dir.groupMembers,
     teamNameMap,
   );
-
-  // Pass 2: emit one row per enterprise member (covers users not in any custom group).
-  // Extra-workspace spend (workspaces without custom groups) is added for every user
-  // so cross-workspace totals stay complete.
   const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; aiSpendUsd: number; nonAiSpendUsd: number; spendUsd: number }[] = [];
-  for (const [userId, m] of dir.members) {
+  for (const userId of requestedMemberIds) {
+    const member = dir.members.get(userId);
+    if (!member) continue;
     const attr = userGroupAttr.get(userId);
-    const wsNames = [...m.workspaces.keys()]
-      .map((wsId) => dir.workspaces.get(wsId)?.name ?? wsId)
-      .filter(Boolean)
-      .join("; ");
-    const spendUsd = canonical.byUser.get(userId) ?? 0;
+    const memberGroups = sortedGroupsForCsv.filter((group) =>
+      (dir.groupMembers.get(group.id) ?? []).includes(userId),
+    );
+    const workspaceNames = [...new Set(
+      memberGroups.map((group) => dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId),
+    )];
+    const sumForUser = (byGroup: ReadonlyMap<string, ReadonlyMap<string, number>>) =>
+      exportGroupIds.reduce((sum, id) => sum + (byGroup.get(id)?.get(userId) ?? 0), 0);
     rows.push({
-      email: m.email,
-      name: m.name ?? "",
-      username: m.username,
+      email: member.email,
+      name: member.name ?? "",
+      username: member.username,
       group: attr?.groupName ?? "",
       team: attr?.teamName ?? "",
-      workspaces: wsNames,
-      aiSpendUsd: canonical.aiSpendByUser.get(userId) ?? 0,
-      nonAiSpendUsd: canonical.nonAiSpendByUser.get(userId) ?? 0,
-      spendUsd,
+      workspaces: workspaceNames.join("; "),
+      aiSpendUsd: sumForUser(canonical.aiSpendByGroup),
+      nonAiSpendUsd: sumForUser(canonical.nonAiSpendByGroup),
+      spendUsd: sumForUser(canonical.authoritativeSpendByGroup),
     });
   }
 
@@ -2664,10 +2699,10 @@ router.get("/export/users.csv", requireAccountOperator, async (req, res) => {
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="all-users-${new Date().toISOString().slice(0, 10)}.csv"`,
+    `attachment; filename="${primaryIds.length === 1 ? "group-users" : "group-cluster-users"}-${new Date().toISOString().slice(0, 10)}.csv"`,
   );
-  res.setHeader("X-Groups-Loaded", String(Math.max(0, workspaceIds.size - canonical.pendingCount)));
-  res.setHeader("X-Groups-Total", String(workspaceIds.size));
+  res.setHeader("X-Groups-Loaded", String(canonical.isComplete ? exportGroups.length : 0));
+  res.setHeader("X-Groups-Total", String(exportGroups.length));
   res.setHeader("X-Export-Complete", String(isComplete));
   res.setHeader("X-Usage-Range", range.key);
   res.send(csv);

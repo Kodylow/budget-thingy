@@ -151,7 +151,7 @@ test("per-user API and CSV wait for member usage after workspace and project inp
   for (const group of groups) {
     __setMemberUsageForTests(group.id, READINESS_RANGE, null);
   }
-  const query = "?rangeType=custom&startDate=2026-07-01&endDate=2026-07-31";
+  const query = "?groupIds=sg-admins-ws1,sg-devs-ws1,sg-admins-ws2&rangeType=custom&startDate=2026-07-01&endDate=2026-07-31";
 
   const coldActivity = await activity("acct", query);
   assert.equal(coldActivity.isComplete, false);
@@ -259,7 +259,7 @@ test("selected custom range has API, group-detail, cluster-source, and CSV parit
   __setMemberUsageForTests("sg-devs-ws1", CUSTOM_RANGE, new Map([["eve", 5]]));
   __setMemberUsageForTests("sg-admins-ws2", CUSTOM_RANGE, new Map([["denise", 40]]));
 
-  const query = "?rangeType=custom&startDate=2026-06-01&endDate=2026-06-30";
+  const query = "?groupIds=sg-admins-ws1,sg-devs-ws1,sg-admins-ws2&rangeType=custom&startDate=2026-06-01&endDate=2026-06-30";
   const activityJson = await activity("acct", query);
   assert.equal(activityJson.isComplete, true);
   const activityDenise = activityJson.users.find((user) => user.username === "denise");

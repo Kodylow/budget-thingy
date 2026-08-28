@@ -471,10 +471,14 @@ export const GetUserActivityResponse = zod.object({
 
 
 /**
- * Exports the same selected-range per-user values returned by User Activity, with separate AI, hosting/non-AI, and total spend columns.
+ * Exports the unique members of the explicitly requested visible groups, with separate AI, hosting/non-AI, and total spend columns.
  * @summary Export canonical per-user activity as CSV
  */
+
+
+
 export const ExportUsersCsvQueryParams = zod.object({
+  "groupIds": zod.coerce.string().min(1).describe('Comma-separated group IDs from a group or cluster detail page'),
   "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')

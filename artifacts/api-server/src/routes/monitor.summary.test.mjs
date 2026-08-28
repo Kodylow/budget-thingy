@@ -279,7 +279,7 @@ function restoreDir() {
 }
 
 async function getCsv() {
-  const res = await fetch(`${baseUrl}/api/export/users.csv`, {
+  const res = await fetch(`${baseUrl}/api/export/users.csv?groupIds=sg-alpha,sg-beta`, {
     headers: { "x-test-user": "acct" },
   });
   assert.equal(res.status, 200);

@@ -17,6 +17,7 @@ import { ThresholdBadge } from '@/components/threshold-badge';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { GroupUserExport } from '@/components/group-user-export';
 
 export default function GroupDetail() {
   const [match, params] = useRoute('/groups/:groupId');
@@ -155,6 +156,7 @@ export default function GroupDetail() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <GroupUserExport groupIds={[groupId]} />
           <RangeFilter />
           {!isComplete && (
             <Badge variant="outline" className="flex items-center gap-2 shrink-0">

@@ -1504,7 +1504,7 @@ export function useGetUserActivity<TData = Awaited<ReturnType<typeof getUserActi
 
 
 
-export const getExportUsersCsvUrl = (params?: ExportUsersCsvParams,) => {
+export const getExportUsersCsvUrl = (params: ExportUsersCsvParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -1520,10 +1520,10 @@ export const getExportUsersCsvUrl = (params?: ExportUsersCsvParams,) => {
 }
 
 /**
- * Exports the same selected-range per-user values returned by User Activity, with separate AI, hosting/non-AI, and total spend columns.
+ * Exports the unique members of the explicitly requested visible groups, with separate AI, hosting/non-AI, and total spend columns.
  * @summary Export canonical per-user activity as CSV
  */
-export const exportUsersCsv = async (params?: ExportUsersCsvParams, options?: RequestInit): Promise<string> => {
+export const exportUsersCsv = async (params: ExportUsersCsvParams, options?: RequestInit): Promise<string> => {
 
   return customFetch<string>(getExportUsersCsvUrl(params),
   {
@@ -1545,7 +1545,7 @@ export const getExportUsersCsvQueryKey = (params?: ExportUsersCsvParams,) => {
     }
 
 
-export const getExportUsersCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportUsersCsv>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params?: ExportUsersCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportUsersCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getExportUsersCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportUsersCsv>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params: ExportUsersCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportUsersCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1572,7 +1572,7 @@ export type ExportUsersCsvQueryError = ErrorType<ApiError | UnauthorizedResponse
  */
 
 export function useExportUsersCsv<TData = Awaited<ReturnType<typeof exportUsersCsv>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
- params?: ExportUsersCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportUsersCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params: ExportUsersCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportUsersCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 

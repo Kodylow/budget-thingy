@@ -23,6 +23,7 @@ import {
   roleBadgeClass,
   ROLE_PRIORITY,
 } from '@/lib/group-clusters';
+import { GroupUserExport } from '@/components/group-user-export';
 
 interface MergedMember {
   userId: string;
@@ -235,6 +236,7 @@ export default function ClusterDetail() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <GroupUserExport groupIds={groupIds} />
           <RangeFilter />
           {!allComplete && (
             <Badge variant="outline" className="flex items-center gap-2 shrink-0">

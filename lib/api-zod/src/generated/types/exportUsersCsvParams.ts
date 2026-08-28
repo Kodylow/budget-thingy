@@ -11,6 +11,11 @@ import type { StartDateParameter } from './startDateParameter';
 
 export type ExportUsersCsvParams = {
 /**
+ * Comma-separated group IDs from a group or cluster detail page
+ * @minLength 1
+ */
+groupIds: string;
+/**
  * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;

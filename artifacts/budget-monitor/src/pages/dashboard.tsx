@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Download, Loader2 } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown } from 'lucide-react';
 
 import { useAuthContext, useCanWrite } from '@/components/auth-context';
 
@@ -116,7 +116,6 @@ export default function Dashboard() {
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [retryingSync, setRetryingSync] = useState(false);
   const [retryPollingStartedAt, setRetryPollingStartedAt] = useState<number | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
 
   const queryParams = useMemo(
     () => ({
@@ -819,43 +818,6 @@ export default function Dashboard() {
     </tr>
   );
 
-  const handleExportUsers = async () => {
-    setIsExporting(true);
-    try {
-      const params = new URLSearchParams();
-      params.set('rangeType', rangeType);
-      if (rangeType === 'custom') {
-        if (startDate) params.set('startDate', startDate);
-        if (endDate) params.set('endDate', endDate);
-      }
-      const response = await fetch(`/api/export/users.csv?${params}`, {
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        const text = await response.text().catch(() => response.statusText);
-        console.error('Export Users failed:', response.status, text);
-        return;
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const disposition = response.headers.get('Content-Disposition') ?? '';
-      const filenameMatch = disposition.match(/filename[^;=\n]*=["']?([^"';\n]+)/i);
-      const filename = filenameMatch?.[1]?.trim()
-        ?? `all-users-${new Date().toISOString().slice(0, 10)}.csv`;
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Export Users error:', err);
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
   const hasTeams = teamSections.length > 0;
 
   return (
@@ -875,20 +837,6 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {isAccountWide && (
-            <button
-              type="button"
-              disabled={isExporting}
-              onClick={() => void handleExportUsers()}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isExporting
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : <Download className="h-4 w-4" />}
-              <span className="hidden sm:inline">{isExporting ? 'Exporting…' : 'Export Users'}</span>
-              <span className="sm:hidden">{isExporting ? '…' : 'Export'}</span>
-            </button>
-          )}
           <RangeFilter />
           {!isComplete && syncStatus === 'syncing' && (
             <Badge
