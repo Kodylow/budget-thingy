@@ -7,6 +7,7 @@
  */
 import type { EndDateParameter } from './endDateParameter';
 import type { RangeTypeParameter } from './rangeTypeParameter';
+import type { ScopeGroupIdsParameter } from './scopeGroupIdsParameter';
 import type { StartDateParameter } from './startDateParameter';
 
 export type GetGroupDetailParams = {
@@ -22,4 +23,8 @@ startDate?: StartDateParameter;
  * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
  */
 endDate?: EndDateParameter;
+/**
+ * Optional comma-separated group IDs that define a team-cluster deduplication scope.
+ */
+scopeGroupIds?: ScopeGroupIdsParameter;
 };

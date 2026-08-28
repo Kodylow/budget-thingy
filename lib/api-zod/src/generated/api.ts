@@ -182,7 +182,8 @@ export const GetGroupDetailParams = zod.object({
 export const GetGroupDetailQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
-  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "scopeGroupIds": zod.coerce.string().optional().describe('Optional comma-separated group IDs that define a team-cluster deduplication scope.')
 })
 
 export const GetGroupDetailResponse = zod.object({

@@ -612,7 +612,7 @@ test("/groups: correct combined spend once all group caches warm", async () => {
 test("cluster headline uses the canonical rollup instead of project attribution", async () => {
   const unrelated = {
     id: "sg-unrelated",
-    workspaceId: "ws-extra",
+    workspaceId: "ws-main",
     name: "Unrelated",
     type: "custom",
   };
@@ -630,6 +630,7 @@ test("cluster headline uses the canonical rollup instead of project attribution"
     __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
     __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
     __setMemberUsageForTests(unrelated.id, RANGE, null);
+    __setProjectUsageForTests(unrelated.id, RANGE, null);
     __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
     __setWsSpendForTests("ws-extra", RANGE, null);
     setProjectSpend(1, 2);
@@ -641,6 +642,13 @@ test("cluster headline uses the canonical rollup instead of project attribution"
       "an unrelated cold workspace must not block the requested cluster",
     );
     assert.equal(headline.spendUsd, 75, "cluster headline must equal canonical group rollup, not $3 of projects");
+
+    const detail = await req("/groups/sg-beta?scopeGroupIds=sg-alpha,sg-beta");
+    assert.equal(
+      detail.isComplete,
+      true,
+      "an unrelated cold group in the same workspace must not block team member detail",
+    );
   } finally {
     __setMemberUsageForTests(unrelated.id, RANGE, null);
     __setProjectUsageForTests(unrelated.id, RANGE, null);

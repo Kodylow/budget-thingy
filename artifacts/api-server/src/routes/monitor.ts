@@ -625,6 +625,27 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
 
     // Source group IDs: this primary plus any same-name aliases.
     const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+    const requestedScopeIds = String(req.query["scopeGroupIds"] ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const requestedScopeGroups = requestedScopeIds.map((id) =>
+      accountScoped.find((candidate) => candidate.id === id),
+    );
+    if (
+      requestedScopeIds.length > 0 &&
+      requestedScopeGroups.some((candidate) => !candidate)
+    ) {
+      res.status(404).json({ error: "Group not found" });
+      return;
+    }
+    const clusterScopeIds = new Set(
+      requestedScopeIds.flatMap((id) => {
+        const primaryId = mergePlan.primaryByGroupId.get(id) ?? id;
+        return mergePlan.mergeMap.get(primaryId) ?? [id];
+      }),
+    );
+    for (const id of sourceIds) clusterScopeIds.add(id);
     // A detail page only needs canonical overlap resolution inside the
     // workspace(s) represented by this merged group. Unrelated account
     // workspaces must not keep a custom-range detail page loading.
@@ -634,9 +655,9 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         return source ? [source.workspaceId] : [];
       }),
     );
-    const scoped = accountScoped.filter((candidate) =>
-      detailWorkspaceIds.has(candidate.workspaceId),
-    );
+    const scoped = requestedScopeIds.length > 0
+      ? accountScoped.filter((candidate) => clusterScopeIds.has(candidate.id))
+      : accountScoped.filter((candidate) => detailWorkspaceIds.has(candidate.workspaceId));
 
     // Queue the selected group's data at high priority (priority 0) so it loads first.
     // Also queue member usage for ALL source groups and all other visible groups at lower
@@ -663,10 +684,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const spend = getSpend(group.id, range.key);
 
     const isAccountAdmin = isAccountWide(req.authz);
-    const groupedWorkspaceIds = scoped.map((item) => item.workspaceId);
-    const scopedWorkspaceIds = isAccountAdmin
-      ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
-      : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
+    const scopedWorkspaceIds = new Set(scoped.map((item) => item.workspaceId));
     for (const workspaceId of scopedWorkspaceIds) {
       queueWsSpendFetch(workspaceId, range, 0);
     }
@@ -980,10 +998,10 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
         .filter((group) => relevantGroupIds.has(group.id))
         .map((group) => group.workspaceId),
     );
-    // Include every visible group in the team's workspace(s) so overlapping
-    // members are still deduped deterministically, but unrelated workspaces do
-    // not block this page.
-    const scoped = visible.filter((group) => relevantWorkspaceIds.has(group.workspaceId));
+    // A cluster is its own canonical overlap scope. Including unrelated groups
+    // from the same enterprise workspace would keep this team loading while a
+    // large custom-range backfill proceeds.
+    const scoped = visible.filter((group) => relevantGroupIds.has(group.id));
     const scopedWorkspaceIds = relevantWorkspaceIds;
     for (const workspaceId of scopedWorkspaceIds) {
       queueWsSpendFetch(workspaceId, range, -20);

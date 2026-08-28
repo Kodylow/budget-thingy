@@ -211,6 +211,7 @@ paths:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
         - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ScopeGroupIds"
       responses:
         "200":
           description: Group detail
@@ -1067,6 +1068,13 @@ components:
       in: query
       required: false
       description: Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+      schema:
+        type: string
+    ScopeGroupIds:
+      name: scopeGroupIds
+      in: query
+      required: false
+      description: Optional comma-separated group IDs that define a team-cluster deduplication scope.
       schema:
         type: string
     AuthorizationSessionHeader:

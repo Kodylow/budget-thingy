@@ -63,6 +63,7 @@ export * from './okResponse';
 export * from './projectMetric';
 export * from './rangeTypeParameter';
 export * from './retryUsageSyncParams';
+export * from './scopeGroupIdsParameter';
 export * from './spendPoint';
 export * from './startDateParameter';
 export * from './summary';

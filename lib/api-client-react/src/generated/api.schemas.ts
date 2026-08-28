@@ -722,6 +722,11 @@ export type StartDateParameter = string;
 export type EndDateParameter = string;
 
 /**
+ * Optional comma-separated group IDs that define a team-cluster deduplication scope.
+ */
+export type ScopeGroupIdsParameter = string;
+
+/**
  * Opaque session token — `Bearer <sid>`.
  */
 export type AuthorizationSessionHeaderParameter = string;
@@ -771,6 +776,10 @@ startDate?: StartDateParameter;
  * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
  */
 endDate?: EndDateParameter;
+/**
+ * Optional comma-separated group IDs that define a team-cluster deduplication scope.
+ */
+scopeGroupIds?: ScopeGroupIdsParameter;
 };
 
 export type GetGroupProjectsParams = {

@@ -61,9 +61,11 @@ export default function ClusterDetail() {
   const groupIds = rawIds ? rawIds.split(',').filter(Boolean) : [];
 
   const { rangeType, startDate, endDate } = useRange();
+  const clusterKey = groupIds.join(',');
   const queryParams = {
     rangeType,
     ...(rangeType === 'custom' ? { startDate, endDate } : {}),
+    scopeGroupIds: clusterKey,
   };
 
   // Fetch all constituent group details in parallel
@@ -79,7 +81,6 @@ export default function ClusterDetail() {
   });
 
   // Single cluster-projects query: exact figures via creator attribution (no scaling)
-  const clusterKey = groupIds.join(',');
   const clusterProjectsQuery = useQuery(
     getGetClusterProjectsQueryOptions(clusterKey, queryParams, {
       query: {
