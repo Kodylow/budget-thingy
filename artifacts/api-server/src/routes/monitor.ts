@@ -295,18 +295,23 @@ router.get("/groups", async (req, res): Promise<void> => {
       ? (paceMetadata.isFallback ? range : resolvePaceUsageRange())
       : null;
 
-    // Member-level usage is the dashboard's critical path: the deduped rollup
-    // cannot render until every visible group has it. Queue it interactively so
-    // it preempts checker/snapshot group-total work already waiting at startup.
-    // Once synchronized, these entries are durable and hydrate before listen.
+    // Queue the one-call account headline and the much smaller workspace set
+    // before hundreds of group detail calls. /groups and /summary launch
+    // together; without distinct priorities, whichever route arrives first can
+    // leave a newly selected custom range looking unchanged for many minutes.
+    if (isAccountAdmin) {
+      queueAccountUsageFetch(range, -30);
+    }
+    for (const workspaceId of scopedWorkspaceIds) {
+      queueWsSpendFetch(workspaceId, range, -20);
+      queueProjectTitlesFetch(workspaceId, -20);
+    }
+    // Member/project detail fills in after the range headline and canonical
+    // workspace rollup have had a chance to update.
     for (const group of scoped) {
       queueMemberUsageFetch(group, range, 0);
       queueProjectUsageFetch(group, range, 0);
       queueProjectTitlesFetch(group.workspaceId, 0);
-    }
-    for (const workspaceId of scopedWorkspaceIds) {
-      queueWsSpendFetch(workspaceId, range, 0);
-      queueProjectTitlesFetch(workspaceId, 0);
     }
     if (paceRange) {
       for (const group of scoped) {
@@ -1260,18 +1265,20 @@ router.get("/summary", async (req, res): Promise<void> => {
                   ...authz.workspaceIds,
                   ...scoped.map((group) => group.workspaceId),
                 ]);
-            // Queue both models independently so /summary can populate from a cold
-            // cache without requiring /groups to be visited first.
+            // The selected-range headline and workspace-authoritative rollup
+            // must preempt the hundreds of slower group detail requests.
+            if (isAccount) {
+              queueAccountUsageFetch(range, -30);
+            }
+            for (const workspaceId of scopedWorkspaceIds) {
+              queueWsSpendFetch(workspaceId, range, -20);
+              queueProjectTitlesFetch(workspaceId, -20);
+            }
+            // Queue both detail models independently so /summary can eventually
+            // become fully attributable without requiring /groups first.
             for (const group of scoped) {
               queueMemberUsageFetch(group, range, 1);
               queueProjectUsageFetch(group, range, 1);
-            }
-            if (isAccount) {
-              queueAccountUsageFetch(range, 0);
-            }
-            for (const workspaceId of scopedWorkspaceIds) {
-              queueWsSpendFetch(workspaceId, range, 1);
-              queueProjectTitlesFetch(workspaceId, 1);
             }
             const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
             const canonical = getCanonicalUsage(
