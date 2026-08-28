@@ -1,9 +1,15 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
 import type { RangeTypeParameter } from '@workspace/api-client-react';
+import {
+  apiRangeType,
+  fullTermDates,
+  type RangeSelection,
+} from '@/lib/range-selection';
 
 interface RangeContextType {
+  rangeSelection: RangeSelection;
+  setRangeSelection: (selection: RangeSelection) => void;
   rangeType: RangeTypeParameter;
-  setRangeType: (type: RangeTypeParameter) => void;
   startDate?: string;
   setStartDate: (date?: string) => void;
   endDate?: string;
@@ -13,12 +19,31 @@ interface RangeContextType {
 const RangeContext = createContext<RangeContextType | undefined>(undefined);
 
 export function RangeProvider({ children }: { children: ReactNode }) {
-  const [rangeType, setRangeType] = useState<RangeTypeParameter>('billing');
-  const [startDate, setStartDate] = useState<string>();
-  const [endDate, setEndDate] = useState<string>();
+  const initialFullTerm = fullTermDates();
+  const [rangeSelection, setRangeSelectionState] = useState<RangeSelection>('full-term');
+  const [startDate, setStartDate] = useState<string | undefined>(initialFullTerm.startDate);
+  const [endDate, setEndDate] = useState<string | undefined>(initialFullTerm.endDate);
+  const rangeType = apiRangeType(rangeSelection) as RangeTypeParameter;
+
+  const setRangeSelection = (selection: RangeSelection) => {
+    setRangeSelectionState(selection);
+    if (selection === 'full-term') {
+      const fullTerm = fullTermDates();
+      setStartDate(fullTerm.startDate);
+      setEndDate(fullTerm.endDate);
+    }
+  };
 
   return (
-    <RangeContext.Provider value={{ rangeType, setRangeType, startDate, setStartDate, endDate, setEndDate }}>
+    <RangeContext.Provider value={{
+      rangeSelection,
+      setRangeSelection,
+      rangeType,
+      startDate,
+      setStartDate,
+      endDate,
+      setEndDate,
+    }}>
       {children}
     </RangeContext.Provider>
   );

@@ -2,26 +2,42 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { useRange } from '@/components/range-context';
 import { CalendarIcon } from 'lucide-react';
-import type { RangeTypeParameter } from '@workspace/api-client-react';
+import type { RangeSelection } from '@/lib/range-selection';
 
 export function RangeFilter() {
-  const { rangeType, setRangeType, startDate, setStartDate, endDate, setEndDate } = useRange();
+  const {
+    rangeSelection,
+    setRangeSelection,
+    startDate,
+    setStartDate,
+    endDate,
+    setEndDate,
+  } = useRange();
 
   return (
     <div className="flex items-center gap-2">
-      <Select value={rangeType} onValueChange={(val: string) => setRangeType(val as RangeTypeParameter)}>
+      <Select
+        value={rangeSelection}
+        onValueChange={(val: string) => setRangeSelection(val as RangeSelection)}
+      >
         <SelectTrigger className="w-[160px] h-9">
           <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
           <SelectValue placeholder="Select range" />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value="full-term">Full term</SelectItem>
           <SelectItem value="billing">Billing period</SelectItem>
           <SelectItem value="mtd">Month to date</SelectItem>
           <SelectItem value="ytd">Year to date</SelectItem>
           <SelectItem value="custom">Custom range</SelectItem>
         </SelectContent>
       </Select>
-      {rangeType === 'custom' && (
+      {rangeSelection === 'full-term' && (
+        <span className="text-xs text-muted-foreground whitespace-nowrap">
+          May 20, 2026–present
+        </span>
+      )}
+      {rangeSelection === 'custom' && (
         <div className="flex items-center gap-1">
           <Input 
             type="date" 
