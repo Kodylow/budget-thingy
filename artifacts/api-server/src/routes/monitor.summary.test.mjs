@@ -610,15 +610,43 @@ test("/groups: correct combined spend once all group caches warm", async () => {
 });
 
 test("cluster headline uses the canonical rollup instead of project attribution", async () => {
-  __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
-  __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
-  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
-  __setWsSpendForTests("ws-extra", RANGE, new Map());
-  setProjectSpend(1, 2);
+  const unrelated = {
+    id: "sg-unrelated",
+    workspaceId: "ws-extra",
+    name: "Unrelated",
+    type: "custom",
+  };
+  __setDirectoryCacheForTests({
+    workspaces: wsExtra,
+    groups: [...groups, unrelated],
+    members,
+    groupMembers: new Map([
+      ["sg-alpha", ["alice", "carol"]],
+      ["sg-beta", ["alice", "bob"]],
+      [unrelated.id, ["dave"]],
+    ]),
+  });
+  try {
+    __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
+    __setMemberUsageForTests("sg-beta", RANGE, new Map([["alice", 20], ["bob", 15]]));
+    __setMemberUsageForTests(unrelated.id, RANGE, null);
+    __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
+    __setWsSpendForTests("ws-extra", RANGE, null);
+    setProjectSpend(1, 2);
 
-  const headline = await req("/clusters/sg-alpha,sg-beta/headline");
-  assert.equal(headline.isComplete, true);
-  assert.equal(headline.spendUsd, 75, "cluster headline must equal canonical group rollup, not $3 of projects");
+    const headline = await req("/clusters/sg-alpha,sg-beta/headline");
+    assert.equal(
+      headline.isComplete,
+      true,
+      "an unrelated cold workspace must not block the requested cluster",
+    );
+    assert.equal(headline.spendUsd, 75, "cluster headline must equal canonical group rollup, not $3 of projects");
+  } finally {
+    __setMemberUsageForTests(unrelated.id, RANGE, null);
+    __setProjectUsageForTests(unrelated.id, RANGE, null);
+    __setWsSpendForTests("ws-extra", RANGE, new Map());
+    restoreDir();
+  }
 });
 
 test("same-name migration aliases reconcile groups, summary pools, and cluster headline", async () => {

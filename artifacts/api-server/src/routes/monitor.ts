@@ -610,11 +610,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       res.status(404).json({ error: "Group not found" });
       return;
     }
-    const scoped = visibleGroups(req.authz!, dir.groups);
+    const accountScoped = visibleGroups(req.authz!, dir.groups);
 
     // Build merge plan so alias (hidden) groups redirect and primaries aggregate
     // member usage and spend from all same-name workspace variants.
-    const mergePlan = buildCanonicalGroupMergePlan(scoped, dir.workspaces);
+    const mergePlan = buildCanonicalGroupMergePlan(accountScoped, dir.workspaces);
 
     // If this group is a hidden alias, treat it as not found (the primary carries
     // all the data; direct navigation to an alias would show misleading $0 spend).
@@ -625,6 +625,18 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
 
     // Source group IDs: this primary plus any same-name aliases.
     const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+    // A detail page only needs canonical overlap resolution inside the
+    // workspace(s) represented by this merged group. Unrelated account
+    // workspaces must not keep a custom-range detail page loading.
+    const detailWorkspaceIds = new Set(
+      sourceIds.flatMap((id) => {
+        const source = dir.groups.find((candidate) => candidate.id === id);
+        return source ? [source.workspaceId] : [];
+      }),
+    );
+    const scoped = accountScoped.filter((candidate) =>
+      detailWorkspaceIds.has(candidate.workspaceId),
+    );
 
     // Queue the selected group's data at high priority (priority 0) so it loads first.
     // Also queue member usage for ALL source groups and all other visible groups at lower
@@ -955,16 +967,33 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
       res.status(404).json({ error: "No matching groups found" });
       return;
     }
-    const scoped = visibleGroups(req.authz!, dir.groups);
-    const scopedWorkspaceIds = isAccountWide(req.authz)
-      ? new Set([...dir.workspaces.keys(), ...scoped.map((group) => group.workspaceId)])
-      : new Set([...req.authz!.workspaceIds, ...scoped.map((group) => group.workspaceId)]);
-    for (const group of scoped) {
-      queueMemberUsageFetch(group, range, 0);
-      queueProjectUsageFetch(group, range, 0);
-      queueProjectTitlesFetch(group.workspaceId, 0);
+    const visible = visibleGroups(req.authz!, dir.groups);
+    const accountMergePlan = buildCanonicalGroupMergePlan(visible, dir.workspaces);
+    const relevantGroupIds = new Set(
+      groupIds.flatMap((groupId) => {
+        const primaryId = accountMergePlan.primaryByGroupId.get(groupId) ?? groupId;
+        return accountMergePlan.mergeMap.get(primaryId) ?? [groupId];
+      }),
+    );
+    const relevantWorkspaceIds = new Set(
+      visible
+        .filter((group) => relevantGroupIds.has(group.id))
+        .map((group) => group.workspaceId),
+    );
+    // Include every visible group in the team's workspace(s) so overlapping
+    // members are still deduped deterministically, but unrelated workspaces do
+    // not block this page.
+    const scoped = visible.filter((group) => relevantWorkspaceIds.has(group.workspaceId));
+    const scopedWorkspaceIds = relevantWorkspaceIds;
+    for (const workspaceId of scopedWorkspaceIds) {
+      queueWsSpendFetch(workspaceId, range, -20);
     }
-    for (const workspaceId of scopedWorkspaceIds) queueWsSpendFetch(workspaceId, range, 0);
+    for (const group of scoped) {
+      const priority = relevantGroupIds.has(group.id) ? -10 : 0;
+      queueMemberUsageFetch(group, range, priority);
+      queueProjectUsageFetch(group, range, priority);
+      queueProjectTitlesFetch(group.workspaceId, priority);
+    }
     const canonical = getCanonicalUsage(
       scoped,
       range.key,
