@@ -1,4 +1,4 @@
-import { pgTable, text, doublePrecision, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, doublePrecision, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -10,7 +10,6 @@ export const groupTeamsTable = pgTable("group_teams", {
 export const teamBudgetsTable = pgTable("team_budgets", {
   teamName: text("team_name").primaryKey(),
   amountUsd: doublePrecision("amount_usd").notNull(),
-  isHidden: boolean("is_hidden").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()

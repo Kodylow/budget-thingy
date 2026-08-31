@@ -326,18 +326,12 @@ router.get("/groups", async (req, res): Promise<void> => {
     // construct the member-deduped dashboard, so keep them in the background.
     void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
 
-    const [budgets, groupTeams, allTeamRows] = await Promise.all([
+    const [budgets, groupTeams] = await Promise.all([
       db.select().from(groupBudgetsTable),
       db.select().from(groupTeamsTable),
-      db.select({ teamName: teamBudgetsTable.teamName, isHidden: teamBudgetsTable.isHidden }).from(teamBudgetsTable),
     ]);
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
-    const hiddenTeamNames = new Set(allTeamRows.filter((r) => r.isHidden).map((r) => r.teamName));
-    const groupTeamMap = new Map(
-      groupTeams
-        .filter((gt) => !hiddenTeamNames.has(gt.teamName))
-        .map((gt) => [gt.groupName, gt.teamName]),
-    );
+    const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const billing = getBillingPeriod();
     // Pass ALL scoped groups (including aliases) so the dedup rollup correctly
     // attributes shared users across both the old and new workspace versions.
@@ -1282,12 +1276,11 @@ router.get("/summary", async (req, res): Promise<void> => {
   try {
     await Promise.race([
       (async () => {
-        const [budgets, allTeamBudgetRows, groupTeams] = await Promise.all([
+        const [budgets, teamBudgets, groupTeams] = await Promise.all([
           db.select().from(groupBudgetsTable),
           db.select().from(teamBudgetsTable),
           db.select().from(groupTeamsTable),
         ]);
-        const teamBudgets = allTeamBudgetRows.filter((tb) => !tb.isHidden);
         const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
 
         let totalGroups = 0;
@@ -1341,12 +1334,7 @@ router.get("/summary", async (req, res): Promise<void> => {
               queueMemberUsageFetch(group, range, 1);
               queueProjectUsageFetch(group, range, 1);
             }
-            const hiddenSummaryTeamNames = new Set(allTeamBudgetRows.filter((tb) => tb.isHidden).map((tb) => tb.teamName));
-            const groupTeamMap = new Map(
-              groupTeams
-                .filter((gt) => !hiddenSummaryTeamNames.has(gt.teamName))
-                .map((gt) => [gt.groupName, gt.teamName]),
-            );
+            const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
             const canonical = getCanonicalUsage(
               scoped,
               range.key,
@@ -1529,7 +1517,7 @@ router.get("/summary", async (req, res): Promise<void> => {
 // Account-wide roles see every team pool. Workspace admins get read-only pool
 // values only for teams containing a group in one of their administered workspaces.
 router.get("/teams/budgets", async (req, res): Promise<void> => {
-  const budgets = await db.select().from(teamBudgetsTable).where(eq(teamBudgetsTable.isHidden, false));
+  const budgets = await db.select().from(teamBudgetsTable);
   const [dir, assignments] = await Promise.all([
     getDirectory(),
     db.select().from(groupTeamsTable),
@@ -2116,18 +2104,12 @@ router.get("/alerts", async (req, res): Promise<void> => {
     const dir = await getDirectory();
     const scoped = visibleGroups(authz, dir.groups);
     allowedIds = new Set(scoped.map((g) => g.id));
-    const [groupTeams, groupBudgets, allAlertTeamBudgetRows] = await Promise.all([
+    const [groupTeams, groupBudgets, teamBudgets] = await Promise.all([
       db.select().from(groupTeamsTable),
       db.select().from(groupBudgetsTable),
       db.select().from(teamBudgetsTable),
     ]);
-    const teamBudgets = allAlertTeamBudgetRows.filter((row) => !row.isHidden);
-    const hiddenAlertTeamNames = new Set(allAlertTeamBudgetRows.filter((row) => row.isHidden).map((row) => row.teamName));
-    const teamByGroupName = new Map(
-      groupTeams
-        .filter((row) => !hiddenAlertTeamNames.has(row.teamName))
-        .map((row) => [row.groupName, row.teamName]),
-    );
+    const teamByGroupName = new Map(groupTeams.map((row) => [row.groupName, row.teamName]));
     const groupBudgetById = new Map(groupBudgets.map((row) => [row.groupId, row.amountUsd]));
     const teamBudgetByName = new Map(teamBudgets.map((row) => [row.teamName, row.amountUsd]));
     const range = resolveRange("billing");

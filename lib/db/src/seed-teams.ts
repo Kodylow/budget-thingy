@@ -81,8 +81,8 @@ const groupTeams: { groupName: string; teamName: string }[] = [
   { groupName: "AZ-Replit - NBCU - Viewer", teamName: "NBCU" },
 ];
 
-const teamBudgets: { teamName: string; amountUsd: number; isHidden?: boolean }[] = [
-  { teamName: "PREPROD", amountUsd: 0.0, isHidden: true },
+const teamBudgets: { teamName: string; amountUsd: number }[] = [
+  { teamName: "PREPROD", amountUsd: 0.0 },
   { teamName: "Finance", amountUsd: 140525.76 },
   { teamName: "GPO Connected Living", amountUsd: 9368.38 },
   { teamName: "GPO CTS", amountUsd: 3747.35 },
@@ -125,7 +125,7 @@ async function seed() {
     .values(teamBudgets)
     .onConflictDoUpdate({
       target: teamBudgetsTable.teamName,
-      set: { amountUsd: teamBudgetsTable.amountUsd, isHidden: teamBudgetsTable.isHidden },
+      set: { amountUsd: teamBudgetsTable.amountUsd },
     });
   console.log(`Inserted ${teamBudgets.length} team budget rows`);
 

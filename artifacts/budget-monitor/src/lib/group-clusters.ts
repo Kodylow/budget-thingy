@@ -195,15 +195,8 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
     });
   }
 
-  // Keep each workspace's rows together, then sort groups alphabetically
-  // within that workspace. Stable identifiers make duplicate labels
-  // deterministic.
-  result.sort((a, b) =>
-    (a.workspaceName ?? '').localeCompare(b.workspaceName ?? '')
-    || a.workspaceId.localeCompare(b.workspaceId)
-    || a.baseName.localeCompare(b.baseName)
-    || a.clusterKey.localeCompare(b.clusterKey),
-  );
+  // Preserve original order: sort by baseName alphabetically
+  result.sort((a, b) => a.baseName.localeCompare(b.baseName));
 
   return result;
 }
