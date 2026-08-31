@@ -67,3 +67,20 @@ test("attributed totals remain pending until every member rollup is loaded", () 
   assert.equal(total.spendLoaded, false);
   assert.equal(total.spendUsd, 62);
 });
+
+test("dashboard rows group by workspace, then sort by group name", () => {
+  const rows = buildGroupClusters([
+    { ...base, groupId: "zebra-a", name: "Zebra", workspaceId: "a", workspaceName: "Alpha" },
+    { ...base, groupId: "alpha-b", name: "Alpha", workspaceId: "b", workspaceName: "Beta" },
+    { ...base, groupId: "alpha-a", name: "Alpha", workspaceId: "a", workspaceName: "Alpha" },
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => [row.workspaceName, row.baseName]),
+    [
+      ["Alpha", "Alpha"],
+      ["Alpha", "Zebra"],
+      ["Beta", "Alpha"],
+    ],
+  );
+});
