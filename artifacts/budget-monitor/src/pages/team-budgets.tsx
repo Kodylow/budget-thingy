@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatTeamName } from '@/lib/team-names';
 
 type BudgetAdjustment = {
   recordId: string;
@@ -85,12 +86,6 @@ const currency = new Intl.NumberFormat('en-US', {
 
 function formatAdjustment(amountUsd: number): string {
   return `${amountUsd >= 0 ? '+' : '−'}${currency.format(Math.abs(amountUsd))}`;
-}
-
-function formatTeamName(teamName: string): string {
-  if (teamName === 'DXP') return 'Growth Strategy & Operations DXP';
-  if (teamName === 'Non-DXP') return 'Growth Strategy & Operations Non-DXP';
-  return teamName;
 }
 
 export default function TeamBudgets() {

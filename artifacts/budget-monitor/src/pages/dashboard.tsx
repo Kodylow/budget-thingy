@@ -91,6 +91,7 @@ import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
 import { filterGroupsForView } from '@/lib/rbac-view';
+import { formatTeamName } from '@/lib/team-names';
 
 interface TeamSection {
   teamName: string;
@@ -666,7 +667,7 @@ export default function Dashboard() {
                 ? <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
             ) : <span className="w-4" aria-hidden="true" />}
-            <span>{team.teamName}</span>
+            <span>{formatTeamName(team.teamName)}</span>
             <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 font-normal">
               {clusterCount > 0 ? `${clusterCount} group${clusterCount !== 1 ? 's' : ''}` : 'Budget only'}
             </Badge>
