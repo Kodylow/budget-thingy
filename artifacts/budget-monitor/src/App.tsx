@@ -12,6 +12,7 @@ import ClusterDetail from '@/pages/cluster-detail';
 import Trends from '@/pages/trends';
 import WorkspaceAdmins from '@/pages/workspace-admins';
 import WorkspaceDirectory from '@/pages/workspace-directory';
+import TeamBudgets from '@/pages/team-budgets';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
@@ -42,6 +43,7 @@ function Router() {
         {isAccountAdmin && <Route path="/settings" component={Settings} />}
         {isAccountAdmin && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
         {isAccountAdmin && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
+        {isAccountAdmin && <Route path="/team-budgets" component={TeamBudgets} />}
         <Route path="/groups/:groupId" component={ScopedGroupRoute} />
         {isAccountWide && <Route path="/clusters" component={ClusterDetail} />}
         <Route component={NotFound} />

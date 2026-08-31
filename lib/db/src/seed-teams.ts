@@ -4,6 +4,7 @@
  */
 import { db } from "./index.js";
 import { groupTeamsTable, teamBudgetsTable } from "./schema/index.js";
+import { eq } from "drizzle-orm";
 
 const groupTeams: { groupName: string; teamName: string }[] = [
   { groupName: "AZ-Replit - PREPROD-Admins", teamName: "PREPROD" },
@@ -28,9 +29,9 @@ const groupTeams: { groupName: string; teamName: string }[] = [
   { groupName: "AZ-Replit - Freewheel - Admin", teamName: "Freewheel" },
   { groupName: "AZ-Replit - Freewheel - Member", teamName: "Freewheel" },
   { groupName: "AZ-Replit - Freewheel - Viewer", teamName: "Freewheel" },
-  { groupName: "AZ-Replit - Growth Strategy & Operations - Admin", teamName: "Growth Strategy & Operations" },
-  { groupName: "AZ-Replit - Growth Strategy & Operations - Member", teamName: "Growth Strategy & Operations" },
-  { groupName: "AZ-Replit - Growth Strategy & Operations - Viewer", teamName: "Growth Strategy & Operations" },
+  { groupName: "AZ-Replit - Growth Strategy & Operations - Admin", teamName: "DXP" },
+  { groupName: "AZ-Replit - Growth Strategy & Operations - Member", teamName: "DXP" },
+  { groupName: "AZ-Replit - Growth Strategy & Operations - Viewer", teamName: "DXP" },
   { groupName: "AZ-Replit - Growth Xfinity Consumer Product Marketing - Admin", teamName: "Growth Xfinity Consumer Product Marketing" },
   { groupName: "AZ-Replit - Growth Xfinity Consumer Product Marketing - Member", teamName: "Growth Xfinity Consumer Product Marketing" },
   { groupName: "AZ-Replit - Growth Xfinity Consumer Product Marketing - Viewer", teamName: "Growth Xfinity Consumer Product Marketing" },
@@ -81,15 +82,16 @@ const groupTeams: { groupName: string; teamName: string }[] = [
   { groupName: "AZ-Replit - NBCU - Viewer", teamName: "NBCU" },
 ];
 
-const teamBudgets: { teamName: string; amountUsd: number }[] = [
-  { teamName: "PREPROD", amountUsd: 0.0 },
+export const ORIGINAL_TEAM_BUDGETS: { teamName: string; amountUsd: number; isHidden?: boolean }[] = [
+  { teamName: "PREPROD", amountUsd: 0.0, isHidden: true },
   { teamName: "Finance", amountUsd: 140525.76 },
   { teamName: "GPO Connected Living", amountUsd: 9368.38 },
   { teamName: "GPO CTS", amountUsd: 3747.35 },
   { teamName: "GPO Creative Services", amountUsd: 47422.76 },
   { teamName: "Corporate Communications", amountUsd: 234209.6 },
   { teamName: "Freewheel", amountUsd: 46841.92 },
-  { teamName: "Growth Strategy & Operations", amountUsd: 18736.77 },
+  { teamName: "DXP", amountUsd: 18736.77 },
+  { teamName: "Non-DXP", amountUsd: 0 },
   { teamName: "Growth Xfinity Consumer Product Marketing", amountUsd: 28105.15 },
   { teamName: "Growth CXSO Account Mgmt", amountUsd: 37473.54 },
   { teamName: "Growth MDU", amountUsd: 0.0 },
@@ -108,31 +110,61 @@ const teamBudgets: { teamName: string; amountUsd: number }[] = [
   { teamName: "NBCU", amountUsd: 0.0 },
 ];
 
+export async function applyAnnualTeamBudgetBackfill(): Promise<void> {
+  await db.transaction(async (tx) => {
+    // Only legacy assignments are remapped here. The full seed remains a manual
+    // operation so startup never overwrites later administrator reassignments.
+    await tx
+      .update(groupTeamsTable)
+      .set({ teamName: "DXP" })
+      .where(eq(groupTeamsTable.teamName, "Growth Strategy & Operations"));
+
+    for (const budget of ORIGINAL_TEAM_BUDGETS) {
+      await tx
+        .insert(teamBudgetsTable)
+        .values({
+          ...budget,
+          originalAmountUsd: budget.amountUsd,
+        })
+        .onConflictDoUpdate({
+          target: teamBudgetsTable.teamName,
+          set: {
+            originalAmountUsd: budget.amountUsd,
+            ...(budget.teamName === "PREPROD" ? { isHidden: true } : {}),
+          },
+        });
+    }
+
+    // The approved split replaces this budget identity after its groups move.
+    await tx
+      .delete(teamBudgetsTable)
+      .where(eq(teamBudgetsTable.teamName, "Growth Strategy & Operations"));
+  });
+}
+
 async function seed() {
   console.log("Seeding group→team mapping...");
-  await db
-    .insert(groupTeamsTable)
-    .values(groupTeams)
-    .onConflictDoUpdate({
-      target: groupTeamsTable.groupName,
-      set: { teamName: groupTeamsTable.teamName },
-    });
+  for (const assignment of groupTeams) {
+    await db
+      .insert(groupTeamsTable)
+      .values(assignment)
+      .onConflictDoUpdate({
+        target: groupTeamsTable.groupName,
+        set: { teamName: assignment.teamName },
+      });
+  }
   console.log(`Inserted ${groupTeams.length} group→team rows`);
 
   console.log("Seeding team budgets...");
-  await db
-    .insert(teamBudgetsTable)
-    .values(teamBudgets)
-    .onConflictDoUpdate({
-      target: teamBudgetsTable.teamName,
-      set: { amountUsd: teamBudgetsTable.amountUsd },
-    });
-  console.log(`Inserted ${teamBudgets.length} team budget rows`);
-
-  process.exit(0);
+  await applyAnnualTeamBudgetBackfill();
+  console.log(`Inserted ${ORIGINAL_TEAM_BUDGETS.length} team budget rows`);
 }
 
-seed().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && /(?:^|[/\\])seed-teams\.(?:ts|js)$/.test(process.argv[1])) {
+  seed()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+}

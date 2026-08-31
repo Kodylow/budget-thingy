@@ -8,7 +8,7 @@
     "build": "node ./build.mjs",
     "prestart": "pnpm --filter @workspace/db run push",
     "start": "node --enable-source-maps ./dist/index.mjs",
-    "test": "LOG_LEVEL=silent node --import tsx --test \"src/**/*.test.mjs\" && vitest run",
+    "test": "LOG_LEVEL=silent node --import tsx --test --test-concurrency=1 \"src/**/*.test.mjs\" && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

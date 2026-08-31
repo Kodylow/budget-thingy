@@ -167,7 +167,8 @@ export const ListGroupsResponse = zod.object({
   "teamRawSpend": zod.record(zod.string(), zod.object({
   "spendUsd": zod.number().describe('Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)'),
   "spendLoaded": zod.boolean().describe('True when member-level usage for every visible custom group is loaded')
-})).describe('Per-team member-deduped rollup spend, with each member counted once across groups')
+})).describe('Per-team member-deduped rollup spend, with each member counted once across groups'),
+  "teamBudgets": zod.record(zod.string(), zod.number()).describe('Effective visible team budgets, including budget-only teams for account-wide callers.')
 })
 
 
@@ -545,37 +546,57 @@ export const GetTeamsBudgetsResponse = zod.object({
 
 
 /**
- * teamName must be URL-encoded (spaces as %20).
- * @summary Set or update the budget for a team
+ * Account-admin-only. Returns original allocations, accepted credit requests, effective totals, and matching issues.
+ * @summary Get the auditable annual team budget history
  */
-export const SetTeamBudgetParams = zod.object({
-  "teamName": zod.coerce.string().describe('URL-encoded team name (spaces as %20)')
-})
-
-export const setTeamBudgetBodyAmountUsdMin = 0;
+export const getTeamBudgetHistoryResponseTeamsItemAdjustmentsItemSubmissionPeriodRegExp = new RegExp('^\\d{4}-(0[1-9]|1[0-2])$');
 
 
-
-export const SetTeamBudgetBody = zod.object({
-  "amountUsd": zod.number().min(setTeamBudgetBodyAmountUsdMin)
-})
-
-export const SetTeamBudgetResponse = zod.object({
+export const GetTeamBudgetHistoryResponse = zod.object({
+  "teams": zod.array(zod.object({
   "teamName": zod.string(),
-  "amountUsd": zod.number().nullable(),
-  "workspaceIds": zod.array(zod.string()).describe('Visible workspaces containing groups assigned to this team.')
+  "originalAmountUsd": zod.number(),
+  "effectiveAmountUsd": zod.number(),
+  "adjustments": zod.array(zod.object({
+  "recordId": zod.string(),
+  "amountUsd": zod.number(),
+  "submissionPeriod": zod.string().regex(getTeamBudgetHistoryResponseTeamsItemAdjustmentsItemSubmissionPeriodRegExp)
+}))
+})),
+  "issues": zod.array(zod.object({
+  "recordId": zod.string(),
+  "sourceTeamName": zod.string().nullable(),
+  "matchState": zod.enum(['unmatched', 'invalid']),
+  "error": zod.string().nullable()
+}))
 })
 
 
 /**
- * teamName must be URL-encoded (spaces as %20).
- * @summary Remove the budget override for a team
+ * Account-admin-only. Connector details and source status are not exposed to scoped viewers.
+ * @summary Get Airtable budget synchronization status
  */
-export const DeleteTeamBudgetParams = zod.object({
-  "teamName": zod.coerce.string().describe('URL-encoded team name (spaces as %20)')
+export const GetTeamBudgetSyncStatusResponse = zod.object({
+  "lastAttemptAt": zod.string().nullable(),
+  "lastSuccessfulAt": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "recordCount": zod.number(),
+  "acceptedCount": zod.number(),
+  "issueCount": zod.number()
 })
 
-export const DeleteTeamBudgetResponse = zod.void()
+
+/**
+ * Account-admin-only. Never writes to Airtable; failures preserve the last successful snapshot.
+ * @summary Refresh the read-only Airtable team budget snapshot
+ */
+export const RefreshTeamBudgetsResponse = zod.object({
+  "ok": zod.boolean(),
+  "recordCount": zod.number(),
+  "acceptedCount": zod.number(),
+  "issueCount": zod.number(),
+  "error": zod.string().nullable()
+})
 
 
 /**
@@ -862,5 +883,3 @@ export const RebuildUsageRangeBody = zod.object({
 export const RebuildUsageRangeResponse = zod.object({
   "ok": zod.boolean()
 })
-
-

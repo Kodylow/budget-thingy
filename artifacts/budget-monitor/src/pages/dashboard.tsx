@@ -85,7 +85,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { LoadingCell } from '@/components/loading-cell';
 import { BudgetInput } from '@/components/budget-input';
-import { TeamBudgetInput } from '@/components/team-budget-input';
 import { useLocation } from 'wouter';
 import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
@@ -274,11 +273,31 @@ export default function Dashboard() {
       });
     }
 
+    // Canonical budgets may exist before any Replit group is assigned. Keep
+    // those teams visible with zero spend so dashboard totals reconcile.
+    if (isAccountWide && !isPreviewing) {
+      for (const [teamName, budgetUsd] of teamBudgetMap) {
+        if (teamMap.has(teamName)) continue;
+        teamSections.push({
+          teamName,
+          memberCount: 0,
+          spendUsd: 0,
+          spendLoaded: true,
+          paceSpendUsd: 0,
+          paceSpendLoaded: true,
+          budgetUsd,
+          remainingUsd: budgetUsd != null && budgetUsd > 0 ? budgetUsd : null,
+          percentUsed: budgetUsd != null && budgetUsd > 0 ? 0 : null,
+          groups: [] as any,
+        });
+      }
+    }
+
     // Sort teams alphabetically
     teamSections.sort((a, b) => a.teamName.localeCompare(b.teamName));
 
     return { teamSections, unassigned };
-  }, [groups, teamBudgetMap, groupsData, isPreviewing]);
+  }, [groups, teamBudgetMap, groupsData, isPreviewing, isAccountWide]);
 
   // Financial summary cards and the table footer must reconcile to the same
   // visible top-level rows: each team pool once, plus each unassigned group.
@@ -632,19 +651,24 @@ export default function Dashboard() {
     return (
       <tr
         key={`team-${team.teamName}`}
-        className="border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer group select-none"
+        className={`border-b border-border bg-muted/30 transition-colors group select-none ${
+          clusterCount > 0 ? 'hover:bg-muted/50 cursor-pointer' : ''
+        }`}
         data-testid={`row-team-${team.teamName}`}
-        onClick={() => toggleTeam(team.teamName)}
+        onClick={() => {
+          if (clusterCount > 0) toggleTeam(team.teamName);
+        }}
       >
         <td className="py-3 px-4 font-semibold text-sm" colSpan={1}>
           <div className="flex items-center gap-2">
-            {expanded
-              ? <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-            }
+            {clusterCount > 0 ? (
+              expanded
+                ? <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            ) : <span className="w-4" aria-hidden="true" />}
             <span>{team.teamName}</span>
             <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 font-normal">
-              {clusterCount} group{clusterCount !== 1 ? 's' : ''}
+              {clusterCount > 0 ? `${clusterCount} group${clusterCount !== 1 ? 's' : ''}` : 'Budget only'}
             </Badge>
           </div>
         </td>
@@ -664,14 +688,10 @@ export default function Dashboard() {
             ${team.spendUsd.toFixed(2)}
           </span>
         </td>
-        <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-          {canWrite ? (
-            <TeamBudgetInput teamName={team.teamName} currentBudget={team.budgetUsd} />
-          ) : (
-            <span className="text-sm font-mono tabular-nums font-semibold" data-testid={`text-team-budget-${team.teamName}`}>
-              {team.budgetUsd !== null && team.budgetUsd !== undefined ? `$${team.budgetUsd.toFixed(2)}` : '—'}
-            </span>
-          )}
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm font-mono tabular-nums font-semibold" data-testid={`text-team-budget-${team.teamName}`}>
+            {team.budgetUsd !== null && team.budgetUsd !== undefined ? `$${team.budgetUsd.toFixed(2)}` : '—'}
+          </span>
         </td>
         <td className="py-3 px-4 text-right">
           {displayRemaining === null ? (

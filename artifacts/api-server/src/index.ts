@@ -3,6 +3,8 @@ import { logger } from "./lib/logger";
 import { startChecker } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
 import { startSnapshotJob } from "./lib/history";
+import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
+import { startTeamBudgetSyncJob } from "./lib/team-budgets";
 
 const rawPort = process.env["PORT"];
 
@@ -21,6 +23,7 @@ if (Number.isNaN(port) || port <= 0) {
 // Durable usage/directory caches must be available before the server accepts a
 // dashboard request; otherwise an early request can race hydration and trigger
 // an unnecessary full bootstrap.
+await applyAnnualTeamBudgetBackfill();
 await initCache();
 
 const server = app.listen(port, (err) => {
@@ -32,6 +35,7 @@ const server = app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   startChecker();
   startSnapshotJob();
+  startTeamBudgetSyncJob();
 });
 
 function shutdown(signal: string) {

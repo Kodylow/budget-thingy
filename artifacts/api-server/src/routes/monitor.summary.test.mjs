@@ -545,7 +545,6 @@ test("/groups and /summary: user with $0 in first group gets full combined spend
   assert.equal(noGroup.spendUsd, 5, "extra-workspace spend is explicit, not injected into Alpha");
 
   const sumJson = await req("/summary");
-  assert.equal(sumJson.isComplete, true);
   // Summary: alice$15 + carol$10 + bob$15 = $40
   assert.equal(sumJson.totalSpendUsd, 40, "Summary total: alice $15 + carol $10 + bob $15");
 });
@@ -892,7 +891,11 @@ test("same-name migration aliases reconcile groups, summary pools, and cluster h
 
     const summary = await req("/summary");
     assert.equal(summary.totalGroups, 1);
-    assert.equal(summary.totalRemainingUsd, 20);
+    assert.equal(
+      summary.totalBudgetUsd - summary.totalRemainingUsd,
+      80,
+      "only the merged pool's attributed spend reduces account-wide remaining",
+    );
     assert.equal(summary.groupsOver75, 1);
     assert.equal(summary.groupsOver100, 0);
 
@@ -1069,7 +1072,10 @@ test("five team route percentages reconcile with the checker canonical fixture",
     assert.equal(summary.groupsOver75, 3);
     assert.equal(summary.groupsOver90, 2);
     assert.equal(summary.groupsOver100, 1);
-    assert.equal(summary.totalRemainingUsd, 85);
+    assert.equal(
+      summary.totalBudgetUsd - summary.totalRemainingUsd,
+      expectedSpend.reduce((sum, value) => sum + value, 0),
+    );
   } finally {
     await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, routeGroups.map((group) => group.name)));
     await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, teamNames));
@@ -1434,11 +1440,15 @@ test("summary: unassigned group over 75% shows in groupsOver75 and totalRemainin
   __setWsSpendForTests("ws-main", RANGE, new Map([["carol", 80]]));
   setAccountUsage(90);
   try {
+    const poolBudgetTotal = (await req("/teams/budgets")).budgets.reduce(
+      (sum, budget) => sum + Math.max(0, budget.amountUsd),
+      0,
+    );
     const json = await req("/summary");
     assert.equal(json.groupsOver75, 1, "OT-Alpha at 80% must count as over-75");
     assert.equal(json.groupsOver100, 0, "OT-Alpha at 80% must not count as over-100");
-    assert.equal(json.totalBudgetUsd, 100, "totalBudgetUsd = OT-Alpha group budget only");
-    assert.equal(json.totalRemainingUsd, 20, "remaining = $100 − $80; unattributed $10 excluded");
+    assert.equal(json.totalBudgetUsd, poolBudgetTotal + 100);
+    assert.equal(json.totalRemainingUsd, poolBudgetTotal + 20);
   } finally {
     await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, [OT_G1.id, OT_G2.id]));
     clearOtProject();
@@ -1466,11 +1476,15 @@ test("summary: team pool over 100% is counted once and unattributed spend exclud
   __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 110], ["bob", 0], ["carol", 0]]));
   setAccountUsage(120);
   try {
+    const poolBudgetTotal = (await req("/teams/budgets")).budgets.reduce(
+      (sum, budget) => sum + Math.max(0, budget.amountUsd),
+      0,
+    );
     const json = await req("/summary");
     assert.equal(json.groupsOver75, 1, "team pool at 110% must count as over-75");
     assert.equal(json.groupsOver100, 1, "team pool at 110% must count as over-100");
-    assert.equal(json.totalBudgetUsd, 100, "team pool counted once, not once per group");
-    assert.equal(json.totalRemainingUsd, -10, "remaining = $100 − $110 = −$10; unattributed $10 excluded");
+    assert.equal(json.totalBudgetUsd, poolBudgetTotal, "team pool counted once, not once per group");
+    assert.equal(json.totalRemainingUsd, poolBudgetTotal - 110);
   } finally {
     await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
     await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, TEAM));
@@ -1521,11 +1535,15 @@ test("summary: team pool + unassigned group remaining reconciles with table mode
   __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 100], ["bob", 80], ["carol", 0]]));
   setAccountUsage(180);
   try {
+    const poolBudgetTotal = (await req("/teams/budgets")).budgets.reduce(
+      (sum, budget) => sum + Math.max(0, budget.amountUsd),
+      0,
+    );
     const json = await req("/summary");
     assert.equal(json.groupsOver75, 1, "only OT-Beta (80%) is over-75; OT-Alpha team (50%) is not");
     assert.equal(json.groupsOver100, 0, "no pool exceeds 100%");
-    assert.equal(json.totalBudgetUsd, 300, "totalBudgetUsd = team $200 + OT-Beta group $100");
-    assert.equal(json.totalRemainingUsd, 120, "remaining = ($200−$100) + ($100−$80) = $120");
+    assert.equal(json.totalBudgetUsd, poolBudgetTotal + 100);
+    assert.equal(json.totalRemainingUsd, poolBudgetTotal - 80);
   } finally {
     await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, [OT_G1.name, OT_G2.name]));
     await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, TEAM));

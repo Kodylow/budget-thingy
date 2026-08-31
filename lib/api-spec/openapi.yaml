@@ -639,51 +639,63 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /teams/{teamName}/budget:
-    put:
-      operationId: setTeamBudget
+  /admin/team-budgets/history:
+    get:
+      operationId: getTeamBudgetHistory
       tags: [teams]
-      summary: Set or update the budget for a team
-      description: teamName must be URL-encoded (spaces as %20).
-      parameters:
-        - $ref: "#/components/parameters/TeamNamePath"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TeamBudgetInput"
+      summary: Get the auditable annual team budget history
+      description: Account-admin-only. Returns original allocations, accepted credit requests, effective totals, and matching issues.
       responses:
         "200":
-          description: Budget saved
+          description: Team budget history
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TeamBudget"
-        "400":
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
+                $ref: "#/components/schemas/TeamBudgetHistoryResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-    delete:
-      operationId: deleteTeamBudget
+  /admin/team-budgets/sync:
+    get:
+      operationId: getTeamBudgetSyncStatus
       tags: [teams]
-      summary: Remove the budget override for a team
-      description: teamName must be URL-encoded (spaces as %20).
-      parameters:
-        - $ref: "#/components/parameters/TeamNamePath"
+      summary: Get Airtable budget synchronization status
+      description: Account-admin-only. Connector details and source status are not exposed to scoped viewers.
       responses:
-        "204":
-          description: Budget removed
+        "200":
+          description: Synchronization status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetSyncStatus"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/refresh:
+    post:
+      operationId: refreshTeamBudgets
+      tags: [teams]
+      summary: Refresh the read-only Airtable team budget snapshot
+      description: Account-admin-only. Never writes to Airtable; failures preserve the last successful snapshot.
+      responses:
+        "200":
+          description: Snapshot refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetRefreshResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: Airtable refresh failed; the last good snapshot remains active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetRefreshResult"
   /admins:
     get:
       operationId: listAdmins
@@ -1328,7 +1340,7 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend]
+      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend, teamBudgets]
       properties:
         groups:
           type: array
@@ -1371,6 +1383,11 @@ components:
                 type: boolean
                 description: True when member-level usage for every visible custom group is loaded
           description: Per-team member-deduped rollup spend, with each member counted once across groups
+        teamBudgets:
+          type: object
+          additionalProperties:
+            type: number
+          description: Effective visible team budgets, including budget-only teams for account-wide callers.
     TrendSeries:
       type: object
       required: [name, type, data]
@@ -1762,6 +1779,86 @@ components:
         amountUsd:
           type: number
           minimum: 0
+    TeamBudgetAdjustment:
+      type: object
+      required: [recordId, amountUsd, submissionPeriod]
+      properties:
+        recordId:
+          type: string
+        amountUsd:
+          type: number
+        submissionPeriod:
+          type: string
+          pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+    TeamBudgetHistoryTeam:
+      type: object
+      required: [teamName, originalAmountUsd, effectiveAmountUsd, adjustments]
+      properties:
+        teamName:
+          type: string
+        originalAmountUsd:
+          type: number
+        effectiveAmountUsd:
+          type: number
+        adjustments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetAdjustment"
+    TeamBudgetMatchIssue:
+      type: object
+      required: [recordId, sourceTeamName, matchState, error]
+      properties:
+        recordId:
+          type: string
+        sourceTeamName:
+          type: [string, "null"]
+        matchState:
+          type: string
+          enum: [unmatched, invalid]
+        error:
+          type: [string, "null"]
+    TeamBudgetHistoryResponse:
+      type: object
+      required: [teams, issues]
+      properties:
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetMatchIssue"
+    TeamBudgetSyncStatus:
+      type: object
+      required: [lastAttemptAt, lastSuccessfulAt, lastError, recordCount, acceptedCount, issueCount]
+      properties:
+        lastAttemptAt:
+          type: [string, "null"]
+        lastSuccessfulAt:
+          type: [string, "null"]
+        lastError:
+          type: [string, "null"]
+        recordCount:
+          type: integer
+        acceptedCount:
+          type: integer
+        issueCount:
+          type: integer
+    TeamBudgetRefreshResult:
+      type: object
+      required: [ok, recordCount, acceptedCount, issueCount, error]
+      properties:
+        ok:
+          type: boolean
+        recordCount:
+          type: integer
+        acceptedCount:
+          type: integer
+        issueCount:
+          type: integer
+        error:
+          type: [string, "null"]
     AdminEmail:
       type: object
       required: [id, email, createdAt]

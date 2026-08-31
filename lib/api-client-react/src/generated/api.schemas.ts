@@ -205,6 +205,11 @@ export type GroupsResponseTeamRawSpend = {[key: string]: {
   spendLoaded: boolean;
 }};
 
+/**
+ * Effective visible team budgets, including budget-only teams for account-wide callers.
+ */
+export type GroupsResponseTeamBudgets = {[key: string]: number};
+
 export interface GroupsResponse {
   groups: Group[];
   /** False while background usage fetches are still pending; poll every ~8s until true */
@@ -224,6 +229,8 @@ export interface GroupsResponse {
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */
   teamRawSpend: GroupsResponseTeamRawSpend;
+  /** Effective visible team budgets, including budget-only teams for account-wide callers. */
+  teamBudgets: GroupsResponseTeamBudgets;
 }
 
 export type TrendSeriesType = typeof TrendSeriesType[keyof typeof TrendSeriesType];
@@ -519,6 +526,63 @@ export interface TeamBudgetsResponse {
 export interface TeamBudgetInput {
   /** @minimum 0 */
   amountUsd: number;
+}
+
+export interface TeamBudgetAdjustment {
+  recordId: string;
+  amountUsd: number;
+  /** @pattern ^\d{4}-(0[1-9]|1[0-2])$ */
+  submissionPeriod: string;
+}
+
+export interface TeamBudgetHistoryTeam {
+  teamName: string;
+  originalAmountUsd: number;
+  effectiveAmountUsd: number;
+  adjustments: TeamBudgetAdjustment[];
+}
+
+export type TeamBudgetMatchIssueMatchState = typeof TeamBudgetMatchIssueMatchState[keyof typeof TeamBudgetMatchIssueMatchState];
+
+
+export const TeamBudgetMatchIssueMatchState = {
+  unmatched: 'unmatched',
+  invalid: 'invalid',
+} as const;
+
+export interface TeamBudgetMatchIssue {
+  recordId: string;
+  /** @nullable */
+  sourceTeamName: string | null;
+  matchState: TeamBudgetMatchIssueMatchState;
+  /** @nullable */
+  error: string | null;
+}
+
+export interface TeamBudgetHistoryResponse {
+  teams: TeamBudgetHistoryTeam[];
+  issues: TeamBudgetMatchIssue[];
+}
+
+export interface TeamBudgetSyncStatus {
+  /** @nullable */
+  lastAttemptAt: string | null;
+  /** @nullable */
+  lastSuccessfulAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+  recordCount: number;
+  acceptedCount: number;
+  issueCount: number;
+}
+
+export interface TeamBudgetRefreshResult {
+  ok: boolean;
+  recordCount: number;
+  acceptedCount: number;
+  issueCount: number;
+  /** @nullable */
+  error: string | null;
 }
 
 export interface AdminEmail {
@@ -947,4 +1011,3 @@ export type ListAlertsParams = {
  */
 limit?: number;
 };
-

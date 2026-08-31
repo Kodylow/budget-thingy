@@ -4,3 +4,4 @@
 - [Allocated pool access](allocated-pool-access.md) — editors use stable Replit IDs; true admins manage access; shared-team alerts never reveal out-of-scope spend.
 - [Historical membership attribution](historical-membership-attribution.md) — immutable UTC rosters require complete fresh reads; current day stays live and pre-snapshot dates are not reconstructed.
 - [Billing anchor startup](billing-anchor-startup.md) — live-refresh billing bounds before the startup account anchor; expired hydrated periods must fall back consistently.
+- [Startup data backfills](startup-data-backfills.md) — drizzle push changes schema only; required data transforms need narrow idempotent startup hooks, never broad seed imports.

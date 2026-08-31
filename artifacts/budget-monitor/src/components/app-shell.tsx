@@ -12,6 +12,7 @@ import {
   Users,
   TrendingUp,
   BookUser,
+  WalletCards,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -82,6 +83,7 @@ export function AppShell({ children }: AppShellProps) {
         { path: '/trends', label: 'Trends', icon: TrendingUp, show: isAccountWide, testId: 'nav-trends' },
         { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
         { path: '/workspace-directory', label: 'Workspace Directory', icon: BookUser, show: isAccountAdmin, testId: 'nav-workspace-directory' },
+        { path: '/team-budgets', label: 'Team Budgets', icon: WalletCards, show: isAccountAdmin, testId: 'nav-team-budgets' },
       ],
     },
   ].map((section) => ({

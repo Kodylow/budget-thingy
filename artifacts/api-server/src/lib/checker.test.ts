@@ -323,6 +323,8 @@ beforeEach(async () => {
     DROP TABLE IF EXISTS alert_delivery_claims;
     DROP TABLE IF EXISTS fired_thresholds;
     DROP TABLE IF EXISTS group_budgets;
+    DROP TABLE IF EXISTS team_budget_adjustments;
+    DROP TABLE IF EXISTS team_budget_sync_state;
     DROP TABLE IF EXISTS team_budgets;
     DROP TABLE IF EXISTS group_teams;
     DROP TABLE IF EXISTS admin_emails;
@@ -376,8 +378,35 @@ beforeEach(async () => {
     );
     CREATE TABLE team_budgets (
       team_name TEXT PRIMARY KEY,
+      original_amount_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
       amount_usd DOUBLE PRECISION NOT NULL,
+      is_hidden BOOLEAN NOT NULL DEFAULT false,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE team_budget_adjustments (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'airtable',
+      source_record_id TEXT NOT NULL,
+      source_team_status TEXT,
+      source_team_name TEXT,
+      team_name TEXT,
+      amount_usd DOUBLE PRECISION,
+      submission_period TEXT,
+      match_state TEXT NOT NULL,
+      error_message TEXT,
+      source_updated_at TIMESTAMPTZ,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE UNIQUE INDEX team_budget_adjustments_source_identity_idx
+      ON team_budget_adjustments (source, source_record_id);
+    CREATE TABLE team_budget_sync_state (
+      id INTEGER PRIMARY KEY,
+      last_attempt_at TIMESTAMPTZ,
+      last_successful_at TIMESTAMPTZ,
+      last_error TEXT,
+      record_count INTEGER NOT NULL DEFAULT 0,
+      accepted_count INTEGER NOT NULL DEFAULT 0,
+      issue_count INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE group_teams (
       group_name TEXT PRIMARY KEY,
@@ -726,7 +755,8 @@ describe("team allocated pool checks", () => {
     await pglite.exec(`DELETE FROM group_budgets`); // isolate team-only behavior
     await pglite.exec(`
       INSERT INTO group_teams (group_name, team_name) VALUES ('Alpha', 'Platform'), ('Beta', 'Platform');
-      INSERT INTO team_budgets (team_name, amount_usd) VALUES ('Platform', ${amountUsd});
+      INSERT INTO team_budgets (team_name, original_amount_usd, amount_usd)
+      VALUES ('Platform', ${amountUsd}, ${amountUsd});
     `);
     directoryGroups = [grpA, grpB];
     groupMembersFixture = new Map([
@@ -943,7 +973,8 @@ describe("team allocated pool checks", () => {
     setSpend(600); // grp-1 at 60% of 1000
     await pglite.exec(`
       INSERT INTO group_teams (group_name, team_name) VALUES ('Alpha', 'Platform');
-      INSERT INTO team_budgets (team_name, amount_usd) VALUES ('Platform', 1000);
+      INSERT INTO team_budgets (team_name, original_amount_usd, amount_usd)
+      VALUES ('Platform', 1000, 1000);
     `);
     directoryGroups = [GROUP, { id: "gA", workspaceId: "ws-1", name: "Alpha" } as EnterpriseGroup];
     groupMembersFixture = new Map([
@@ -1015,7 +1046,11 @@ describe("team allocated pool checks", () => {
       })),
     );
     await testDb.insert(schema.teamBudgetsTable).values(
-      teams.map((teamName) => ({ teamName, amountUsd: 100 })),
+      teams.map((teamName) => ({
+        teamName,
+        originalAmountUsd: 100,
+        amountUsd: 100,
+      })),
     );
 
     const teamMap = new Map(

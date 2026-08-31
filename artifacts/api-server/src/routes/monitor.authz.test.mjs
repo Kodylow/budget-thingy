@@ -564,13 +564,6 @@ test("workspace admin mutation attempts are rejected (403, read-only)", async ()
   });
   assert.equal(rebuild.status, 403);
 
-  const setTeamBudget = await req("/teams/Team%20One/budget", {
-    user: "ws1admin",
-    method: "PUT",
-    body: { amountUsd: 200 },
-  });
-  assert.equal(setTeamBudget.status, 403);
-
   const addAdmin = await req("/admins", {
     user: "ws1admin",
     method: "POST",

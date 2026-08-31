@@ -61,8 +61,9 @@ import type {
   RetryUsageSyncParams,
   Summary,
   SystemStatus,
-  TeamBudget,
-  TeamBudgetInput,
+  TeamBudgetHistoryResponse,
+  TeamBudgetRefreshResult,
+  TeamBudgetSyncStatus,
   TeamBudgetsResponse,
   TrendsResponse,
   UnauthorizedResponse,
@@ -1887,27 +1888,26 @@ export function useGetTeamsBudgets<TData = Awaited<ReturnType<typeof getTeamsBud
 
 
 
-export const getSetTeamBudgetUrl = (teamName: string,) => {
+export const getGetTeamBudgetHistoryUrl = () => {
 
 
 
 
-  return `/api/teams/${teamName}/budget`
+  return `/api/admin/team-budgets/history`
 }
 
 /**
- * teamName must be URL-encoded (spaces as %20).
- * @summary Set or update the budget for a team
+ * Account-admin-only. Returns original allocations, accepted credit requests, effective totals, and matching issues.
+ * @summary Get the auditable annual team budget history
  */
-export const setTeamBudget = async (teamName: string,
-    teamBudgetInput: TeamBudgetInput, options?: RequestInit): Promise<TeamBudget> => {
+export const getTeamBudgetHistory = async ( options?: RequestInit): Promise<TeamBudgetHistoryResponse> => {
 
-  return customFetch<TeamBudget>(getSetTeamBudgetUrl(teamName),
+  return customFetch<TeamBudgetHistoryResponse>(getGetTeamBudgetHistoryUrl(),
   {
     ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(teamBudgetInput)
+    method: 'GET'
+
+
   }
 );}
 
@@ -1915,69 +1915,75 @@ export const setTeamBudget = async (teamName: string,
 
 
 
-export const getSetTeamBudgetMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext> => {
-
-const mutationKey = ['setTeamBudget'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setTeamBudget>>, {teamName: string;data: BodyType<TeamBudgetInput>}> = (props) => {
-          const {teamName,data} = props ?? {};
-
-          return  setTeamBudget(teamName,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SetTeamBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof setTeamBudget>>>
-    export type SetTeamBudgetMutationBody = BodyType<TeamBudgetInput>
-    export type SetTeamBudgetMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
-
-    /**
- * @summary Set or update the budget for a team
- */
-export const useSetTeamBudget = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamBudget>>, TError,{teamName: string;data: BodyType<TeamBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof setTeamBudget>>,
-        TError,
-        {teamName: string;data: BodyType<TeamBudgetInput>},
-        TContext
-      > => {
-      return useMutation(getSetTeamBudgetMutationOptions(options));
+export const getGetTeamBudgetHistoryQueryKey = () => {
+    return [
+    `/api/admin/team-budgets/history`
+    ] as const;
     }
 
-export const getDeleteTeamBudgetUrl = (teamName: string,) => {
+
+export const getGetTeamBudgetHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getTeamBudgetHistory>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamBudgetHistoryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamBudgetHistory>>> = ({ signal }) => getTeamBudgetHistory({ signal, ...requestOptions });
 
 
 
 
-  return `/api/teams/${teamName}/budget`
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeamBudgetHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getTeamBudgetHistory>>>
+export type GetTeamBudgetHistoryQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Get the auditable annual team budget history
+ */
+
+export function useGetTeamBudgetHistory<TData = Awaited<ReturnType<typeof getTeamBudgetHistory>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeamBudgetHistoryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTeamBudgetSyncStatusUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/sync`
 }
 
 /**
- * teamName must be URL-encoded (spaces as %20).
- * @summary Remove the budget override for a team
+ * Account-admin-only. Connector details and source status are not exposed to scoped viewers.
+ * @summary Get Airtable budget synchronization status
  */
-export const deleteTeamBudget = async (teamName: string, options?: RequestInit): Promise<void> => {
+export const getTeamBudgetSyncStatus = async ( options?: RequestInit): Promise<TeamBudgetSyncStatus> => {
 
-  return customFetch<void>(getDeleteTeamBudgetUrl(teamName),
+  return customFetch<TeamBudgetSyncStatus>(getGetTeamBudgetSyncStatusUrl(),
   {
     ...options,
-    method: 'DELETE'
+    method: 'GET'
 
 
   }
@@ -1987,11 +1993,89 @@ export const deleteTeamBudget = async (teamName: string, options?: RequestInit):
 
 
 
-export const getDeleteTeamBudgetMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext> => {
+export const getGetTeamBudgetSyncStatusQueryKey = () => {
+    return [
+    `/api/admin/team-budgets/sync`
+    ] as const;
+    }
 
-const mutationKey = ['deleteTeamBudget'];
+
+export const getGetTeamBudgetSyncStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamBudgetSyncStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>> = ({ signal }) => getTeamBudgetSyncStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeamBudgetSyncStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>>
+export type GetTeamBudgetSyncStatusQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Get Airtable budget synchronization status
+ */
+
+export function useGetTeamBudgetSyncStatus<TData = Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeamBudgetSyncStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRefreshTeamBudgetsUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/refresh`
+}
+
+/**
+ * Account-admin-only. Never writes to Airtable; failures preserve the last successful snapshot.
+ * @summary Refresh the read-only Airtable team budget snapshot
+ */
+export const refreshTeamBudgets = async ( options?: RequestInit): Promise<TeamBudgetRefreshResult> => {
+
+  return customFetch<TeamBudgetRefreshResult>(getRefreshTeamBudgetsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRefreshTeamBudgetsMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | TeamBudgetRefreshResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshTeamBudgets>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshTeamBudgets>>, TError,void, TContext> => {
+
+const mutationKey = ['refreshTeamBudgets'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -2001,10 +2085,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteTeamBudget>>, {teamName: string}> = (props) => {
-          const {teamName} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshTeamBudgets>>, void> = () => {
 
-          return  deleteTeamBudget(teamName,requestOptions)
+
+          return  refreshTeamBudgets(requestOptions)
         }
 
 
@@ -2014,22 +2098,22 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type DeleteTeamBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTeamBudget>>>
+    export type RefreshTeamBudgetsMutationResult = NonNullable<Awaited<ReturnType<typeof refreshTeamBudgets>>>
 
-    export type DeleteTeamBudgetMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+    export type RefreshTeamBudgetsMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | TeamBudgetRefreshResult>
 
     /**
- * @summary Remove the budget override for a team
+ * @summary Refresh the read-only Airtable team budget snapshot
  */
-export const useDeleteTeamBudget = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamBudget>>, TError,{teamName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useRefreshTeamBudgets = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | TeamBudgetRefreshResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshTeamBudgets>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof deleteTeamBudget>>,
+        Awaited<ReturnType<typeof refreshTeamBudgets>>,
         TError,
-        {teamName: string},
+        void,
         TContext
       > => {
-      return useMutation(getDeleteTeamBudgetMutationOptions(options));
+      return useMutation(getRefreshTeamBudgetsMutationOptions(options));
     }
 
 export const getListAdminsUrl = () => {
@@ -3092,4 +3176,3 @@ export const useRebuildUsageRange = <TError = ErrorType<ApiError | UnauthorizedR
       > => {
       return useMutation(getRebuildUsageRangeMutationOptions(options));
     }
-

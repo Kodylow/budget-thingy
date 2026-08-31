@@ -7,6 +7,7 @@
  */
 import type { Group } from './group';
 import type { GroupsResponseSyncStatus } from './groupsResponseSyncStatus';
+import type { GroupsResponseTeamBudgets } from './groupsResponseTeamBudgets';
 import type { GroupsResponseTeamRawSpend } from './groupsResponseTeamRawSpend';
 
 export interface GroupsResponse {
@@ -28,4 +29,6 @@ export interface GroupsResponse {
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */
   teamRawSpend: GroupsResponseTeamRawSpend;
+  /** Effective visible team budgets, including budget-only teams for account-wide callers. */
+  teamBudgets: GroupsResponseTeamBudgets;
 }
