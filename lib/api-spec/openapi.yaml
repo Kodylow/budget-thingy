@@ -871,6 +871,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /directory/groups:
+    get:
+      operationId: listDirectoryGroups
+      tags: [directory]
+      summary: List enterprise groups with their owning workspaces
+      description: >
+        Returns every custom/SCIM group from the directory cache together with its
+        owning workspace. Available only to account administrators and independent
+        of usage loading or the selected reporting range.
+      responses:
+        "200":
+          description: Directory group list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DirectoryGroup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /workspace-admins:
     get:
       operationId: listWorkspaceAdmins
@@ -1799,6 +1827,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DirectoryMemberWorkspace"
+    DirectoryGroup:
+      type: object
+      required: [groupId, groupName, workspaceId, workspaceName]
+      properties:
+        groupId:
+          type: string
+        groupName:
+          type: string
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
     GroupAdminsItem:
       type: object
       required: [groupId, groupName, workspaceId, workspaceName, admins]

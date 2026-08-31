@@ -562,6 +562,13 @@ export interface DirectoryMember {
   workspaces: DirectoryMemberWorkspace[];
 }
 
+export interface DirectoryGroup {
+  groupId: string;
+  groupName: string;
+  workspaceId: string;
+  workspaceName: string;
+}
+
 export interface GroupAdminsItem {
   groupId: string;
   groupName: string;

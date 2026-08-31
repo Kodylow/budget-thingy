@@ -69,6 +69,11 @@ const groupMembers = new Map([
   ["g-ws2-a", ["ws2user"]],
 ]);
 
+const workspaces = new Map([
+  ["ws-1", { id: "ws-1", name: "Zeta Workspace" }],
+  ["ws-2", { id: "ws-2", name: "Alpha Workspace" }],
+]);
+
 let server;
 let baseUrl;
 
@@ -79,7 +84,7 @@ test.before(async () => {
     deliveredTo: to,
     messageId: "test-message",
   }));
-  __setDirectoryCacheForTests({ groups, members, groupMembers });
+  __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
   __setMemberUsageForTests(
     "custom:2026-05-20:2026-08-11",
     new Map([
@@ -265,6 +270,31 @@ test("account admin sees every group", async () => {
   assert.equal(status, 200);
   const ids = json.groups.filter((g) => !g.isSynthetic).map((g) => g.groupId).sort();
   assert.deepEqual(ids, ["g-ws1-a", "g-ws2-a"]);
+});
+
+test("group directory is account-admin-only and returns alphabetized directory metadata", async () => {
+  const unauthenticated = await req("/directory/groups");
+  assert.equal(unauthenticated.status, 401);
+
+  const workspaceAdmin = await req("/directory/groups", { user: "ws1admin" });
+  assert.equal(workspaceAdmin.status, 403);
+
+  const accountAdmin = await req("/directory/groups", { user: "acct" });
+  assert.equal(accountAdmin.status, 200);
+  assert.deepEqual(accountAdmin.json, [
+    {
+      groupId: "g-ws2-a",
+      groupName: "Gamma",
+      workspaceId: "ws-2",
+      workspaceName: "Alpha Workspace",
+    },
+    {
+      groupId: "g-ws1-a",
+      groupName: "Alpha",
+      workspaceId: "ws-1",
+      workspaceName: "Zeta Workspace",
+    },
+  ]);
 });
 
 test("workspace admin only sees in-scope groups", async () => {

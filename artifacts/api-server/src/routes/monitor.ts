@@ -44,6 +44,7 @@ import {
   DeleteEditorResponse,
   RebuildUsageRangeBody,
   RebuildUsageRangeResponse,
+  ListDirectoryGroupsResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -2848,6 +2849,38 @@ router.get("/users/activity", async (req, res): Promise<void> => {
 });
 
 // ---------- Directory members ----------
+
+router.get("/directory/groups", requireAccountAdmin, async (req, res): Promise<void> => {
+  if (!isConfigured()) {
+    res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
+    return;
+  }
+  try {
+    const dir = await getDirectory();
+    if (!dir) {
+      res.status(503).json({ error: "Directory not yet available" });
+      return;
+    }
+
+    const groups = dir.groups.map((group) => ({
+      groupId: group.id,
+      groupName: group.name,
+      workspaceId: group.workspaceId,
+      workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId,
+    }));
+    groups.sort(
+      (a, b) =>
+        a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: "base" }) ||
+        a.groupName.localeCompare(b.groupName, undefined, { sensitivity: "base" }) ||
+        a.groupId.localeCompare(b.groupId),
+    );
+
+    res.json(ListDirectoryGroupsResponse.parse(groups));
+  } catch (err) {
+    req.log.error({ err }, "listDirectoryGroups failed");
+    res.status(503).json({ error: "Directory unavailable" });
+  }
+});
 
 router.get("/directory/members", requireAccountAdmin, async (req, res): Promise<void> => {
   if (!isConfigured()) {

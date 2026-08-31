@@ -1,7 +1,9 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { Fragment, useState, useMemo, useCallback, useEffect } from 'react';
 import {
   useListDirectoryMembers,
   getListDirectoryMembersQueryKey,
+  useListDirectoryGroups,
+  getListDirectoryGroupsQueryKey,
   useGetUserActivity,
   getGetUserActivityQueryKey,
 } from '@workspace/api-client-react';
@@ -15,8 +17,10 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
-import { Download, Search, ShieldCheck } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ChevronDown, Download, Search, ShieldCheck } from 'lucide-react';
 import { useRange } from '@/components/range-context';
+import { groupDirectoryByWorkspace } from '@/lib/workspace-directory-groups';
 
 // ---------- helpers ----------
 
@@ -113,6 +117,19 @@ function SkeletonRow() {
       </td>
       <td className="px-4 py-3 text-right">
         <div className="h-3 w-16 bg-muted animate-pulse rounded ml-auto" />
+      </td>
+    </tr>
+  );
+}
+
+function GroupSkeletonRow() {
+  return (
+    <tr className="border-b border-border last:border-0">
+      <td className="px-4 py-3">
+        <div className="h-3.5 w-36 bg-muted animate-pulse rounded" />
+      </td>
+      <td className="px-4 py-3">
+        <div className="h-3.5 w-44 bg-muted animate-pulse rounded" />
       </td>
     </tr>
   );
@@ -317,7 +334,11 @@ function DetailPanel({ member, spend, onClose }: DetailPanelProps) {
 export default function WorkspaceDirectory() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [groupSearch, setGroupSearch] = useState('');
   const [selectedMember, setSelectedMember] = useState<DirectoryMember | null>(null);
+  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Keep selected member data in sync when the list refreshes
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -337,6 +358,16 @@ export default function WorkspaceDirectory() {
   const { data: members, isLoading: membersLoading } = useListDirectoryMembers(rangeParams, {
     query: {
       queryKey: getListDirectoryMembersQueryKey(rangeParams),
+    },
+  });
+
+  const {
+    data: directoryGroups,
+    isLoading: groupsLoading,
+    isError: groupsUnavailable,
+  } = useListDirectoryGroups({
+    query: {
+      queryKey: getListDirectoryGroupsQueryKey(),
     },
   });
 
@@ -377,6 +408,23 @@ export default function WorkspaceDirectory() {
     );
   }, [members, debouncedSearch]);
 
+  const filteredDirectoryGroups = useMemo(() => {
+    const groups = directoryGroups ?? [];
+    const query = groupSearch.trim().toLowerCase();
+    if (!query) return groups;
+
+    return groups.filter(
+      (group) =>
+        group.groupName.toLowerCase().includes(query) ||
+        group.workspaceName.toLowerCase().includes(query),
+    );
+  }, [directoryGroups, groupSearch]);
+
+  const groupedWorkspaces = useMemo(
+    () => groupDirectoryByWorkspace(filteredDirectoryGroups),
+    [filteredDirectoryGroups],
+  );
+
   // Derive the selected member object from the live members list so workspace
   // spend stays up-to-date as the range changes or data refreshes.
   const selectedMemberLive = useMemo(
@@ -394,6 +442,18 @@ export default function WorkspaceDirectory() {
     setSelectedMember(null);
   }, []);
 
+  const toggleWorkspace = useCallback((workspaceId: string) => {
+    setCollapsedWorkspaceIds((current) => {
+      const next = new Set(current);
+      if (next.has(workspaceId)) {
+        next.delete(workspaceId);
+      } else {
+        next.add(workspaceId);
+      }
+      return next;
+    });
+  }, []);
+
   const activeMember = selectedMemberLive ?? selectedMember;
 
   const selectedSpend = activeMember
@@ -402,49 +462,178 @@ export default function WorkspaceDirectory() {
 
   return (
     <div className="p-4 md:p-8 space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Workspace Directory</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            All enterprise members — search by username, name, or email
-          </p>
-        </div>
-        <button
-          type="button"
-          disabled={isLoading || !members}
-          onClick={() => exportDirectoryUsers(members ?? [], spendByUser)}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          data-testid="button-export-directory-users"
-        >
-          <Download className="h-4 w-4" />
-          Export Users
-        </button>
-      </div>
-
-      {/* Search bar */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <Input
-          placeholder="Search members…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-8 h-9 text-sm"
-          data-testid="directory-search"
-        />
-      </div>
-
-      {/* Member count */}
-      {!isLoading && (
-        <p className="text-xs text-muted-foreground">
-          {filteredMembers.length} member{filteredMembers.length !== 1 ? 's' : ''}
-          {debouncedSearch ? ' found' : ''}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Workspace Directory</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Browse enterprise groups by workspace and search all members
         </p>
-      )}
+      </div>
 
-      {/* Table */}
-      <div className="rounded-lg border border-border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+      <Tabs defaultValue="members" className="space-y-4">
+        <TabsList aria-label="Workspace directory view">
+          <TabsTrigger value="members" data-testid="directory-tab-members">
+            Members
+          </TabsTrigger>
+          <TabsTrigger value="groups" data-testid="directory-tab-groups">
+            Groups
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="groups">
+          <section className="space-y-3" aria-labelledby="groups-directory-heading">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 id="groups-directory-heading" className="text-lg font-semibold">Groups</h2>
+                <p className="text-sm text-muted-foreground">
+                  Enterprise groups organized by their owning workspace
+                </p>
+              </div>
+              {!groupsLoading && !groupsUnavailable && (
+                <p className="text-xs text-muted-foreground" data-testid="directory-group-counts">
+                  {filteredDirectoryGroups.length} group{filteredDirectoryGroups.length === 1 ? '' : 's'} across{' '}
+                  {groupedWorkspaces.length} workspace{groupedWorkspaces.length === 1 ? '' : 's'}
+                  {groupSearch.trim() ? ' found' : ''}
+                </p>
+              )}
+            </div>
+
+            <div className="relative max-w-md">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                type="search"
+                placeholder="Search groups or workspaces…"
+                aria-label="Search groups or workspaces"
+                value={groupSearch}
+                onChange={(event) => setGroupSearch(event.target.value)}
+                className="pl-8"
+                data-testid="directory-groups-search"
+              />
+            </div>
+
+            <div className="rounded-lg border border-border overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm" data-testid="directory-groups-table">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40">
+                      <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">
+                        Workspace
+                      </th>
+                      <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">
+                        Group
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupsLoading ? (
+                      Array.from({ length: 4 }).map((_, i) => <GroupSkeletonRow key={i} />)
+                    ) : groupsUnavailable ? (
+                      <tr>
+                        <td colSpan={2} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                          Group directory is currently unavailable. Try again later.
+                        </td>
+                      </tr>
+                    ) : groupedWorkspaces.length === 0 ? (
+                      <tr>
+                        <td colSpan={2} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                          {groupSearch.trim() ? 'No groups match that search.' : 'No groups found.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      groupedWorkspaces.map((workspace) => {
+                        const isExpanded = !collapsedWorkspaceIds.has(workspace.workspaceId);
+                        const contentId = `workspace-groups-${workspace.workspaceId}`;
+                        return (
+                          <Fragment key={workspace.workspaceId}>
+                            <tr className="border-b border-border bg-muted/20">
+                              <th colSpan={2} scope="rowgroup" className="p-0 text-left">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted/40 transition-colors"
+                                  onClick={() => toggleWorkspace(workspace.workspaceId)}
+                                  aria-expanded={isExpanded}
+                                  aria-controls={contentId}
+                                  data-testid={`directory-workspace-toggle-${workspace.workspaceId}`}
+                                >
+                                  <span>
+                                    <span className="block font-medium">{workspace.workspaceName}</span>
+                                    <span className="block text-xs font-normal text-muted-foreground">
+                                      {workspace.groups.length} group{workspace.groups.length === 1 ? '' : 's'}
+                                    </span>
+                                  </span>
+                                  <ChevronDown
+                                    className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                                      isExpanded ? 'rotate-180' : ''
+                                    }`}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              </th>
+                            </tr>
+                            {isExpanded && workspace.groups.map((group) => (
+                              <tr
+                                key={group.groupId}
+                                id={group === workspace.groups[0] ? contentId : undefined}
+                                className="border-b border-border last:border-0"
+                                data-testid={`directory-group-row-${group.groupId}`}
+                              >
+                                <td className="px-4 py-3 text-muted-foreground">
+                                  <span className="sr-only">{workspace.workspaceName}</span>
+                                </td>
+                                <td className="px-4 py-3 font-medium">{group.groupName}</td>
+                              </tr>
+                            ))}
+                          </Fragment>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="members">
+          <section className="space-y-3" aria-labelledby="members-directory-heading">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 id="members-directory-heading" className="text-lg font-semibold">Members</h2>
+                <p className="text-sm text-muted-foreground">Search enterprise members and review current spend</p>
+              </div>
+              <button
+                type="button"
+                disabled={isLoading || !members}
+                onClick={() => exportDirectoryUsers(members ?? [], spendByUser)}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="button-export-directory-users"
+              >
+                <Download className="h-4 w-4" />
+                Export Users
+              </button>
+            </div>
+        <div className="relative max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search members…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-9 text-sm"
+            data-testid="directory-search"
+          />
+        </div>
+
+        {/* Member count */}
+        {!isLoading && (
+          <p className="text-xs text-muted-foreground">
+            {filteredMembers.length} member{filteredMembers.length !== 1 ? 's' : ''}
+            {debouncedSearch ? ' found' : ''}
+          </p>
+        )}
+
+        {/* Table */}
+        <div className="rounded-lg border border-border overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40">
                 <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">
@@ -525,9 +714,12 @@ export default function WorkspaceDirectory() {
                 })
               )}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
-      </div>
+          </section>
+        </TabsContent>
+      </Tabs>
 
       {/* Detail slide-over */}
       <DetailPanel

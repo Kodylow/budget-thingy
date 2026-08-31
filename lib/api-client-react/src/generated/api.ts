@@ -30,6 +30,7 @@ import type {
   BeginBrowserLoginParams,
   CheckResult,
   ClusterHeadline,
+  DirectoryGroup,
   DirectoryMember,
   ErrorEnvelope,
   ExportUsersCsvParams,
@@ -2545,6 +2546,84 @@ export function useListDirectoryMembers<TData = Awaited<ReturnType<typeof listDi
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListDirectoryMembersQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListDirectoryGroupsUrl = () => {
+
+
+
+
+  return `/api/directory/groups`
+}
+
+/**
+ * Returns every custom/SCIM group from the directory cache together with its owning workspace. Available only to account administrators and independent of usage loading or the selected reporting range.
+ * @summary List enterprise groups with their owning workspaces
+ */
+export const listDirectoryGroups = async ( options?: RequestInit): Promise<DirectoryGroup[]> => {
+
+  return customFetch<DirectoryGroup[]>(getListDirectoryGroupsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDirectoryGroupsQueryKey = () => {
+    return [
+    `/api/directory/groups`
+    ] as const;
+    }
+
+
+export const getListDirectoryGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listDirectoryGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDirectoryGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDirectoryGroupsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDirectoryGroups>>> = ({ signal }) => listDirectoryGroups({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDirectoryGroups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDirectoryGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof listDirectoryGroups>>>
+export type ListDirectoryGroupsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary List enterprise groups with their owning workspaces
+ */
+
+export function useListDirectoryGroups<TData = Awaited<ReturnType<typeof listDirectoryGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDirectoryGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDirectoryGroupsQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

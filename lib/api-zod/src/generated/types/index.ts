@@ -23,6 +23,7 @@ export * from './authUserEnvelope';
 export * from './beginBrowserLoginParams';
 export * from './checkResult';
 export * from './clusterHeadline';
+export * from './directoryGroup';
 export * from './directoryMember';
 export * from './directoryMemberWorkspace';
 export * from './endDateParameter';

@@ -693,6 +693,19 @@ export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersRespon
 
 
 /**
+ * Returns every custom/SCIM group from the directory cache together with its owning workspace. Available only to account administrators and independent of usage loading or the selected reporting range.
+ * @summary List enterprise groups with their owning workspaces
+ */
+export const ListDirectoryGroupsResponseItem = zod.object({
+  "groupId": zod.string(),
+  "groupName": zod.string(),
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string()
+})
+export const ListDirectoryGroupsResponse = zod.array(ListDirectoryGroupsResponseItem)
+
+
+/**
  * Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
  * @summary List admins per group
  */
