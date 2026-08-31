@@ -47,7 +47,6 @@ function PaceCell({
   periodLabel: string;
   isFallback: boolean;
 }) {
-  if (!spendLoaded) return <span className="text-sm text-muted-foreground">—</span>;
   if (budgetUsd == null || budgetUsd <= 0) return <span className="text-sm text-muted-foreground">—</span>;
   const pace = calcPace(spendUsd, budgetUsd, periodStart, periodEnd);
   if (!pace) return <span className="text-sm text-muted-foreground">—</span>;
@@ -58,8 +57,12 @@ function PaceCell({
   }[pace.status];
   return (
     <div
-      className="flex flex-col items-end gap-0.5"
-      title={`Pace period: ${periodLabel}${isFallback ? ' (safe fallback)' : ''}`}
+      className={`flex flex-col items-end gap-0.5${!spendLoaded ? ' opacity-60' : ''}`}
+      title={
+        !spendLoaded
+          ? `Latest available pace; background sync is still running. Pace period: ${periodLabel}${isFallback ? ' (safe fallback)' : ''}`
+          : `Pace period: ${periodLabel}${isFallback ? ' (safe fallback)' : ''}`
+      }
     >
       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.cls} ${semibold ? 'font-semibold' : ''}`}>
         {cfg.label}
@@ -623,6 +626,8 @@ export default function Dashboard() {
   const renderTeamHeader = (team: TeamSection) => {
     const expanded = expandedTeams.has(team.teamName);
     const hasBudget = team.budgetUsd !== null && team.budgetUsd > 0;
+    const displayRemaining = hasBudget ? team.budgetUsd! - team.spendUsd : null;
+    const displayPercentUsed = hasBudget ? (team.spendUsd / team.budgetUsd!) * 100 : null;
     const clusterCount = buildGroupClusters(team.groups as any[]).length;
     return (
       <tr
@@ -669,27 +674,33 @@ export default function Dashboard() {
           )}
         </td>
         <td className="py-3 px-4 text-right">
-          {!team.spendLoaded || !hasBudget ? (
+          {displayRemaining === null ? (
             <span className="text-sm text-muted-foreground">—</span>
           ) : (
-            <span className={`text-sm font-mono tabular-nums font-semibold ${team.remainingUsd! < 0 ? 'text-destructive' : ''}`}>
-              ${team.remainingUsd!.toFixed(2)}
+            <span
+              className={`text-sm font-mono tabular-nums font-semibold ${displayRemaining < 0 ? 'text-destructive' : ''}${!team.spendLoaded ? ' text-muted-foreground' : ''}`}
+              title={!team.spendLoaded ? 'Latest available value; background sync is still running' : undefined}
+            >
+              ${displayRemaining.toFixed(2)}
             </span>
           )}
         </td>
         <td className="py-3 px-4 text-right">
           <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-            {!team.spendLoaded || !hasBudget ? (
+            {displayPercentUsed === null ? (
               <span className="text-sm text-muted-foreground">—</span>
             ) : (
               <>
-                <span className={`text-xs font-mono tabular-nums font-semibold ${team.percentUsed! >= 100 ? 'text-destructive' : team.percentUsed! >= 75 ? 'text-yellow-600' : ''}`}>
-                  {team.percentUsed!.toFixed(1)}%
+                <span
+                  className={`text-xs font-mono tabular-nums font-semibold ${displayPercentUsed >= 100 ? 'text-destructive' : displayPercentUsed >= 75 ? 'text-yellow-600' : ''}${!team.spendLoaded ? ' text-muted-foreground' : ''}`}
+                  title={!team.spendLoaded ? 'Latest available value; background sync is still running' : undefined}
+                >
+                  {displayPercentUsed.toFixed(1)}%
                 </span>
                 <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
                   <div
-                    className={`h-full transition-all duration-500 ${team.percentUsed! >= 100 ? 'bg-destructive' : 'bg-primary'}`}
-                    style={{ width: `${Math.min(team.percentUsed!, 100)}%` }}
+                    className={`h-full transition-all duration-500 ${displayPercentUsed >= 100 ? 'bg-destructive' : 'bg-primary'}`}
+                    style={{ width: `${Math.min(displayPercentUsed, 100)}%` }}
                   />
                 </div>
               </>
