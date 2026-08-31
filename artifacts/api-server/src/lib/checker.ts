@@ -305,14 +305,20 @@ export function evaluateGroup(group: EnterpriseGroup): Promise<Alert[]> {
 async function buildTeamSpecs(): Promise<EntitySpec[]> {
   const dir = await getDirectory();
 
-  const [teamBudgets, groupTeams] = await Promise.all([
+  const [allCheckerTeamBudgetRows, groupTeams] = await Promise.all([
     db.select().from(teamBudgetsTable),
     db.select().from(groupTeamsTable),
   ]);
+  const teamBudgets = allCheckerTeamBudgetRows.filter((tb) => !tb.isHidden);
   if (teamBudgets.length === 0) return [];
 
   const budgetByTeam = new Map(teamBudgets.map((tb) => [tb.teamName, tb.amountUsd]));
-  const teamByGroupName = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
+  const hiddenCheckerTeamNames = new Set(allCheckerTeamBudgetRows.filter((tb) => tb.isHidden).map((tb) => tb.teamName));
+  const teamByGroupName = new Map(
+    groupTeams
+      .filter((gt) => !hiddenCheckerTeamNames.has(gt.teamName))
+      .map((gt) => [gt.groupName, gt.teamName]),
+  );
 
   // Deduped rollup across ALL directory groups, including extra-workspace spend,
   // so a team spanning multiple workspaces sees exactly the dashboard total.
@@ -395,11 +401,12 @@ async function runCheckInternal(
   for (const group of dir.groups) {
     queueProjectUsageFetch(group, projectRange, force ? 0 : 1, force);
   }
-  const [budgets, teamBudgets, groupTeams] = await Promise.all([
+  const [budgets, allRunTeamBudgetRows, groupTeams] = await Promise.all([
     db.select().from(groupBudgetsTable),
     db.select().from(teamBudgetsTable),
     db.select().from(groupTeamsTable),
   ]);
+  const teamBudgets = allRunTeamBudgetRows.filter((row) => !row.isHidden);
   const budgeted = new Set(budgets.map((b) => b.groupId));
   const budgetByGroupId = new Map(budgets.map((row) => [row.groupId, row.amountUsd]));
   const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
@@ -413,7 +420,12 @@ async function runCheckInternal(
       ),
   );
   const teamsConfigured = teamBudgets.length > 0;
-  const teamByGroupName = new Map(groupTeams.map((row) => [row.groupName, row.teamName]));
+  const hiddenRunTeamNames = new Set(allRunTeamBudgetRows.filter((row) => row.isHidden).map((row) => row.teamName));
+  const teamByGroupName = new Map(
+    groupTeams
+      .filter((row) => !hiddenRunTeamNames.has(row.teamName))
+      .map((row) => [row.groupName, row.teamName]),
+  );
   let canonicalDataReady = true;
   // Team thresholds use the same period anchor as group thresholds. In a
   // team-only configuration there may be no group-budget fetch to populate
