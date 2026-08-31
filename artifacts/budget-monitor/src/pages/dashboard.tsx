@@ -91,7 +91,7 @@ import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
 import { filterGroupsForView } from '@/lib/rbac-view';
-import { formatTeamName } from '@/lib/team-names';
+import { compareTeamNames, formatTeamName } from '@/lib/team-names';
 
 interface TeamSection {
   teamName: string;
@@ -294,8 +294,9 @@ export default function Dashboard() {
       }
     }
 
-    // Sort teams alphabetically
-    teamSections.sort((a, b) => a.teamName.localeCompare(b.teamName));
+    // Sort by the names shown in the table, not internal team keys.
+    teamSections.sort((a, b) => compareTeamNames(a.teamName, b.teamName));
+    unassigned.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
     return { teamSections, unassigned };
   }, [groups, teamBudgetMap, groupsData, isPreviewing, isAccountWide]);
@@ -1021,7 +1022,9 @@ export default function Dashboard() {
                       )}
                     </>
                   ) : (
-                    groups.map((group) => renderGroupRow(group))
+                    [...groups]
+                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+                      .map((group) => renderGroupRow(group))
                   )}
                   {!isPreviewing && summary?.reconciliationSpendUsd != null &&
                     (isAccountWide || summary.reconciliationSpendUsd > 0) && (
