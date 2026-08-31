@@ -101,10 +101,9 @@ export function sumAttributedRollup(groups: Array<{
   let spendLoaded = true;
   for (const group of groups) {
     memberCount += group.rollupMemberCount ?? 0;
+    spendUsd += group.rollupSpendUsd ?? 0;
     if (!group.rollupSpendLoaded) {
       spendLoaded = false;
-    } else {
-      spendUsd += group.rollupSpendUsd ?? 0;
     }
   }
   return { memberCount, spendUsd, spendLoaded };

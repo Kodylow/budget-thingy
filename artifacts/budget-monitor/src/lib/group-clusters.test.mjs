@@ -62,7 +62,8 @@ test("standalone team group preserves project spend instead of raw member spend"
 test("attributed totals remain pending until every member rollup is loaded", () => {
   const total = sumAttributedRollup([
     roleGroups[0],
-    { ...roleGroups[1], rollupSpendLoaded: false, rollupSpendUsd: 0 },
+    { ...roleGroups[1], rollupSpendLoaded: false, rollupSpendUsd: 12 },
   ]);
   assert.equal(total.spendLoaded, false);
+  assert.equal(total.spendUsd, 62);
 });

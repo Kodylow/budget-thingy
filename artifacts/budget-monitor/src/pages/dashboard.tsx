@@ -88,10 +88,6 @@ import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
-import {
-  isCanonicalSummaryPending,
-  isTotalSpendHeadlinePending,
-} from '@/lib/dashboard-reconciliation';
 import { filterGroupsForView } from '@/lib/rbac-view';
 
 interface TeamSection {
@@ -396,15 +392,7 @@ export default function Dashboard() {
         : `$${(summary?.totalSpendUsd ?? tableTotals.totalSpendUsd).toFixed(2)}`,
       description: summary?.billingPeriodLabel || 'Loading...',
       icon: DollarSign,
-      loading: role === 'workspace_admin' && isPreviewing
-        ? groupsLoading || !isComplete
-        : isTotalSpendHeadlinePending({
-            isLoading: summaryLoading,
-            isAccountWide,
-            accountUsageTotalSpendUsd: summary?.accountUsageTotalSpendUsd,
-            isComplete: summary?.isComplete,
-            syncStatus: summary?.syncStatus,
-          }),
+      loading: !summary && !groupsData,
     },
     {
       title: 'Total Budget',
@@ -420,9 +408,7 @@ export default function Dashboard() {
         : `$${(summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd).toFixed(2)}`,
       description: 'Across visible budgeted pools',
       icon: Wallet,
-      loading: role === 'workspace_admin' && isPreviewing
-        ? groupsLoading || !isComplete
-        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete, summary?.syncStatus),
+      loading: !summary && !groupsData,
       valueClassName: (role === 'workspace_admin' && isPreviewing
         ? tableTotals.totalRemainingUsd
         : (summary?.totalRemainingUsd ?? 0)) < 0 ? 'text-destructive' : '',
@@ -436,9 +422,7 @@ export default function Dashboard() {
         ? `${groups.filter((group) => (group.percentUsed ?? 0) >= 100).length} over budget`
         : `${summary?.groupsOver100 ?? 0} over budget`,
       icon: AlertTriangle,
-      loading: role === 'workspace_admin' && isPreviewing
-        ? groupsLoading || !isComplete
-        : isCanonicalSummaryPending(summaryLoading, summary?.isComplete, summary?.syncStatus),
+      loading: !summary && !groupsData,
     },
     {
       title: 'Alerts Sent',
@@ -449,8 +433,18 @@ export default function Dashboard() {
     },
   ].filter((card) => !(role === 'workspace_admin' && card.title === 'Alerts Sent'));
 
-  const renderGroupRow = (group: (typeof groups)[0]) => (
-    <tr
+  const renderGroupRow = (group: (typeof groups)[0]) => {
+    const hasBudget = group.budgetUsd != null && group.budgetUsd > 0;
+    const displaySpend = group.spendUsd ?? 0;
+    const displayRemaining = hasBudget
+      ? (group.remainingUsd ?? group.budgetUsd! - displaySpend)
+      : null;
+    const displayPercentUsed = hasBudget
+      ? (group.percentUsed ?? (displaySpend / group.budgetUsd!) * 100)
+      : null;
+
+    return (
+      <tr
       key={group.groupId}
       className={`border-b border-border transition-colors group ${
         group.isSynthetic ? 'bg-muted/10' : 'hover:bg-muted/50 cursor-pointer'
@@ -483,13 +477,13 @@ export default function Dashboard() {
         </span>
       </td>
       <td className="py-3 px-4 text-right">
-        {!group.spendLoaded ? (
-          <div className="flex justify-end"><LoadingCell /></div>
-        ) : (
-          <span className="text-sm font-mono tabular-nums" data-testid={`text-spend-${group.groupId}`}>
-            ${(group.spendUsd ?? 0).toFixed(2)}
-          </span>
-        )}
+        <span
+          className={`text-sm font-mono tabular-nums${!group.spendLoaded ? ' text-muted-foreground' : ''}`}
+          data-testid={`text-spend-${group.groupId}`}
+          title={!group.spendLoaded ? 'Latest available value; background sync is still running' : undefined}
+        >
+          ${displaySpend.toFixed(2)}
+        </span>
       </td>
       <td className="py-3 px-4 text-right">
         <div className="flex flex-col items-end gap-1">
@@ -508,28 +502,28 @@ export default function Dashboard() {
         </div>
       </td>
       <td className="py-3 px-4 text-right">
-        {!group.spendLoaded || group.budgetUsd === null ? (
+        {displayRemaining === null ? (
           <span className="text-sm text-muted-foreground">—</span>
         ) : (
-          <span className={`text-sm font-mono tabular-nums ${group.remainingUsd! < 0 ? 'text-destructive font-bold' : ''}`}>
-            ${group.remainingUsd?.toFixed(2)}
+          <span className={`text-sm font-mono tabular-nums ${displayRemaining < 0 ? 'text-destructive font-bold' : ''}${!group.spendLoaded ? ' text-muted-foreground' : ''}`}>
+            ${displayRemaining.toFixed(2)}
           </span>
         )}
       </td>
       <td className="py-3 px-4 text-right">
         <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-          {!group.spendLoaded || group.budgetUsd === null ? (
+          {displayPercentUsed === null ? (
             <span className="text-sm text-muted-foreground">—</span>
           ) : (
             <>
               <ThresholdBadge
-                percentUsed={group.percentUsed ?? null}
+                percentUsed={displayPercentUsed}
                 thresholdsFired={group.thresholdsFired}
               />
               <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
                 <div
-                  className={`h-full transition-all duration-500 ${group.percentUsed! >= 100 ? 'bg-destructive' : 'bg-primary'}`}
-                  style={{ width: `${Math.min(group.percentUsed!, 100)}%` }}
+                  className={`h-full transition-all duration-500 ${displayPercentUsed >= 100 ? 'bg-destructive' : 'bg-primary'}`}
+                  style={{ width: `${Math.min(displayPercentUsed, 100)}%` }}
                 />
               </div>
             </>
@@ -547,8 +541,9 @@ export default function Dashboard() {
           isFallback={summary?.pacePeriodIsFallback ?? true}
         />
       </td>
-    </tr>
-  );
+      </tr>
+    );
+  };
 
   const renderClusterRow = (cluster: GroupCluster) => {
     const roles = Object.values(cluster.groupRoles);
@@ -592,13 +587,12 @@ export default function Dashboard() {
           </span>
         </td>
         <td className="py-3 px-4 text-right">
-          {!cluster.spendLoaded ? (
-            <div className="flex justify-end"><LoadingCell /></div>
-          ) : (
-            <span className="text-sm font-mono tabular-nums">
-              ${cluster.spendUsd.toFixed(2)}
-            </span>
-          )}
+          <span
+            className={`text-sm font-mono tabular-nums${!cluster.spendLoaded ? ' text-muted-foreground' : ''}`}
+            title={!cluster.spendLoaded ? 'Latest available value; background sync is still running' : undefined}
+          >
+            ${cluster.spendUsd.toFixed(2)}
+          </span>
         </td>
         {/* Budget, Remaining, Usage, Pace — not applicable at cluster level */}
         <td className="py-3 px-4 text-right">
@@ -658,16 +652,12 @@ export default function Dashboard() {
           </span>
         </td>
         <td className="py-3 px-4 text-right">
-          {/* Show the provisional rollup value as soon as any spend is available,
-              even before spendLoaded (which waits for global dedup completion).
-              When spendUsd is still 0 and not loaded, show the spinner instead. */}
-          {!team.spendLoaded && team.spendUsd === 0 ? (
-            <div className="flex justify-end"><LoadingCell /></div>
-          ) : (
-            <span className={`text-sm font-mono tabular-nums font-semibold${!team.spendLoaded ? ' text-muted-foreground' : ''}`}>
-              ${team.spendUsd.toFixed(2)}
-            </span>
-          )}
+          <span
+            className={`text-sm font-mono tabular-nums font-semibold${!team.spendLoaded ? ' text-muted-foreground' : ''}`}
+            title={!team.spendLoaded ? 'Latest available value; background sync is still running' : undefined}
+          >
+            ${team.spendUsd.toFixed(2)}
+          </span>
         </td>
         <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
           {canWrite ? (
