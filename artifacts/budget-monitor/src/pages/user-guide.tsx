@@ -1,11 +1,10 @@
 import {
-  Bell,
-  CalendarRange,
-  CircleDollarSign,
+  ArrowRight,
+  Building2,
   ExternalLink,
   Info,
   Layers3,
-  MousePointerClick,
+  ShieldCheck,
   Users,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,41 +13,28 @@ import { Button } from '@/components/ui/button';
 const CREDIT_REQUEST_URL =
   'https://airtable.com/appDXDfAHCXfJWF94/pag0RCmIauEcWroiy/form';
 
-function Step({
-  number,
-  title,
-  children,
-}: {
-  number: number;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <li className="flex gap-3">
-      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-background text-xs font-semibold">
-        {number}
-      </span>
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-foreground">{title}</p>
-        <p className="mt-0.5 text-sm leading-5 text-muted-foreground">{children}</p>
-      </div>
-    </li>
-  );
-}
+const sections = [
+  { id: 'team-formation', label: 'Team formation' },
+  { id: 'team-members', label: 'Team members' },
+  { id: 'comcast-workspace', label: 'Comcast workspace' },
+  { id: 'multiple-workspaces', label: 'Multiple workspaces' },
+] as const;
 
 function GuideSection({
+  id,
   icon: Icon,
   title,
   description,
   children,
 }: {
+  id: string;
   icon: typeof Users;
   title: string;
-  description?: string;
+  description: string;
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    <Card id={id} className="scroll-mt-6">
       <CardHeader className="px-4 py-4 md:px-5">
         <div className="flex items-start gap-3">
           <span className="mt-0.5 rounded-md border bg-muted/40 p-2 text-muted-foreground">
@@ -56,7 +42,7 @@ function GuideSection({
           </span>
           <div className="space-y-1">
             <CardTitle className="text-base">{title}</CardTitle>
-            {description && <CardDescription className="leading-5">{description}</CardDescription>}
+            <CardDescription className="leading-5">{description}</CardDescription>
           </div>
         </div>
       </CardHeader>
@@ -65,11 +51,28 @@ function GuideSection({
   );
 }
 
-function BulletList({ children }: { children: React.ReactNode }) {
+function RuleList({ children }: { children: React.ReactNode }) {
   return (
     <ul className="space-y-2 text-sm leading-5 text-muted-foreground [&>li]:relative [&>li]:pl-4 [&>li]:before:absolute [&>li]:before:left-0 [&>li]:before:top-[0.55rem] [&>li]:before:h-1 [&>li]:before:w-1 [&>li]:before:rounded-full [&>li]:before:bg-muted-foreground/60">
       {children}
     </ul>
+  );
+}
+
+function Callout({
+  label,
+  children,
+}: {
+  label: 'Example' | 'Important';
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-3 flex gap-2 rounded-md border bg-muted/30 p-3">
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <p className="text-sm leading-5 text-muted-foreground">
+        <strong className="text-foreground">{label}:</strong> {children}
+      </p>
+    </div>
   );
 }
 
@@ -84,160 +87,140 @@ export default function UserGuide() {
           className="text-2xl font-bold tracking-tight md:text-3xl"
           data-testid="text-user-guide-title"
         >
-          Budget Monitor User Guide
+          Budget Monitor Business Rules
         </h1>
         <p className="mt-1 text-sm text-muted-foreground md:text-base">
-          Understand your scoped usage, allocated pools, and email activity.
+          How groups become teams, people are deduplicated, and spend is assigned to workspaces.
         </p>
       </header>
 
       <Card className="border-primary/25 bg-primary/[0.03]">
         <CardHeader className="px-4 py-4 md:px-5">
-          <CardTitle className="text-base">Quick Start</CardTitle>
-          <CardDescription>Three steps to find and understand the information you need.</CardDescription>
+          <CardTitle className="text-base">Rules at a glance</CardTitle>
+          <CardDescription>Four principles determine what appears in the Budget Monitor.</CardDescription>
         </CardHeader>
-        <CardContent className="px-4 pb-4 md:px-5">
-          <ol className="grid gap-4 md:grid-cols-3">
-            <Step number={1} title="Choose a date range">
-              Use the date-range control to set the period shown across the dashboard.
-            </Step>
-            <Step number={2} title="Review the Dashboard">
-              Check visible spend, allocated pools, Remaining, and percentage used.
-            </Step>
-            <Step number={3} title="Open the details">
-              Select an authorized group for member and project details, or open <strong>Email Activity</strong> for notification history.
-            </Step>
-          </ol>
+        <CardContent className="grid gap-3 px-4 pb-4 sm:grid-cols-2 md:px-5">
+          {[
+            ['1', 'Matching role groups roll up to one team.'],
+            ['2', 'Admin takes precedence when a person has multiple roles.'],
+            ['3', 'Legacy Comcast spend moves only when an eligible current workspace has spend.'],
+            ['4', 'Spend is counted in the workspace where it occurred.'],
+          ].map(([number, rule]) => (
+            <div key={number} className="flex gap-3 rounded-md border bg-background p-3">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-muted/40 text-xs font-semibold">
+                {number}
+              </span>
+              <p className="text-sm leading-5">{rule}</p>
+            </div>
+          ))}
         </CardContent>
       </Card>
 
+      <nav aria-label="Business rule sections" className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Jump to
+        </span>
+        {sections.map((section) => (
+          <a
+            key={section.id}
+            href={`#${section.id}`}
+            className="rounded-full border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            {section.label}
+          </a>
+        ))}
+      </nav>
+
       <div className="space-y-4">
         <GuideSection
-          icon={CalendarRange}
-          title="Choose the usage period"
-          description="The selected date range controls the usage shown throughout the dashboard and authorized group details."
-        >
-          <BulletList>
-            <li>
-              A per-user total adds that user’s usage across <strong className="text-foreground">all metric types</strong> in the workspaces you can see.
-            </li>
-            <li>
-              If the user belongs to multiple groups in one workspace, their <strong className="text-foreground">shared membership is counted once</strong> there.
-            </li>
-            <li>Usage from distinct visible workspaces is added together.</li>
-          </BulletList>
-        </GuideSection>
-
-        <GuideSection
-          icon={Users}
-          title="Understand headline spend"
-          description="Group and team headline spend uses workspace-aware member rollups."
-        >
-          <BulletList>
-            <li>
-              Each workspace charge is <strong className="text-foreground">assigned once using stable group attribution</strong>, preventing shared membership from duplicating the same charge.
-            </li>
-            <li>
-              Usage that belongs to a visible workspace but cannot be assigned to a group is preserved in a <strong className="text-foreground">“No group” row</strong>. It is not silently dropped.
-            </li>
-          </BulletList>
-        </GuideSection>
-
-        <GuideSection
+          id="team-formation"
           icon={Layers3}
-          title="Compare headline and project totals"
-          description="The two views organize the same kind of usage for different questions."
+          title="Team formation"
+          description="Groups with the same core name are combined into one team."
         >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-md border bg-muted/20 p-3">
-              <p className="text-sm font-medium">Headline spend</p>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                A member-rollup view that follows workspace-aware member attribution.
-              </p>
-            </div>
-            <div className="rounded-md border bg-muted/20 p-3">
-              <p className="text-sm font-medium">Projects table</p>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                A project-attributed view in an authorized group detail that organizes charges by project.
-              </p>
-            </div>
-          </div>
-          <div className="mt-3 flex gap-2 rounded-md border bg-muted/30 p-3">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <p className="text-sm leading-5 text-muted-foreground">
-              <strong className="text-foreground">Note:</strong> These totals may differ because they intentionally answer different questions.
-            </p>
-          </div>
+          <RuleList>
+            <li>
+              Group names follow the pattern <strong className="text-foreground">AZ-Replit - XXX - Role</strong>.
+            </li>
+            <li>
+              When <strong className="text-foreground">XXX</strong> matches, the Admin, Member, and Viewer groups roll up together.
+            </li>
+            <li>The resulting team is named XXX; the role suffix is not part of the team name.</li>
+          </RuleList>
+          <Callout label="Example">
+            <span className="block">
+              <span className="font-mono text-xs text-foreground">AZ-Replit - Comcast Advertising - Admin</span>
+              <br />
+              <span className="font-mono text-xs text-foreground">AZ-Replit - Comcast Advertising - Member</span>
+              <br />
+              <span className="font-mono text-xs text-foreground">AZ-Replit - Comcast Advertising - Viewer</span>
+            </span>
+            <span className="mt-2 flex items-center gap-1 font-medium text-foreground">
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              Comcast Advertising
+            </span>
+          </Callout>
         </GuideSection>
 
         <GuideSection
-          icon={CircleDollarSign}
-          title="Read allocated pool status"
-          description="Use the budget columns and summary cards to see how current spend compares with its allocation."
+          id="team-members"
+          icon={Users}
+          title="Team members"
+          description="Each person appears once on a Team page, even when they belong to more than one role group."
         >
-          <dl className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-md border p-3">
-              <dt className="text-sm font-medium">Allocated pool</dt>
-              <dd className="mt-1 text-sm leading-5 text-muted-foreground">The budget assigned to a group or team.</dd>
-            </div>
-            <div className="rounded-md border p-3">
-              <dt className="text-sm font-medium">Remaining</dt>
-              <dd className="mt-1 text-sm leading-5 text-muted-foreground">Remaining is the allocated pool minus current headline spend.</dd>
-            </div>
-            <div className="rounded-md border p-3">
-              <dt className="text-sm font-medium">Percentage used</dt>
-              <dd className="mt-1 text-sm leading-5 text-muted-foreground">Headline spend divided by the allocated pool.</dd>
-            </div>
-            <div className="rounded-md border p-3">
-              <dt className="text-sm font-medium">Over Threshold</dt>
-              <dd className="mt-1 text-sm leading-5 text-muted-foreground">The “Over Threshold” count includes visible pools at or above 75%.</dd>
-            </div>
-          </dl>
-          <div className="mt-3 flex gap-2 rounded-md border bg-muted/30 p-3">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <p className="text-sm leading-5 text-muted-foreground">
-              <strong className="text-foreground">Important:</strong> Only pools and usage in your authorized scope contribute to Workspace Admin summary figures. A dash or loading value means the dashboard does not yet have a complete value for that field. Wait for loading to finish before comparing totals or percentage used.
-            </p>
-          </div>
+          <RuleList>
+            <li>Duplicate membership does not create duplicate people or duplicate spend.</li>
+            <li>
+              <strong className="text-foreground">Admin takes precedence over Member.</strong>
+            </li>
+            <li>If a person is both an Admin and a Member, the Team page shows only their Admin status.</li>
+          </RuleList>
+          <Callout label="Important">
+            Role precedence controls which status is displayed. It does not add the person’s spend more than once.
+          </Callout>
         </GuideSection>
 
         <GuideSection
-          icon={Bell}
-          title="Review automated email alerts"
-          description="Alerts track configured group or team allocated pools through the billing period."
+          id="comcast-workspace"
+          icon={Building2}
+          title="Legacy Comcast workspace"
+          description="Positive Comcast spend is reassigned when the user has an eligible non-Comcast workspace with positive spend."
         >
-          <BulletList>
-            <li>Automated emails evaluate configured pools at <strong className="text-foreground">50%, 75%, 90%, and 100%</strong>.</li>
-            <li>Each threshold is sent at most once per billing period.</li>
-            <li>A newly crossed threshold becomes eligible on the next successful check.</li>
-            <li>If delivery fails or email delivery is unavailable, that threshold remains retryable.</li>
-          </BulletList>
-          <div className="mt-3 rounded-md border bg-muted/30 p-3">
-            <p className="text-sm leading-5 text-muted-foreground">
-              <strong className="text-foreground">Email Activity is read-only</strong> and limited to authorized data. It shows the spend captured when an email was sent and the current spend, so those values can differ as usage changes.
-            </p>
-          </div>
+          <RuleList>
+            <li>
+              Comcast spend is transferred to the eligible non-Comcast workspace where that user has the highest positive spend.
+            </li>
+            <li>Admin still takes precedence over Member when the person has multiple role memberships.</li>
+            <li>The transferred spend is counted once; overlapping roles do not duplicate it.</li>
+            <li>
+              If the user has no positive spend in a non-Comcast workspace, their Comcast spend remains in the Comcast workspace.
+            </li>
+          </RuleList>
+          <Callout label="Important">
+            Comcast-only users are unchanged. The dashboard does not invent a destination when there is no eligible non-Comcast workspace with positive spend.
+          </Callout>
         </GuideSection>
 
         <GuideSection
-          icon={MousePointerClick}
-          title="Navigate the dashboard"
-          description="Move between scoped summaries, authorized details, and notification history."
+          id="multiple-workspaces"
+          icon={ShieldCheck}
+          title="Users in multiple workspaces"
+          description="Spend remains attached to the active workspace where it occurred."
         >
-          <ol className="space-y-3">
-            <Step number={1} title="Start on Dashboard">
-              Review scoped summary figures and group rows.
-            </Step>
-            <Step number={2} title="Select an authorized group">
-              Open its member and project details.
-            </Step>
-            <Step number={3} title="Adjust the date range">
-              Use the date-range control to change the period shown.
-            </Step>
-            <Step number={4} title="Open Email Activity">
-              Review notification history for the data you are authorized to see.
-            </Step>
-          </ol>
+          <RuleList>
+            <li>
+              Excluding the Comcast workspace, a user’s spend is assigned only to the workspace where that spend occurred.
+            </li>
+            <li>The same spend is never copied across the user’s other workspaces.</li>
+            <li>
+              The eligible non-Comcast workspace with the <strong className="text-foreground">highest positive spend</strong> is the user’s primary workspace.
+            </li>
+            <li>Legacy Comcast spend is assigned to that primary workspace only when one exists.</li>
+            <li>If eligible workspaces have equal spend, the workspace ID breaks the tie consistently.</li>
+          </RuleList>
+          <Callout label="Example">
+            If a user spends $80 in Workspace A and $20 in Workspace B, those amounts remain in A and B. Workspace A is primary, so any Comcast workspace spend is assigned to Workspace A.
+          </Callout>
         </GuideSection>
       </div>
 

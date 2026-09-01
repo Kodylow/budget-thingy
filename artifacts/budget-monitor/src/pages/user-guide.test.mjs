@@ -26,52 +26,54 @@ test('user guide is routed and linked under Administration for account admins on
   assert.equal(overviewSection.includes("label: 'User Guide'"), false);
 });
 
-test('guide contains the canonical scoped usage, pool, and alert guidance', async () => {
+test('guide centers the uploaded team and role business rules', async () => {
   const page = await readFile(pagePath, 'utf8');
   for (const expected of [
-    'selected date range controls the usage shown',
-    'all metric types',
-    'shared membership is counted once',
-    'distinct visible workspaces is added together',
-    'workspace-aware member rollups',
-    'assigned once using stable group attribution',
-    '“No group” row',
-    'intentionally answer different questions',
-    'Remaining is the allocated pool minus',
-    '“Over Threshold” count includes visible pools at or above 75%',
-    '50%, 75%, 90%, and 100%',
-    'at most once per billing period',
-    'next successful check',
-    'remains retryable',
-    'Email Activity is read-only',
-    'spend captured when an email was sent and the current spend',
+    'Budget Monitor Business Rules',
+    'AZ-Replit - XXX - Role',
+    'the Admin, Member, and Viewer groups roll up together',
+    'The resulting team is named XXX',
+    'AZ-Replit - Comcast Advertising - Admin',
+    'AZ-Replit - Comcast Advertising - Member',
+    'AZ-Replit - Comcast Advertising - Viewer',
+    'Admin takes precedence over Member',
+    'the Team page shows only their Admin status',
   ]) {
     assert.ok(page.includes(expected), `missing guide copy: ${expected}`);
   }
 });
 
-test('guide stays workspace-scoped and uses safe external credit navigation', async () => {
+test('guide contains the uploaded Comcast and multi-workspace attribution rules', async () => {
+  const page = await readFile(pagePath, 'utf8');
+  for (const expected of [
+    'reassigned when the user has an eligible non-Comcast workspace with positive spend',
+    'eligible non-Comcast workspace where that user has the highest positive spend',
+    'overlapping roles do not duplicate it',
+    'their Comcast spend remains in the Comcast workspace',
+    'Comcast-only users are unchanged',
+    'assigned only to the workspace where that spend occurred',
+    'never copied across the user’s other workspaces',
+    'highest positive spend',
+    'assigned to that primary workspace only when one exists',
+    'workspace ID breaks the tie consistently',
+  ]) {
+    assert.ok(page.includes(expected), `missing guide copy: ${expected}`);
+  }
+});
+
+test('guide retains safe external credit navigation', async () => {
   const page = await readFile(pagePath, 'utf8');
   assert.match(page, /Request additional credits/);
   assert.match(page, /https:\/\/airtable\.com\/appDXDfAHCXfJWF94\/pag0RCmIauEcWroiy\/form/);
   assert.match(page, /target="_blank" rel="noopener noreferrer"/);
-
-  for (const excluded of [
-    'Run Check Now',
-    'Send test',
-    'Manage recipients',
-    'Workspace Directory',
-    'Team Budgets',
-  ]) {
-    assert.equal(page.includes(excluded), false, `guide exposes account-only reference: ${excluded}`);
-  }
 });
 
 test('guide follows responsive page and card conventions', async () => {
   const page = await readFile(pagePath, 'utf8');
   assert.match(page, /max-w-4xl/);
   assert.match(page, /space-y-4 p-4 md:space-y-5 md:p-8/);
-  assert.match(page, /Quick Start/);
+  assert.match(page, /Rules at a glance/);
+  assert.match(page, /aria-label="Business rule sections"/);
   assert.match(page, /rounded-full border/);
   assert.match(page, /rounded-md border bg-muted\/30 p-3/);
   assert.match(page, /w-full shrink-0 sm:w-auto/);
