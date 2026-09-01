@@ -6,14 +6,24 @@ const pagePath = new URL('./user-guide.tsx', import.meta.url);
 const appPath = new URL('../App.tsx', import.meta.url);
 const shellPath = new URL('../components/app-shell.tsx', import.meta.url);
 
-test('workspace admin guide is routed and linked under Overview', async () => {
+test('user guide is routed and linked under Administration for account admins only', async () => {
   const [app, shell] = await Promise.all([
     readFile(appPath, 'utf8'),
     readFile(shellPath, 'utf8'),
   ]);
-  assert.match(app, /path="\/user-guide"/);
-  assert.match(app, /path="\/user-guide" component=\{UserGuide\}/);
-  assert.match(shell, /label: 'Overview'[\s\S]*label: 'User Guide'[\s\S]*show: true/);
+  assert.match(
+    app,
+    /function AccountAdminGuideRoute\(\)[\s\S]*isAccountAdmin \? <UserGuide \/> : <Redirect to="\/" \/>/,
+  );
+  assert.match(app, /path="\/user-guide" component=\{AccountAdminGuideRoute\}/);
+  assert.match(
+    shell,
+    /label: 'Administration'[\s\S]*label: 'User Guide'[\s\S]*show: isAccountAdmin/,
+  );
+  const overviewSection = shell.match(
+    /label: 'Overview',[\s\S]*?items: \[([\s\S]*?)\][\s\S]*?\},/,
+  )?.[1] ?? '';
+  assert.equal(overviewSection.includes("label: 'User Guide'"), false);
 });
 
 test('guide contains the canonical scoped usage, pool, and alert guidance', async () => {

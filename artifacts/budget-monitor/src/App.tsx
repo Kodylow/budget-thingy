@@ -46,11 +46,15 @@ function Router() {
     return canOpen ? <ClusterDetail /> : <Redirect to="/" />;
   }
 
+  function AccountAdminGuideRoute() {
+    return isAccountAdmin ? <UserGuide /> : <Redirect to="/" />;
+  }
+
   return (
     <AppShell>
       <Switch>
         <Route path="/" component={Dashboard} />
-        <Route path="/user-guide" component={UserGuide} />
+        <Route path="/user-guide" component={AccountAdminGuideRoute} />
         <Route path="/alerts" component={Alerts} />
         {isAccountWide && <Route path="/trends" component={Trends} />}
         {isAccountAdmin && <Route path="/settings" component={Settings} />}

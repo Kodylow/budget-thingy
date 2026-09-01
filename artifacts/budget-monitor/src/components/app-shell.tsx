@@ -69,7 +69,6 @@ export function AppShell({ children }: AppShellProps) {
       label: 'Overview',
       items: [
         { path: '/', label: 'Dashboard', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
-        { path: '/user-guide', label: 'User Guide', icon: BookOpen, show: true, testId: 'nav-user-guide' },
       ],
     },
     {
@@ -81,6 +80,7 @@ export function AppShell({ children }: AppShellProps) {
     {
       label: 'Administration',
       items: [
+        { path: '/user-guide', label: 'User Guide', icon: BookOpen, show: isAccountAdmin, testId: 'nav-user-guide' },
         { path: '/settings', label: 'Settings', icon: Settings, show: isAccountAdmin, testId: 'nav-settings' },
         { path: '/trends', label: 'Trends', icon: TrendingUp, show: isAccountWide, testId: 'nav-trends' },
         { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
