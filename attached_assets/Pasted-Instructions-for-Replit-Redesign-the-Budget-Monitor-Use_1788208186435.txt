@@ -1,0 +1,59 @@
+Instructions for Replit
+
+Redesign the Budget Monitor User Guide page to make it concise, visually clean, and easy for a first-time user to scan and understand. Do not change the existing instructional content or meaning at this stage; focus on the UI, organization, and presentation.
+
+Overall layout
+
+Use a clean, single-page help-center style layout rather than displaying the guide as one long document.
+Keep the main content in a centered container with a comfortable max width. Avoid stretching text across the full screen.
+Reduce unnecessary whitespace while maintaining clear separation between sections.
+Use the same typography, colors, buttons, border radius, and other design patterns as the rest of the Budget Monitor.
+Avoid oversized headings, large hero sections, gradients, or decorative elements that make the guide feel like a marketing page.
+
+Top of page
+
+Use a compact header with the title Budget Monitor User Guide and a short one-line description underneath.
+Directly below the header, add a small Quick Start section that surfaces the most important information a new user needs to know.
+If the guide is long enough to warrant it, add a compact Jump to navigation row with links to the major sections of the guide.
+
+Guide sections
+
+Break the existing content into clearly defined sections based on the tasks/actions users need to complete.
+Present each major section in a subtle bordered card or clearly separated content block.
+Each section should have:
+a short, descriptive heading
+a one-sentence explanation when needed
+numbered steps for sequential instructions
+bullets for supporting information
+Keep paragraphs short. Avoid dense blocks of text.
+Use bold text selectively to highlight button names, navigation labels, field names, and important actions.
+
+Progressive disclosure
+
+Keep the most commonly needed instructions visible by default.
+Put secondary details, troubleshooting information, definitions, or less frequently needed guidance into expandable accordions where appropriate.
+Do not hide critical instructions inside accordions.
+
+Visual hierarchy
+
+Make the hierarchy immediately clear: Page Title → Section → Step → Supporting Detail.
+Use numbered circles or another subtle step indicator for multi-step processes.
+Use small callout boxes for Note, Important, or Tip information instead of embedding these details within paragraphs.
+Keep callouts visually subtle and consistent.
+
+Navigation
+
+If the guide contains several sections, add a sticky section navigation on desktop so users can quickly move between topics.
+Highlight the section currently being viewed.
+On smaller screens, collapse this into a simple Jump to section control rather than using a persistent sidebar.
+Add a small Back to top link at the end of longer sections if useful.
+
+Usability
+
+The page should be understandable through headings and highlighted actions even if someone does not read every sentence.
+Prioritize the question: “What does the user need to do?”
+Do not repeat information simply to fill out sections.
+Make interactive elements visually distinct from informational text.
+Ensure the layout is responsive and works well on standard laptop screens without excessive scrolling caused by oversized UI elements.
+
+Important: Preserve all existing Budget Monitor functionality and navigation. This update should only redesign the User Guide experience and should not change the underlying Budget Monitor functionality.

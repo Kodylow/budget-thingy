@@ -13,6 +13,7 @@ import Trends from '@/pages/trends';
 import WorkspaceAdmins from '@/pages/workspace-admins';
 import WorkspaceDirectory from '@/pages/workspace-directory';
 import TeamBudgets from '@/pages/team-budgets';
+import UserGuide from '@/pages/user-guide';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
@@ -49,6 +50,7 @@ function Router() {
     <AppShell>
       <Switch>
         <Route path="/" component={Dashboard} />
+        <Route path="/user-guide" component={UserGuide} />
         <Route path="/alerts" component={Alerts} />
         {isAccountWide && <Route path="/trends" component={Trends} />}
         {isAccountAdmin && <Route path="/settings" component={Settings} />}

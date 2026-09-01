@@ -13,6 +13,7 @@ import {
   TrendingUp,
   BookUser,
   WalletCards,
+  BookOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -68,6 +69,7 @@ export function AppShell({ children }: AppShellProps) {
       label: 'Overview',
       items: [
         { path: '/', label: 'Dashboard', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
+        { path: '/user-guide', label: 'User Guide', icon: BookOpen, show: true, testId: 'nav-user-guide' },
       ],
     },
     {
