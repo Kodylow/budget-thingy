@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRoute, Link } from 'wouter';
 import {
   useGetGroupDetail,
@@ -7,17 +7,23 @@ import {
   getGetGroupProjectsQueryKey,
   getListGroupsQueryKey,
   getGetSummaryQueryKey,
+  useListVisibleWorkspaceMembers,
+  getListVisibleWorkspaceMembersQueryKey,
+  type WorkspaceMemberBudget,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, RefreshCw, DollarSign, Wallet, TrendingUp, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, RefreshCw, DollarSign, Wallet, TrendingUp, AlertTriangle, AlertCircle } from 'lucide-react';
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GroupUserExport } from '@/components/group-user-export';
+import { useCanWrite } from '@/components/auth-context';
+import { MemberBudgetInput } from '@/components/member-budget-input';
+import { indexMemberBudgets } from '@/lib/member-budgets';
 
 export default function GroupDetail() {
   const [match, params] = useRoute('/groups/:groupId');
@@ -27,6 +33,7 @@ export default function GroupDetail() {
   const queryParams = { rangeType, ...(rangeType === 'custom' ? { startDate, endDate } : {}) };
 
   const queryClient = useQueryClient();
+  const canWrite = useCanWrite();
 
   // When the user navigates away from the group detail page, the in-memory
   // member-usage cache on the server may have accumulated more data than what
@@ -59,6 +66,29 @@ export default function GroupDetail() {
       enabled: !!groupId,
     }
   });
+  const workspaceId = data?.group.workspaceId;
+  const workspaceMembersQuery = useListVisibleWorkspaceMembers(workspaceId as string, {
+    query: {
+      enabled: !!workspaceId,
+      queryKey: workspaceId
+        ? getListVisibleWorkspaceMembersQueryKey(workspaceId)
+        : ['workspaceMembers', ''],
+      refetchInterval: (query) => {
+        const response = query.state.data;
+        if (!response || response.connector.status !== 'available') return false;
+        return response.members.some(
+          (member) => member.budgetUsd !== null && member.usageUsd === null,
+        ) ? 8000 : false;
+      },
+    },
+  });
+  const workspaceMembersMap = useMemo(
+    () => indexMemberBudgets<WorkspaceMemberBudget>(
+      data?.members ?? [],
+      workspaceMembersQuery.data?.members ?? [],
+    ),
+    [data?.members, workspaceMembersQuery.data],
+  );
 
   if (isLoading && !data) {
     return (
@@ -136,6 +166,13 @@ export default function GroupDetail() {
     const bSpend = b.spendLoaded ? (b.spendUsd || 0) : -1;
     return bSpend - aSpend;
   });
+  const connector = workspaceMembersQuery.data?.connector;
+  const connectorUnavailable =
+    workspaceMembersQuery.isError ||
+    connector?.status === 'unavailable' ||
+    connector?.status === 'error';
+  const mutationUnavailable =
+    canWrite && connector?.status === 'available' && !connector.canWrite;
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
@@ -195,6 +232,22 @@ export default function GroupDetail() {
         })}
       </div>
 
+      {(connectorUnavailable || mutationUnavailable) && (
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm px-4 py-3 rounded-md flex items-start gap-3">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">
+              {mutationUnavailable ? 'Budget editing unavailable' : 'Member budgets unavailable'}
+            </p>
+            <p className="text-xs opacity-90 mt-0.5">
+              A workspace administrator must enable the approved Replit integration
+              with <code>write:budgets</code> permission. No API key or token can be
+              entered here.
+            </p>
+          </div>
+        </div>
+      )}
+
       <Tabs defaultValue="members">
       <Card>
         <CardHeader>
@@ -217,7 +270,7 @@ export default function GroupDetail() {
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Allocated Budget</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Ind. Budget</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting / Non-AI</th>
@@ -226,7 +279,10 @@ export default function GroupDetail() {
                 </tr>
               </thead>
               <tbody>
-                {sortedMembers.map(member => (
+                {sortedMembers.map(member => {
+                  const budget = workspaceMembersMap.get(member.userId);
+                  const hasConnector = connector?.status === 'available';
+                  return (
                   <tr key={member.userId} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-between">
@@ -241,16 +297,16 @@ export default function GroupDetail() {
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <div className="flex flex-col items-end gap-1">
-                        <span className="text-sm font-mono tabular-nums">
-                          {member.allocatedBudgetUsd !== null && member.allocatedBudgetUsd !== undefined ? `$${member.allocatedBudgetUsd.toFixed(2)}` : '—'}
-                        </span>
-                        {member.budgetSource && (
-                          <Badge variant="secondary" className="text-[9px] h-4 px-1 py-0 uppercase bg-muted/50">
-                            {member.budgetSource.replace('_', ' ')}
-                          </Badge>
-                        )}
-                      </div>
+                      {workspaceMembersQuery.isLoading ? (
+                        <div className="flex justify-end"><LoadingCell /></div>
+                      ) : hasConnector && workspaceId ? (
+                        <MemberBudgetInput
+                          workspaceId={workspaceId}
+                          userId={member.userId}
+                          currentBudget={budget?.budgetUsd ?? null}
+                          canWrite={canWrite && connector.canWrite}
+                        />
+                      ) : <span className="text-sm text-muted-foreground">—</span>}
                     </td>
                     <td className="py-3 px-4 text-right">
                       {!member.spendLoaded ? <div className="flex justify-end"><LoadingCell /></div> : (
@@ -264,9 +320,11 @@ export default function GroupDetail() {
                       {member.spendLoaded ? `$${(member.nonAiSpendUsd ?? 0).toFixed(2)}` : '—'}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      {!member.spendLoaded || member.allocatedBudgetUsd === null || member.allocatedBudgetUsd === undefined ? <span className="text-sm text-muted-foreground">—</span> : (
-                        <span className={`text-sm font-mono tabular-nums ${member.remainingUsd !== undefined && member.remainingUsd !== null && member.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
-                          ${member.remainingUsd?.toFixed(2) ?? '0.00'}
+                      {workspaceMembersQuery.isLoading ? (
+                        <div className="flex justify-end"><LoadingCell /></div>
+                      ) : !hasConnector || budget?.remainingUsd === null || budget?.remainingUsd === undefined ? <span className="text-sm text-muted-foreground">—</span> : (
+                        <span className={`text-sm font-mono tabular-nums ${budget.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
+                          {budget.remainingUsd < 0 ? '-' : ''}${Math.abs(budget.remainingUsd).toFixed(2)}
                         </span>
                       )}
                     </td>
@@ -278,7 +336,8 @@ export default function GroupDetail() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
 
                 {unattributedSpendUsd > 0 && (
                   <tr className="border-b border-border/50 bg-muted/10">
@@ -310,7 +369,7 @@ export default function GroupDetail() {
                   <td className="py-3 px-4 text-sm">Group Total</td>
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
-                      {group.budgetUsd !== null && group.budgetUsd !== undefined ? `$${group.budgetUsd.toFixed(2)}` : '—'}
+                      —
                     </span>
                   </td>
                   <td className="py-3 px-4 text-right">
@@ -325,9 +384,7 @@ export default function GroupDetail() {
                     {isComplete ? `$${members.reduce((sum, member) => sum + (member.nonAiSpendUsd ?? 0), 0).toFixed(2)}` : '—'}
                   </td>
                   <td className="py-3 px-4 text-right">
-                    <span className={`text-sm font-mono tabular-nums ${group.remainingUsd !== undefined && group.remainingUsd !== null && group.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
-                      {displaySpendLoaded && group.remainingUsd !== undefined && group.remainingUsd !== null ? `$${group.remainingUsd.toFixed(2)}` : '—'}
-                    </span>
+                    <span className="text-sm text-muted-foreground">—</span>
                   </td>
                   <td className="py-3 px-4 text-right flex justify-end">
                     {displaySpendLoaded && group.budgetUsd !== null && group.budgetUsd !== undefined ? (

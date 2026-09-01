@@ -883,6 +883,152 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /directory/workspaces:
+    get:
+      operationId: listVisibleWorkspaces
+      tags: [directory]
+      summary: List workspaces visible to the current operator
+      description: Account-wide operators see every workspace; workspace administrators see only workspaces they administer.
+      responses:
+        "200":
+          description: Visible workspace list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VisibleWorkspace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/members:
+    get:
+      operationId: listVisibleWorkspaceMembers
+      tags: [directory, budgets]
+      summary: List members and Agent budgets for a visible workspace
+      description: >
+        Usage is always for the current Replit billing cycle and is independent
+        of the dashboard reporting range. Budget connector failures are returned
+        explicitly and never fall back to the Enterprise API key.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      responses:
+        "200":
+          description: Workspace member budget view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMembersResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found or not visible
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/members/{userId}/budget:
+    put:
+      operationId: setWorkspaceMemberBudget
+      tags: [directory, budgets]
+      summary: Set or replace a member's desired Agent budget
+      description: Account-wide operators only. The Replit connector is the sole credential source.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - $ref: "#/components/parameters/UserIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceMemberBudgetInput"
+      responses:
+        "200":
+          description: Desired budget applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMemberBudgetMutation"
+        "400":
+          description: Invalid desired budget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "502":
+          description: Replit budget connector request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Replit budget connector is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: clearWorkspaceMemberBudget
+      tags: [directory, budgets]
+      summary: Clear a member's desired Agent budget
+      description: Account-wide operators only. Clearing an already-unset budget is idempotent.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - $ref: "#/components/parameters/UserIdPath"
+      responses:
+        "200":
+          description: Desired budget cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMemberBudgetMutation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "502":
+          description: Replit budget connector request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Replit budget connector is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /directory/groups:
     get:
       operationId: listDirectoryGroups
@@ -1076,6 +1222,20 @@ components:
           schema:
             $ref: "#/components/schemas/ApiError"
   parameters:
+    WorkspaceIdPath:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     GroupIdPath:
       name: groupId
       in: path
@@ -1751,6 +1911,89 @@ components:
         amountUsd:
           type: number
           exclusiveMinimum: 0
+    VisibleWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, memberCount]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        memberCount:
+          type: integer
+          minimum: 0
+    BudgetConnectorState:
+      type: object
+      required: [status, canWrite, error]
+      properties:
+        status:
+          type: string
+          enum: [available, unavailable, error]
+        canWrite:
+          type: boolean
+          description: True only when the approved connector explicitly grants write:budgets.
+        error:
+          type: [string, "null"]
+    WorkspaceMemberBudget:
+      type: object
+      required: [userId, username, name, email, role, isDisabled, budgetUsd, usageUsd, remainingUsd]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        name:
+          type: [string, "null"]
+        email:
+          type: string
+        role:
+          type: string
+        isDisabled:
+          type: boolean
+        budgetUsd:
+          type: [number, "null"]
+          description: Desired Agent budget; null means unset.
+        usageUsd:
+          type: [number, "null"]
+          description: Agent usage in the current billing cycle.
+        remainingUsd:
+          type: [number, "null"]
+          description: Budget minus current-cycle Agent usage; may be negative and is null when unset.
+    WorkspaceMembersResponse:
+      type: object
+      required: [workspaceId, workspaceName, billingPeriod, connector, members]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        billingPeriod:
+          type: string
+          enum: [current]
+        connector:
+          $ref: "#/components/schemas/BudgetConnectorState"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceMemberBudget"
+    WorkspaceMemberBudgetInput:
+      type: object
+      additionalProperties: false
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+    WorkspaceMemberBudgetMutation:
+      type: object
+      required: [workspaceId, userId, budgetUsd]
+      properties:
+        workspaceId:
+          type: string
+        userId:
+          type: string
+        budgetUsd:
+          type: [number, "null"]
     TeamBudget:
       type: object
       required: [teamName, amountUsd, workspaceIds]

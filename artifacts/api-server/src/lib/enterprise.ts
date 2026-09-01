@@ -250,6 +250,20 @@ interface UsageMetricEntry {
   costUsd: number;
 }
 
+export function sumAgentUsageMetrics(
+  metrics: UsageMetricEntry[] | undefined,
+): number {
+  return (metrics ?? [])
+    .filter((metric) => {
+      const id = metric.id.toLowerCase();
+      const name = metric.name.toLowerCase();
+      return id.includes("ai_agent") ||
+        id.includes("ai-agent") ||
+        (metric.category.toLowerCase() === "ai" && name.includes("agent"));
+    })
+    .reduce((sum, metric) => sum + metric.costUsd, 0);
+}
+
 interface UsageGroupEntry {
   key: { userId?: string; workspaceId?: string; projectId?: string; date?: string };
   totalCostUsd: number;
@@ -1009,6 +1023,7 @@ function aggregateAccountUsage(rows: UsageSyncChunk[]): AccountUsage {
 
 function aggregateMemberUsage(rows: UsageSyncChunk[]): MemberUsage {
   const byUser = new Map<string, number>();
+  const agentByUser = new Map<string, number>();
   let attributableTotalCostUsd = 0;
   let unattributableTotalCostUsd = 0;
   let totalCostUsd = 0;
@@ -1020,12 +1035,20 @@ function aggregateMemberUsage(rows: UsageSyncChunk[]): MemberUsage {
     for (const entry of payload.groups) {
       if (entry.key.userId) {
         byUser.set(entry.key.userId, (byUser.get(entry.key.userId) ?? 0) + entry.totalCostUsd);
+        if (Array.isArray(entry.metrics)) {
+          const agentSpend = sumAgentUsageMetrics(entry.metrics);
+          agentByUser.set(
+            entry.key.userId,
+            (agentByUser.get(entry.key.userId) ?? 0) + agentSpend,
+          );
+        }
       }
     }
   }
   return {
     fetchedAt: Math.max(...rows.map((row) => row.completedAt.getTime())),
     byUser,
+    agentByUser,
     attributableTotalCostUsd,
     unattributableTotalCostUsd,
     totalCostUsd,
@@ -1701,6 +1724,7 @@ export function __setWsSpendForTests(
     attributableTotalCostUsd?: number;
     unattributableTotalCostUsd?: number;
     totalCostUsd?: number;
+    agentByUser?: Map<string, number>;
   },
 ): void {
   const key = `${rangeKey}|${wsId}`;
@@ -1717,6 +1741,9 @@ export function __setWsSpendForTests(
     wsSpendCache.set(key, {
       fetchedAt,
       byUser: new Map(byUser),
+      agentByUser: totals?.agentByUser
+        ? new Map(totals.agentByUser)
+        : undefined,
       attributableTotalCostUsd,
       unattributableTotalCostUsd,
       totalCostUsd:
@@ -1972,6 +1999,8 @@ export async function refreshAllGroupSpends(
 export interface MemberUsage {
   fetchedAt: number;
   byUser: Map<string, number>;
+  /** Agent-only spend from the metric breakdown, when the source supplied it. */
+  agentByUser?: Map<string, number>;
   attributableTotalCostUsd: number;
   unattributableTotalCostUsd: number;
   totalCostUsd: number;
@@ -2542,6 +2571,33 @@ export function getWorkspaceMemberUsage(
   rangeKey: string,
 ): MemberUsage | undefined {
   return wsSpendCache.get(`${rangeKey}|${wsId}`);
+}
+
+export function isWorkspaceMemberUsageComplete(
+  wsId: string,
+  rangeKey: string,
+): boolean {
+  const metadata = syncMetadata.get(syncId("workspace_member", rangeKey, wsId));
+  return metadata?.status === "success";
+}
+
+export function __setWorkspaceMemberUsageStatusForTests(
+  wsId: string,
+  rangeKey: string,
+  status: UsageSyncStatus | null,
+): void {
+  if (status === null) {
+    syncMetadata.delete(syncId("workspace_member", rangeKey, wsId));
+    return;
+  }
+  const previous = syncMetadata.get(syncId("workspace_member", rangeKey, wsId));
+  syncMetadata.set(syncId("workspace_member", rangeKey, wsId), {
+    syncedThrough: previous?.syncedThrough ?? Date.now(),
+    completedAt: Date.now(),
+    isClosed: previous?.isClosed ?? false,
+    status,
+    error: status === "success" ? null : `test ${status}`,
+  });
 }
 
 export function queueWsSpendFetch(

@@ -511,6 +511,82 @@ export interface GroupBudgetInput {
   amountUsd: number;
 }
 
+export interface VisibleWorkspace {
+  workspaceId: string;
+  workspaceName: string;
+  /** @minimum 0 */
+  memberCount: number;
+}
+
+export type BudgetConnectorStateStatus = typeof BudgetConnectorStateStatus[keyof typeof BudgetConnectorStateStatus];
+
+
+export const BudgetConnectorStateStatus = {
+  available: 'available',
+  unavailable: 'unavailable',
+  error: 'error',
+} as const;
+
+export interface BudgetConnectorState {
+  status: BudgetConnectorStateStatus;
+  /** True only when the approved connector explicitly grants write:budgets. */
+  canWrite: boolean;
+  /** @nullable */
+  error: string | null;
+}
+
+export interface WorkspaceMemberBudget {
+  userId: string;
+  username: string;
+  /** @nullable */
+  name: string | null;
+  email: string;
+  role: string;
+  isDisabled: boolean;
+  /**
+     * Desired Agent budget; null means unset.
+     * @nullable
+     */
+  budgetUsd: number | null;
+  /**
+     * Agent usage in the current billing cycle.
+     * @nullable
+     */
+  usageUsd: number | null;
+  /**
+     * Budget minus current-cycle Agent usage; may be negative and is null when unset.
+     * @nullable
+     */
+  remainingUsd: number | null;
+}
+
+export type WorkspaceMembersResponseBillingPeriod = typeof WorkspaceMembersResponseBillingPeriod[keyof typeof WorkspaceMembersResponseBillingPeriod];
+
+
+export const WorkspaceMembersResponseBillingPeriod = {
+  current: 'current',
+} as const;
+
+export interface WorkspaceMembersResponse {
+  workspaceId: string;
+  workspaceName: string;
+  billingPeriod: WorkspaceMembersResponseBillingPeriod;
+  connector: BudgetConnectorState;
+  members: WorkspaceMemberBudget[];
+}
+
+export interface WorkspaceMemberBudgetInput {
+  /** @exclusiveMinimum 0 */
+  amountUsd: number;
+}
+
+export interface WorkspaceMemberBudgetMutation {
+  workspaceId: string;
+  userId: string;
+  /** @nullable */
+  budgetUsd: number | null;
+}
+
 export interface TeamBudget {
   teamName: string;
   /** @nullable */

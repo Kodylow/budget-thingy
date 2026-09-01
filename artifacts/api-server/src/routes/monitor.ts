@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { eq, desc } from "drizzle-orm";
 import {
   db,
@@ -46,6 +46,11 @@ import {
   GetTeamBudgetHistoryResponse,
   GetTeamBudgetSyncStatusResponse,
   RefreshTeamBudgetsResponse,
+  ListVisibleWorkspacesResponse,
+  ListVisibleWorkspaceMembersResponse,
+  SetWorkspaceMemberBudgetBody,
+  SetWorkspaceMemberBudgetResponse,
+  ClearWorkspaceMemberBudgetResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -67,6 +72,7 @@ import {
   getWsSpendByUser,
   applyComcastReAttribution,
   getWorkspaceMemberUsage,
+  isWorkspaceMemberUsageComplete,
   queueProjectUsageFetch,
   getProjectUsage,
   queueProjectTitlesFetch,
@@ -123,6 +129,12 @@ import {
   getVisibleEffectiveTeamBudgetMap,
   refreshTeamBudgetSnapshot,
 } from "../lib/team-budgets";
+import {
+  clearReplitMemberBudget,
+  listReplitMemberBudgets,
+  ReplitBudgetConnectorError,
+  setReplitMemberBudget,
+} from "../lib/replit-budgets";
 
 const router: IRouter = Router();
 
@@ -2926,6 +2938,180 @@ router.get("/users/activity", async (req, res): Promise<void> => {
 });
 
 // ---------- Directory members ----------
+
+router.get("/directory/workspaces", async (req, res): Promise<void> => {
+  try {
+    const dir = await getDirectory();
+    const allowed = isAccountWide(req.authz)
+      ? null
+      : new Set(req.authz!.workspaceIds);
+    const workspaces = [...dir.workspaces.values()]
+      .filter((workspace) => !allowed || allowed.has(workspace.id))
+      .map((workspace) => ({
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        memberCount: [...dir.members.values()].filter((member) =>
+          member.workspaces.has(workspace.id),
+        ).length,
+      }))
+      .sort((a, b) =>
+        a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: "base" }) ||
+        a.workspaceId.localeCompare(b.workspaceId),
+      );
+    res.json(ListVisibleWorkspacesResponse.parse(workspaces));
+  } catch (err) {
+    req.log.error({ err }, "listVisibleWorkspaces failed");
+    res.status(503).json({ error: "Directory unavailable" });
+  }
+});
+
+router.get(
+  "/directory/workspaces/:workspaceId/members",
+  async (req, res): Promise<void> => {
+    try {
+      const workspaceId = String(req.params["workspaceId"]);
+      const dir = await getDirectory();
+      const workspace = dir.workspaces.get(workspaceId);
+      if (!workspace || (!isAccountWide(req.authz) && !req.authz!.workspaceIds.includes(workspaceId))) {
+        res.status(404).json({ error: "Workspace not found" });
+        return;
+      }
+      const snapshot = await listReplitMemberBudgets(workspaceId);
+      const billingRange = resolveRange("billing");
+      queueWsSpendFetch(workspaceId, billingRange, 0);
+      const workspaceUsage = getWorkspaceMemberUsage(
+        workspaceId,
+        billingRange.key,
+      );
+      const workspaceUsageComplete = isWorkspaceMemberUsageComplete(
+        workspaceId,
+        billingRange.key,
+      );
+      const seen = new Set<string>();
+      const members = [...dir.members.values()]
+        .flatMap((member) => {
+          const membership = member.workspaces.get(workspaceId);
+          // Defensive identity deduplication protects against replayed/duplicate
+          // memberships in upstream directory snapshots.
+          if (!membership || seen.has(member.userId)) return [];
+          seen.add(member.userId);
+          const budget = snapshot.budgets.get(member.userId);
+          const budgetUsd = budget?.budgetUsd ?? null;
+          // One workspace_member observation avoids role-subgroup duplicates.
+          // Only its Agent metric is used, always for the current billing range.
+          const usageUsd = !workspaceUsage || !workspaceUsageComplete
+            ? null
+            : !workspaceUsage.byUser.has(member.userId)
+              ? 0
+              : (workspaceUsage.agentByUser?.get(member.userId) ?? null);
+          return [{
+            userId: member.userId,
+            username: member.username,
+            name: member.name,
+            email: member.email,
+            role: membership.role,
+            isDisabled: membership.isDisabled,
+            budgetUsd,
+            usageUsd,
+            // Do not clamp: a negative value is meaningful overspend.
+            remainingUsd:
+              budgetUsd == null || usageUsd == null ? null : budgetUsd - usageUsd,
+          }];
+        })
+        .sort((a, b) =>
+          a.username.localeCompare(b.username, undefined, { sensitivity: "base" }) ||
+          a.userId.localeCompare(b.userId),
+        );
+      res.json(ListVisibleWorkspaceMembersResponse.parse({
+        workspaceId,
+        workspaceName: workspace.name,
+        billingPeriod: "current",
+        connector: {
+          status: snapshot.status,
+          canWrite: snapshot.canWrite,
+          error: snapshot.error,
+        },
+        members,
+      }));
+    } catch (err) {
+      req.log.error({ err }, "listVisibleWorkspaceMembers failed");
+      res.status(503).json({ error: "Directory unavailable" });
+    }
+  },
+);
+
+async function validateWorkspaceMember(
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const dir = await getDirectory();
+  return dir.workspaces.has(workspaceId) &&
+    dir.members.get(userId)?.workspaces.has(workspaceId) === true;
+}
+
+function sendBudgetConnectorError(
+  error: unknown,
+  res: Response,
+): void {
+  if (error instanceof ReplitBudgetConnectorError) {
+    res.status(error.kind === "unavailable" ? 503 : 502).json({ error: error.message });
+    return;
+  }
+  res.status(502).json({
+    error: error instanceof Error ? error.message : "Replit budgets API request failed",
+  });
+}
+
+router.put(
+  "/directory/workspaces/:workspaceId/members/:userId/budget",
+  requireAccountOperator,
+  async (req, res): Promise<void> => {
+    const parsed = SetWorkspaceMemberBudgetBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.message });
+      return;
+    }
+    const workspaceId = String(req.params["workspaceId"]);
+    const userId = String(req.params["userId"]);
+    try {
+      if (!(await validateWorkspaceMember(workspaceId, userId))) {
+        res.status(404).json({ error: "Workspace member not found" });
+        return;
+      }
+      await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
+      res.json(SetWorkspaceMemberBudgetResponse.parse({
+        workspaceId,
+        userId,
+        budgetUsd: parsed.data.amountUsd,
+      }));
+    } catch (error) {
+      sendBudgetConnectorError(error, res);
+    }
+  },
+);
+
+router.delete(
+  "/directory/workspaces/:workspaceId/members/:userId/budget",
+  requireAccountOperator,
+  async (req, res): Promise<void> => {
+    const workspaceId = String(req.params["workspaceId"]);
+    const userId = String(req.params["userId"]);
+    try {
+      if (!(await validateWorkspaceMember(workspaceId, userId))) {
+        res.status(404).json({ error: "Workspace member not found" });
+        return;
+      }
+      await clearReplitMemberBudget(workspaceId, userId);
+      res.json(ClearWorkspaceMemberBudgetResponse.parse({
+        workspaceId,
+        userId,
+        budgetUsd: null,
+      }));
+    } catch (error) {
+      sendBudgetConnectorError(error, res);
+    }
+  },
+);
 
 router.get("/directory/groups", requireAccountAdmin, async (req, res): Promise<void> => {
   if (!isConfigured()) {

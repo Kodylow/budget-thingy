@@ -21,11 +21,13 @@ import {
   maybeBootstrapEditor,
 } from "../lib/authz.ts";
 import { setSendEmailOverrideForTests } from "../lib/email.ts";
+import { setReplitBudgetTransportForTests } from "../lib/replit-budgets.ts";
 import {
   __setDirectoryCacheForTests,
   __setAccountUsageForTests,
   __setMemberUsageForTests,
   __setWsSpendForTests,
+  __setWorkspaceMemberUsageStatusForTests,
   __setProjectUsageForTests,
   parseIsAccountAdmin,
   resolveRange,
@@ -84,7 +86,41 @@ test.before(async () => {
     deliveredTo: to,
     messageId: "test-message",
   }));
+  setReplitBudgetTransportForTests(async (path, init) => {
+    if (init.method === "GET") {
+      const workspaceId = new URL(path, "https://connector.invalid").searchParams.get("workspaceId");
+      return new Response(JSON.stringify({
+        data: workspaceId === "ws-1"
+          ? [
+              { workspaceId, userId: "ws1admin", amountUsd: 20 },
+              { workspaceId, userId: "plain", amountUsd: null },
+            ]
+          : [],
+        pagination: { hasMore: false, cursor: null },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(null, { status: 204 });
+  });
   __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+  __setMemberUsageForTests(
+    resolveRange("billing").key,
+    new Map([
+      ["g-ws1-a", new Map([["ws1admin", 25], ["plain", 2]])],
+      ["g-ws2-a", new Map([["ws2user", 4]])],
+    ]),
+    new Map([
+      ["g-ws1-a", 0],
+      ["g-ws2-a", 0],
+    ]),
+  );
+  __setWsSpendForTests(
+    "ws-1",
+    resolveRange("billing").key,
+    new Map([["ws1admin", 90], ["plain", 12]]),
+    {
+      agentByUser: new Map([["ws1admin", 25], ["plain", 2]]),
+    },
+  );
   __setMemberUsageForTests(
     "custom:2026-05-20:2026-08-11",
     new Map([
@@ -217,6 +253,7 @@ test.after(async () => {
   __setProjectUsageForTests("g-ws2-a", "custom:2026-05-20:2026-08-11", null);
   setAuthorizationResolver(null);
   setSendEmailOverrideForTests(null);
+  setReplitBudgetTransportForTests(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
   server?.close();
 });
@@ -457,6 +494,77 @@ test("workspace admin budgets are limited to visible groups", async () => {
   const { status, json } = await req("/budgets", { user: "ws1admin" });
   assert.equal(status, 200);
   assert.deepEqual(json.map((budget) => budget.groupId), ["g-ws1-a"]);
+});
+
+test("workspace member budget reads are scoped and preserve unset and negative remaining", async () => {
+  const visible = await req("/directory/workspaces/ws-1/members", { user: "ws1admin" });
+  assert.equal(visible.status, 200);
+  assert.equal(visible.json.billingPeriod, "current");
+  assert.deepEqual(visible.json.connector, {
+    status: "available",
+    canWrite: true,
+    error: null,
+  });
+  assert.equal(visible.json.members.find((member) => member.userId === "ws1admin").remainingUsd, -5);
+  assert.equal(visible.json.members.find((member) => member.userId === "plain").remainingUsd, null);
+
+  const hidden = await req("/directory/workspaces/ws-2/members", { user: "ws1admin" });
+  assert.equal(hidden.status, 404);
+  assert.equal(hidden.json.error, "Workspace not found");
+});
+
+test("partial workspace usage never invents zero usage or remaining", async () => {
+  const rangeKey = resolveRange("billing").key;
+  __setWorkspaceMemberUsageStatusForTests("ws-1", rangeKey, "partial");
+  const partial = await req("/directory/workspaces/ws-1/members", { user: "ws1admin" });
+  assert.equal(partial.status, 200);
+  const member = partial.json.members.find((row) => row.userId === "ws1admin");
+  assert.equal(member.usageUsd, null);
+  assert.equal(member.remainingUsd, null);
+  __setWsSpendForTests(
+    "ws-1",
+    rangeKey,
+    new Map([["ws1admin", 90], ["plain", 12]]),
+    { agentByUser: new Map([["ws1admin", 25], ["plain", 2]]) },
+  );
+});
+
+test("legacy workspace usage without successful sync metadata remains unknown", async () => {
+  const rangeKey = resolveRange("billing").key;
+  __setWorkspaceMemberUsageStatusForTests("ws-1", rangeKey, null);
+  const legacy = await req("/directory/workspaces/ws-1/members", { user: "ws1admin" });
+  assert.equal(legacy.status, 200);
+  const member = legacy.json.members.find((row) => row.userId === "ws1admin");
+  assert.equal(member.usageUsd, null);
+  assert.equal(member.remainingUsd, null);
+  __setWsSpendForTests(
+    "ws-1",
+    rangeKey,
+    new Map([["ws1admin", 90], ["plain", 12]]),
+    { agentByUser: new Map([["ws1admin", 25], ["plain", 2]]) },
+  );
+});
+
+test("workspace admins cannot mutate member budgets while account operators can set and clear", async () => {
+  assert.equal((await req("/directory/workspaces/ws-1/members/plain/budget", {
+    user: "ws1admin",
+    method: "PUT",
+    body: { amountUsd: 50 },
+  })).status, 403);
+
+  const set = await req("/directory/workspaces/ws-1/members/plain/budget", {
+    user: "editor",
+    method: "PUT",
+    body: { amountUsd: 50 },
+  });
+  assert.equal(set.status, 200);
+  assert.equal(set.json.budgetUsd, 50);
+  const cleared = await req("/directory/workspaces/ws-1/members/plain/budget", {
+    user: "editor",
+    method: "DELETE",
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.json.budgetUsd, null);
 });
 
 test("workspace admin alerts are scoped and recipient addresses are redacted", async () => {

@@ -5,3 +5,4 @@
 - [Historical membership attribution](historical-membership-attribution.md) — immutable UTC rosters require complete fresh reads; current day stays live and pre-snapshot dates are not reconstructed.
 - [Billing anchor startup](billing-anchor-startup.md) — live-refresh billing bounds before the startup account anchor; expired hydrated periods must fall back consistently.
 - [Startup data backfills](startup-data-backfills.md) — drizzle push changes schema only; required data transforms need narrow idempotent startup hooks, never broad seed imports.
+- [Member budget accounting](member-budget-accounting.md) — Replit limits are workspace/user scoped; Remaining uses complete current-cycle workspace Agent metrics, never selected-range cluster spend.

@@ -68,7 +68,11 @@ import type {
   TrendsResponse,
   UnauthorizedResponse,
   UsageRangeRebuildInput,
-  UserActivityResponse
+  UserActivityResponse,
+  VisibleWorkspace,
+  WorkspaceMemberBudgetInput,
+  WorkspaceMemberBudgetMutation,
+  WorkspaceMembersResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -2641,6 +2645,311 @@ export function useListDirectoryMembers<TData = Awaited<ReturnType<typeof listDi
 
 
 
+
+export const getListVisibleWorkspacesUrl = () => {
+
+
+
+
+  return `/api/directory/workspaces`
+}
+
+/**
+ * Account-wide operators see every workspace; workspace administrators see only workspaces they administer.
+ * @summary List workspaces visible to the current operator
+ */
+export const listVisibleWorkspaces = async ( options?: RequestInit): Promise<VisibleWorkspace[]> => {
+
+  return customFetch<VisibleWorkspace[]>(getListVisibleWorkspacesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVisibleWorkspacesQueryKey = () => {
+    return [
+    `/api/directory/workspaces`
+    ] as const;
+    }
+
+
+export const getListVisibleWorkspacesQueryOptions = <TData = Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVisibleWorkspacesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVisibleWorkspaces>>> = ({ signal }) => listVisibleWorkspaces({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVisibleWorkspacesQueryResult = NonNullable<Awaited<ReturnType<typeof listVisibleWorkspaces>>>
+export type ListVisibleWorkspacesQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary List workspaces visible to the current operator
+ */
+
+export function useListVisibleWorkspaces<TData = Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVisibleWorkspacesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListVisibleWorkspaceMembersUrl = (workspaceId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${workspaceId}/members`
+}
+
+/**
+ * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget connector failures are returned explicitly and never fall back to the Enterprise API key.
+ * @summary List members and Agent budgets for a visible workspace
+ */
+export const listVisibleWorkspaceMembers = async (workspaceId: string, options?: RequestInit): Promise<WorkspaceMembersResponse> => {
+
+  return customFetch<WorkspaceMembersResponse>(getListVisibleWorkspaceMembersUrl(workspaceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVisibleWorkspaceMembersQueryKey = (workspaceId: string,) => {
+    return [
+    `/api/directory/workspaces/${workspaceId}/members`
+    ] as const;
+    }
+
+
+export const getListVisibleWorkspaceMembersQueryOptions = <TData = Awaited<ReturnType<typeof listVisibleWorkspaceMembers>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaceMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVisibleWorkspaceMembersQueryKey(workspaceId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVisibleWorkspaceMembers>>> = ({ signal }) => listVisibleWorkspaceMembers(workspaceId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workspaceId !== null && workspaceId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaceMembers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVisibleWorkspaceMembersQueryResult = NonNullable<Awaited<ReturnType<typeof listVisibleWorkspaceMembers>>>
+export type ListVisibleWorkspaceMembersQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary List members and Agent budgets for a visible workspace
+ */
+
+export function useListVisibleWorkspaceMembers<TData = Awaited<ReturnType<typeof listVisibleWorkspaceMembers>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaceMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVisibleWorkspaceMembersQueryOptions(workspaceId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSetWorkspaceMemberBudgetUrl = (workspaceId: string,
+    userId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${workspaceId}/members/${userId}/budget`
+}
+
+/**
+ * Account-wide operators only. The Replit connector is the sole credential source.
+ * @summary Set or replace a member's desired Agent budget
+ */
+export const setWorkspaceMemberBudget = async (workspaceId: string,
+    userId: string,
+    workspaceMemberBudgetInput: WorkspaceMemberBudgetInput, options?: RequestInit): Promise<WorkspaceMemberBudgetMutation> => {
+
+  return customFetch<WorkspaceMemberBudgetMutation>(getSetWorkspaceMemberBudgetUrl(workspaceId,userId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(workspaceMemberBudgetInput)
+  }
+);}
+
+
+
+
+
+export const getSetWorkspaceMemberBudgetMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setWorkspaceMemberBudget>>, TError,{workspaceId: string;userId: string;data: BodyType<WorkspaceMemberBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setWorkspaceMemberBudget>>, TError,{workspaceId: string;userId: string;data: BodyType<WorkspaceMemberBudgetInput>}, TContext> => {
+
+const mutationKey = ['setWorkspaceMemberBudget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setWorkspaceMemberBudget>>, {workspaceId: string;userId: string;data: BodyType<WorkspaceMemberBudgetInput>}> = (props) => {
+          const {workspaceId,userId,data} = props ?? {};
+
+          return  setWorkspaceMemberBudget(workspaceId,userId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetWorkspaceMemberBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof setWorkspaceMemberBudget>>>
+    export type SetWorkspaceMemberBudgetMutationBody = BodyType<WorkspaceMemberBudgetInput>
+    export type SetWorkspaceMemberBudgetMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Set or replace a member's desired Agent budget
+ */
+export const useSetWorkspaceMemberBudget = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setWorkspaceMemberBudget>>, TError,{workspaceId: string;userId: string;data: BodyType<WorkspaceMemberBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setWorkspaceMemberBudget>>,
+        TError,
+        {workspaceId: string;userId: string;data: BodyType<WorkspaceMemberBudgetInput>},
+        TContext
+      > => {
+      return useMutation(getSetWorkspaceMemberBudgetMutationOptions(options));
+    }
+
+export const getClearWorkspaceMemberBudgetUrl = (workspaceId: string,
+    userId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${workspaceId}/members/${userId}/budget`
+}
+
+/**
+ * Account-wide operators only. Clearing an already-unset budget is idempotent.
+ * @summary Clear a member's desired Agent budget
+ */
+export const clearWorkspaceMemberBudget = async (workspaceId: string,
+    userId: string, options?: RequestInit): Promise<WorkspaceMemberBudgetMutation> => {
+
+  return customFetch<WorkspaceMemberBudgetMutation>(getClearWorkspaceMemberBudgetUrl(workspaceId,userId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getClearWorkspaceMemberBudgetMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof clearWorkspaceMemberBudget>>, TError,{workspaceId: string;userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof clearWorkspaceMemberBudget>>, TError,{workspaceId: string;userId: string}, TContext> => {
+
+const mutationKey = ['clearWorkspaceMemberBudget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof clearWorkspaceMemberBudget>>, {workspaceId: string;userId: string}> = (props) => {
+          const {workspaceId,userId} = props ?? {};
+
+          return  clearWorkspaceMemberBudget(workspaceId,userId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClearWorkspaceMemberBudgetMutationResult = NonNullable<Awaited<ReturnType<typeof clearWorkspaceMemberBudget>>>
+
+    export type ClearWorkspaceMemberBudgetMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+    /**
+ * @summary Clear a member's desired Agent budget
+ */
+export const useClearWorkspaceMemberBudget = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof clearWorkspaceMemberBudget>>, TError,{workspaceId: string;userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof clearWorkspaceMemberBudget>>,
+        TError,
+        {workspaceId: string;userId: string},
+        TContext
+      > => {
+      return useMutation(getClearWorkspaceMemberBudgetMutationOptions(options));
+    }
 
 export const getListDirectoryGroupsUrl = () => {
 

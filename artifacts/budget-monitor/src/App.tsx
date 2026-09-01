@@ -16,7 +16,7 @@ import TeamBudgets from '@/pages/team-budgets';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
-import { Redirect, useRoute } from 'wouter';
+import { Redirect, useRoute, useSearch } from 'wouter';
 import { canOpenGroupInView } from '@/lib/rbac-view';
 
 const queryClient = new QueryClient();
@@ -34,6 +34,17 @@ function Router() {
       : <Redirect to="/" />;
   }
 
+  function ScopedClusterRoute() {
+    const search = useSearch();
+    const groupIds = new URLSearchParams(search)
+      .get('ids')
+      ?.split(',')
+      .filter(Boolean) ?? [];
+    const canOpen = groupIds.length > 0 &&
+      groupIds.every((groupId) => canOpenGroupInView(groupId, role, preview));
+    return canOpen ? <ClusterDetail /> : <Redirect to="/" />;
+  }
+
   return (
     <AppShell>
       <Switch>
@@ -45,7 +56,7 @@ function Router() {
         {isAccountAdmin && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
         {isAccountAdmin && <Route path="/team-budgets" component={TeamBudgets} />}
         <Route path="/groups/:groupId" component={ScopedGroupRoute} />
-        {isAccountWide && <Route path="/clusters" component={ClusterDetail} />}
+        <Route path="/clusters" component={ScopedClusterRoute} />
         <Route component={NotFound} />
       </Switch>
     </AppShell>

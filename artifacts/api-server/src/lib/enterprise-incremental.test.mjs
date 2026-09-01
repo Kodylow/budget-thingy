@@ -18,6 +18,17 @@ let projectMetadataFetchCount = 0;
 let failNextProjectMetadataFetch = false;
 let accountTotalUsd = 25;
 const usageRequestUrls = [];
+const testNow = new Date();
+const testBillingStart = new Date(Date.UTC(
+  testNow.getUTCFullYear(),
+  testNow.getUTCMonth(),
+  1,
+)).toISOString();
+const testBillingEnd = new Date(Date.UTC(
+  testNow.getUTCFullYear(),
+  testNow.getUTCMonth() + 1,
+  1,
+)).toISOString();
 
 globalThis.fetch = async (input) => {
   fetchCount += 1;
@@ -109,8 +120,8 @@ globalThis.fetch = async (input) => {
       data: {
         interval: url.searchParams.get("billingPeriod") === "current"
           ? {
-              startTime: "2026-08-01T00:00:00.000Z",
-              endTime: "2026-09-01T00:00:00.000Z",
+              startTime: testBillingStart,
+              endTime: testBillingEnd,
             }
           : {
               startTime: url.searchParams.get("startTime"),
@@ -697,13 +708,14 @@ test("billing period discovery exposes freshness, mismatch, fallback, and restar
   await enterprise.refreshBillingPeriodMetadata(0, false, false);
   await waitForQueue();
   const discovered = enterprise.getBillingPeriodMetadata();
-  assert.equal(discovered.start, "2026-08-01T00:00:00.000Z");
-  assert.equal(discovered.end, "2026-09-01T00:00:00.000Z");
+  assert.equal(discovered.start, testBillingStart);
+  assert.equal(discovered.end, testBillingEnd);
   assert.equal(discovered.isFallback, false);
   assert.equal(discovered.isFresh, true);
   assert.equal(discovered.differsFromReportingCutoff, true);
   const resolved = enterprise.resolveRange("billing");
-  assert.match(resolved.key, /2026-08-01T00:00:00\.000Z.*2026-09-01T00:00:00\.000Z/);
+  assert.ok(resolved.key.includes(testBillingStart));
+  assert.ok(resolved.key.includes(testBillingEnd));
   assert.equal(resolved.params.startTime, discovered.start);
   assert.ok(new Date(resolved.params.endTime) <= new Date(discovered.end));
   assert.equal(

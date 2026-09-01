@@ -9,11 +9,14 @@ import {
   getGetClusterProjectsQueryKey,
   useGetCanonicalClusterHeadline,
   getGetCanonicalClusterHeadlineQueryKey,
+  useListVisibleWorkspaceMembers,
+  getListVisibleWorkspaceMembersQueryKey,
+  type WorkspaceMemberBudget,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, RefreshCw, DollarSign, Users } from 'lucide-react';
+import { ChevronLeft, RefreshCw, DollarSign, Users, AlertCircle } from 'lucide-react';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import {
@@ -24,6 +27,9 @@ import {
   ROLE_PRIORITY,
 } from '@/lib/group-clusters';
 import { GroupUserExport } from '@/components/group-user-export';
+import { useCanWrite } from '@/components/auth-context';
+import { MemberBudgetInput } from '@/components/member-budget-input';
+import { indexMemberBudgets } from '@/lib/member-budgets';
 
 interface MergedMember {
   userId: string;
@@ -58,6 +64,8 @@ export default function ClusterDetail() {
   const rawIds = params.get('ids') ?? '';
   const clusterName = params.get('name') ?? 'Group Cluster';
   const groupIds = rawIds ? rawIds.split(',').filter(Boolean) : [];
+
+  const canWrite = useCanWrite();
 
   const { rangeType, startDate, endDate } = useRange();
   const clusterKey = groupIds.join(',');
@@ -187,6 +195,38 @@ export default function ClusterDetail() {
   const mergedProjects: ClusterProject[] = clusterProjectsData?.projects ?? [];
   const projectsUnattributedSpend = clusterProjectsData?.unattributedSpendUsd ?? 0;
 
+  const firstGroupData = results.find((r) => r.data)?.data;
+  const workspaceId = firstGroupData?.group.workspaceId;
+
+  const workspaceMembersQuery = useListVisibleWorkspaceMembers(workspaceId as string, {
+    query: {
+      enabled: !!workspaceId,
+      queryKey: workspaceId ? getListVisibleWorkspaceMembersQueryKey(workspaceId) : ['workspaceMembers', ''],
+      refetchInterval: (query) => {
+        const response = query.state.data;
+        if (!response || response.connector.status !== 'available') return false;
+        return response.members.some(
+          (member) => member.budgetUsd !== null && member.usageUsd === null,
+        ) ? 8000 : false;
+      },
+    },
+  });
+  const workspaceMembersData = workspaceMembersQuery.data;
+
+  const workspaceMembersMap = useMemo(() => {
+    return indexMemberBudgets<WorkspaceMemberBudget>(
+      mergedMembers,
+      workspaceMembersData?.members ?? [],
+    );
+  }, [mergedMembers, workspaceMembersData]);
+  const connectorUnavailable =
+    workspaceMembersData?.connector.status === 'unavailable' ||
+    workspaceMembersData?.connector.status === 'error';
+  const mutationUnavailable =
+    canWrite &&
+    workspaceMembersData?.connector.status === 'available' &&
+    !workspaceMembersData.connector.canWrite;
+
   if (!allLoaded && results.every((r) => !r.data)) {
     return (
       <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
@@ -203,8 +243,6 @@ export default function ClusterDetail() {
       </div>
     );
   }
-
-  const firstGroupData = results.find((r) => r.data)?.data;
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
@@ -287,6 +325,22 @@ export default function ClusterDetail() {
         </Card>
       </div>
 
+      {(workspaceMembersQuery.isError || connectorUnavailable || mutationUnavailable) && (
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm px-4 py-3 rounded-md flex items-start gap-3">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">
+              {mutationUnavailable ? 'Budget editing unavailable' : 'Member budgets unavailable'}
+            </p>
+            <p className="text-xs opacity-90 mt-0.5">
+              A workspace administrator must enable the approved Replit integration
+              with <code>write:budgets</code> permission. No API key or token can be
+              entered here.
+            </p>
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Members</CardTitle>
@@ -303,56 +357,87 @@ export default function ClusterDetail() {
                 <tr className="border-b border-border">
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Role</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Ind. Budget</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Remaining</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
                 </tr>
               </thead>
               <tbody>
-                {mergedMembers.map((member) => (
-                  <tr
-                    key={member.userId}
-                    className="border-b border-border/50 hover:bg-muted/30 transition-colors"
-                  >
-                    <td className="py-3 px-4">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium">
-                          {member.name || member.username || member.userId}
-                        </span>
-                        <span className="text-xs text-muted-foreground">{member.email || '—'}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1">
-                        <span
-                          className={`inline-flex items-center border rounded px-2 py-0.5 text-[10px] font-medium ${roleBadgeClass(member.role)}`}
-                        >
-                          {member.role}
-                        </span>
-                        {member.allRoles.length > 1 &&
-                          member.allRoles
-                            .filter((r) => r !== member.role)
-                            .map((r) => (
-                              <span
-                                key={r}
-                                className={`inline-flex items-center border rounded px-2 py-0.5 text-[10px] font-medium opacity-60 ${roleBadgeClass(r)}`}
-                              >
-                                {r}
-                              </span>
-                            ))}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {!member.spendLoaded ? (
-                        <div className="flex justify-end">
-                          <LoadingCell />
+                {mergedMembers.map((member) => {
+                  const wsm = workspaceMembersMap.get(member.userId);
+                  const hasConnector = workspaceMembersData?.connector.status === 'available';
+                  return (
+                    <tr
+                      key={member.userId}
+                      className="border-b border-border/50 hover:bg-muted/30 transition-colors"
+                    >
+                      <td className="py-3 px-4 align-middle">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium">
+                            {member.name || member.username || member.userId}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{member.email || '—'}</span>
                         </div>
-                      ) : (
-                        <span className="text-sm font-mono tabular-nums">
-                          ${member.spendUsd.toFixed(2)}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="py-3 px-4 align-middle">
+                        <div className="flex flex-wrap gap-1">
+                          <span
+                            className={`inline-flex items-center border rounded px-2 py-0.5 text-[10px] font-medium ${roleBadgeClass(member.role)}`}
+                          >
+                            {member.role}
+                          </span>
+                          {member.allRoles.length > 1 &&
+                            member.allRoles
+                              .filter((r) => r !== member.role)
+                              .map((r) => (
+                                <span
+                                  key={r}
+                                  className={`inline-flex items-center border rounded px-2 py-0.5 text-[10px] font-medium opacity-60 ${roleBadgeClass(r)}`}
+                                >
+                                  {r}
+                                </span>
+                              ))}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right align-middle w-32">
+                        {workspaceMembersQuery.isLoading ? (
+                          <div className="flex justify-end"><LoadingCell /></div>
+                        ) : hasConnector && workspaceId ? (
+                          <MemberBudgetInput
+                            workspaceId={workspaceId}
+                            userId={member.userId}
+                            currentBudget={wsm?.budgetUsd ?? null}
+                            canWrite={canWrite && workspaceMembersData.connector.canWrite}
+                          />
+                        ) : (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right align-middle w-32">
+                        {workspaceMembersQuery.isLoading ? (
+                          <div className="flex justify-end"><LoadingCell /></div>
+                        ) : hasConnector && wsm?.remainingUsd !== undefined && wsm?.remainingUsd !== null ? (
+                          <span className={`text-sm font-mono tabular-nums ${wsm.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
+                            {wsm.remainingUsd < 0 ? '-' : ''}${Math.abs(wsm.remainingUsd).toFixed(2)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right align-middle">
+                        {!member.spendLoaded ? (
+                          <div className="flex justify-end">
+                            <LoadingCell />
+                          </div>
+                        ) : (
+                          <span className="text-sm font-mono tabular-nums">
+                            ${member.spendUsd.toFixed(2)}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
 
                 {allComplete && totalUnattributedSpend > 0.005 && (
                   <tr className="border-b border-border/50 bg-muted/10">
@@ -365,6 +450,8 @@ export default function ClusterDetail() {
                       </div>
                     </td>
                     <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm font-mono tabular-nums">
                         ${totalUnattributedSpend.toFixed(2)}
@@ -376,6 +463,8 @@ export default function ClusterDetail() {
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
                   <td className="py-3 px-4 text-sm">Combined Total</td>
+                  <td className="py-3 px-4" />
+                  <td className="py-3 px-4" />
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
                     {!allComplete || !clusterSpendLoaded ? (

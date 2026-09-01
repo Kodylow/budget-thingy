@@ -138,9 +138,20 @@ test("duplicate-queued callbacks fan out with the fetched (not stale) value", as
 });
 
 test("daily snapshot lookup uses the same active billing key as its prewarmed fetch", async () => {
+  const now = new Date();
+  const periodStart = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    1,
+  )).toISOString();
+  const periodEnd = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth() + 1,
+    1,
+  )).toISOString();
   __setBillingPeriodForTests({
-    start: "2026-08-01T00:00:00.000Z",
-    end: "2026-09-01T00:00:00.000Z",
+    start: periodStart,
+    end: periodEnd,
     fetchedAt: Date.now(),
   });
   const billingRange = resolveRange("billing");

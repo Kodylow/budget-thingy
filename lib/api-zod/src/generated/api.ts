@@ -714,6 +714,104 @@ export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersRespon
 
 
 /**
+ * Account-wide operators see every workspace; workspace administrators see only workspaces they administer.
+ * @summary List workspaces visible to the current operator
+ */
+export const listVisibleWorkspacesResponseMemberCountMin = 0;
+
+
+
+export const ListVisibleWorkspacesResponseItem = zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string(),
+  "memberCount": zod.number().min(listVisibleWorkspacesResponseMemberCountMin)
+})
+export const ListVisibleWorkspacesResponse = zod.array(ListVisibleWorkspacesResponseItem)
+
+
+/**
+ * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget connector failures are returned explicitly and never fall back to the Enterprise API key.
+ * @summary List members and Agent budgets for a visible workspace
+ */
+
+
+
+export const ListVisibleWorkspaceMembersParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1)
+})
+
+export const ListVisibleWorkspaceMembersResponse = zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string(),
+  "billingPeriod": zod.enum(['current']),
+  "connector": zod.object({
+  "status": zod.enum(['available', 'unavailable', 'error']),
+  "canWrite": zod.boolean().describe('True only when the approved connector explicitly grants write:budgets.'),
+  "error": zod.string().nullable()
+}),
+  "members": zod.array(zod.object({
+  "userId": zod.string(),
+  "username": zod.string(),
+  "name": zod.string().nullable(),
+  "email": zod.string(),
+  "role": zod.string(),
+  "isDisabled": zod.boolean(),
+  "budgetUsd": zod.number().nullable().describe('Desired Agent budget; null means unset.'),
+  "usageUsd": zod.number().nullable().describe('Agent usage in the current billing cycle.'),
+  "remainingUsd": zod.number().nullable().describe('Budget minus current-cycle Agent usage; may be negative and is null when unset.')
+}))
+})
+
+
+/**
+ * Account-wide operators only. The Replit connector is the sole credential source.
+ * @summary Set or replace a member's desired Agent budget
+ */
+
+
+
+
+export const SetWorkspaceMemberBudgetParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1),
+  "userId": zod.coerce.string().min(1)
+})
+
+export const setWorkspaceMemberBudgetBodyAmountUsdExclusiveMin = 0;
+
+
+
+export const SetWorkspaceMemberBudgetBody = zod.object({
+  "amountUsd": zod.number().gt(setWorkspaceMemberBudgetBodyAmountUsdExclusiveMin)
+})
+
+export const SetWorkspaceMemberBudgetResponse = zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "budgetUsd": zod.number().nullable()
+})
+
+
+/**
+ * Account-wide operators only. Clearing an already-unset budget is idempotent.
+ * @summary Clear a member's desired Agent budget
+ */
+
+
+
+
+export const ClearWorkspaceMemberBudgetParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1),
+  "userId": zod.coerce.string().min(1)
+})
+
+export const ClearWorkspaceMemberBudgetResponse = zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "budgetUsd": zod.number().nullable()
+})
+
+
+/**
  * Returns every custom/SCIM group from the directory cache together with its owning workspace. Available only to account administrators and independent of usage loading or the selected reporting range.
  * @summary List enterprise groups with their owning workspaces
  */
