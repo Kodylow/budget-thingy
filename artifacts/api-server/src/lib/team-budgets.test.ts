@@ -8,7 +8,10 @@ import {
   teamBudgetUpstreamSyncTable,
   teamBudgetsTable,
 } from "@workspace/db";
-import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
+import {
+  applyAnnualTeamBudgetBackfill,
+  BASELINE_GROUP_TEAMS,
+} from "@workspace/db/seed-teams";
 import { __setDirectoryCacheForTests } from "./enterprise";
 import { setReplitBudgetTransportForTests } from "./replit-budgets";
 
@@ -33,6 +36,46 @@ const RENAMED_TEAM = `${PREFIX} Renamed`;
 const HIDDEN = `${PREFIX} Hidden`;
 
 describe("annual allocation seed", () => {
+  it("restores missing baseline group mappings without overwriting an existing reassignment", async () => {
+    const missing = BASELINE_GROUP_TEAMS.find(
+      (row) => row.groupName === "AZ-Replit - Comcast Advertising - Admin",
+    )!;
+    const reassigned = BASELINE_GROUP_TEAMS.find(
+      (row) => row.groupName === "AZ-Replit - Finance - Admin",
+    )!;
+    const customTeam = `${PREFIX} Reassigned`;
+
+    await db.delete(groupTeamsTable).where(eq(groupTeamsTable.groupName, missing.groupName));
+    await db
+      .insert(groupTeamsTable)
+      .values({ groupName: reassigned.groupName, teamName: customTeam })
+      .onConflictDoUpdate({
+        target: groupTeamsTable.groupName,
+        set: { teamName: customTeam },
+      });
+
+    try {
+      await applyAnnualTeamBudgetBackfill();
+
+      const [restoredRows, preservedRows] = await Promise.all([
+        db.select().from(groupTeamsTable).where(eq(groupTeamsTable.groupName, missing.groupName)),
+        db.select().from(groupTeamsTable).where(eq(groupTeamsTable.groupName, reassigned.groupName)),
+      ]);
+
+      expect(restoredRows).toEqual([
+        expect.objectContaining(missing),
+      ]);
+      expect(preservedRows).toEqual([
+        expect.objectContaining({ groupName: reassigned.groupName, teamName: customTeam }),
+      ]);
+    } finally {
+      await db
+        .update(groupTeamsTable)
+        .set({ teamName: reassigned.teamName })
+        .where(eq(groupTeamsTable.groupName, reassigned.groupName));
+    }
+  });
+
   it("splits the legacy Growth Strategy pool into the canonical DXP and Non-DXP rows", async () => {
     const groupName = "AZ-Replit - Growth Strategy & Operations - Admin";
     const [existingFinance] = await db

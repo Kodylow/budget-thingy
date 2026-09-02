@@ -6,7 +6,7 @@ import { db } from "./index.js";
 import { groupTeamsTable, teamBudgetsTable } from "./schema/index.js";
 import { eq } from "drizzle-orm";
 
-const groupTeams: { groupName: string; teamName: string }[] = [
+export const BASELINE_GROUP_TEAMS: { groupName: string; teamName: string }[] = [
   { groupName: "AZ-Replit - PREPROD-Admins", teamName: "PREPROD" },
   { groupName: "AZ-Replit - PREPROD-Members", teamName: "PREPROD" },
   { groupName: "AZ-Replit - PREPROD-Viewer", teamName: "PREPROD" },
@@ -112,8 +112,15 @@ export const ORIGINAL_TEAM_BUDGETS: { teamName: string; amountUsd: number; isHid
 
 export async function applyAnnualTeamBudgetBackfill(): Promise<void> {
   await db.transaction(async (tx) => {
-    // Only legacy assignments are remapped here. The full seed remains a manual
-    // operation so startup never overwrites later administrator reassignments.
+    // Fresh published databases receive schema but not standalone seed data.
+    // Restore missing baseline mappings without overwriting later administrator
+    // reassignments of an existing group.
+    await tx
+      .insert(groupTeamsTable)
+      .values(BASELINE_GROUP_TEAMS)
+      .onConflictDoNothing({ target: groupTeamsTable.groupName });
+
+    // Only legacy assignments are remapped here.
     await tx
       .update(groupTeamsTable)
       .set({ teamName: "DXP" })
@@ -144,7 +151,7 @@ export async function applyAnnualTeamBudgetBackfill(): Promise<void> {
 
 async function seed() {
   console.log("Seeding group→team mapping...");
-  for (const assignment of groupTeams) {
+  for (const assignment of BASELINE_GROUP_TEAMS) {
     await db
       .insert(groupTeamsTable)
       .values(assignment)
@@ -153,7 +160,7 @@ async function seed() {
         set: { teamName: assignment.teamName },
       });
   }
-  console.log(`Inserted ${groupTeams.length} group→team rows`);
+  console.log(`Inserted ${BASELINE_GROUP_TEAMS.length} group→team rows`);
 
   console.log("Seeding team budgets...");
   await applyAnnualTeamBudgetBackfill();
