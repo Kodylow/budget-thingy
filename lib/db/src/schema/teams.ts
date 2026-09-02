@@ -28,6 +28,28 @@ export const teamBudgetsTable = pgTable("team_budgets", {
     .$onUpdate(() => new Date()),
 });
 
+export const teamBudgetUpstreamSyncTable = pgTable(
+  "team_budget_upstream_sync",
+  {
+    teamName: text("team_name").primaryKey(),
+    workspaceId: text("workspace_id"),
+    targetGroupId: text("target_group_id"),
+    targetGroupName: text("target_group_name"),
+    desiredAmountUsd: doublePrecision("desired_amount_usd").notNull(),
+    upstreamAmountUsd: doublePrecision("upstream_amount_usd"),
+    status: text("status")
+      .$type<"pending" | "synced" | "unresolved" | "failed">()
+      .notNull()
+      .default("pending"),
+    reason: text("reason"),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+);
+
 export const teamBudgetAdjustmentsTable = pgTable(
   "team_budget_adjustments",
   {
@@ -60,6 +82,8 @@ export const insertTeamBudgetSchema = createInsertSchema(teamBudgetsTable).omit(
 });
 export type InsertTeamBudget = z.infer<typeof insertTeamBudgetSchema>;
 export type TeamBudget = typeof teamBudgetsTable.$inferSelect;
+export type TeamBudgetUpstreamSync =
+  typeof teamBudgetUpstreamSyncTable.$inferSelect;
 
 export type TeamBudgetAdjustment = typeof teamBudgetAdjustmentsTable.$inferSelect;
 

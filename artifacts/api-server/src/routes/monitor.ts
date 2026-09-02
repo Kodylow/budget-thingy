@@ -45,6 +45,7 @@ import {
   ListDirectoryGroupsResponse,
   GetTeamBudgetHistoryResponse,
   GetTeamBudgetSyncStatusResponse,
+  RetryTeamBudgetUpstreamSyncResponse,
   RefreshTeamBudgetsResponse,
   ListVisibleWorkspacesResponse,
   ListVisibleWorkspaceMembersResponse,
@@ -104,6 +105,7 @@ import {
   requireAuth,
   requireAccountAdmin,
   requireAccountOperator,
+  requireTrueAccountAdmin,
 } from "../middlewares/requireAuth";
 import {
   canSeeGroup,
@@ -126,7 +128,9 @@ import {
 } from "../lib/historical-attribution";
 import {
   getEffectiveTeamBudgets,
+  getTeamBudgetUpstreamSyncRows,
   getVisibleEffectiveTeamBudgetMap,
+  reconcileTeamBudgetsUpstream,
   refreshTeamBudgetSnapshot,
 } from "../lib/team-budgets";
 import {
@@ -1662,17 +1666,46 @@ router.get("/admin/team-budgets/history", requireAccountAdmin, async (_req, res)
   }));
 });
 
-router.get("/admin/team-budgets/sync", requireAccountAdmin, async (_req, res): Promise<void> => {
-  const { sync } = await getEffectiveTeamBudgets();
-  res.json(GetTeamBudgetSyncStatusResponse.parse({
+async function buildTeamBudgetSyncStatus() {
+  const [{ sync }, teams] = await Promise.all([
+    getEffectiveTeamBudgets(),
+    getTeamBudgetUpstreamSyncRows(),
+  ]);
+  return {
     lastAttemptAt: sync?.lastAttemptAt?.toISOString() ?? null,
     lastSuccessfulAt: sync?.lastSuccessfulAt?.toISOString() ?? null,
     lastError: sync?.lastError ?? null,
     recordCount: sync?.recordCount ?? 0,
     acceptedCount: sync?.acceptedCount ?? 0,
     issueCount: sync?.issueCount ?? 0,
-  }));
+    teams: teams.map((team) => ({
+      teamName: team.teamName,
+      workspaceId: team.workspaceId,
+      targetGroupId: team.targetGroupId,
+      targetGroupName: team.targetGroupName,
+      desiredAmountUsd: team.desiredAmountUsd,
+      upstreamAmountUsd: team.upstreamAmountUsd,
+      status: team.status,
+      reason: team.reason,
+      lastAttemptAt: team.lastAttemptAt?.toISOString() ?? null,
+    })),
+  };
+}
+
+router.get("/admin/team-budgets/sync", requireTrueAccountAdmin, async (_req, res): Promise<void> => {
+  res.json(GetTeamBudgetSyncStatusResponse.parse(await buildTeamBudgetSyncStatus()));
 });
+
+router.post(
+  "/admin/team-budgets/reconcile",
+  requireTrueAccountAdmin,
+  async (_req, res): Promise<void> => {
+    await reconcileTeamBudgetsUpstream();
+    res.json(
+      RetryTeamBudgetUpstreamSyncResponse.parse(await buildTeamBudgetSyncStatus()),
+    );
+  },
+);
 
 router.post("/admin/team-budgets/refresh", requireAccountAdmin, async (_req, res): Promise<void> => {
   const result = await refreshTeamBudgetSnapshot();

@@ -18,6 +18,7 @@ import {
   __setProjectUsageForTests,
   __setWsSpendForTests,
 } from "../lib/enterprise.ts";
+import { setTeamBudgetDirectoryFetcherForTests } from "../lib/team-budgets.ts";
 
 const RANGE = "billing:from-cutoff";
 const PREFIX = "__task158_route__";
@@ -69,7 +70,23 @@ test.before(async () => {
     groupMembers: new Map([[GROUP_ID, ["task158-workspace", "task158-plain"]]]),
   });
   const { resolveAuthorization } = await import("../lib/authz.ts");
-  setAuthorizationResolver((userId) => resolveAuthorization(userId));
+  setAuthorizationResolver((userId) => {
+    if (userId === "task158-delegate") {
+      return Promise.resolve({ role: "account_delegate", workspaceIds: [] });
+    }
+    if (userId === "task158-editor") {
+      return Promise.resolve({ role: "account_editor", workspaceIds: [] });
+    }
+    return resolveAuthorization(userId);
+  });
+  setTeamBudgetDirectoryFetcherForTests(async () => ({
+    allGroups: [{
+      id: GROUP_ID,
+      workspaceId: "task158-ws",
+      name: GROUP_NAME,
+      type: "custom",
+    }],
+  }));
 
   await db.delete(teamBudgetAdjustmentsTable).where(inArray(
     teamBudgetAdjustmentsTable.sourceRecordId,
@@ -157,6 +174,7 @@ test.before(async () => {
 test.after(async () => {
   server?.close();
   setAuthorizationResolver(null);
+  setTeamBudgetDirectoryFetcherForTests(null);
   __setDirectoryCacheForTests(null);
   __setMemberUsageForTests(GROUP_ID, RANGE, null);
   __setWsSpendForTests("task158-ws", RANGE, null);
@@ -176,8 +194,9 @@ test.after(async () => {
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
 });
 
-async function request(path, user) {
+async function request(path, user, method = "GET") {
   const response = await fetch(`${baseUrl}/api${path}`, {
+    method,
     headers: user ? { "x-test-user": user } : {},
   });
   const text = await response.text();
@@ -193,13 +212,48 @@ async function request(path, user) {
   };
 }
 
-test("budget audit and sync status are account-admin-only", async () => {
+test("budget audit and sync status reject workspace-scoped users", async () => {
   for (const path of ["/admin/team-budgets/history", "/admin/team-budgets/sync"]) {
     assert.equal((await request(path)).status, 401);
     assert.equal((await request(path, "task158-plain")).status, 403);
     assert.equal((await request(path, "task158-workspace")).status, 403);
     assert.equal((await request(path, "task158-account")).status, 200);
   }
+});
+
+test("upstream status and retry reject delegates and editors", async () => {
+  assert.equal(
+    (await request("/admin/team-budgets/history", "task158-delegate")).status,
+    200,
+  );
+  for (const user of ["task158-delegate", "task158-editor"]) {
+    assert.equal(
+      (await request("/admin/team-budgets/sync", user)).status,
+      403,
+    );
+    assert.equal(
+      (await request("/admin/team-budgets/reconcile", user, "POST")).status,
+      403,
+    );
+  }
+});
+
+test("only a true account admin can retry upstream budget reconciliation", async () => {
+  assert.equal(
+    (await request("/admin/team-budgets/reconcile", undefined, "POST")).status,
+    401,
+  );
+  assert.equal(
+    (await request("/admin/team-budgets/reconcile", "task158-workspace", "POST")).status,
+    403,
+  );
+  const accountAdmin = await request(
+    "/admin/team-budgets/reconcile",
+    "task158-account",
+    "POST",
+  );
+  assert.equal(accountAdmin.status, 200);
+  assert.ok(Array.isArray(accountAdmin.json.teams));
 });
 
 test("history orders months and excludes hidden teams while retaining separate records", async () => {

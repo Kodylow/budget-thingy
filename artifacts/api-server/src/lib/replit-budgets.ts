@@ -1,6 +1,10 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
 
 const CONNECTOR = "replit";
+const BUDGETS_API_BASE_URL = "https://api.replit.com";
+const BUDGETS_API_KEY_ENV = "REPLIT_ENTERPRISE_API_KEY_BUDGETS";
+const BUDGETS_WRITE_ENABLED_ENV =
+  "REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED";
 const MAX_PAGES = 200;
 
 export type BudgetConnectorStatus = "available" | "unavailable" | "error";
@@ -11,11 +15,24 @@ export interface ReplitMemberBudget {
   budgetUsd: number | null;
 }
 
+export interface ReplitGroupBudget {
+  workspaceId: string;
+  groupId: string;
+  budgetUsd: number | null;
+}
+
 export interface ReplitBudgetSnapshot {
   status: BudgetConnectorStatus;
   canWrite: boolean;
   error: string | null;
   budgets: Map<string, ReplitMemberBudget>;
+}
+
+export interface ReplitGroupBudgetSnapshot {
+  status: BudgetConnectorStatus;
+  canWrite: boolean;
+  error: string | null;
+  budgets: Map<string, ReplitGroupBudget>;
 }
 
 export class ReplitBudgetConnectorError extends Error {
@@ -68,6 +85,9 @@ function containsScope(value: unknown, expected: string): boolean {
 
 async function connectorCanWrite(): Promise<boolean> {
   if (writeCapabilityOverride != null) return writeCapabilityOverride;
+  if (process.env[BUDGETS_API_KEY_ENV]) {
+    return process.env[BUDGETS_WRITE_ENABLED_ENV]?.trim().toLowerCase() === "true";
+  }
   try {
     const connections = await new ReplitConnectors().listConnections({
       connector_names: CONNECTOR,
@@ -96,6 +116,29 @@ async function connectorTransport(
   return new ReplitConnectors().proxy(CONNECTOR, path, init);
 }
 
+async function enterpriseBudgetTransport(
+  path: string,
+  init: ReplitBudgetRequest,
+): Promise<Response> {
+  const key = process.env[BUDGETS_API_KEY_ENV];
+  if (!key) {
+    throw new Error(`${BUDGETS_API_KEY_ENV} is not configured`);
+  }
+  return fetch(`${BUDGETS_API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...init.headers,
+      Authorization: `Bearer ${key}`,
+    },
+  });
+}
+
+function configuredTransport(): ReplitBudgetTransport {
+  return process.env[BUDGETS_API_KEY_ENV]
+    ? enterpriseBudgetTransport
+    : connectorTransport;
+}
+
 function errorKind(message: string): "unavailable" | "error" {
   return /(not.?connected|not configured|connector.*unavailable|identity|renewal|hostname)/i.test(
     message,
@@ -110,7 +153,7 @@ async function request(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await (transportOverride ?? connectorTransport)(path, init);
+    response = await (transportOverride ?? configuredTransport())(path, init);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Replit connector unavailable";
@@ -231,6 +274,40 @@ export function parseReplitMemberBudget(
   return { workspaceId, userId, budgetUsd };
 }
 
+/** Normalize workspace group limits from current and earlier flat beta responses. */
+export function parseReplitGroupBudget(
+  value: unknown,
+  fallbackWorkspaceId?: string,
+): ReplitGroupBudget | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const group =
+    row.group && typeof row.group === "object"
+      ? (row.group as Record<string, unknown>)
+      : {};
+  const workspace =
+    row.workspace && typeof row.workspace === "object"
+      ? (row.workspace as Record<string, unknown>)
+      : {};
+  const groupId = stringValue(row.groupId, group.id);
+  const workspaceId = stringValue(
+    row.workspaceId,
+    workspace.id,
+    fallbackWorkspaceId,
+  );
+  if (!groupId || !workspaceId) return null;
+  const explicitMetric = stringValue(row.metric, row.metricId, row.type);
+  if (explicitMetric && !isAgentMetric(explicitMetric)) return null;
+
+  const budgetUsd =
+    finiteNumber(row.budgetUsd) ??
+    finiteNumber(row.amountUsd) ??
+    finiteNumber(row.limitUsd) ??
+    finiteNumber(row.desiredBudgetUsd) ??
+    agentAmount(row, ["budgetUsd", "amountUsd", "limitUsd", "amount", "limit"]);
+  return { workspaceId, groupId, budgetUsd };
+}
+
 function pageRows(body: unknown): unknown[] {
   if (Array.isArray(body)) return body;
   if (!body || typeof body !== "object") {
@@ -316,6 +393,57 @@ export async function listReplitMemberBudgets(
   }
 }
 
+export async function listReplitGroupBudgets(
+  workspaceId: string,
+): Promise<ReplitGroupBudgetSnapshot> {
+  const budgets = new Map<string, ReplitGroupBudget>();
+  let cursor: string | null = null;
+  try {
+    const canWrite = await connectorCanWrite();
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const query = new URLSearchParams({
+        workspaceId,
+        billingPeriod: "current",
+        metric: "replit:v0:teams:ai_agent",
+        limit: "100",
+      });
+      if (cursor) query.set("cursor", cursor);
+      const body = await request(`/v1/budgets?${query}`, { method: "GET" });
+      for (const value of pageRows(body)) {
+        const parsed = parseReplitGroupBudget(value, workspaceId);
+        if (parsed && parsed.workspaceId === workspaceId) {
+          const existing = budgets.get(parsed.groupId);
+          if (existing && existing.budgetUsd !== parsed.budgetUsd) {
+            throw new Error(
+              `Replit budgets API returned conflicting limits for workspace group ${parsed.groupId}`,
+            );
+          }
+          budgets.set(parsed.groupId, parsed);
+        }
+      }
+      cursor = nextCursor(body);
+      if (!cursor) return { status: "available", canWrite, error: null, budgets };
+    }
+    throw new Error(`Replit budgets pagination exceeded ${MAX_PAGES} pages`);
+  } catch (error) {
+    const connectorError =
+      error instanceof ReplitBudgetConnectorError
+        ? error
+        : new ReplitBudgetConnectorError(
+            "error",
+            error instanceof Error
+              ? error.message
+              : "Unknown Replit budgets error",
+          );
+    return {
+      status: connectorError.kind,
+      canWrite: false,
+      error: connectorError.message,
+      budgets: new Map(),
+    };
+  }
+}
+
 export async function setReplitMemberBudget(
   workspaceId: string,
   userId: string,
@@ -356,6 +484,52 @@ export async function clearReplitMemberBudget(
   const query = new URLSearchParams({
     workspaceId,
     userId,
+    billingPeriod: "current",
+    metric: "replit:v0:teams:ai_agent",
+  });
+  await request(`/v1/budgets?${query}`, { method: "DELETE" });
+}
+
+export async function setReplitGroupBudget(
+  workspaceId: string,
+  groupId: string,
+  amountUsd: number,
+): Promise<void> {
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    throw new TypeError("amountUsd must be a finite number greater than zero");
+  }
+  if (!(await connectorCanWrite())) {
+    throw new ReplitBudgetConnectorError(
+      "unavailable",
+      "The approved Replit integration does not grant write:budgets",
+    );
+  }
+  await request("/v1/budgets", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workspaceId,
+      groupId,
+      billingPeriod: "current",
+      metric: "replit:v0:teams:ai_agent",
+      amountUsd,
+    }),
+  });
+}
+
+export async function clearReplitGroupBudget(
+  workspaceId: string,
+  groupId: string,
+): Promise<void> {
+  if (!(await connectorCanWrite())) {
+    throw new ReplitBudgetConnectorError(
+      "unavailable",
+      "The approved Replit integration does not grant write:budgets",
+    );
+  }
+  const query = new URLSearchParams({
+    workspaceId,
+    groupId,
     billingPeriod: "current",
     metric: "replit:v0:teams:ai_agent",
   });

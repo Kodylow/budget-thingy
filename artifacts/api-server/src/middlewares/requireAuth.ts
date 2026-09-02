@@ -1,5 +1,6 @@
 import { type NextFunction, type Request, type Response } from "express";
 import {
+  isAccountAdmin,
   isApplicationAdmin,
   resolveCurrentAuthorization,
   type Authorization,
@@ -67,6 +68,23 @@ export function requireAccountAdmin(
   next: NextFunction,
 ): void {
   if (!isApplicationAdmin(req.authz)) {
+    res.status(403).json({ error: "Access denied" });
+    return;
+  }
+  next();
+}
+
+/**
+ * Require a true Enterprise account administrator. Unlike the broader
+ * application-admin guard, this deliberately excludes the designated delegate.
+ * Use it for operations that can change settings in Replit itself.
+ */
+export function requireTrueAccountAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!isAccountAdmin(req.authz)) {
     res.status(403).json({ error: "Access denied" });
     return;
   }

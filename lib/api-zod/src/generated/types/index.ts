@@ -83,6 +83,8 @@ export * from './teamBudgetMatchIssueMatchState';
 export * from './teamBudgetRefreshResult';
 export * from './teamBudgetsResponse';
 export * from './teamBudgetSyncStatus';
+export * from './teamBudgetUpstreamSync';
+export * from './teamBudgetUpstreamSyncStatus';
 export * from './trendBucketRange';
 export * from './trendSeries';
 export * from './trendSeriesType';

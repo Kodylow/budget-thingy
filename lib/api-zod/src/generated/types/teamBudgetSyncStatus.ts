@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { TeamBudgetUpstreamSync } from './teamBudgetUpstreamSync';
 
 export interface TeamBudgetSyncStatus {
   /** @nullable */
@@ -16,4 +17,5 @@ export interface TeamBudgetSyncStatus {
   recordCount: number;
   acceptedCount: number;
   issueCount: number;
+  teams: TeamBudgetUpstreamSync[];
 }

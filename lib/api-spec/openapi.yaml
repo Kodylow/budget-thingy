@@ -673,6 +673,23 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/reconcile:
+    post:
+      operationId: retryTeamBudgetUpstreamSync
+      tags: [teams]
+      summary: Retry upstream Replit group budget synchronization
+      description: Available only to true Enterprise account administrators; account delegates and editors are not authorized. Reconciles per-team desired budgets with their upstream Replit groups.
+      responses:
+        "200":
+          description: Upstream synchronization reconciled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetSyncStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /admin/team-budgets/refresh:
     post:
       operationId: refreshTeamBudgets
@@ -1931,7 +1948,7 @@ components:
           enum: [available, unavailable, error]
         canWrite:
           type: boolean
-          description: True only when the approved connector explicitly grants write:budgets.
+          description: True when the configured Replit budgets credential grants write:budgets.
         error:
           type: [string, "null"]
     WorkspaceMemberBudget:
@@ -2074,7 +2091,7 @@ components:
             $ref: "#/components/schemas/TeamBudgetMatchIssue"
     TeamBudgetSyncStatus:
       type: object
-      required: [lastAttemptAt, lastSuccessfulAt, lastError, recordCount, acceptedCount, issueCount]
+      required: [lastAttemptAt, lastSuccessfulAt, lastError, recordCount, acceptedCount, issueCount, teams]
       properties:
         lastAttemptAt:
           type: [string, "null"]
@@ -2088,6 +2105,33 @@ components:
           type: integer
         issueCount:
           type: integer
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetUpstreamSync"
+    TeamBudgetUpstreamSync:
+      type: object
+      required: [teamName, workspaceId, targetGroupId, targetGroupName, desiredAmountUsd, upstreamAmountUsd, status, reason, lastAttemptAt]
+      properties:
+        teamName:
+          type: string
+        workspaceId:
+          type: [string, "null"]
+        targetGroupId:
+          type: [string, "null"]
+        targetGroupName:
+          type: [string, "null"]
+        desiredAmountUsd:
+          type: number
+        upstreamAmountUsd:
+          type: [number, "null"]
+        status:
+          type: string
+          enum: [pending, synced, unresolved, failed]
+        reason:
+          type: [string, "null"]
+        lastAttemptAt:
+          type: [string, "null"]
     TeamBudgetRefreshResult:
       type: object
       required: [ok, recordCount, acceptedCount, issueCount, error]

@@ -529,7 +529,7 @@ export const BudgetConnectorStateStatus = {
 
 export interface BudgetConnectorState {
   status: BudgetConnectorStateStatus;
-  /** True only when the approved connector explicitly grants write:budgets. */
+  /** True when the configured Replit budgets credential grants write:budgets. */
   canWrite: boolean;
   /** @nullable */
   error: string | null;
@@ -640,6 +640,34 @@ export interface TeamBudgetHistoryResponse {
   issues: TeamBudgetMatchIssue[];
 }
 
+export type TeamBudgetUpstreamSyncStatus = typeof TeamBudgetUpstreamSyncStatus[keyof typeof TeamBudgetUpstreamSyncStatus];
+
+
+export const TeamBudgetUpstreamSyncStatus = {
+  pending: 'pending',
+  synced: 'synced',
+  unresolved: 'unresolved',
+  failed: 'failed',
+} as const;
+
+export interface TeamBudgetUpstreamSync {
+  teamName: string;
+  /** @nullable */
+  workspaceId: string | null;
+  /** @nullable */
+  targetGroupId: string | null;
+  /** @nullable */
+  targetGroupName: string | null;
+  desiredAmountUsd: number;
+  /** @nullable */
+  upstreamAmountUsd: number | null;
+  status: TeamBudgetUpstreamSyncStatus;
+  /** @nullable */
+  reason: string | null;
+  /** @nullable */
+  lastAttemptAt: string | null;
+}
+
 export interface TeamBudgetSyncStatus {
   /** @nullable */
   lastAttemptAt: string | null;
@@ -650,6 +678,7 @@ export interface TeamBudgetSyncStatus {
   recordCount: number;
   acceptedCount: number;
   issueCount: number;
+  teams: TeamBudgetUpstreamSync[];
 }
 
 export interface TeamBudgetRefreshResult {

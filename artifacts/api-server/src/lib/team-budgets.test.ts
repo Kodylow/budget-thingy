@@ -5,9 +5,12 @@ import {
   groupTeamsTable,
   teamBudgetAdjustmentsTable,
   teamBudgetSyncStateTable,
+  teamBudgetUpstreamSyncTable,
   teamBudgetsTable,
 } from "@workspace/db";
 import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
+import { __setDirectoryCacheForTests } from "./enterprise";
+import { setReplitBudgetTransportForTests } from "./replit-budgets";
 
 import {
   getEffectiveTeamBudgets,
@@ -15,7 +18,10 @@ import {
   parseAirtableBudgetRecord,
   parseSubmissionPeriod,
   refreshTeamBudgetSnapshot,
+  reconcileTeamBudgetsUpstream,
+  resolveTeamBudgetTargets,
   setAirtableBudgetFetcherForTests,
+  setTeamBudgetDirectoryFetcherForTests,
   startTeamBudgetSyncJob,
   TEAM_BUDGET_SYNC_INTERVAL_MS,
 } from "./team-budgets";
@@ -286,6 +292,95 @@ describe("team budget Airtable parsing", () => {
   });
 });
 
+describe("team budget upstream target resolution", () => {
+  const group = (id: string, workspaceId: string, name: string) => ({
+    id,
+    workspaceId,
+    name,
+    type: "custom",
+  });
+
+  it("parses singular and plural role suffixes and selects only Member groups", () => {
+    const groups = [
+      group("a", "w1", "Platform-Admin"),
+      group("m", "w1", "Platform-Members"),
+      group("v", "w1", "Platform-Viewer"),
+      group("g", "w1", "Platform-Guests"),
+    ];
+    const [resolved] = resolveTeamBudgetTargets(
+      ["Platform Team"],
+      groups,
+      [{ groupName: "Platform-Admin", teamName: "Platform Team" }],
+    );
+    expect(resolved).toMatchObject({
+      workspaceId: "w1",
+      targetGroupId: "m",
+      targetGroupName: "Platform-Members",
+      reason: null,
+    });
+  });
+
+  it("resolves a renamed member through an exactly mapped live sibling", () => {
+    const [resolved] = resolveTeamBudgetTargets(
+      ["Renamed Team"],
+      [
+        group("admin", "w1", "Current Name - Admins"),
+        group("live-member-id", "w1", "Current Name - Members"),
+      ],
+      [
+        { groupName: "Old Name - Members", teamName: "Renamed Team" },
+        { groupName: "Current Name - Admins", teamName: "Renamed Team" },
+      ],
+    );
+    expect(resolved?.targetGroupId).toBe("live-member-id");
+    expect(resolved?.targetGroupName).toBe("Current Name - Members");
+  });
+
+  it("fails closed when an assigned live group name is reused across workspaces", () => {
+    const [resolved] = resolveTeamBudgetTargets(
+      ["Shared Name Team"],
+      [
+        group("admin-a", "workspace-a", "Shared Family - Admin"),
+        group("member-a", "workspace-a", "Shared Family - Member"),
+        group("admin-b", "workspace-b", "Shared Family - Admin"),
+        group("member-b", "workspace-b", "Shared Family - Members"),
+      ],
+      [{ groupName: "Shared Family - Admin", teamName: "Shared Name Team" }],
+    );
+
+    expect(resolved).toMatchObject({
+      targetGroupId: null,
+      workspaceId: null,
+    });
+    expect(resolved?.reason).toContain("No uniquely assigned");
+  });
+
+  it("reports missing and ambiguous member targets without selecting siblings", () => {
+    const groups = [
+      group("only-admin", "w1", "No Member - Admin"),
+      group("m1", "w1", "First - Member"),
+      group("a1", "w1", "First - Admin"),
+      group("m2", "w2", "Second - Members"),
+      group("guest2", "w2", "Second - Guest"),
+    ];
+    const results = resolveTeamBudgetTargets(
+      ["Missing", "Ambiguous"],
+      groups,
+      [
+        { groupName: "No Member - Admin", teamName: "Missing" },
+        { groupName: "First - Admin", teamName: "Ambiguous" },
+        { groupName: "Second - Guest", teamName: "Ambiguous" },
+      ],
+    );
+    expect(results[0]).toMatchObject({ targetGroupId: null });
+    expect(results[0]?.reason).toContain("No uniquely assigned");
+    expect(results[1]).toMatchObject({ targetGroupId: null });
+    expect(results[1]?.reason).toContain("Ambiguous");
+    expect(results.map((row) => row.targetGroupId)).not.toContain("only-admin");
+    expect(results.map((row) => row.targetGroupId)).not.toContain("guest2");
+  });
+});
+
 describe("team budget synchronization schedule", () => {
   it("uses an hourly interval", () => {
     expect(TEAM_BUDGET_SYNC_INTERVAL_MS).toBe(60 * 60 * 1000);
@@ -308,6 +403,12 @@ describe.sequential("effective team budget persistence", () => {
   let priorSyncState: Array<typeof teamBudgetSyncStateTable.$inferSelect> = [];
 
   beforeAll(async () => {
+    __setDirectoryCacheForTests({ groups: [], members: new Map() });
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: [] }));
+    setReplitBudgetTransportForTests(
+      async () => new Response(JSON.stringify({ error: "not connected" }), { status: 401 }),
+      false,
+    );
     priorAdjustments = await db
       .select()
       .from(teamBudgetAdjustmentsTable)
@@ -330,6 +431,10 @@ describe.sequential("effective team budget persistence", () => {
 
   afterAll(async () => {
     setAirtableBudgetFetcherForTests(null);
+    await reconcileTeamBudgetsUpstream();
+    setReplitBudgetTransportForTests(null);
+    setTeamBudgetDirectoryFetcherForTests(null);
+    __setDirectoryCacheForTests(null);
     await db.delete(teamBudgetAdjustmentsTable).where(eq(teamBudgetAdjustmentsTable.source, "airtable"));
     await db.delete(teamBudgetSyncStateTable);
     await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, [
@@ -484,5 +589,202 @@ describe.sequential("effective team budget persistence", () => {
     expect((await refreshTeamBudgetSnapshot()).ok).toBe(true);
     snapshot = await getEffectiveTeamBudgets();
     expect(snapshot.teams.some((team) => team.teamName === RENAMED_TEAM)).toBe(false);
+  });
+});
+
+describe.sequential("team budget upstream reconciliation", () => {
+  const TEAM_CLEAR = `${PREFIX} Upstream Clear`;
+  const TEAM_SAME = `${PREFIX} Upstream Same`;
+  const TEAM_ONE = `${PREFIX} Upstream One`;
+  const TEAM_TWO = `${PREFIX} Upstream Two`;
+  const teamNames = [TEAM_CLEAR, TEAM_SAME, TEAM_ONE, TEAM_TWO];
+  const workspaceId = `${PREFIX}-workspace`;
+  const groups = teamNames.flatMap((teamName, index) => {
+    const base = `${PREFIX} Family ${index}`;
+    return [
+      { id: `admin-${index}`, workspaceId, name: `${base} - Admin`, type: "custom" },
+      { id: `member-${index}`, workspaceId, name: `${base} - Members`, type: "custom" },
+    ];
+  });
+  const upstream = new Map<string, number | null>();
+  let mutations: Array<{ method: string; groupId: string }> = [];
+  let failingGroupId: string | null = null;
+
+  const installTransport = (canWrite: boolean) => {
+    setReplitBudgetTransportForTests(async (path, init) => {
+      if (init.method === "GET") {
+        return Response.json({
+          items: [...upstream].map(([groupId, budgetUsd]) => ({
+            workspaceId,
+            groupId,
+            budgetUsd,
+          })),
+        });
+      }
+      const body = init.body ? JSON.parse(init.body) as { groupId: string; amountUsd: number } : null;
+      const groupId = body?.groupId ?? new URL(`https://test.invalid${path}`).searchParams.get("groupId")!;
+      mutations.push({ method: init.method, groupId });
+      if (groupId === failingGroupId) {
+        return new Response(JSON.stringify({ error: "simulated mutation failure" }), { status: 500 });
+      }
+      upstream.set(groupId, init.method === "DELETE" ? null : body!.amountUsd);
+      return new Response(null, { status: 204 });
+    }, canWrite);
+  };
+
+  beforeAll(async () => {
+    await db.delete(teamBudgetAdjustmentsTable).where(inArray(
+      teamBudgetAdjustmentsTable.sourceRecordId,
+      [`${PREFIX}-upstream-history`],
+    ));
+    await db.delete(teamBudgetUpstreamSyncTable).where(inArray(
+      teamBudgetUpstreamSyncTable.teamName,
+      teamNames,
+    ));
+    await db.delete(groupTeamsTable).where(inArray(
+      groupTeamsTable.groupName,
+      groups.map((group) => group.name),
+    ));
+    await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, teamNames));
+    await db.insert(teamBudgetsTable).values([
+      { teamName: TEAM_CLEAR, amountUsd: 0, originalAmountUsd: 0 },
+      { teamName: TEAM_SAME, amountUsd: 10, originalAmountUsd: 10 },
+      { teamName: TEAM_ONE, amountUsd: 10, originalAmountUsd: 10 },
+      { teamName: TEAM_TWO, amountUsd: 22, originalAmountUsd: 22 },
+    ]);
+    await db.insert(teamBudgetAdjustmentsTable).values({
+      source: "manual-test",
+      sourceRecordId: `${PREFIX}-upstream-history`,
+      teamName: TEAM_ONE,
+      amountUsd: 1,
+      submissionPeriod: "2026-01",
+      matchState: "accepted",
+    });
+    await db.insert(groupTeamsTable).values(groups
+      .filter((group) => group.id.startsWith("admin"))
+      .map((group, index) => ({ groupName: group.name, teamName: teamNames[index]! })));
+    __setDirectoryCacheForTests({
+      groups,
+      members: new Map(),
+    });
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
+  });
+
+  afterAll(async () => {
+    setReplitBudgetTransportForTests(null);
+    setTeamBudgetDirectoryFetcherForTests(null);
+    __setDirectoryCacheForTests(null);
+    await db.delete(teamBudgetAdjustmentsTable).where(eq(
+      teamBudgetAdjustmentsTable.sourceRecordId,
+      `${PREFIX}-upstream-history`,
+    ));
+    await db.delete(teamBudgetUpstreamSyncTable).where(inArray(
+      teamBudgetUpstreamSyncTable.teamName,
+      teamNames,
+    ));
+    await db.delete(groupTeamsTable).where(inArray(
+      groupTeamsTable.groupName,
+      groups.map((group) => group.name),
+    ));
+    await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, teamNames));
+  });
+
+  it("clears zero, skips cent-equivalent limits, and verifies the result", async () => {
+    upstream.clear();
+    upstream.set("member-0", 12);
+    upstream.set("member-1", 10.001);
+    upstream.set("member-2", 11);
+    upstream.set("member-3", 22);
+    mutations = [];
+    installTransport(true);
+
+    await reconcileTeamBudgetsUpstream();
+
+    expect(mutations).toEqual([{ method: "DELETE", groupId: "member-0" }]);
+    const rows = await db.select().from(teamBudgetUpstreamSyncTable)
+      .where(inArray(teamBudgetUpstreamSyncTable.teamName, [TEAM_CLEAR, TEAM_SAME]));
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ teamName: TEAM_CLEAR, status: "synced", upstreamAmountUsd: null }),
+      expect.objectContaining({ teamName: TEAM_SAME, status: "synced", upstreamAmountUsd: 10.001 }),
+    ]));
+  });
+
+  it("leaves changed limits pending without write scope and performs no mutation", async () => {
+    upstream.set("member-1", 2);
+    mutations = [];
+    installTransport(false);
+    await reconcileTeamBudgetsUpstream();
+    const [row] = await db.select().from(teamBudgetUpstreamSyncTable)
+      .where(eq(teamBudgetUpstreamSyncTable.teamName, TEAM_SAME));
+    expect(mutations).toHaveLength(0);
+    expect(row).toMatchObject({ status: "pending", targetGroupId: "member-1", upstreamAmountUsd: 2 });
+    expect(row?.reason).toContain("write:budgets");
+  });
+
+  it("uses the forced fresh directory target instead of a stale cached ID", async () => {
+    const admin = groups[2]!;
+    const staleMember = {
+      ...groups[3]!,
+      id: "stale-recreated-member",
+    };
+    const freshMember = {
+      ...groups[3]!,
+      id: "fresh-recreated-member",
+    };
+    __setDirectoryCacheForTests({
+      groups: [admin, staleMember],
+      members: new Map(),
+    });
+    setTeamBudgetDirectoryFetcherForTests(async () => ({
+      allGroups: [admin, freshMember],
+    }));
+    upstream.clear();
+    mutations = [];
+    installTransport(true);
+
+    await reconcileTeamBudgetsUpstream();
+
+    expect(mutations).toEqual([
+      { method: "PUT", groupId: "fresh-recreated-member" },
+    ]);
+    expect(mutations.some(({ groupId }) => groupId === "stale-recreated-member")).toBe(false);
+    const [row] = await db.select().from(teamBudgetUpstreamSyncTable)
+      .where(eq(teamBudgetUpstreamSyncTable.teamName, TEAM_SAME));
+    expect(row).toMatchObject({
+      status: "synced",
+      targetGroupId: "fresh-recreated-member",
+    });
+
+    __setDirectoryCacheForTests({ groups, members: new Map() });
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
+  });
+
+  it("isolates a mutation failure, preserves local history, and succeeds on retry", async () => {
+    upstream.set("member-2", 0);
+    upstream.set("member-3", 0);
+    failingGroupId = "member-3";
+    mutations = [];
+    installTransport(true);
+    await reconcileTeamBudgetsUpstream();
+
+    let rows = await db.select().from(teamBudgetUpstreamSyncTable)
+      .where(inArray(teamBudgetUpstreamSyncTable.teamName, [TEAM_ONE, TEAM_TWO]));
+    expect(rows.find((row) => row.teamName === TEAM_ONE)?.status).toBe("synced");
+    expect(rows.find((row) => row.teamName === TEAM_TWO)?.status).toBe("failed");
+    expect(upstream.get("member-2")).toBe(11);
+    expect(upstream.get("member-3")).toBe(0);
+    expect(await db.select().from(teamBudgetAdjustmentsTable).where(eq(
+      teamBudgetAdjustmentsTable.sourceRecordId,
+      `${PREFIX}-upstream-history`,
+    ))).toHaveLength(1);
+
+    failingGroupId = null;
+    mutations = [];
+    await reconcileTeamBudgetsUpstream();
+    rows = await db.select().from(teamBudgetUpstreamSyncTable)
+      .where(inArray(teamBudgetUpstreamSyncTable.teamName, [TEAM_ONE, TEAM_TWO]));
+    expect(rows.every((row) => row.status === "synced")).toBe(true);
+    expect(mutations).toEqual([{ method: "PUT", groupId: "member-3" }]);
+    expect(upstream.get("member-3")).toBe(22);
   });
 });

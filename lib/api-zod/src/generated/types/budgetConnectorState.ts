@@ -9,7 +9,7 @@ import type { BudgetConnectorStateStatus } from './budgetConnectorStateStatus';
 
 export interface BudgetConnectorState {
   status: BudgetConnectorStateStatus;
-  /** True only when the approved connector explicitly grants write:budgets. */
+  /** True when the configured Replit budgets credential grants write:budgets. */
   canWrite: boolean;
   /** @nullable */
   error: string | null;

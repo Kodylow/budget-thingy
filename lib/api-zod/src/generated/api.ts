@@ -582,7 +582,43 @@ export const GetTeamBudgetSyncStatusResponse = zod.object({
   "lastError": zod.string().nullable(),
   "recordCount": zod.number(),
   "acceptedCount": zod.number(),
-  "issueCount": zod.number()
+  "issueCount": zod.number(),
+  "teams": zod.array(zod.object({
+  "teamName": zod.string(),
+  "workspaceId": zod.string().nullable(),
+  "targetGroupId": zod.string().nullable(),
+  "targetGroupName": zod.string().nullable(),
+  "desiredAmountUsd": zod.number(),
+  "upstreamAmountUsd": zod.number().nullable(),
+  "status": zod.enum(['pending', 'synced', 'unresolved', 'failed']),
+  "reason": zod.string().nullable(),
+  "lastAttemptAt": zod.string().nullable()
+}))
+})
+
+
+/**
+ * Available only to true Enterprise account administrators; account delegates and editors are not authorized. Reconciles per-team desired budgets with their upstream Replit groups.
+ * @summary Retry upstream Replit group budget synchronization
+ */
+export const RetryTeamBudgetUpstreamSyncResponse = zod.object({
+  "lastAttemptAt": zod.string().nullable(),
+  "lastSuccessfulAt": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "recordCount": zod.number(),
+  "acceptedCount": zod.number(),
+  "issueCount": zod.number(),
+  "teams": zod.array(zod.object({
+  "teamName": zod.string(),
+  "workspaceId": zod.string().nullable(),
+  "targetGroupId": zod.string().nullable(),
+  "targetGroupName": zod.string().nullable(),
+  "desiredAmountUsd": zod.number(),
+  "upstreamAmountUsd": zod.number().nullable(),
+  "status": zod.enum(['pending', 'synced', 'unresolved', 'failed']),
+  "reason": zod.string().nullable(),
+  "lastAttemptAt": zod.string().nullable()
+}))
 })
 
 
@@ -746,7 +782,7 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
   "billingPeriod": zod.enum(['current']),
   "connector": zod.object({
   "status": zod.enum(['available', 'unavailable', 'error']),
-  "canWrite": zod.boolean().describe('True only when the approved connector explicitly grants write:budgets.'),
+  "canWrite": zod.boolean().describe('True when the configured Replit budgets credential grants write:budgets.'),
   "error": zod.string().nullable()
 }),
   "members": zod.array(zod.object({

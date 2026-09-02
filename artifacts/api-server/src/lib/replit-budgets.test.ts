@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  clearReplitGroupBudget,
   clearReplitMemberBudget,
+  listReplitGroupBudgets,
   listReplitMemberBudgets,
+  parseReplitGroupBudget,
   parseReplitMemberBudget,
   setReplitBudgetTransportForTests,
+  setReplitGroupBudget,
   setReplitMemberBudget,
 } from "./replit-budgets";
 
@@ -17,6 +21,104 @@ function json(body: unknown, status = 200): Response {
 afterEach(() => setReplitBudgetTransportForTests(null));
 
 describe("Replit budgets connector", () => {
+  it("prefers the scoped Enterprise budgets key and sends it only as a bearer credential", async () => {
+    const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
+    const previousWriteEnabled =
+      process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "scoped-test-key";
+    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED = "true";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
+      data: [],
+      pagination: { hasMore: false, cursor: null },
+    }));
+    try {
+      const result = await listReplitGroupBudgets("ws");
+      expect(result).toMatchObject({ status: "available", canWrite: true });
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(String(url)).toContain("https://api.replit.com/v1/budgets?");
+      expect(init?.headers).toMatchObject({
+        Authorization: "Bearer scoped-test-key",
+      });
+    } finally {
+      fetchMock.mockRestore();
+      if (previousKey === undefined) {
+        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
+      } else {
+        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = previousKey;
+      }
+      if (previousWriteEnabled === undefined) {
+        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+      } else {
+        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED =
+          previousWriteEnabled;
+      }
+    }
+  });
+
+  it("keeps a scoped key read-only without separate write approval", async () => {
+    const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
+    const previousWriteEnabled =
+      process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "read-only-test-key";
+    delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
+      data: [],
+      pagination: { hasMore: false, cursor: null },
+    }));
+    try {
+      const snapshot = await listReplitGroupBudgets("ws");
+      expect(snapshot).toMatchObject({ status: "available", canWrite: false });
+      await expect(setReplitGroupBudget("ws", "g", 25)).rejects.toMatchObject({
+        kind: "unavailable",
+      });
+      expect(fetchMock).toHaveBeenCalledOnce();
+    } finally {
+      fetchMock.mockRestore();
+      if (previousKey === undefined) {
+        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
+      } else {
+        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = previousKey;
+      }
+      if (previousWriteEnabled === undefined) {
+        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+      } else {
+        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED =
+          previousWriteEnabled;
+      }
+    }
+  });
+
+  it("reports direct scoped-key authorization failures as non-writable", async () => {
+    const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
+    const previousWriteEnabled =
+      process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "denied-test-key";
+    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED = "true";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      json({ error: { message: "insufficient_scope" } }, 403),
+    );
+    try {
+      const snapshot = await listReplitGroupBudgets("ws");
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.canWrite).toBe(false);
+      expect(snapshot.error).toContain("insufficient_scope");
+    } finally {
+      fetchMock.mockRestore();
+      if (previousKey === undefined) {
+        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
+      } else {
+        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = previousKey;
+      }
+      if (previousWriteEnabled === undefined) {
+        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+      } else {
+        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED =
+          previousWriteEnabled;
+      }
+    }
+  });
+
   it("follows cursors and deduplicates identical member observations", async () => {
     const paths: string[] = [];
     setReplitBudgetTransportForTests(async (path) => {
@@ -166,4 +268,156 @@ describe("Replit budgets connector", () => {
       expect(called).toBe(false);
     },
   );
+
+  it("parses typed group Agent limits and rejects unrelated rows", () => {
+    expect(
+      parseReplitGroupBudget({
+        workspace: { id: "ws" },
+        group: { id: "g" },
+        metrics: [
+          { id: "storage", amount: 999 },
+          { id: "replit:v0:teams:ai_agent", limitUsd: "75" },
+        ],
+      }),
+    ).toEqual({
+      workspaceId: "ws",
+      groupId: "g",
+      budgetUsd: 75,
+    });
+    expect(
+      parseReplitGroupBudget({
+        workspaceId: "ws",
+        groupId: "g",
+        metric: "storage",
+        amountUsd: 10,
+      }),
+    ).toBeNull();
+    expect(parseReplitGroupBudget({ workspaceId: "ws", userId: "u" })).toBeNull();
+  });
+
+  it("paginates group budgets, filters other workspaces, and deduplicates by group ID", async () => {
+    const paths: string[] = [];
+    setReplitBudgetTransportForTests(async (path) => {
+      paths.push(path);
+      return path.includes("cursor=next")
+        ? json({
+            data: [
+              { workspaceId: "ws", groupId: "g1", amountUsd: 10 },
+              { workspaceId: "ws", groupId: "g2", amountUsd: null },
+            ],
+            pagination: { hasMore: false },
+          })
+        : json({
+            data: [
+              { workspaceId: "ws", groupId: "g1", amountUsd: 10 },
+              { workspaceId: "other", groupId: "g3", amountUsd: 30 },
+              { workspaceId: "ws", userId: "u1", amountUsd: 40 },
+            ],
+            pagination: { hasMore: true, nextCursor: "next" },
+          });
+    });
+
+    const result = await listReplitGroupBudgets("ws");
+    expect(result.status).toBe("available");
+    expect([...result.budgets]).toEqual([
+      ["g1", { workspaceId: "ws", groupId: "g1", budgetUsd: 10 }],
+      ["g2", { workspaceId: "ws", groupId: "g2", budgetUsd: null }],
+    ]);
+    expect(paths).toHaveLength(2);
+    expect(paths[0]).toBe(
+      "/v1/budgets?workspaceId=ws&billingPeriod=current&metric=replit%3Av0%3Ateams%3Aai_agent&limit=100",
+    );
+    expect(paths[1]).toContain("cursor=next");
+  });
+
+  it("rejects conflicting duplicate group budgets", async () => {
+    setReplitBudgetTransportForTests(async (path) =>
+      path.includes("cursor=next")
+        ? json({
+            data: [{ workspaceId: "ws", groupId: "g", amountUsd: 20 }],
+            pagination: { hasMore: false },
+          })
+        : json({
+            data: [{ workspaceId: "ws", groupId: "g", amountUsd: 10 }],
+            pagination: { hasMore: true, cursor: "next" },
+          }),
+    );
+
+    const result = await listReplitGroupBudgets("ws");
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("conflicting limits for workspace group g");
+    expect(result.budgets.size).toBe(0);
+  });
+
+  it("uses exact group PUT and DELETE requests", async () => {
+    const calls: Array<{
+      path: string;
+      method: string;
+      headers?: Record<string, string>;
+      body?: unknown;
+    }> = [];
+    setReplitBudgetTransportForTests(async (path, init) => {
+      calls.push({
+        path,
+        method: init.method,
+        headers: init.headers,
+        body: init.body ? JSON.parse(init.body) : undefined,
+      });
+      return new Response(null, { status: 204 });
+    });
+
+    await setReplitGroupBudget("ws", "g", 25);
+    await clearReplitGroupBudget("ws", "g");
+    expect(calls).toEqual([
+      {
+        path: "/v1/budgets",
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: {
+          workspaceId: "ws",
+          groupId: "g",
+          billingPeriod: "current",
+          metric: "replit:v0:teams:ai_agent",
+          amountUsd: 25,
+        },
+      },
+      {
+        path:
+          "/v1/budgets?workspaceId=ws&groupId=g&billingPeriod=current&metric=replit%3Av0%3Ateams%3Aai_agent",
+        method: "DELETE",
+        headers: undefined,
+        body: undefined,
+      },
+    ]);
+  });
+
+  it("denies group writes without scope and makes no mutation", async () => {
+    let called = false;
+    setReplitBudgetTransportForTests(async () => {
+      called = true;
+      return new Response(null, { status: 204 });
+    }, false);
+
+    await expect(setReplitGroupBudget("ws", "g", 10)).rejects.toMatchObject({
+      kind: "unavailable",
+    });
+    await expect(clearReplitGroupBudget("ws", "g")).rejects.toMatchObject({
+      kind: "unavailable",
+    });
+    expect(called).toBe(false);
+  });
+
+  it("handles zero by clearing while keeping the group setter positive-only", async () => {
+    const methods: string[] = [];
+    setReplitBudgetTransportForTests(async (_path, init) => {
+      methods.push(init.method);
+      return new Response(null, { status: 204 });
+    });
+
+    await expect(setReplitGroupBudget("ws", "g", 0)).rejects.toThrow(
+      "greater than zero",
+    );
+    await clearReplitGroupBudget("ws", "g");
+    expect(methods).toEqual(["DELETE"]);
+  });
 });

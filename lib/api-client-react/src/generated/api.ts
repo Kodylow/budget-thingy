@@ -2048,6 +2048,78 @@ export function useGetTeamBudgetSyncStatus<TData = Awaited<ReturnType<typeof get
 
 
 
+export const getRetryTeamBudgetUpstreamSyncUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/reconcile`
+}
+
+/**
+ * Available only to true Enterprise account administrators; account delegates and editors are not authorized. Reconciles per-team desired budgets with their upstream Replit groups.
+ * @summary Retry upstream Replit group budget synchronization
+ */
+export const retryTeamBudgetUpstreamSync = async ( options?: RequestInit): Promise<TeamBudgetSyncStatus> => {
+
+  return customFetch<TeamBudgetSyncStatus>(getRetryTeamBudgetUpstreamSyncUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRetryTeamBudgetUpstreamSyncMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryTeamBudgetUpstreamSync>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryTeamBudgetUpstreamSync>>, TError,void, TContext> => {
+
+const mutationKey = ['retryTeamBudgetUpstreamSync'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryTeamBudgetUpstreamSync>>, void> = () => {
+
+
+          return  retryTeamBudgetUpstreamSync(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryTeamBudgetUpstreamSyncMutationResult = NonNullable<Awaited<ReturnType<typeof retryTeamBudgetUpstreamSync>>>
+
+    export type RetryTeamBudgetUpstreamSyncMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Retry upstream Replit group budget synchronization
+ */
+export const useRetryTeamBudgetUpstreamSync = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryTeamBudgetUpstreamSync>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryTeamBudgetUpstreamSync>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRetryTeamBudgetUpstreamSyncMutationOptions(options));
+    }
+
 export const getRefreshTeamBudgetsUrl = () => {
 
 
