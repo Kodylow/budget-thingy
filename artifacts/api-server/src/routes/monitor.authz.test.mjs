@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import express from "express";
 import { eq, inArray } from "drizzle-orm";
@@ -81,6 +82,7 @@ let server;
 let baseUrl;
 let budgetWriteFailures = new Set();
 let budgetWriteUserIds = [];
+const delegateManagedEmail = `delegate-managed-${randomUUID()}@example.com`;
 
 test.before(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key"; // marks isConfigured()
@@ -916,7 +918,7 @@ test("account-admin removal survives the designated editor's next verified login
   const addedRecipient = await req("/admins", {
     user: "bootstrap-editor",
     method: "POST",
-    body: { email: "delegate-managed@example.com" },
+    body: { email: delegateManagedEmail },
   });
   assert.equal(addedRecipient.status, 201);
   assert.equal((await req(`/admins/${addedRecipient.json.id}`, {
