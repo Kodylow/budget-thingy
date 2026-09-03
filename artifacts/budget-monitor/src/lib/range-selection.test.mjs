@@ -21,8 +21,8 @@ test('local date formatting does not use the UTC calendar day', () => {
   assert.equal(toLocalDateInputValue(localDate), '2026-01-02');
 });
 
-test('full term reuses the validated custom-range API contract', () => {
-  assert.equal(apiRangeType('full-term'), 'custom');
+test('full term uses its stable rolling API identity', () => {
+  assert.equal(apiRangeType('full-term'), 'full-term');
   assert.equal(apiRangeType('billing'), 'billing');
   assert.equal(apiRangeType('custom'), 'custom');
 });

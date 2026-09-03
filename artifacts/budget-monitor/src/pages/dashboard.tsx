@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Loader2 } from 'lucide-react';
 
 import { useAuthContext, useCanWrite } from '@/components/auth-context';
 
@@ -877,6 +877,18 @@ export default function Dashboard() {
                 {projectSpendLoaded ? "Syncing history" : "Syncing project spend"} · {pendingCount} remaining
               </span>
               <span className="sm:hidden">Syncing...</span>
+            </Badge>
+          )}
+          {syncStatus === 'complete' && !projectSpendLoaded && (
+            <Badge
+              variant="outline"
+              className="flex items-center gap-2"
+              data-testid="badge-project-sync-background"
+              title="Headline and workspace usage are ready. Project detail is updating in the background."
+            >
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span className="hidden sm:inline">Updating project detail in background</span>
+              <span className="sm:hidden">Updating detail...</span>
             </Badge>
           )}
           {(syncStatus === 'failed' || syncStatus === 'partial') && (

@@ -82,13 +82,14 @@ async function rawFetch(
 export const SPEND_DATA_CUTOFF_ISO = "2026-05-20T00:00:00.000Z";
 export const SPEND_DATA_CUTOFF_MS = new Date(SPEND_DATA_CUTOFF_ISO).getTime();
 export const SPEND_DATA_CUTOFF_LABEL = "May 2026-present";
+export const FULL_TERM_RANGE_KEY = "full-term:from-cutoff";
 export const PACE_FALLBACK_END_ISO = "2027-05-17T00:00:00.000Z";
 const BILLING_PERIOD_REFRESH_MS = 24 * 60 * 60 * 1000;
 const VERIFICATION_HEAL_THRESHOLD_USD = 1;
 const VERIFICATION_RETRY_BASE_MS = 60 * 1000;
 const VERIFICATION_RETRY_MAX_MS = 60 * 60 * 1000;
 
-export type RangeType = "billing" | "mtd" | "ytd" | "custom";
+export type RangeType = "billing" | "mtd" | "ytd" | "custom" | "full-term";
 
 export interface UsageRange {
   key: string; // cache key
@@ -100,11 +101,22 @@ export function resolveRange(
   rangeType: string | undefined,
   startDate?: string,
   endDate?: string,
+  now = new Date(),
 ): UsageRange {
-  const now = new Date();
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();
   switch (rangeType) {
+    case "full-term": {
+      const end = new Date(Date.UTC(y, m, now.getUTCDate() + 1));
+      return {
+        key: FULL_TERM_RANGE_KEY,
+        label: formatPeriodLabel(SPEND_DATA_CUTOFF_ISO, end.toISOString()),
+        params: {
+          startTime: SPEND_DATA_CUTOFF_ISO,
+          endTime: end.toISOString(),
+        },
+      };
+    }
     case "mtd": {
       const rawStart = new Date(Date.UTC(y, m, 1)).getTime();
       const effectiveStart = new Date(Math.max(rawStart, SPEND_DATA_CUTOFF_MS));
@@ -854,12 +866,49 @@ async function synchronizeUsage(
       }
       const result = await fetchUsageChunk(mode, baseParams, chunk.start, chunk.end);
       fetched.push({ ...chunk, ...result });
+      // A cursorless workspace-member response cannot be made complete by
+      // fetching later chunks. Stop after the bounded recovery for the first
+      // affected interval instead of multiplying that bound across the range.
+      if (mode === "workspace_member" && result.partial) break;
     }
 
     const completedAt = new Date();
     const { start: rangeStart, end: syncedThrough } = rangeBounds(range);
     const partialError = fetched.find((chunk) => chunk.partial)?.error ?? null;
     const status: UsageSyncStatus = partialError ? "partial" : "success";
+    if (mode === "workspace_member" && partialError && storedState) {
+      const retainedRows = await tx
+        .select()
+        .from(usageSyncChunksTable)
+        .where(and(
+          eq(usageSyncChunksTable.mode, mode),
+          eq(usageSyncChunksTable.rangeKey, range.key),
+          eq(usageSyncChunksTable.scopeKey, scopeKey),
+        ));
+      if (retainedRows.length > 0) {
+        await tx.update(usageSyncStateTable).set({
+          isClosed: false,
+          status: "partial",
+          errorMessage: partialError,
+          startedAt,
+          completedAt,
+        }).where(and(
+          eq(usageSyncStateTable.mode, mode),
+          eq(usageSyncStateTable.rangeKey, range.key),
+          eq(usageSyncStateTable.scopeKey, scopeKey),
+        ));
+        return {
+          rows: retainedRows,
+          metadata: {
+            syncedThrough: storedState.syncedThrough.getTime(),
+            completedAt: completedAt.getTime(),
+            isClosed: false,
+            status: "partial" as const,
+            error: partialError,
+          },
+        };
+      }
+    }
     await tx
       .delete(usageSyncChunksTable)
       .where(and(
@@ -1161,10 +1210,10 @@ export function getUsageSyncSummary(
     if ((!metadata && !loaded) || metadata?.status === "syncing") pendingCount++;
     else if (metadata?.status === "failed") {
       failedCount++;
-      error ??= metadata.error;
+      error ??= formatUsageScopeError(id, metadata.error);
     } else if (metadata?.status === "partial") {
       partialCount++;
-      error ??= metadata.error;
+      error ??= formatUsageScopeError(id, metadata.error);
     }
   }
   return {
@@ -1180,6 +1229,21 @@ export function getUsageSyncSummary(
     partialCount,
     error,
   };
+}
+
+function formatUsageScopeError(id: string, error: string | null): string | null {
+  if (!error) return null;
+  const [mode, , scopeKey] = id.split("|");
+  const label = mode === "workspace_member"
+    ? "Workspace member usage"
+    : mode === "group_member"
+      ? "Group member usage"
+      : mode === "group_project"
+        ? "Project detail"
+        : mode === "account_total"
+          ? "Account usage"
+          : "Usage";
+  return `${label} (${scopeKey ?? "unknown scope"}): ${error}`;
 }
 
 export function isUsageSyncRetryable(
@@ -1499,6 +1563,7 @@ export async function initCache(
 ): Promise<void> {
   try {
     await maybePruneExpiredCustomUsage();
+    await adoptLegacyFullTermUsage();
     const [
       dirRow,
       billingPeriodRow,
@@ -1632,6 +1697,92 @@ export async function initCache(
       billingPeriodRefreshTimer.unref();
     }
   }
+}
+
+const LEGACY_FULL_TERM_KEY = /^custom:2026-05-20:\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Adopt the newest usable cutoff-based custom snapshot into the stable rolling
+ * full-term identity. This is intentionally copy-only and idempotent: existing
+ * stable scopes always win, and legacy custom reports remain available.
+ */
+async function adoptLegacyFullTermUsage(): Promise<number> {
+  return db.transaction(async (tx) => {
+    const states = await tx.select().from(usageSyncStateTable);
+    const stableIds = new Set(
+      states
+        .filter((state) => state.rangeKey === FULL_TERM_RANGE_KEY)
+        .map((state) => syncId(state.mode as UsageSyncMode, state.rangeKey, state.scopeKey)),
+    );
+    const candidates = states.filter((state) =>
+      LEGACY_FULL_TERM_KEY.test(state.rangeKey) &&
+      state.rangeStart.getTime() === SPEND_DATA_CUTOFF_MS &&
+      (state.status === "success" || state.status === "partial")
+    );
+    const winners = new Map<string, typeof candidates[number]>();
+    for (const candidate of candidates) {
+      const id = syncId(candidate.mode as UsageSyncMode, FULL_TERM_RANGE_KEY, candidate.scopeKey);
+      if (stableIds.has(id)) continue;
+      const current = winners.get(id);
+      const candidateRank = candidate.status === "success" ? 1 : 0;
+      const currentRank = current?.status === "success" ? 1 : 0;
+      if (
+        !current ||
+        candidateRank > currentRank ||
+        (candidateRank === currentRank &&
+          (candidate.syncedThrough > current.syncedThrough ||
+            (candidate.syncedThrough.getTime() === current.syncedThrough.getTime() &&
+              candidate.completedAt > current.completedAt)))
+      ) {
+        winners.set(id, candidate);
+      }
+    }
+
+    let adopted = 0;
+    for (const [id, source] of winners) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${id}))`);
+      const [existing] = await tx.select({ rangeKey: usageSyncStateTable.rangeKey })
+        .from(usageSyncStateTable)
+        .where(and(
+          eq(usageSyncStateTable.mode, source.mode),
+          eq(usageSyncStateTable.rangeKey, FULL_TERM_RANGE_KEY),
+          eq(usageSyncStateTable.scopeKey, source.scopeKey),
+        ));
+      if (existing) continue;
+      const sourceRows = await tx.select().from(usageSyncChunksTable).where(and(
+        eq(usageSyncChunksTable.mode, source.mode),
+        eq(usageSyncChunksTable.rangeKey, source.rangeKey),
+        eq(usageSyncChunksTable.scopeKey, source.scopeKey),
+      ));
+      if (sourceRows.length === 0) continue;
+      await tx.insert(usageSyncChunksTable).values(sourceRows.map((row) => ({
+        mode: row.mode,
+        rangeKey: FULL_TERM_RANGE_KEY,
+        scopeKey: row.scopeKey,
+        chunkStart: row.chunkStart,
+        chunkEnd: row.chunkEnd,
+        payloadJson: row.payloadJson,
+        completedAt: row.completedAt,
+      }))).onConflictDoNothing();
+      await tx.insert(usageSyncStateTable).values({
+        mode: source.mode,
+        rangeKey: FULL_TERM_RANGE_KEY,
+        scopeKey: source.scopeKey,
+        rangeStart: source.rangeStart,
+        syncedThrough: source.syncedThrough,
+        isClosed: false,
+        status: source.status,
+        errorMessage: source.errorMessage,
+        startedAt: source.startedAt,
+        completedAt: source.completedAt,
+      }).onConflictDoNothing();
+      adopted++;
+    }
+    if (adopted > 0) {
+      logger.info({ adopted }, "Adopted legacy full-term usage snapshots");
+    }
+    return adopted;
+  });
 }
 
 export interface DirectoryCache {

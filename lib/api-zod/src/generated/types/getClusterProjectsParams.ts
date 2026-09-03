@@ -11,7 +11,7 @@ import type { StartDateParameter } from './startDateParameter';
 
 export type GetClusterProjectsParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**

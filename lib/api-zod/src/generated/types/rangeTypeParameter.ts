@@ -11,6 +11,7 @@ export type RangeTypeParameter = typeof RangeTypeParameter[keyof typeof RangeTyp
 
 export const RangeTypeParameter = {
   billing: 'billing',
+  'full-term': 'full-term',
   mtd: 'mtd',
   ytd: 'ytd',
   custom: 'custom',

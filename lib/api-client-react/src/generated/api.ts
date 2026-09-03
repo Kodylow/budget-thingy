@@ -137,6 +137,7 @@ export const getGetCurrentAuthUserQueryKey = () => {
     ] as const;
     }
 
+
 export const getGetCurrentAuthUserQueryOptions = <TData = Awaited<ReturnType<typeof getCurrentAuthUser>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCurrentAuthUser>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 

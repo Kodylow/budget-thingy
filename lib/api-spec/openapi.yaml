@@ -1322,10 +1322,10 @@ components:
       name: rangeType
       in: query
       required: false
-      description: Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+      description: Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
       schema:
         type: string
-        enum: [billing, mtd, ytd, custom]
+        enum: [billing, full-term, mtd, ytd, custom]
     StartDate:
       name: startDate
       in: query
@@ -1952,7 +1952,7 @@ components:
       properties:
         rangeType:
           type: string
-          enum: [billing, mtd, ytd, custom]
+          enum: [billing, full-term, mtd, ytd, custom]
         startDate:
           type: string
         endDate:

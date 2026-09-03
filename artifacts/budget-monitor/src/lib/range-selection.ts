@@ -1,6 +1,6 @@
 export const FULL_TERM_START_DATE = '2026-05-20';
 
-export type ApiRangeType = 'billing' | 'mtd' | 'ytd' | 'custom';
+export type ApiRangeType = 'billing' | 'mtd' | 'ytd' | 'custom' | 'full-term';
 export type RangeSelection = ApiRangeType | 'full-term';
 
 export function toLocalDateInputValue(date = new Date()): string {
@@ -18,5 +18,5 @@ export function fullTermDates(date = new Date()) {
 }
 
 export function apiRangeType(selection: RangeSelection): ApiRangeType {
-  return selection === 'full-term' ? 'custom' : selection;
+  return selection;
 }

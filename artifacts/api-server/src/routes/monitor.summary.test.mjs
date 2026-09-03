@@ -583,6 +583,30 @@ test("/groups: complete workspace usage remains authoritative when group usage i
   assert.equal(json.pendingCount, 0);
 });
 
+test("/groups and /summary finish while project detail continues in the background", async () => {
+  __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 10], ["carol", 0]]));
+  __setMemberUsageForTests("sg-beta", RANGE, new Map([["bob", 10]]));
+  __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 30], ["bob", 20]]));
+  __setWsSpendForTests("ws-extra", RANGE, new Map());
+  setAccountUsage(50);
+  clearProjectSpend();
+
+  const groupsJson = await req("/groups");
+  assert.equal(groupsJson.isComplete, true);
+  assert.equal(groupsJson.syncStatus, "complete");
+  assert.equal(groupsJson.pendingCount, 0);
+  assert.equal(groupsJson.projectSpendLoaded, false);
+  assert.equal(groupsJson.groups.find((group) => group.groupId === "sg-alpha")?.spendLoaded, true);
+  assert.equal(groupsJson.groups.find((group) => group.groupId === "sg-beta")?.spendLoaded, true);
+
+  const summaryJson = await req("/summary");
+  assert.equal(summaryJson.isComplete, true);
+  assert.equal(summaryJson.syncStatus, "complete");
+  assert.equal(summaryJson.pendingCount, 0);
+
+  setProjectSpend(40, 10);
+});
+
 test("/groups: correct combined spend once all group caches warm", async () => {
   // alice is in Alpha AND Beta: $30 Alpha Comcast + $20 Beta Comcast + $20 extra = $70.
   // Two-phase approach: sum Comcast across all her groups first, then add extra-ws once.

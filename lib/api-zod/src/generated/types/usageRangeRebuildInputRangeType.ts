@@ -11,6 +11,7 @@ export type UsageRangeRebuildInputRangeType = typeof UsageRangeRebuildInputRange
 
 export const UsageRangeRebuildInputRangeType = {
   billing: 'billing',
+  'full-term': 'full-term',
   mtd: 'mtd',
   ytd: 'ytd',
   custom: 'custom',

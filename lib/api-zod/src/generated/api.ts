@@ -118,7 +118,7 @@ export const HealthCheckResponse = zod.object({
  * @summary List all groups with usage and budget state
  */
 export const ListGroupsQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -181,7 +181,7 @@ export const GetGroupDetailParams = zod.object({
 })
 
 export const GetGroupDetailQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
   "scopeGroupIds": zod.coerce.string().optional().describe('Optional comma-separated group IDs that define a team-cluster deduplication scope.')
@@ -251,7 +251,7 @@ export const GetGroupProjectsParams = zod.object({
 })
 
 export const GetGroupProjectsQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -290,7 +290,7 @@ export const GetClusterProjectsParams = zod.object({
 })
 
 export const GetClusterProjectsQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -329,7 +329,7 @@ export const GetCanonicalClusterHeadlineParams = zod.object({
 })
 
 export const GetCanonicalClusterHeadlineQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -358,7 +358,7 @@ export const RefreshGroupUsageResponse = zod.object({
  * @summary Retry failed or partial dashboard usage scopes
  */
 export const RetryUsageSyncQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -373,7 +373,7 @@ export const RetryUsageSyncResponse = zod.object({
  * @summary Dashboard summary
  */
 export const GetSummaryQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -416,7 +416,7 @@ export const GetSummaryResponse = zod.object({
  * @summary Group and team spending trends
  */
 export const GetTrendsQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
   "granularity": zod.enum(['week', 'month']),
@@ -448,7 +448,7 @@ export const GetTrendsResponse = zod.object({
  * @summary List canonical per-user activity
  */
 export const GetUserActivityQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -480,7 +480,7 @@ export const GetUserActivityResponse = zod.object({
 
 export const ExportUsersCsvQueryParams = zod.object({
   "groupIds": zod.coerce.string().min(1).describe('Comma-separated group IDs from a group or cluster detail page'),
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -726,7 +726,7 @@ export const DeleteEditorResponse = zod.object({
  * @summary List all enterprise workspace members
  */
 export const ListDirectoryMembersQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
@@ -1044,7 +1044,7 @@ export const GetStatusResponse = zod.object({
  * @summary Rebuild one usage range
  */
 export const RebuildUsageRangeBody = zod.object({
-  "rangeType": zod.enum(['billing', 'mtd', 'ytd', 'custom']),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']),
   "startDate": zod.string().optional(),
   "endDate": zod.string().optional()
 })

@@ -409,6 +409,7 @@ router.get("/groups", async (req, res): Promise<void> => {
       scoped,
       scopedWorkspaceIds,
       false,
+      false,
     );
 
     // Include source group IDs (alias groups) in the history query so merged
@@ -431,7 +432,7 @@ router.get("/groups", async (req, res): Promise<void> => {
         // Spend is only "loaded" when this group's member usage, the full rollup, AND
         // all extra-workspace fetches are complete. Until all groups' member usage loads,
         // shared users can be temporarily attributed to the wrong group.
-        const fullyLoaded = rollup.isComplete;
+        const fullyLoaded = canonical.authoritativeSpendComplete;
 
         // Sum spend across all same-name source groups. The rollup already deduplicates
         // users so summing byGroup values produces the correct combined total without
@@ -515,7 +516,7 @@ router.get("/groups", async (req, res): Promise<void> => {
           paceSpendUsd: paceSpend,
           projectSpendLoaded: projectAttribution.isComplete,
           projectSpendUsd: projectAttribution.isComplete ? projectSpendUsd : null,
-          rollupSpendLoaded: rollup.isComplete,
+          rollupSpendLoaded: canonical.authoritativeSpendComplete,
           rollupSpendUsd: combinedSpend,
           rawMemberSpendUsd: memberUsageLoaded ? rawMemberSpend : null,
           rawMemberSpendLoaded: memberUsageLoaded,
@@ -549,13 +550,13 @@ router.get("/groups", async (req, res): Promise<void> => {
         syntheticKind: "no_group",
         memberCount: ungrouped.memberCount,
         rollupMemberCount: ungrouped.memberCount,
-        spendLoaded: rollup.isComplete,
-        spendUsd: rollup.isComplete ? ungrouped.spendUsd : null,
+        spendLoaded: canonical.authoritativeSpendComplete,
+        spendUsd: canonical.authoritativeSpendComplete ? ungrouped.spendUsd : null,
         paceSpendLoaded: paceCanonical?.isComplete ?? false,
         paceSpendUsd: paceUngrouped?.spendUsd ?? 0,
         projectSpendLoaded: true,
         projectSpendUsd: null,
-        rollupSpendLoaded: rollup.isComplete,
+        rollupSpendLoaded: canonical.authoritativeSpendComplete,
         rollupSpendUsd: ungrouped.spendUsd,
         rawMemberSpendUsd: null,
         rawMemberSpendLoaded: false,
@@ -603,28 +604,28 @@ router.get("/groups", async (req, res): Promise<void> => {
       // value to show?".
       teamRawSpend[teamName] = {
         spendUsd: teamRollupSpend,
-        spendLoaded: rollup.isComplete,
+        spendLoaded: canonical.authoritativeSpendComplete,
       };
     }
     // Every visible budget-only team is a first-class row before groups are assigned.
     if (isAccountWide(req.authz)) {
       for (const teamName of effectiveTeamBudgetMap.keys()) {
-        teamRawSpend[teamName] ??= { spendUsd: 0, spendLoaded: rollup.isComplete };
+        teamRawSpend[teamName] ??= {
+          spendUsd: 0,
+          spendLoaded: canonical.authoritativeSpendComplete,
+        };
       }
     }
 
     res.json(
       ListGroupsResponse.parse({
         groups,
-        isComplete: sync.status === "complete" && canonical.isComplete,
-        syncStatus:
-          sync.status === "complete" && !canonical.isComplete
-            ? "syncing"
-            : sync.status,
+        isComplete: sync.status === "complete" && canonical.authoritativeSpendComplete,
+        syncStatus: sync.status,
         syncError: sync.error,
-        // Durable sync status covers API usage scopes, while canonical readiness
-        // also waits for creator metadata when non-AI attribution needs it.
-        pendingCount: Math.max(sync.pendingCount, canonical.pendingCount),
+        // Project usage and creator metadata continue in the background. The
+        // blocking sync status reflects only headline/member/workspace scopes.
+        pendingCount: sync.pendingCount,
         failedCount: sync.failedCount,
         partialCount: sync.partialCount,
         billingPeriodLabel: range.label,
@@ -1286,7 +1287,7 @@ router.post("/usage/retry", async (req, res): Promise<void> => {
       queueMemberUsageFetch(group, range, -20, true);
     }
     if (isUsageSyncRetryable("group_project", range.key, group.id)) {
-      queueProjectUsageFetch(group, range, -20, true);
+      queueProjectUsageFetch(group, range, 10, true);
     }
   }
   for (const workspaceId of workspaceIds) {
@@ -1435,8 +1436,8 @@ router.get("/summary", async (req, res): Promise<void> => {
                 totalSpendUsd = accountUsage.totalCostUsd;
               }
             }
-            pending = canonical.pendingCount;
-            summaryExtraComplete = canonical.isComplete;
+            pending = canonical.authoritativePendingCount;
+            summaryExtraComplete = canonical.authoritativeSpendComplete;
 
             // Compute over-threshold counts using the same top-level pool logic as tableTotals.
             // Groups assigned to a team: aggregate attributed spend per team and compare against team budget.

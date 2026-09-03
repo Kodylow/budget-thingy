@@ -489,6 +489,7 @@ export type UsageRangeRebuildInputRangeType = typeof UsageRangeRebuildInputRange
 
 export const UsageRangeRebuildInputRangeType = {
   billing: 'billing',
+  'full-term': 'full-term',
   mtd: 'mtd',
   ytd: 'ytd',
   custom: 'custom',
@@ -908,6 +909,7 @@ export type RangeTypeParameter = typeof RangeTypeParameter[keyof typeof RangeTyp
 
 export const RangeTypeParameter = {
   billing: 'billing',
+  'full-term': 'full-term',
   mtd: 'mtd',
   ytd: 'ytd',
   custom: 'custom',
@@ -952,7 +954,7 @@ returnTo?: string;
 
 export type ListGroupsParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -967,7 +969,7 @@ endDate?: EndDateParameter;
 
 export type GetGroupDetailParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -986,7 +988,7 @@ scopeGroupIds?: ScopeGroupIdsParameter;
 
 export type GetGroupProjectsParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1001,7 +1003,7 @@ endDate?: EndDateParameter;
 
 export type GetClusterProjectsParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1016,7 +1018,7 @@ endDate?: EndDateParameter;
 
 export type GetCanonicalClusterHeadlineParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1031,7 +1033,7 @@ endDate?: EndDateParameter;
 
 export type RetryUsageSyncParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1046,7 +1048,7 @@ endDate?: EndDateParameter;
 
 export type GetSummaryParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1061,7 +1063,7 @@ endDate?: EndDateParameter;
 
 export type GetTrendsParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1087,7 +1089,7 @@ export const GetTrendsGranularity = {
 
 export type GetUserActivityParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1107,7 +1109,7 @@ export type ExportUsersCsvParams = {
  */
 groupIds: string;
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**
@@ -1122,7 +1124,7 @@ endDate?: EndDateParameter;
 
 export type ListDirectoryMembersParams = {
 /**
- * Date range for usage. billing = current billing cycle (default), mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
  */
 rangeType?: RangeTypeParameter;
 /**

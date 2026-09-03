@@ -14,6 +14,7 @@ let fetchCount = 0;
 let failNextUsageFetch = false;
 let failAtFetchCount = null;
 let noCursorProjectMode = false;
+let noCursorWorkspaceMode = false;
 let projectMetadataFetchCount = 0;
 let failNextProjectMetadataFetch = false;
 let accountTotalUsd = 25;
@@ -71,7 +72,10 @@ globalThis.fetch = async (input) => {
   const cursor = url.searchParams.get("cursor");
   const isProject = groupBy === "project";
   const isGroupMember = groupBy === "member" && url.searchParams.has("groupId");
-  const pagination = noCursorProjectMode && isProject
+  const isWorkspaceMember = groupBy === "member" && url.searchParams.has("workspaceId") &&
+    !url.searchParams.has("groupId");
+  const pagination = (noCursorProjectMode && isProject) ||
+      (noCursorWorkspaceMode && isWorkspaceMember)
     ? { cursor: null, hasMore: true }
     : cursor
     ? { cursor: null, hasMore: false }
@@ -296,6 +300,186 @@ test("no-cursor pagination terminates as durable partial and retries only when f
     false,
   );
   assert.equal(retried.status, "syncing", "only the intentionally absent member scope remains");
+});
+
+test("cursorless workspace refresh retains the last usable snapshot across retry and restart", async () => {
+  const retainedWorkspaceId = `retained-workspace-${crypto.randomUUID()}`;
+  const retainedRange = {
+    key: `full-term:retained-${crypto.randomUUID()}`,
+    label: "Retained workspace snapshot",
+    params: {
+      startTime: "2026-09-03T00:00:00.000Z",
+      endTime: "2026-09-03T02:00:00.000Z",
+    },
+  };
+  assert.equal(enterprise.queueWsSpendFetch(retainedWorkspaceId, retainedRange, 0), true);
+  await waitForQueue();
+  assert.equal(
+    enterprise.getWsSpendByUser(retainedWorkspaceId, retainedRange.key)?.get("member-2"),
+    2,
+  );
+
+  const beforeMalformed = fetchCount;
+  noCursorWorkspaceMode = true;
+  assert.equal(enterprise.queueWsSpendFetch(retainedWorkspaceId, retainedRange, 0, true), true);
+  await waitForQueue();
+  assert.ok(
+    fetchCount - beforeMalformed <= 3,
+    "workspace cursorless recovery must stop after the first bounded failed chunk",
+  );
+  assert.equal(
+    enterprise.getWsSpendByUser(retainedWorkspaceId, retainedRange.key)?.get("member-2"),
+    2,
+    "a partial first page must not replace the complete prior workspace snapshot",
+  );
+  assert.equal(
+    enterprise.isWorkspaceMemberUsageComplete(retainedWorkspaceId, retainedRange.key),
+    false,
+  );
+  const partial = enterprise.getUsageSyncSummary(
+    retainedRange.key,
+    [],
+    [retainedWorkspaceId],
+  );
+  assert.equal(partial.status, "partial");
+  assert.match(partial.error, new RegExp(retainedWorkspaceId));
+  assert.match(partial.error, /without a cursor/);
+
+  enterprise.__resetDurableUsageCachesForTests();
+  await enterprise.initCache({ revalidateOnStartup: false });
+  assert.equal(
+    enterprise.getWsSpendByUser(retainedWorkspaceId, retainedRange.key)?.get("member-2"),
+    2,
+    "the retained usable snapshot must hydrate after restart",
+  );
+  assert.equal(
+    enterprise.isWorkspaceMemberUsageComplete(retainedWorkspaceId, retainedRange.key),
+    false,
+  );
+
+  noCursorWorkspaceMode = false;
+  assert.equal(enterprise.queueWsSpendFetch(retainedWorkspaceId, retainedRange, 0, true), true);
+  await waitForQueue();
+  assert.equal(
+    enterprise.isWorkspaceMemberUsageComplete(retainedWorkspaceId, retainedRange.key),
+    true,
+  );
+  assert.equal(
+    enterprise.getWsSpendByUser(retainedWorkspaceId, retainedRange.key)?.get("member-2"),
+    2,
+  );
+});
+
+test("stable full-term range reuses same-day data and advances only the trailing reconciliation window", () => {
+  const firstDay = enterprise.resolveRange(
+    "full-term",
+    undefined,
+    undefined,
+    new Date("2026-09-03T23:59:59.000Z"),
+  );
+  const nextDay = enterprise.resolveRange(
+    "full-term",
+    undefined,
+    undefined,
+    new Date("2026-09-04T00:00:01.000Z"),
+  );
+  assert.equal(firstDay.key, enterprise.FULL_TERM_RANGE_KEY);
+  assert.equal(nextDay.key, firstDay.key);
+  assert.equal(firstDay.params.startTime, enterprise.SPEND_DATA_CUTOFF_ISO);
+  assert.equal(firstDay.params.endTime, "2026-09-04T00:00:00.000Z");
+  assert.equal(nextDay.params.endTime, "2026-09-05T00:00:00.000Z");
+
+  const sameDayPlan = enterprise.__planSyncChunksForTests(firstDay, {
+    syncedThrough: Date.parse(firstDay.params.endTime),
+    completedAt: Date.parse("2026-09-03T23:59:58.000Z"),
+    isClosed: false,
+    status: "success",
+    error: null,
+  }, Date.parse("2026-09-03T23:59:59.000Z"));
+  assert.equal(sameDayPlan.chunks.length, 0);
+
+  const rolloverPlan = enterprise.__planSyncChunksForTests(nextDay, {
+    syncedThrough: Date.parse(firstDay.params.endTime),
+    completedAt: 0,
+    isClosed: false,
+    status: "success",
+    error: null,
+  }, Date.parse("2026-09-04T00:00:01.000Z"));
+  assert.equal(rolloverPlan.replacementStart, "2026-08-28T00:00:00.000Z");
+  assert.equal(rolloverPlan.chunks.at(-1)?.end, nextDay.params.endTime);
+  assert.ok(rolloverPlan.chunks.length <= 8, "rollover must not replay full-term history");
+  assert.equal(rolloverPlan.isClosed, false);
+});
+
+test("startup adopts the newest successful legacy cutoff snapshot without an API replay", async () => {
+  const legacyScope = `legacy-full-term-${crypto.randomUUID()}`;
+  const legacyKey = "custom:2026-05-20:2026-09-02";
+  const completedAt = new Date("2026-09-03T00:05:00.000Z");
+  await pool.query(
+    `insert into usage_sync_chunks
+      (mode, range_key, scope_key, chunk_start, chunk_end, payload_json, completed_at)
+     values ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+    [
+      "group_project",
+      legacyKey,
+      legacyScope,
+      enterprise.SPEND_DATA_CUTOFF_ISO,
+      "2026-09-03T00:00:00.000Z",
+      JSON.stringify({
+        totalCostUsd: 9,
+        attributableTotalCostUsd: 9,
+        unattributableTotalCostUsd: 0,
+        groups: [{
+          key: { projectId: "legacy-project" },
+          totalCostUsd: 9,
+          metrics: [],
+        }],
+      }),
+      completedAt,
+    ],
+  );
+  await pool.query(
+    `insert into usage_sync_state
+      (mode, range_key, scope_key, range_start, synced_through, is_closed, status,
+       error_message, started_at, completed_at)
+     values ($1, $2, $3, $4, $5, true, 'success', null, $6, $6)`,
+    [
+      "group_project",
+      legacyKey,
+      legacyScope,
+      enterprise.SPEND_DATA_CUTOFF_ISO,
+      "2026-09-03T00:00:00.000Z",
+      completedAt,
+    ],
+  );
+
+  const requestsBeforeRestart = usageRequestUrls.length;
+  enterprise.__resetDurableUsageCachesForTests();
+  await enterprise.initCache({ revalidateOnStartup: false });
+  assert.equal(
+    enterprise.getProjectUsage(legacyScope, enterprise.FULL_TERM_RANGE_KEY)
+      ?.byProject.get("legacy-project")?.totalCostUsd,
+    9,
+  );
+  assert.equal(usageRequestUrls.length, requestsBeforeRestart);
+  const adoptedRows = await enterprise.__getDurableRangeRowsForTests(
+    enterprise.FULL_TERM_RANGE_KEY,
+  );
+  assert.ok(adoptedRows.some((row) =>
+    row.mode === "group_project" && row.scopeKey === legacyScope
+  ));
+  await pool.query(
+    `delete from usage_sync_chunks
+     where mode = 'group_project' and scope_key = $1
+       and range_key in ($2, $3)`,
+    [legacyScope, legacyKey, enterprise.FULL_TERM_RANGE_KEY],
+  );
+  await pool.query(
+    `delete from usage_sync_state
+     where mode = 'group_project' and scope_key = $1
+       and range_key in ($2, $3)`,
+    [legacyScope, legacyKey, enterprise.FULL_TERM_RANGE_KEY],
+  );
 });
 
 test("failed usage scopes become terminal and do not remain pending", async () => {
