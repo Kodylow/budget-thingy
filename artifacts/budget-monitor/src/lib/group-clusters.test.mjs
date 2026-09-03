@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildGroupClusters, sumAttributedRollup } from "./group-clusters.ts";
+import {
+  buildGroupClusters,
+  buildLogicalGroupScopes,
+  sumAttributedRollup,
+} from "./group-clusters.ts";
 
 const base = {
   workspaceId: "ws",
@@ -66,4 +70,51 @@ test("attributed totals remain pending until every member rollup is loaded", () 
   ]);
   assert.equal(total.spendLoaded, false);
   assert.equal(total.spendUsd, 62);
+});
+
+test("logical preview scopes combine role siblings but preserve standalone groups", () => {
+  const scopes = buildLogicalGroupScopes([
+    ...roleGroups,
+    { ...base, groupId: "viewer", name: "Project - Viewer" },
+    { ...base, groupId: "standalone", name: "Standalone" },
+  ]);
+
+  assert.deepEqual(scopes.map((scope) => ({
+    displayName: scope.displayName,
+    groupIds: scope.groupIds,
+  })), [
+    {
+      displayName: "Project",
+      groupIds: ["admin", "member", "viewer"],
+    },
+    {
+      displayName: "Standalone",
+      groupIds: ["standalone"],
+    },
+  ]);
+});
+
+test("logical preview scopes never combine same-name families across workspaces", () => {
+  const scopes = buildLogicalGroupScopes([
+    ...roleGroups,
+    { ...roleGroups[0], workspaceId: "other", workspaceName: "Other", groupId: "other-admin" },
+    { ...roleGroups[1], workspaceId: "other", workspaceName: "Other", groupId: "other-member" },
+  ]);
+
+  assert.equal(scopes.length, 2);
+  assert.deepEqual(scopes.map((scope) => scope.displayName), [
+    "Project · Other",
+    "Project · Workspace",
+  ]);
+  assert.deepEqual(scopes.map((scope) => scope.groupIds), [
+    ["other-admin", "other-member"],
+    ["admin", "member"],
+  ]);
+});
+
+test("a lone role-suffixed group remains a standalone preview choice", () => {
+  const [scope] = buildLogicalGroupScopes([roleGroups[0]]);
+  assert.equal(scope.scopeId, "admin");
+  assert.equal(scope.displayName, "Project - Admin");
+  assert.deepEqual(scope.groupIds, ["admin"]);
 });

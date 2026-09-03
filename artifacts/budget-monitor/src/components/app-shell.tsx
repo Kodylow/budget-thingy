@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { getListGroupsQueryKey, useListGroups } from '@workspace/api-client-react';
+import { buildLogicalGroupScopes } from '@/lib/group-clusters';
 
 interface AppShellProps {
   children: ReactNode;
@@ -115,12 +116,40 @@ export function AppShell({ children }: AppShellProps) {
         ? `${workspaceIds.length} workspace${workspaceIds.length === 1 ? '' : 's'}`
         : 'No workspaces';
 
-  const previewValue = preview?.role === 'workspace_admin'
-    ? `group:${preview.groupId}`
-    : preview?.role ?? 'real';
   const selectableGroups = (previewGroups?.groups ?? []).filter(
     (group) => !group.groupId.startsWith('synthetic:'),
   );
+  const previewScopes = buildLogicalGroupScopes(selectableGroups);
+  const selectedScope = preview?.role === 'workspace_admin'
+    ? previewScopes.find(
+        (scope) => scope.scopeId === preview.groupId ||
+          scope.groupIds.some((groupId) => preview.groupIds.includes(groupId)),
+      )
+    : undefined;
+  const previewValue = preview?.role === 'workspace_admin'
+    ? selectedScope ? `group:${selectedScope.scopeId}` : 'real'
+    : preview?.role ?? 'real';
+
+  useEffect(() => {
+    if (preview?.role !== 'workspace_admin' || !previewGroups) return;
+    if (!selectedScope) {
+      resetPreview();
+      return;
+    }
+    const isCurrent =
+      preview.groupId === selectedScope.scopeId &&
+      preview.groupName === selectedScope.displayName &&
+      preview.groupIds.length === selectedScope.groupIds.length &&
+      preview.groupIds.every((groupId, index) => groupId === selectedScope.groupIds[index]);
+    if (!isCurrent) {
+      setPreview({
+        role: 'workspace_admin',
+        groupId: selectedScope.scopeId,
+        groupIds: selectedScope.groupIds,
+        groupName: selectedScope.displayName,
+      });
+    }
+  }, [preview, previewGroups, selectedScope, resetPreview, setPreview]);
 
   const handlePreviewChange = (value: string) => {
     if (value === 'real') {
@@ -128,9 +157,16 @@ export function AppShell({ children }: AppShellProps) {
     } else if (value === 'account_admin' || value === 'account_editor') {
       setPreview({ role: value, groupId: null, groupName: null });
     } else if (value.startsWith('group:')) {
-      const groupId = value.slice('group:'.length);
-      const group = selectableGroups.find((candidate) => candidate.groupId === groupId);
-      if (group) setPreview({ role: 'workspace_admin', groupId, groupName: group.name });
+      const scopeId = value.slice('group:'.length);
+      const scope = previewScopes.find((candidate) => candidate.scopeId === scopeId);
+      if (scope) {
+        setPreview({
+          role: 'workspace_admin',
+          groupId: scope.scopeId,
+          groupIds: scope.groupIds,
+          groupName: scope.displayName,
+        });
+      }
     }
   };
 
@@ -289,9 +325,9 @@ export function AppShell({ children }: AppShellProps) {
                       <SelectItem value="real">My real access</SelectItem>
                       <SelectItem value="account_admin">Account admin</SelectItem>
                       <SelectItem value="account_editor">Account editor</SelectItem>
-                      {selectableGroups.map((group) => (
-                        <SelectItem key={group.groupId} value={`group:${group.groupId}`}>
-                          Group admin · {group.name}
+                      {previewScopes.map((scope) => (
+                        <SelectItem key={scope.scopeId} value={`group:${scope.scopeId}`}>
+                          Group admin · {scope.displayName}
                         </SelectItem>
                       ))}
                     </SelectContent>

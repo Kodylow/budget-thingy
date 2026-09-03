@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuthContext, useCanWrite } from '@/components/auth-context';
 import { NotificationRecipients } from '@/components/notification-recipients';
+import { filterAlertsForView } from '@/lib/rbac-view';
 
 export default function Alerts() {
   const queryClient = useQueryClient();
@@ -24,11 +25,7 @@ export default function Alerts() {
   const [testingAlertId, setTestingAlertId] = useState<number | null>(null);
 
   const { data: alerts, isLoading } = useListAlerts({ limit: 100 });
-  const visibleAlerts = preview?.role === 'workspace_admin'
-    ? (alerts ?? []).filter(
-        (alert) => alert.entityType === 'group' && alert.entityId === preview.groupId,
-      )
-    : (alerts ?? []);
+  const visibleAlerts = filterAlertsForView(alerts ?? [], preview);
   const runCheck = useRunAlertCheck();
   const sendTest = useSendTestAlert();
 

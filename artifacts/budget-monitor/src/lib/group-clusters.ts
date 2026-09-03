@@ -87,6 +87,98 @@ export interface GroupCluster {
   singleGroup?: GroupLike;
 }
 
+export interface LogicalGroupScope {
+  scopeId: string;
+  displayName: string;
+  workspaceId: string;
+  workspaceName: string | null | undefined;
+  groupIds: string[];
+}
+
+/**
+ * Builds workspace-safe logical group families for presentation-only access
+ * controls. Role-suffixed siblings collapse only when at least two exist in the
+ * same workspace; unmatched and standalone groups remain individual scopes.
+ */
+export function buildLogicalGroupScopes<T extends {
+  groupId: string;
+  workspaceId: string;
+  workspaceName?: string | null;
+  name: string;
+}>(groups: T[]): LogicalGroupScope[] {
+  const familyGroups = new Map<string, Array<T & { parsedRole: string }>>();
+  const standalone: T[] = [];
+
+  for (const group of groups) {
+    const parsed = parseRoleSuffix(group.name);
+    if (!parsed) {
+      standalone.push(group);
+      continue;
+    }
+    const scopeId = `${group.workspaceId}::${parsed.baseName}`;
+    const family = familyGroups.get(scopeId) ?? [];
+    family.push({ ...group, parsedRole: parsed.role });
+    familyGroups.set(scopeId, family);
+  }
+
+  const scopes: LogicalGroupScope[] = standalone.map((group) => ({
+    scopeId: group.groupId,
+    displayName: group.name,
+    workspaceId: group.workspaceId,
+    workspaceName: group.workspaceName,
+    groupIds: [group.groupId],
+  }));
+
+  for (const [scopeId, family] of familyGroups) {
+    if (family.length < 2) {
+      const [group] = family;
+      if (group) {
+        scopes.push({
+          scopeId: group.groupId,
+          displayName: group.name,
+          workspaceId: group.workspaceId,
+          workspaceName: group.workspaceName,
+          groupIds: [group.groupId],
+        });
+      }
+      continue;
+    }
+
+    const parsed = parseRoleSuffix(family[0]!.name)!;
+    family.sort((a, b) =>
+      (ROLE_PRIORITY[a.parsedRole] ?? 99) - (ROLE_PRIORITY[b.parsedRole] ?? 99) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
+      a.groupId.localeCompare(b.groupId)
+    );
+    scopes.push({
+      scopeId,
+      displayName: parsed.baseName,
+      workspaceId: family[0]!.workspaceId,
+      workspaceName: family[0]!.workspaceName,
+      groupIds: family.map((group) => group.groupId),
+    });
+  }
+
+  const duplicateNames = new Map<string, number>();
+  for (const scope of scopes) {
+    const key = scope.displayName.toLocaleLowerCase();
+    duplicateNames.set(key, (duplicateNames.get(key) ?? 0) + 1);
+  }
+
+  return scopes
+    .map((scope) => ({
+      ...scope,
+      displayName: (duplicateNames.get(scope.displayName.toLocaleLowerCase()) ?? 0) > 1
+        ? `${scope.displayName} · ${scope.workspaceName || scope.workspaceId}`
+        : scope.displayName,
+    }))
+    .sort((a, b) =>
+      a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }) ||
+      a.workspaceId.localeCompare(b.workspaceId) ||
+      a.scopeId.localeCompare(b.scopeId)
+    );
+}
+
 export function sumAttributedRollup(groups: Array<{
   rollupMemberCount?: number;
   rollupSpendLoaded?: boolean;
