@@ -22,6 +22,7 @@ import {
   type DedupedGroupRollup,
   type DedupedUsageRollup,
 } from "./usage-rollup";
+import { updateJobClaimCursor, withJobClaim } from "./job-claims";
 
 const BASE_URL = "https://api.replit.com/v1";
 
@@ -1408,17 +1409,29 @@ async function queueDailyFactRefreshes(): Promise<void> {
 export function startDailyFactJob(): void {
   if (dailyFactRefreshTimer) return;
   const run = () => {
-    void queueDailyFactRefreshes().catch((err) => {
+    void withJobClaim(
+      "enterprise:daily-facts",
+      24 * 60 * 60 * 1000,
+      10 * 60 * 1000,
+      async (claim) => {
+        claim.signal?.throwIfAborted();
+        await queueDailyFactRefreshes();
+        claim.signal?.throwIfAborted();
+      },
+    ).catch((err) => {
       dailyFactParityReady = false;
       logger.warn({ err }, "Failed to plan daily usage fact refresh");
     });
   };
   const initial = setTimeout(run, 5_000);
   initial.unref();
-  dailyFactRefreshTimer = setInterval(run, 24 * 60 * 60 * 1000);
+  // Poll claims more often than the cadence so another replica recovers an
+  // abandoned lease promptly; notBefore prevents successful work repeating.
+  dailyFactRefreshTimer = setInterval(run, 15 * 60 * 1000);
   dailyFactRefreshTimer.unref();
 }
 
+export const USAGE_COORDINATOR_INTERVAL_MS = 5 * 60 * 1000;
 async function synchronizeUsage(
   mode: UsageSyncMode,
   range: UsageRange,
@@ -2737,6 +2750,14 @@ export function __setDirectoryCacheForTests(
   };
 }
 
+/** Read the startup-hydrated directory without turning request traffic into ingestion. */
+export function getCachedDirectory(): Promise<DirectoryCache> {
+  if (!directoryCache) {
+    return Promise.reject(new Error("Enterprise directory has not been hydrated yet"));
+  }
+  return Promise.resolve(directoryCache);
+}
+
 export function getDirectoryFreshness(now = Date.now()): DirectoryFreshness {
   return {
     dataAsOf: directoryCache ? new Date(directoryCache.fetchedAt).toISOString() : null,
@@ -2884,7 +2905,7 @@ export async function refreshAllGroupSpends(
   onGroupDone?: (group: EnterpriseGroup, spend: GroupSpend) => void,
   range: UsageRange = resolveRange("billing"),
 ): Promise<EnterpriseGroup[]> {
-  const dir = await getDirectory();
+      const dir = await getDirectory();
   for (const g of dir.groups) {
     queueGroupSpendFetch(g, priority, false, (spend) => onGroupDone?.(g, spend), range);
   }
@@ -5345,3 +5366,108 @@ export function setEnterpriseFetchForTests(override: EnterpriseFetch | null): vo
 
 const platformEnterpriseFetch: EnterpriseFetch = (input, init) => fetch(input, init);
 let enterpriseFetch: EnterpriseFetch = platformEnterpriseFetch;
+
+export interface RotatingUsageItem {
+  key: string;
+  kind: "group_member" | "group_project" | "project_metadata";
+  group?: EnterpriseGroup;
+  workspaceId?: string;
+}
+
+export function startUsageCoordinator(): void {
+  if (usageCoordinatorTimer) return;
+  const run = () => void runUsageCoordinator().catch((err) => {
+    logger.error({ err }, "Usage coordinator failed");
+  });
+  run();
+  usageCoordinatorTimer = setInterval(run, USAGE_COORDINATOR_INTERVAL_MS);
+  usageCoordinatorTimer.unref();
+}
+
+/**
+ * One fixed-cadence planner owns all ordinary current-range ingestion. Workspace
+ * member observations are always queued first; lower-priority group/project
+ * scopes share a durable fair cursor and a bounded amount of scheduled work.
+ */
+export async function runUsageCoordinator(): Promise<boolean> {
+  const result = await withJobClaim(
+    "enterprise:usage-coordinator",
+    USAGE_COORDINATOR_INTERVAL_MS,
+    USAGE_COORDINATOR_LEASE_MS,
+    async (claim) => {
+      if (!isConfigured()) return;
+      claim.signal?.throwIfAborted();
+      const dir = await getDirectory(true);
+      claim.signal?.throwIfAborted();
+      const range = resolveRange("billing");
+
+      // Workspace-member observations establish the canonical current-month
+      // view and deliberately enter the scheduled queue before every other
+      // scope.
+      for (const workspaceId of [...dir.workspaces.keys()].sort()) {
+        claim.signal?.throwIfAborted();
+        queueWsSpendFetch(workspaceId, range, 1, true);
+      }
+      queueAccountUsageFetch(range, 1, true);
+
+      const items: RotatingUsageItem[] = [
+        ...dir.groups.flatMap((group) => [
+          { key: `member:${group.id}`, kind: "group_member" as const, group },
+          { key: `project:${group.id}`, kind: "group_project" as const, group },
+        ]),
+        ...[...dir.workspaces.keys()].map((workspaceId) => ({
+          key: `metadata:${workspaceId}`,
+          kind: "project_metadata" as const,
+          workspaceId,
+        })),
+      ];
+      const rotation = selectRoundRobinUsageItems(
+        items,
+        claim.cursor,
+        USAGE_COORDINATOR_ROTATING_BUDGET,
+      );
+      for (const item of rotation.selected) {
+        claim.signal?.throwIfAborted();
+        if (item.kind === "group_member") {
+          queueMemberUsageFetch(item.group!, range, 1, true);
+        } else if (item.kind === "group_project") {
+          queueProjectUsageFetch(item.group!, range, 1, true);
+        } else {
+          queueProjectTitlesFetch(item.workspaceId!, 1, true);
+        }
+      }
+      await updateJobClaimCursor(claim, rotation.cursor);
+      claim.signal?.throwIfAborted();
+      // Billing metadata is recurring enterprise work too. It shares this
+      // owner and is queued after current-month usage, never during startup.
+      await refreshBillingPeriodMetadata(1);
+      claim.signal?.throwIfAborted();
+    },
+  );
+  return result.acquired;
+}
+
+const USAGE_COORDINATOR_ROTATING_BUDGET = 8;
+
+let usageCoordinatorTimer: NodeJS.Timeout | null = null;
+
+/** Stable persisted round-robin selection; exported to keep fairness testable. */
+export function selectRoundRobinUsageItems(
+  items: readonly RotatingUsageItem[],
+  previousCursor: string | null,
+  limit: number,
+): { selected: RotatingUsageItem[]; cursor: string | null } {
+  if (items.length === 0 || limit <= 0) return { selected: [], cursor: previousCursor };
+  const ordered = [...items].sort((a, b) => a.key.localeCompare(b.key));
+  const previous = previousCursor
+    ? ordered.findIndex((item) => item.key === previousCursor)
+    : -1;
+  const selected: RotatingUsageItem[] = [];
+  const count = Math.min(Math.floor(limit), ordered.length);
+  for (let offset = 1; offset <= count; offset++) {
+    selected.push(ordered[(previous + offset) % ordered.length]!);
+  }
+  return { selected, cursor: selected.at(-1)?.key ?? previousCursor };
+}
+
+const USAGE_COORDINATOR_LEASE_MS = 4 * 60 * 1000;

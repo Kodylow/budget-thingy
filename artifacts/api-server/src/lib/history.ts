@@ -15,6 +15,7 @@ import {
   type GroupSpend,
   type EnterpriseGroup,
 } from "./enterprise";
+import { withJobClaim } from "./job-claims";
 
 const SNAPSHOT_RETRY_MS = 15 * 60 * 1000;
 const SNAPSHOT_UTC_OFFSET_MS = 5 * 60 * 1000;
@@ -160,8 +161,19 @@ export function millisecondsUntilNextSnapshot(now = Date.now()): number {
 export function startSnapshotJob(): void {
   const schedule = (delayMs: number): void => {
     const timer = setTimeout(() => {
-      void snapshotAllGroups()
-        .then(() => schedule(millisecondsUntilNextSnapshot()))
+      void withJobClaim(
+        `enterprise:snapshot:${utcDay(Date.now())}`,
+        24 * 60 * 60 * 1000,
+        10 * 60 * 1000,
+        async (claim) => {
+          claim.signal?.throwIfAborted();
+          await snapshotAllGroups();
+          claim.signal?.throwIfAborted();
+        },
+      )
+        .then((result) => schedule(
+          result.acquired ? millisecondsUntilNextSnapshot() : SNAPSHOT_RETRY_MS,
+        ))
         .catch((err) => {
           logger.error({ err }, "Snapshot pass failed; retrying");
           schedule(SNAPSHOT_RETRY_MS);

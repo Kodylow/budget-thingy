@@ -19,6 +19,7 @@ import {
   type EnterpriseGroup,
 } from "./enterprise";
 import { logger } from "./logger";
+import { withJobClaim } from "./job-claims";
 
 const AIRTABLE_CONNECTOR = "airtable";
 const BASE_NAMES = [
@@ -479,17 +480,28 @@ export function refreshTeamBudgetSnapshot(): ReturnType<typeof performTeamBudget
 export function startTeamBudgetSyncJob(): void {
   const schedule = (): void => {
     const timer = setTimeout(() => {
-      void refreshTeamBudgetSnapshot()
+      void withJobClaim(
+        "team-budgets:sync",
+        TEAM_BUDGET_SYNC_INTERVAL_MS,
+        10 * 60 * 1000,
+        async (claim) => {
+          claim.signal?.throwIfAborted();
+          const result = await refreshTeamBudgetSnapshot();
+          claim.signal?.throwIfAborted();
+          return result;
+        },
+      )
         .then((result) => {
-          if (result.ok) {
+          if (!result.acquired) return;
+          if (result.value.ok) {
             logger.info({
-              recordCount: result.recordCount,
-              acceptedCount: result.acceptedCount,
-              issueCount: result.issueCount,
+              recordCount: result.value.recordCount,
+              acceptedCount: result.value.acceptedCount,
+              issueCount: result.value.issueCount,
             }, "Hourly approved Replit Finance Approval team budget synchronization completed");
           } else {
             logger.warn(
-              { error: result.error },
+              { error: result.value.error },
               "Hourly approved Replit Finance Approval team budget synchronization failed",
             );
           }

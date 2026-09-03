@@ -60,7 +60,7 @@ import {
 import {
   isConfigured,
   getApiHealth,
-  getDirectory,
+  getCachedDirectory as getDirectory,
   getDirectoryFreshness,
   getSpend,
   getBillingPeriod,
@@ -69,11 +69,9 @@ import {
   resolvePaceUsageRange,
   queueFullRangeRebuild,
   queueGroupSpendFetch,
-  refreshAllGroupSpends,
   queueMemberUsageFetch,
   getMemberUsage,
   queueAccountUsageFetch,
-  queueAllWorkspacesFetch,
   queueWsSpendFetch,
   getWsSpendByUser,
   applyComcastReAttribution,
@@ -328,37 +326,6 @@ router.get("/groups", async (req, res): Promise<void> => {
     const paceRange = range.key.startsWith("billing:")
       ? (paceMetadata.isFallback ? range : resolvePaceUsageRange())
       : null;
-
-    // Queue the one-call account headline and the much smaller workspace set
-    // before hundreds of group detail calls. /groups and /summary launch
-    // together; without distinct priorities, whichever route arrives first can
-    // leave a newly selected custom range looking unchanged for many minutes.
-    if (isAccountAdmin) {
-      queueAccountUsageFetch(range, -30);
-    }
-    for (const workspaceId of scopedWorkspaceIds) {
-      queueWsSpendFetch(workspaceId, range, -20);
-      queueProjectTitlesFetch(workspaceId, -20);
-    }
-    // Member/project detail fills in after the range headline and canonical
-    // workspace rollup have had a chance to update.
-    for (const group of scoped) {
-      queueMemberUsageFetch(group, range, 0);
-      queueProjectUsageFetch(group, range, 0);
-      queueProjectTitlesFetch(group.workspaceId, 0);
-    }
-    if (paceRange) {
-      for (const group of scoped) {
-        queueMemberUsageFetch(group, paceRange, -20);
-        queueProjectUsageFetch(group, paceRange, -20);
-      }
-      for (const workspaceId of scopedWorkspaceIds) {
-        queueWsSpendFetch(workspaceId, paceRange, -20);
-      }
-    }
-    // Raw group totals support alerting/history metadata but are not required to
-    // construct the member-deduped dashboard, so keep them in the background.
-    void refreshAllGroupSpends(1, undefined, range).catch(() => undefined);
 
     const [budgets, groupTeams, effectiveTeamSnapshot, allTeamRows] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -727,25 +694,6 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     // and cross-workspace users and makes detail totals disagree with dashboard.
     const scoped = accountScoped;
 
-    // Promote the selected group's data ahead of dashboard background work.
-    // Other visible groups continue warming at low priority, but no longer block
-    // this cluster's readiness.
-    for (const srcId of sourceIds) {
-      const srcGroup = dir.groups.find((g) => g.id === srcId);
-      if (srcGroup) {
-        queueGroupSpendFetch(srcGroup, 0, false, undefined, range);
-      }
-    }
-    const interactiveDetailIds = detailScopeIds ?? new Set(sourceIds);
-    for (const g of scoped) {
-      const isInteractiveDetail = interactiveDetailIds.has(g.id);
-      queueMemberUsageFetch(g, range, isInteractiveDetail ? -10 : 1);
-      // Queue project usage for other groups at lower priority so that
-      // getProjectAttribution eventually reflects full cross-group data here too,
-      // making projectSpendUsd consistent between the detail page and dashboard.
-      queueProjectUsageFetch(g, range, isInteractiveDetail ? -10 : 2);
-      if (isInteractiveDetail) queueProjectTitlesFetch(g.workspaceId, -10);
-    }
 
     const spend = getSpend(group.id, range.key);
 
@@ -754,10 +702,6 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const scopedWorkspaceIds = isAccountAdmin
       ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
       : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
-    for (const workspaceId of scopedWorkspaceIds) {
-      queueWsSpendFetch(workspaceId, range, 0);
-      queueProjectTitlesFetch(workspaceId, 0);
-    }
     const canonical = getCanonicalUsage(
       scoped,
       range.key,
@@ -975,10 +919,6 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
       return;
     }
 
-    // Kick off fetches (high priority); serve from cache if available.
-    queueProjectUsageFetch(group, range, 0);
-    queueProjectTitlesFetch(group.workspaceId, 0);
-
     const projectUsage = getProjectUsage(group.id, range.key);
     const titleMap = getProjectTitles(group.workspaceId);
     const groupSpend = getSpend(group.id, range.key);
@@ -1081,15 +1021,6 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
     const scopedWorkspaceIds = isAccountAdmin
       ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
       : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
-    for (const workspaceId of scopedWorkspaceIds) {
-      queueWsSpendFetch(workspaceId, range, -20);
-    }
-    for (const group of scoped) {
-      const priority = relevantGroupIds.has(group.id) ? -10 : 0;
-      queueMemberUsageFetch(group, range, priority);
-      queueProjectUsageFetch(group, range, priority);
-      queueProjectTitlesFetch(group.workspaceId, priority);
-    }
     const canonical = getCanonicalUsage(
       scoped,
       range.key,
@@ -1156,10 +1087,7 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
     }
     const groups = requestedGroups;
 
-    // Queue fetches (high priority)
     const workspaceIds = new Set(groups.map((g) => g.workspaceId));
-    for (const g of groups) queueProjectUsageFetch(g, range, 0);
-    for (const wsId of workspaceIds) queueProjectTitlesFetch(wsId, 0);
 
     // Member set — union of all members across constituent groups
     const memberSet = new Set<string>();
@@ -1404,21 +1332,6 @@ router.get("/summary", async (req, res): Promise<void> => {
                   ...authz.workspaceIds,
                   ...scoped.map((group) => group.workspaceId),
                 ]);
-            // The selected-range headline and workspace-authoritative rollup
-            // must preempt the hundreds of slower group detail requests.
-            if (isAccount) {
-              queueAccountUsageFetch(range, -30);
-            }
-            for (const workspaceId of scopedWorkspaceIds) {
-              queueWsSpendFetch(workspaceId, range, -20);
-              queueProjectTitlesFetch(workspaceId, -20);
-            }
-            // Queue both detail models independently so /summary can eventually
-            // become fully attributable without requiring /groups first.
-            for (const group of scoped) {
-              queueMemberUsageFetch(group, range, 1);
-              queueProjectUsageFetch(group, range, 1);
-            }
             const groupTeamMap = new Map(
               groupTeams
                 .filter((gt) => !hiddenSummaryTeamNames.has(gt.teamName))
@@ -1904,11 +1817,7 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
     const groupTeamMap = new Map(groupTeams.map((gt) => [gt.groupName, gt.teamName]));
     const groups = visibleGroups(req.authz!, dir.groups);
 
-    // Kick off background fetches so future calls are warmer (low priority —
-    // data may already be in cache from normal dashboard polling).
     const workspaceIds = new Set(groups.map((g) => g.workspaceId));
-    for (const g of groups) queueProjectUsageFetch(g, range, 10);
-    for (const wsId of workspaceIds) queueProjectTitlesFetch(wsId, 10);
 
     // Aggregate across all groups: one row per projectId.
     // Dedup strategy: keep the entry with the highest reported spend to avoid
@@ -2285,12 +2194,6 @@ router.get("/alerts", async (req, res): Promise<void> => {
     const workspaceIds = accountWide
       ? new Set([...dir.workspaces.keys(), ...scoped.map((group) => group.workspaceId)])
       : new Set([...authz.workspaceIds, ...scoped.map((group) => group.workspaceId)]);
-    for (const group of scoped) {
-      queueMemberUsageFetch(group, range, 1);
-      queueProjectUsageFetch(group, range, 1);
-      queueProjectTitlesFetch(group.workspaceId, 1);
-    }
-    for (const workspaceId of workspaceIds) queueWsSpendFetch(workspaceId, range, 1);
     const canonical = getCanonicalUsage(
       scoped,
       range.key,
@@ -2570,27 +2473,6 @@ router.get("/trends", async (req, res): Promise<void> => {
       })),
     }));
 
-    const queuedLiveRanges = new Set<string>();
-    const queuedWorkspaceRanges = new Set<string>();
-    for (const { components } of bucketPlans) {
-      for (const component of components) {
-        if (!queuedWorkspaceRanges.has(component.range.key)) {
-          for (const workspaceId of scopedWorkspaceIds) {
-            queueWsSpendFetch(workspaceId, component.range, 1);
-          }
-          queuedWorkspaceRanges.add(component.range.key);
-        }
-        if (component.rosterDate === null && !queuedLiveRanges.has(component.range.key)) {
-          for (const group of visible) {
-            queueMemberUsageFetch(group, component.range, 1);
-            queueProjectUsageFetch(group, component.range, 1);
-            queueProjectTitlesFetch(group.workspaceId, 1);
-          }
-          queuedLiveRanges.add(component.range.key);
-        }
-      }
-    }
-
     interface TrendUsageResult {
       spendByPrimaryGroup: Map<string, number>;
       totalSpendUsd: number;
@@ -2800,15 +2682,6 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
   const scopedWorkspaceIds = callerIsAccountWide
     ? new Set([...dir.workspaces.keys(), ...visible.map((group) => group.workspaceId)])
     : new Set([...req.authz!.workspaceIds, ...visible.map((group) => group.workspaceId)]);
-  for (const group of visible) {
-    const priority = exportGroupIdSet.has(group.id) ? -10 : 1;
-    queueMemberUsageFetch(group, range, priority);
-    queueProjectUsageFetch(group, range, priority);
-  }
-  for (const workspaceId of scopedWorkspaceIds) {
-    queueWsSpendFetch(workspaceId, range, -10);
-    queueProjectTitlesFetch(workspaceId, 1);
-  }
   const canonical = getCanonicalUsage(
     visible,
     range.key,
@@ -2939,15 +2812,6 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   const scopedWorkspaceIds = callerIsAccountAdmin
     ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
     : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
-  for (const workspaceId of scopedWorkspaceIds) {
-    queueWsSpendFetch(workspaceId, range, 1);
-    queueProjectTitlesFetch(workspaceId, 1);
-  }
-  for (const group of orderedGroups) {
-    queueMemberUsageFetch(group, range, 1);
-    queueProjectUsageFetch(group, range, 1);
-  }
-
   const visibleUserIds = new Set<string>();
   for (const group of orderedGroups) {
     for (const userId of dir.groupMembers.get(group.id) ?? []) {
@@ -3068,7 +2932,6 @@ router.get(
       }
       const snapshot = await listReplitMemberBudgets(workspaceId);
       const billingRange = resolveRange("billing");
-      queueWsSpendFetch(workspaceId, billingRange, 0);
       const workspaceUsage = getWorkspaceMemberUsage(
         workspaceId,
         billingRange.key,

@@ -17,11 +17,6 @@ import {
   isConfigured,
   getCanonicalUsage,
   getStoredBudgetEvaluationSnapshot,
-  queueGroupSpendFetch,
-  queueMemberUsageFetch,
-  queueProjectUsageFetch,
-  queueProjectTitlesFetch,
-  queueAllWorkspacesFetch,
   buildCanonicalGroupMergePlan,
   resolveCanonicalMergedGroupBudget,
   resolveRange,
@@ -30,6 +25,7 @@ import {
 import { sendEmail, buildAlertEmail, isEmailConfigured } from "./email";
 import { resolveAlertRecipients } from "./alert-recipients";
 import { getVisibleEffectiveTeamBudgetMap } from "./team-budgets";
+import { withJobClaim } from "./job-claims";
 
 export const THRESHOLDS = [50, 75, 90, 100];
 export const CHECK_INTERVAL_MINUTES = 10;
@@ -620,8 +616,8 @@ export function startChecker(): void {
   if (!isConfigured()) {
     logger.warn("Enterprise API key missing; background checker idle");
   }
-  // Warm-up is ingestion-only. Alert evaluation remains on the independent,
-  // database-only checker interval.
+  // Hydrate database-only diagnostics. Usage ingestion is owned exclusively by
+  // the fixed coordinator, never by a replica startup or dashboard request.
   void (async () => {
     try {
       const storedState = await db.query.budgetCheckerStateTable.findFirst({
@@ -635,36 +631,24 @@ export function startChecker(): void {
           lastSkipReason: storedState.lastSkipReason,
         };
       }
-      const budgets = await db.select().from(groupBudgetsTable);
-      const budgeted = new Set(budgets.map((b) => b.groupId));
-      const dir = await getDirectory();
-      // Budgeted groups first (higher urgency), then the rest.
-      const ordered = [...dir.groups].sort(
-        (a, b) => Number(budgeted.has(b.id)) - Number(budgeted.has(a.id)),
-      );
-      // Bootstrap the dashboard's durable member-level rollup before background
-      // raw totals. On later boots, hydrated rows make this an incremental recent
-      // overlap refresh while the dashboard can render the stored snapshot at once.
-      const dashboardRange = resolveRange("billing");
-      for (const g of ordered) {
-        queueMemberUsageFetch(g, dashboardRange, 1);
-        queueProjectUsageFetch(g, dashboardRange, 1);
-        queueProjectTitlesFetch(g.workspaceId, 1);
-      }
-      // Queue workspace_member fetches for ALL workspaces so the dashboard can use
-      // MAX(group_member, workspace_member) to capture non-agent spend (compute etc.)
-      // that the group_member API omits.
-      queueAllWorkspacesFetch(dir, dashboardRange, 1);
-      for (const g of ordered) queueGroupSpendFetch(g, 1, false);
-      logger.info({ groups: dir.groups.length }, "Warm-up: queued member, project, and spend fetches");
     } catch (err) {
-      logger.error({ err }, "Warm-up failed");
+      logger.error({ err }, "Checker state hydration failed");
     }
   })();
 
   setInterval(
     () => {
-      void runCheck().catch((err) => logger.error({ err }, "Scheduled check failed"));
+      void withJobClaim(
+        "budget:threshold-check",
+        CHECK_INTERVAL_MINUTES * 60 * 1000,
+        5 * 60 * 1000,
+        async (claim) => {
+          claim.signal?.throwIfAborted();
+          const result = await runCheck();
+          claim.signal?.throwIfAborted();
+          return result;
+        },
+      ).catch((err) => logger.error({ err }, "Scheduled check failed"));
     },
     CHECK_INTERVAL_MINUTES * 60 * 1000,
   );

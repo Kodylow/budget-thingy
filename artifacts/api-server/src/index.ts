@@ -1,7 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startChecker } from "./lib/checker";
-import { initCache, startDailyFactJob } from "./lib/enterprise";
+import { initCache, startDailyFactJob, startUsageCoordinator } from "./lib/enterprise";
 import { startSnapshotJob } from "./lib/history";
 import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
 import { startTeamBudgetSyncJob } from "./lib/team-budgets";
@@ -24,7 +24,7 @@ if (Number.isNaN(port) || port <= 0) {
 // dashboard request; otherwise an early request can race hydration and trigger
 // an unnecessary full bootstrap.
 await applyAnnualTeamBudgetBackfill();
-await initCache();
+await initCache({ revalidateOnStartup: false });
 
 const server = app.listen(port, (err) => {
   if (err) {
@@ -37,6 +37,7 @@ const server = app.listen(port, (err) => {
   startSnapshotJob();
   startTeamBudgetSyncJob();
   startDailyFactJob();
+  startUsageCoordinator();
 });
 
 function shutdown(signal: string) {

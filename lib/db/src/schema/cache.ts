@@ -47,6 +47,23 @@ export const budgetCheckerStateTable = pgTable("budget_checker_state", {
 
 export type BudgetCheckerState = typeof budgetCheckerStateTable.$inferSelect;
 
+/**
+ * Cross-replica ownership and cadence state for recurring work.  Owners are
+ * opaque per-attempt tokens; an abandoned row becomes claimable at lease
+ * expiry, while a normally released row remains unavailable until notBefore.
+ */
+export const recurringJobClaimsTable = pgTable("recurring_job_claims", {
+  jobKey: text("job_key").primaryKey(),
+  ownerToken: text("owner_token"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }).notNull(),
+  notBefore: timestamp("not_before", { withTimezone: true }).notNull(),
+  cursor: text("cursor"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
+export type RecurringJobClaim = typeof recurringJobClaimsTable.$inferSelect;
+
 // One row per (range_key, group_id) — stores the spend value + when it was fetched.
 export const apiSpendCacheTable = pgTable(
   "api_spend_cache",

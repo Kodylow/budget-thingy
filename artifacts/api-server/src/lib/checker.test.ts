@@ -692,7 +692,7 @@ describe("canonical group alert parity", () => {
     expect(await getFiredThresholds("grp-1", PERIOD_JUL)).toEqual([]);
   });
 
-  it("startChecker warm-up queues ingestion without evaluating alerts", async () => {
+  it("startChecker hydrates state without request-independent ingestion or alert evaluation", async () => {
     const unrelated = {
       ...GROUP,
       id: "unrelated-group",
@@ -715,9 +715,9 @@ describe("canonical group alert parity", () => {
     );
     try {
       startChecker();
-      await vi.waitFor(() => expect(rawSpendRefreshGroupIds).toContain(GROUP.id));
-      expect(rawSpendCallbacks.size).toBe(0);
       await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(rawSpendRefreshGroupIds).toEqual([]);
+      expect(rawSpendCallbacks.size).toBe(0);
       expect(sendEmailMock).not.toHaveBeenCalled();
       expect(await getFiredThresholds(GROUP.id, PERIOD_JUL, "group")).toEqual([]);
 
