@@ -6,3 +6,4 @@ export * from "./cache";
 export * from "./auth";
 export * from "./snapshots";
 export * from "./usage-limit-audits";
+export * from "./usage-facts";

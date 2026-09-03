@@ -155,6 +155,113 @@ const group = {
   type: "custom",
 };
 
+test("daily fact day identities are normalized to UTC", () => {
+  assert.deepEqual(
+    enterprise.__dateRangeDaysForTests(
+      "2026-08-31T23:30:00.000Z",
+      "2026-09-02T00:00:00.000Z",
+    ),
+    ["2026-08-31", "2026-09-01"],
+  );
+});
+
+test("fact-backed UTC ranges hydrate without queueing an upstream request", () => {
+  process.env["ENTERPRISE_DAILY_FACTS_READS"] = "true";
+  enterprise.__resetDurableUsageCachesForTests();
+  enterprise.__setDailyFactsForTests([{
+    mode: "account_total",
+    scopeKey: "enterprise",
+    usageDate: "2026-06-01",
+    payloadJson: {
+      totalCostUsd: 12.5,
+      attributableTotalCostUsd: 10,
+      unattributableTotalCostUsd: 2.5,
+      groups: [],
+    },
+    source: "test",
+    fetchedAt: new Date(),
+  }]);
+  const factRange = enterprise.resolveRange("custom", "2026-06-01", "2026-06-01");
+  assert.equal(enterprise.getAccountUsage(factRange.key).totalCostUsd, 12.5);
+  assert.equal(enterprise.queueAccountUsageFetch(factRange, 0), false);
+
+  enterprise.__resetDurableUsageCachesForTests();
+  delete process.env["ENTERPRISE_DAILY_FACTS_READS"];
+});
+
+test("fact reads fail closed for a non-midnight range start", () => {
+  process.env["ENTERPRISE_DAILY_FACTS_READS"] = "true";
+  enterprise.__resetDurableUsageCachesForTests();
+  enterprise.__setDailyFactsForTests([{
+    mode: "account_total",
+    scopeKey: "enterprise",
+    usageDate: "2026-06-01",
+    payloadJson: {
+      totalCostUsd: 12.5,
+      attributableTotalCostUsd: 10,
+      unattributableTotalCostUsd: 2.5,
+      groups: [],
+    },
+    source: "test",
+    fetchedAt: new Date(),
+  }]);
+  const partialRange = {
+    key: "partial-start",
+    label: "partial",
+    params: {
+      startTime: "2026-06-01T12:00:00.000Z",
+      endTime: "2026-06-02T00:00:00.000Z",
+    },
+  };
+  assert.equal(enterprise.prepareUsageRangeFromDailyFacts(partialRange), false);
+  assert.equal(enterprise.getAccountUsage(partialRange.key), undefined);
+
+  enterprise.__resetDurableUsageCachesForTests();
+  delete process.env["ENTERPRISE_DAILY_FACTS_READS"];
+});
+
+test("fact reads fail closed for a non-midnight range end", () => {
+  process.env["ENTERPRISE_DAILY_FACTS_READS"] = "true";
+  enterprise.__resetDurableUsageCachesForTests();
+  enterprise.__setDailyFactsForTests([{
+    mode: "account_total",
+    scopeKey: "enterprise",
+    usageDate: "2026-06-01",
+    payloadJson: {
+      totalCostUsd: 12.5,
+      attributableTotalCostUsd: 10,
+      unattributableTotalCostUsd: 2.5,
+      groups: [],
+    },
+    source: "test",
+    fetchedAt: new Date(),
+  }]);
+  const partialRange = {
+    key: "partial-end",
+    label: "partial",
+    params: {
+      startTime: "2026-06-01T00:00:00.000Z",
+      endTime: "2026-06-01T12:00:00.000Z",
+    },
+  };
+  assert.equal(enterprise.prepareUsageRangeFromDailyFacts(partialRange), false);
+  assert.equal(enterprise.getAccountUsage(partialRange.key), undefined);
+
+  enterprise.__resetDurableUsageCachesForTests();
+  delete process.env["ENTERPRISE_DAILY_FACTS_READS"];
+});
+
+test("a month cannot close when a persisted daily fact is missing", async () => {
+  await assert.rejects(
+    enterprise.__finalizeMissingFactMonthForTests(
+      "2026-06-01",
+      `missing-fact-${crypto.randomUUID()}`,
+      new Date("2026-09-03T12:00:00.000Z"),
+    ),
+    /is incomplete/,
+  );
+});
+
 async function waitForQueue() {
   while (enterprise.pendingUsageCount() > 0) {
     await new Promise((resolve) => setTimeout(resolve, 25));

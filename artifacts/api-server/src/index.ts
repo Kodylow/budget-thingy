@@ -1,7 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startChecker } from "./lib/checker";
-import { initCache } from "./lib/enterprise";
+import { initCache, startDailyFactJob } from "./lib/enterprise";
 import { startSnapshotJob } from "./lib/history";
 import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
 import { startTeamBudgetSyncJob } from "./lib/team-budgets";
@@ -36,6 +36,7 @@ const server = app.listen(port, (err) => {
   startChecker();
   startSnapshotJob();
   startTeamBudgetSyncJob();
+  startDailyFactJob();
 });
 
 function shutdown(signal: string) {

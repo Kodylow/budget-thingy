@@ -4,10 +4,7 @@ export type ApiRangeType = 'billing' | 'mtd' | 'ytd' | 'custom' | 'full-term';
 export type RangeSelection = ApiRangeType | 'full-term';
 
 export function toLocalDateInputValue(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return date.toISOString().slice(0, 10);
 }
 
 export function fullTermDates(date = new Date()) {

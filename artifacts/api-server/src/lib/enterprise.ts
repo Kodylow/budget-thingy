@@ -9,9 +9,12 @@ import {
   apiProjectMetadataStateTable,
   usageSyncChunksTable,
   usageSyncStateTable,
+  usageDailyFactsTable,
+  usageFactMonthsTable,
   type UsageSyncChunk,
+  type UsageDailyFact,
 } from "@workspace/db/schema";
-import { and, eq, gt, like, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, like, lt, lte, sql } from "drizzle-orm";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
@@ -88,6 +91,8 @@ const BILLING_PERIOD_REFRESH_MS = 24 * 60 * 60 * 1000;
 const VERIFICATION_HEAL_THRESHOLD_USD = 1;
 const VERIFICATION_RETRY_BASE_MS = 60 * 1000;
 const VERIFICATION_RETRY_MAX_MS = 60 * 60 * 1000;
+export const DAILY_FACT_MONTH_GRACE_MS = 24 * 60 * 60 * 1000;
+const DAILY_FACT_ROLLOUT_ENV = "ENTERPRISE_DAILY_FACTS_READS";
 
 export type RangeType = "billing" | "mtd" | "ytd" | "custom" | "full-term";
 
@@ -95,6 +100,11 @@ export interface UsageRange {
   key: string; // cache key
   label: string;
   params: Record<string, string>; // billingPeriod OR startTime/endTime
+}
+
+function resolvedRange(range: UsageRange): UsageRange {
+  prepareUsageRangeFromDailyFacts(range);
+  return range;
 }
 
 export function resolveRange(
@@ -105,35 +115,36 @@ export function resolveRange(
 ): UsageRange {
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();
+  const nextUtcDay = new Date(Date.UTC(y, m, now.getUTCDate() + 1));
   switch (rangeType) {
     case "full-term": {
-      const end = new Date(Date.UTC(y, m, now.getUTCDate() + 1));
-      return {
+      const end = nextUtcDay;
+      return resolvedRange({
         key: FULL_TERM_RANGE_KEY,
         label: formatPeriodLabel(SPEND_DATA_CUTOFF_ISO, end.toISOString()),
         params: {
           startTime: SPEND_DATA_CUTOFF_ISO,
           endTime: end.toISOString(),
         },
-      };
+      });
     }
     case "mtd": {
       const rawStart = new Date(Date.UTC(y, m, 1)).getTime();
       const effectiveStart = new Date(Math.max(rawStart, SPEND_DATA_CUTOFF_MS));
-      return {
+      return resolvedRange({
         key: `mtd:${effectiveStart.toISOString().slice(0, 10)}`,
         label: `${now.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })} (MTD)`,
-        params: { startTime: effectiveStart.toISOString(), endTime: now.toISOString() },
-      };
+        params: { startTime: effectiveStart.toISOString(), endTime: nextUtcDay.toISOString() },
+      });
     }
     case "ytd": {
       const rawStart = new Date(Date.UTC(y, 0, 1)).getTime();
       const effectiveStart = new Date(Math.max(rawStart, SPEND_DATA_CUTOFF_MS));
-      return {
+      return resolvedRange({
         key: `ytd:${effectiveStart.toISOString().slice(0, 10)}`,
         label: `${y} year to date`,
-        params: { startTime: effectiveStart.toISOString(), endTime: now.toISOString() },
-      };
+        params: { startTime: effectiveStart.toISOString(), endTime: nextUtcDay.toISOString() },
+      });
     }
     case "custom": {
       if (!startDate || !endDate) {
@@ -153,11 +164,11 @@ export function resolveRange(
         );
       }
       const effectiveStartDate = effectiveStart.toISOString().slice(0, 10);
-      return {
+      return resolvedRange({
         key: `custom:${effectiveStartDate}:${endDate}`,
         label: `${effectiveStartDate} to ${endDate}`,
         params: { startTime: effectiveStart.toISOString(), endTime: end.toISOString() },
-      };
+      });
     }
     default:
       {
@@ -166,13 +177,13 @@ export function resolveRange(
         const periodStartMs = new Date(activePeriod.start).getTime();
         const periodEndMs = new Date(activePeriod.end).getTime();
         const effectiveStart = new Date(Math.max(periodStartMs, SPEND_DATA_CUTOFF_MS));
-        const effectiveEnd = new Date(Math.min(now.getTime(), periodEndMs));
+        const effectiveEnd = new Date(Math.min(nextUtcDay.getTime(), periodEndMs));
         if (
           Number.isFinite(effectiveStart.getTime()) &&
           Number.isFinite(effectiveEnd.getTime()) &&
           effectiveEnd > effectiveStart
         ) {
-          return {
+          return resolvedRange({
             // The discovered interval bounds are immutable material identity. The
             // moving reporting end is deliberately excluded so polling reuses cache.
             key: `billing:${activePeriod.start}:${activePeriod.end}:from:${effectiveStart.toISOString()}`,
@@ -181,15 +192,15 @@ export function resolveRange(
               startTime: effectiveStart.toISOString(),
               endTime: effectiveEnd.toISOString(),
             },
-          };
+          });
         }
       }
       }
-      return {
+      return resolvedRange({
         key: "billing:from-cutoff",
-        label: formatPeriodLabel(SPEND_DATA_CUTOFF_ISO, now.toISOString()),
-        params: { startTime: SPEND_DATA_CUTOFF_ISO, endTime: now.toISOString() },
-      };
+        label: formatPeriodLabel(SPEND_DATA_CUTOFF_ISO, nextUtcDay.toISOString()),
+        params: { startTime: SPEND_DATA_CUTOFF_ISO, endTime: nextUtcDay.toISOString() },
+      });
   }
 }
 
@@ -544,25 +555,31 @@ export function getBillingPeriodMetadata(): BillingPeriodMetadata {
 
 export function resolvePaceUsageRange(): UsageRange | null {
   const period = getBillingPeriodMetadata();
+  const now = new Date();
+  const nextUtcDay = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + 1,
+  ));
   const start = new Date(Math.max(
     new Date(period.start).getTime(),
     SPEND_DATA_CUTOFF_MS,
   ));
   const end = new Date(Math.min(
-    Date.now(),
+    nextUtcDay.getTime(),
     new Date(period.end).getTime(),
   ));
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
     return null;
   }
-  return {
+  return resolvedRange({
     key: `pace:${start.toISOString().slice(0, 10)}:${period.end.slice(0, 10)}`,
     label: period.label,
     params: {
       startTime: start.toISOString(),
       endTime: end.toISOString(),
     },
-  };
+  });
 }
 
 export function refreshBillingPeriodMetadata(
@@ -651,6 +668,95 @@ interface StoredUsagePayload {
   attributableTotalCostUsd: number;
   unattributableTotalCostUsd: number;
   groups: UsageGroupEntry[];
+}
+
+const dailyFactCache = new Map<string, UsageDailyFact>();
+const materializedFactRanges = new Set<string>();
+const verifiedDailyFactScopes = new Set<string>();
+let dailyFactParityReady = false;
+let dailyFactRefreshTimer: NodeJS.Timeout | null = null;
+
+function dailyFactId(mode: UsageSyncMode, scopeKey: string, usageDate: string): string {
+  return `${mode}|${scopeKey}|${usageDate}`;
+}
+
+function dailyFactReadsRequested(): boolean {
+  return process.env[DAILY_FACT_ROLLOUT_ENV] === "true";
+}
+
+export function dailyFactReadsEnabled(): boolean {
+  return dailyFactReadsRequested() && dailyFactParityReady;
+}
+
+function dateRangeDays(start: Date, end: Date): string[] {
+  const days: string[] = [];
+  for (let cursor = utcDayStart(start.getTime()); cursor < end.getTime(); cursor += 86_400_000) {
+    days.push(new Date(cursor).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+function factRowsForRange(
+  mode: UsageSyncMode,
+  scopeKey: string,
+  range: UsageRange,
+): UsageSyncChunk[] | null {
+  const { start, end } = rangeBounds(range);
+  if (
+    start.getTime() !== utcDayStart(start.getTime()) ||
+    end.getTime() !== utcDayStart(end.getTime())
+  ) return null;
+  const days = dateRangeDays(start, end);
+  const facts = days.map((day) => dailyFactCache.get(dailyFactId(mode, scopeKey, day)));
+  if (facts.some((fact) => !fact)) return null;
+  return facts.map((fact) => {
+    const chunkStart = new Date(`${fact!.usageDate}T00:00:00.000Z`);
+    return {
+      mode: fact!.mode,
+      rangeKey: range.key,
+      scopeKey: fact!.scopeKey,
+      chunkStart,
+      chunkEnd: new Date(Math.min(chunkStart.getTime() + 86_400_000, end.getTime())),
+      payloadJson: fact!.payloadJson,
+      completedAt: fact!.fetchedAt,
+    };
+  });
+}
+
+/**
+ * Materialize a requested reporting identity from normalized facts. This is
+ * synchronous because facts are hydrated before the server starts accepting
+ * requests; no dashboard range causes an upstream call on this path.
+ */
+export function prepareUsageRangeFromDailyFacts(range: UsageRange): boolean {
+  if (!dailyFactReadsEnabled()) return false;
+  if (materializedFactRanges.has(range.key)) return true;
+  const scopes = new Set(
+    [...dailyFactCache.values()].map((fact) => `${fact.mode}|${fact.scopeKey}`),
+  );
+  const rows: UsageSyncChunk[] = [];
+  for (const scope of scopes) {
+    const separator = scope.indexOf("|");
+    const mode = scope.slice(0, separator) as UsageSyncMode;
+    const scopeKey = scope.slice(separator + 1);
+    const selected = factRowsForRange(mode, scopeKey, range);
+    if (selected) {
+      rows.push(...selected);
+      syncMetadata.set(syncId(mode, range.key, scopeKey), {
+        syncedThrough: new Date(range.params.endTime).getTime(),
+        completedAt: Date.now(),
+        isClosed: false,
+        status: "success",
+        error: null,
+      });
+    }
+  }
+  if (!rows.some((row) => row.mode === "account_total" && row.scopeKey === ACCOUNT_USAGE_SCOPE)) {
+    return false;
+  }
+  hydrateDurableUsage(rows);
+  materializedFactRanges.add(range.key);
+  return true;
 }
 
 interface SyncMetadata {
@@ -967,6 +1073,308 @@ async function fetchUsageChunk(
   throw new Error(`Usage pagination exceeded ${MAX_USAGE_PAGES} pages`);
 }
 
+interface DailyFactScope {
+  mode: UsageSyncMode;
+  scopeKey: string;
+  params: Record<string, string | undefined>;
+}
+
+function monthBounds(monthStart: string): { start: Date; end: Date } {
+  const start = new Date(`${monthStart}T00:00:00.000Z`);
+  const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+  return { start, end };
+}
+
+async function syncDailyFactDay(
+  usageDate: string,
+  scope: DailyFactScope,
+): Promise<void> {
+  const dayStart = new Date(`${usageDate}T00:00:00.000Z`);
+  const result = await fetchUsageChunk(
+    scope.mode,
+    scope.params,
+    dayStart,
+    new Date(dayStart.getTime() + 86_400_000),
+    0,
+    { runId: nextQueueRunId(), rangeKey: `facts:${usageDate}`, scopeKey: scope.scopeKey },
+  );
+  if (result.partial) throw new Error(result.error ?? "Daily usage fact was partial");
+  const completedAt = new Date();
+  const committedFact: UsageDailyFact = {
+    mode: scope.mode,
+    scopeKey: scope.scopeKey,
+    usageDate,
+    payloadJson: result.payload,
+    source: "enterprise_api",
+    fetchedAt: completedAt,
+  };
+  const lockId = `daily-fact|${scope.mode}|${scope.scopeKey}|${usageDate}`;
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${lockId}))`);
+    await tx.insert(usageDailyFactsTable).values({
+      mode: scope.mode,
+      scopeKey: scope.scopeKey,
+      usageDate,
+      payloadJson: result.payload,
+      source: "enterprise_api",
+      fetchedAt: completedAt,
+    }).onConflictDoUpdate({
+      target: [
+        usageDailyFactsTable.mode,
+        usageDailyFactsTable.scopeKey,
+        usageDailyFactsTable.usageDate,
+      ],
+      set: { payloadJson: result.payload, source: "enterprise_api", fetchedAt: completedAt },
+    });
+  });
+  // Never publish data that has not survived the transaction commit.
+  dailyFactCache.set(dailyFactId(scope.mode, scope.scopeKey, usageDate), committedFact);
+  materializedFactRanges.clear();
+}
+
+async function finalizeDailyFactMonth(
+  monthStart: string,
+  scope: DailyFactScope,
+  now = new Date(),
+): Promise<void> {
+  const { start: rawStart, end: naturalEnd } = monthBounds(monthStart);
+  const start = new Date(Math.max(rawStart.getTime(), SPEND_DATA_CUTOFF_MS));
+  const end = new Date(Math.min(naturalEnd.getTime(), utcDayStart(now.getTime()) + 86_400_000));
+  const expectedDays = dateRangeDays(start, end);
+  const persistedFacts = await db.select().from(usageDailyFactsTable).where(and(
+    eq(usageDailyFactsTable.mode, scope.mode),
+    eq(usageDailyFactsTable.scopeKey, scope.scopeKey),
+    gte(usageDailyFactsTable.usageDate, expectedDays[0]!),
+    lt(usageDailyFactsTable.usageDate, new Date(end).toISOString().slice(0, 10)),
+  ));
+  const persistedByDay = new Map(persistedFacts.map((fact) => [fact.usageDate, fact]));
+  if (expectedDays.some((day) => !persistedByDay.has(day))) {
+    throw new Error(`Daily fact month ${monthStart} is incomplete for ${scope.mode}/${scope.scopeKey}`);
+  }
+  const currentMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    .toISOString().slice(0, 10);
+  if (monthStart === currentMonthStart) {
+    const direct = await fetchUsageChunk(
+      scope.mode,
+      scope.params,
+      start,
+      now,
+      0,
+      { runId: nextQueueRunId(), rangeKey: `facts-parity:${monthStart}`, scopeKey: scope.scopeKey },
+    );
+    const storedTotalUsd = expectedDays.reduce(
+      (sum, day) =>
+        sum + (persistedByDay.get(day)!.payloadJson as StoredUsagePayload).totalCostUsd,
+      0,
+    );
+    const deltaUsd = direct.payload.totalCostUsd - storedTotalUsd;
+    if (direct.partial || Math.abs(deltaUsd) >= VERIFICATION_HEAL_THRESHOLD_USD) {
+      throw new Error(
+        `Daily fact parity failed for ${scope.mode}/${scope.scopeKey}: delta ${deltaUsd}`,
+      );
+    }
+    verifiedDailyFactScopes.add(`${scope.mode}|${scope.scopeKey}`);
+  }
+  const isClosed = naturalEnd.getTime() + DAILY_FACT_MONTH_GRACE_MS <= now.getTime();
+  const monthLockId = `daily-facts-month|${scope.mode}|${scope.scopeKey}|${monthStart}`;
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${monthLockId}))`);
+    const committed = await tx.select({
+      usageDate: usageDailyFactsTable.usageDate,
+    }).from(usageDailyFactsTable).where(and(
+      eq(usageDailyFactsTable.mode, scope.mode),
+      eq(usageDailyFactsTable.scopeKey, scope.scopeKey),
+      gte(usageDailyFactsTable.usageDate, expectedDays[0]!),
+      lt(usageDailyFactsTable.usageDate, end.toISOString().slice(0, 10)),
+    ));
+    const committedDays = new Set(committed.map((fact) => fact.usageDate));
+    if (expectedDays.some((day) => !committedDays.has(day))) {
+      throw new Error(
+        `Daily fact month ${monthStart} lost persisted coverage for ${scope.mode}/${scope.scopeKey}`,
+      );
+    }
+    const completedAt = new Date();
+    await tx.insert(usageFactMonthsTable).values({
+      mode: scope.mode,
+      scopeKey: scope.scopeKey,
+      monthStart,
+      isClosed,
+      status: "success",
+      errorMessage: null,
+      syncedThrough: end,
+      completedAt,
+    }).onConflictDoUpdate({
+      target: [
+        usageFactMonthsTable.mode,
+        usageFactMonthsTable.scopeKey,
+        usageFactMonthsTable.monthStart,
+      ],
+      set: { isClosed, status: "success", errorMessage: null, syncedThrough: end, completedAt },
+    });
+  });
+}
+
+/**
+ * Copy legacy chunks that already represent exactly one UTC day. Aggregate
+ * chunks are deliberately not divided; the month backfill retrieves those
+ * bounded intervals again because splitting an aggregate would invent data.
+ */
+async function backfillDailyFactsFromLegacyChunks(): Promise<number> {
+  const [rows, existing] = await Promise.all([
+    db.select().from(usageSyncChunksTable),
+    db.select({
+      mode: usageDailyFactsTable.mode,
+      scopeKey: usageDailyFactsTable.scopeKey,
+      usageDate: usageDailyFactsTable.usageDate,
+    }).from(usageDailyFactsTable),
+  ]);
+  const existingIds = new Set(
+    existing.map((fact) => dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate)),
+  );
+  const compatible = rows.filter((row) =>
+    row.chunkStart.getTime() === utcDayStart(row.chunkStart.getTime()) &&
+    row.chunkEnd.getTime() - row.chunkStart.getTime() === 86_400_000 &&
+    !existingIds.has(dailyFactId(
+      row.mode as UsageSyncMode,
+      row.scopeKey,
+      row.chunkStart.toISOString().slice(0, 10),
+    ))
+  );
+  let inserted = 0;
+  await db.transaction(async (tx) => {
+    for (const row of compatible) {
+      const usageDate = row.chunkStart.toISOString().slice(0, 10);
+      await tx.insert(usageDailyFactsTable).values({
+        mode: row.mode,
+        scopeKey: row.scopeKey,
+        usageDate,
+        payloadJson: row.payloadJson,
+        source: "legacy_daily_chunk",
+        fetchedAt: row.completedAt,
+      }).onConflictDoNothing();
+      inserted++;
+    }
+  });
+  return inserted;
+}
+
+async function queueDailyFactRefreshes(): Promise<void> {
+  if (!isConfigured()) return;
+  const dir = await getDirectory();
+  const now = new Date();
+  const currentMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  const scopes: DailyFactScope[] = [
+    { mode: "account_total", scopeKey: ACCOUNT_USAGE_SCOPE, params: {} },
+    ...dir.groups.flatMap((group): DailyFactScope[] => {
+      const params = { workspaceId: group.workspaceId, groupId: group.id };
+      return [
+        { mode: "group_total", scopeKey: group.id, params },
+        { mode: "group_member", scopeKey: group.id, params },
+        { mode: "group_project", scopeKey: group.id, params },
+      ];
+    }),
+    ...[...dir.workspaces.keys()].map((workspaceId): DailyFactScope => ({
+      mode: "workspace_member",
+      scopeKey: workspaceId,
+      params: { workspaceId },
+    })),
+  ];
+  const [monthStates, storedFacts] = await Promise.all([
+    db.select({
+      mode: usageFactMonthsTable.mode,
+      scopeKey: usageFactMonthsTable.scopeKey,
+      monthStart: usageFactMonthsTable.monthStart,
+      isClosed: usageFactMonthsTable.isClosed,
+    }).from(usageFactMonthsTable),
+    db.select({
+      mode: usageDailyFactsTable.mode,
+      scopeKey: usageDailyFactsTable.scopeKey,
+      usageDate: usageDailyFactsTable.usageDate,
+    }).from(usageDailyFactsTable),
+  ]);
+  const closedMonths = new Set(
+    monthStates
+      .filter((state) => state.isClosed)
+      .map((state) => `${state.monthStart}|${state.mode}|${state.scopeKey}`),
+  );
+  const existingFacts = new Set(
+    storedFacts.map((fact) => dailyFactId(
+      fact.mode as UsageSyncMode,
+      fact.scopeKey,
+      fact.usageDate,
+    )),
+  );
+  dailyFactParityReady = false;
+  verifiedDailyFactScopes.clear();
+  const cutoff = new Date(SPEND_DATA_CUTOFF_MS);
+  const months: string[] = [];
+  for (
+    let cursor = new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth(), 1));
+    cursor <= new Date(`${currentMonth}T00:00:00.000Z`);
+    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
+  ) {
+    months.push(cursor.toISOString().slice(0, 10));
+  }
+  for (const monthStart of months.reverse()) {
+    const { start: rawStart, end: naturalEnd } = monthBounds(monthStart);
+    const rangeStart = new Date(Math.max(rawStart.getTime(), SPEND_DATA_CUTOFF_MS));
+    const rangeEnd = new Date(Math.min(
+      naturalEnd.getTime(),
+      utcDayStart(now.getTime()) + 86_400_000,
+    ));
+    const isCurrent = monthStart === currentMonth;
+    const mutableTailStart = utcDayStart(rangeEnd.getTime() - RECONCILIATION_OVERLAP_MS);
+    for (const scope of scopes) {
+      if (closedMonths.has(`${monthStart}|${scope.mode}|${scope.scopeKey}`)) continue;
+      const priority = isCurrent ? (scope.mode === "account_total" ? -5 : 1) : 2;
+      for (const usageDate of dateRangeDays(rangeStart, rangeEnd)) {
+        const factId = dailyFactId(scope.mode, scope.scopeKey, usageDate);
+        const dayMs = new Date(`${usageDate}T00:00:00.000Z`).getTime();
+        const needsRefresh = !existingFacts.has(factId) ||
+          (isCurrent && dayMs >= mutableTailStart);
+        if (!needsRefresh) continue;
+        enqueueUsage(
+          `daily-fact:${usageDate}:${scope.mode}:${scope.scopeKey}`,
+          priority,
+          () => syncDailyFactDay(usageDate, scope),
+        );
+      }
+      enqueueUsage(
+        `daily-facts-finalize:${monthStart}:${scope.mode}:${scope.scopeKey}`,
+        priority,
+        () => finalizeDailyFactMonth(monthStart, scope, new Date()),
+      );
+    }
+  }
+  // Current-month finalizers are inserted before this gate at the same
+  // priorities, while historical work remains lower priority.
+  enqueueUsage(`daily-facts-parity:${currentMonth}`, 1, async () => {
+    dailyFactParityReady = scopes.every((scope) =>
+      verifiedDailyFactScopes.has(`${scope.mode}|${scope.scopeKey}`)
+    );
+    logger[dailyFactParityReady ? "info" : "warn"](
+      { verifiedScopes: verifiedDailyFactScopes.size, requiredScopes: scopes.length },
+      dailyFactParityReady
+        ? "Daily usage facts passed current-month parity"
+        : "Daily usage facts failed current-month parity; legacy reads remain active",
+    );
+  });
+}
+
+export function startDailyFactJob(): void {
+  if (dailyFactRefreshTimer) return;
+  const run = () => {
+    void queueDailyFactRefreshes().catch((err) => {
+      dailyFactParityReady = false;
+      logger.warn({ err }, "Failed to plan daily usage fact refresh");
+    });
+  };
+  const initial = setTimeout(run, 5_000);
+  initial.unref();
+  dailyFactRefreshTimer = setInterval(run, 24 * 60 * 60 * 1000);
+  dailyFactRefreshTimer.unref();
+}
+
 async function synchronizeUsage(
   mode: UsageSyncMode,
   range: UsageRange,
@@ -974,6 +1382,10 @@ async function synchronizeUsage(
   baseParams: Record<string, string | undefined>,
   force = false,
 ): Promise<UsageSyncChunk[]> {
+  if (prepareUsageRangeFromDailyFacts(range)) {
+    const rows = factRowsForRange(mode, scopeKey, range);
+    if (rows) return rows;
+  }
   await maybePruneExpiredCustomUsage();
   const id = syncId(mode, range.key, scopeKey);
   const priorMetadata = syncMetadata.get(id);
@@ -1855,6 +2267,10 @@ export async function initCache(
   try {
     await maybePruneExpiredCustomUsage();
     await adoptLegacyFullTermUsage();
+    const backfilledFacts = await backfillDailyFactsFromLegacyChunks();
+    if (backfilledFacts > 0) {
+      logger.info({ rows: backfilledFacts }, "Backfilled normalized daily usage facts");
+    }
     const [
       dirRow,
       billingPeriodRow,
@@ -1863,6 +2279,7 @@ export async function initCache(
       projectRows,
       projectStates,
       durable,
+      facts,
     ] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
       db.query.apiBillingPeriodCacheTable.findFirst({
@@ -1880,8 +2297,16 @@ export async function initCache(
         const chunks = await tx.select().from(usageSyncChunksTable);
         return { states, chunks };
       }),
+      db.select().from(usageDailyFactsTable),
     ]);
     const { states, chunks } = durable;
+    for (const fact of facts) {
+      dailyFactCache.set(
+        dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
+        fact,
+      );
+    }
+    if (facts.length > 0) logger.info({ facts: facts.length }, "Daily usage facts hydrated from DB");
 
     if (billingPeriodRow) {
       billingPeriodCache = {
@@ -4400,6 +4825,41 @@ export function __resetDurableUsageCachesForTests(): void {
   accountUsageFailureCount.clear();
   for (const timer of accountUsageRetryTimers.values()) clearTimeout(timer);
   accountUsageRetryTimers.clear();
+  dailyFactCache.clear();
+  materializedFactRanges.clear();
+  verifiedDailyFactScopes.clear();
+  dailyFactParityReady = false;
+}
+
+export function __setDailyFactsForTests(
+  facts: UsageDailyFact[],
+  parityReady = true,
+): void {
+  dailyFactCache.clear();
+  materializedFactRanges.clear();
+  for (const fact of facts) {
+    dailyFactCache.set(
+      dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
+      fact,
+    );
+  }
+  dailyFactParityReady = parityReady;
+}
+
+export function __dateRangeDaysForTests(start: string, end: string): string[] {
+  return dateRangeDays(new Date(start), new Date(end));
+}
+
+export function __finalizeMissingFactMonthForTests(
+  monthStart: string,
+  scopeKey: string,
+  now: Date,
+): Promise<void> {
+  return finalizeDailyFactMonth(
+    monthStart,
+    { mode: "account_total", scopeKey, params: {} },
+    now,
+  );
 }
 
 export function __setBillingPeriodForTests(period: StoredBillingPeriod | null): void {

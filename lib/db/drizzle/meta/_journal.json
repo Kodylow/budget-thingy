@@ -99,6 +99,13 @@
       "when": 1788240000000,
       "tag": "0013_team_budget_upstream_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788455880000,
+      "tag": "0014_usage_daily_facts",
+      "breakpoints": true
     }
   ]
 }
