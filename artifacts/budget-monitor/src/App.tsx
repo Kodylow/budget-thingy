@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -5,22 +6,44 @@ import NotFound from '@/pages/not-found';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 import { AppShell } from '@/components/app-shell';
 import Dashboard from '@/pages/dashboard';
-import Alerts from '@/pages/alerts';
-import Settings from '@/pages/settings';
-import GroupDetail from '@/pages/group-detail';
-import ClusterDetail from '@/pages/cluster-detail';
-import Trends from '@/pages/trends';
-import WorkspaceAdmins from '@/pages/workspace-admins';
-import WorkspaceDirectory from '@/pages/workspace-directory';
-import TeamBudgets from '@/pages/team-budgets';
-import UserGuide from '@/pages/user-guide';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
 import { Redirect, useRoute, useSearch } from 'wouter';
 import { canOpenGroupInView } from '@/lib/rbac-view';
+import {
+  pollingRetryDelay,
+  QUERY_STALE_TIME_MS,
+} from '@/lib/client-performance';
 
-const queryClient = new QueryClient();
+const Settings = lazy(() => import('@/pages/settings'));
+const Trends = lazy(() => import('@/pages/trends'));
+const Alerts = lazy(() => import('@/pages/alerts'));
+const GroupDetail = lazy(() => import('@/pages/group-detail'));
+const ClusterDetail = lazy(() => import('@/pages/cluster-detail'));
+const WorkspaceAdmins = lazy(() => import('@/pages/workspace-admins'));
+const WorkspaceDirectory = lazy(() => import('@/pages/workspace-directory'));
+const TeamBudgets = lazy(() => import('@/pages/team-budgets'));
+const UserGuide = lazy(() => import('@/pages/user-guide'));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: QUERY_STALE_TIME_MS,
+      refetchOnWindowFocus: false,
+      retry: 1,
+      retryDelay: pollingRetryDelay,
+    },
+  },
+});
+
+function RouteLoading() {
+  return (
+    <div className="p-4 md:p-8" role="status" aria-label="Loading page">
+      <div className="h-40 animate-pulse-glow rounded bg-muted" />
+    </div>
+  );
+}
 
 function Router() {
   // Account-only routes (settings) are removed for workspace admins so a
@@ -52,19 +75,21 @@ function Router() {
 
   return (
     <AppShell>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/user-guide" component={AccountAdminGuideRoute} />
-        <Route path="/alerts" component={Alerts} />
-        {isAccountWide && <Route path="/trends" component={Trends} />}
-        {isAccountAdmin && <Route path="/settings" component={Settings} />}
-        {isAccountAdmin && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
-        {isAccountAdmin && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
-        {isAccountAdmin && <Route path="/team-budgets" component={TeamBudgets} />}
-        <Route path="/groups/:groupId" component={ScopedGroupRoute} />
-        <Route path="/clusters" component={ScopedClusterRoute} />
-        <Route component={NotFound} />
-      </Switch>
+      <Suspense fallback={<RouteLoading />}>
+        <Switch>
+          <Route path="/" component={Dashboard} />
+          <Route path="/user-guide" component={AccountAdminGuideRoute} />
+          <Route path="/alerts" component={Alerts} />
+          {isAccountWide && <Route path="/trends" component={Trends} />}
+          {isAccountAdmin && <Route path="/settings" component={Settings} />}
+          {isAccountAdmin && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
+          {isAccountAdmin && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
+          {isAccountAdmin && <Route path="/team-budgets" component={TeamBudgets} />}
+          <Route path="/groups/:groupId" component={ScopedGroupRoute} />
+          <Route path="/clusters" component={ScopedClusterRoute} />
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
     </AppShell>
   );
 }

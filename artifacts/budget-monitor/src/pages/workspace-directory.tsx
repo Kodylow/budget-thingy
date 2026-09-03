@@ -7,6 +7,7 @@ import {
   useGetUserActivity,
   getGetUserActivityQueryKey,
 } from '@workspace/api-client-react';
+import { progressivePollInterval } from '@/lib/client-performance';
 import type { DirectoryMember, DirectoryMemberWorkspace } from '@workspace/api-client-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -376,7 +377,11 @@ export default function WorkspaceDirectory() {
     query: {
       queryKey: getGetUserActivityQueryKey(activityParams),
       refetchInterval: (query) =>
-        query.state.data?.isComplete === false ? 8000 : false,
+        progressivePollInterval(
+          query.state.data,
+          query.state.dataUpdateCount,
+          query.state.status,
+        ),
     },
   });
 

@@ -92,6 +92,7 @@ import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
 import { filterGroupsForView } from '@/lib/rbac-view';
 import { compareTeamNames, formatTeamName } from '@/lib/team-names';
+import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 
 interface TeamSection {
   teamName: string;
@@ -115,7 +116,6 @@ export default function Dashboard() {
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [retryingSync, setRetryingSync] = useState(false);
   const [retrySyncError, setRetrySyncError] = useState<string | null>(null);
-  const [retryPollingStartedAt, setRetryPollingStartedAt] = useState<number | null>(null);
 
   const queryParams = useMemo(
     () => ({
@@ -138,10 +138,10 @@ export default function Dashboard() {
       placeholderData: (previousData) => previousData,
       refetchInterval: (query) => {
         const data = query.state.data;
+        if (query.state.status === 'error') return false;
         const paceComplete = rangeType !== 'billing' ||
           (data?.groups.every((group) => group.paceSpendLoaded) ?? false);
-        const retryPolling = retryPollingStartedAt !== null;
-        return retryPolling ? 2000 : (data?.syncStatus === 'failed' || data?.syncStatus === 'partial') ||
+        return (data?.syncStatus === 'failed' || data?.syncStatus === 'partial') ||
           (data?.isComplete && paceComplete) ? false : 8000;
       },
     },
@@ -159,12 +159,10 @@ export default function Dashboard() {
       queryKey: getGetSummaryQueryKey(queryParams),
       placeholderData: (previousData) => previousData,
       refetchInterval: (query) => {
+        if (query.state.status === 'error') return false;
         const status = query.state.data?.syncStatus;
-        const retryPolling = retryPollingStartedAt !== null;
-        if (retryPolling) return 2000;
-        if (status === 'failed') return false;
+        if (status === 'failed' || status === 'partial') return false;
         if (query.state.data?.isComplete) return false;
-        if (status === 'partial') return 30000;
         return 8000;
       },
     },
@@ -201,14 +199,6 @@ export default function Dashboard() {
   const projectSyncStatus = groupsData?.projectSyncStatus ?? 'syncing';
   const projectPendingCount = groupsData?.projectPendingCount ?? 0;
   const syncStatus = groupsData?.syncStatus ?? 'syncing';
-  useEffect(() => {
-    if (
-      retryPollingStartedAt !== null &&
-      (syncStatus === 'syncing' || syncStatus === 'complete')
-    ) {
-      setRetryPollingStartedAt(null);
-    }
-  }, [retryPollingStartedAt, syncStatus]);
   const retrySync = async () => {
     setRetryingSync(true);
     setRetrySyncError(null);
@@ -224,7 +214,6 @@ export default function Dashboard() {
         credentials: 'include',
       });
       if (!response.ok) throw new Error('Retry request failed');
-      setRetryPollingStartedAt(Date.now());
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey(queryParams) }),
         queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey(queryParams) }),
@@ -522,9 +511,15 @@ export default function Dashboard() {
         group.isSynthetic ? 'bg-muted/10' : 'hover:bg-muted/50 cursor-pointer'
       }`}
       data-testid={`row-group-${group.groupId}`}
+      tabIndex={group.isSynthetic ? undefined : 0}
       onClick={(e) => {
         if (group.isSynthetic) return;
         if ((e.target as HTMLElement).closest('button, input, a')) return;
+        setLocation(`/groups/${group.groupId}`);
+      }}
+      onKeyDown={(e) => {
+        if (group.isSynthetic || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
         setLocation(`/groups/${group.groupId}`);
       }}
     >
@@ -628,7 +623,13 @@ export default function Dashboard() {
       <tr
         key={cluster.clusterKey}
         className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
+        tabIndex={0}
         onClick={() => setLocation(clusterUrl)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          setLocation(clusterUrl);
+        }}
       >
         <td className="py-3 px-4 pl-10">
           <div className="flex flex-col gap-1">
@@ -705,8 +706,14 @@ export default function Dashboard() {
           clusterCount > 0 ? 'hover:bg-muted/50 cursor-pointer' : ''
         }`}
         data-testid={`row-team-${team.teamName}`}
+        tabIndex={clusterCount > 0 ? 0 : undefined}
         onClick={() => {
           if (clusterCount > 0) toggleTeam(team.teamName);
+        }}
+        onKeyDown={(e) => {
+          if (clusterCount === 0 || (e.key !== 'Enter' && e.key !== ' ')) return;
+          e.preventDefault();
+          toggleTeam(team.teamName);
         }}
       >
         <td className="py-3 px-4 font-semibold text-sm" colSpan={1}>
@@ -800,7 +807,13 @@ export default function Dashboard() {
         key="team-unassigned"
         className="border-b border-border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer select-none"
         data-testid="row-team-unassigned"
+      tabIndex={0}
         onClick={() => toggleTeam('__unassigned__')}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        toggleTeam('__unassigned__');
+      }}
       >
         <td className="py-3 px-4 font-semibold text-sm text-muted-foreground" colSpan={8}>
           <div className="flex items-center gap-2">
@@ -1086,7 +1099,7 @@ export default function Dashboard() {
               ))}
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
               <table className="w-full" data-testid="table-groups">
                 <thead>
                   <tr className="border-b border-border">
@@ -1116,7 +1129,7 @@ export default function Dashboard() {
                     </th>
                   </tr>
                 </thead>
-                <tbody>
+                <VirtualizedTableRows columnCount={8}>
                   {hasTeams ? (
                     <>
                       {teamSections.map((team) => (
@@ -1173,7 +1186,7 @@ export default function Dashboard() {
                       <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
                     </tr>
                   )}
-                </tbody>
+                </VirtualizedTableRows>
                 {groups.length > 0 && (
                   <tfoot>
                     <tr className="border-t-2 border-border bg-muted/40 font-semibold">

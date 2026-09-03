@@ -24,6 +24,7 @@ import { GroupUserExport } from '@/components/group-user-export';
 import { useCanWrite } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
 import { indexMemberBudgets } from '@/lib/member-budgets';
+import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 
 export default function GroupDetail() {
   const [match, params] = useRoute('/groups/:groupId');
@@ -35,18 +36,12 @@ export default function GroupDetail() {
   const queryClient = useQueryClient();
   const canWrite = useCanWrite();
 
-  // When the user navigates away from the group detail page, the in-memory
-  // member-usage cache on the server may have accumulated more data than what
-  // the dashboard last polled (the detail page queues high-priority fetches).
-  // Remove (not just invalidate) the listGroups and summary cache entries so
-  // the dashboard always performs a fresh fetch on its next mount rather than
-  // briefly showing a stale snapshot while a background refetch is in flight.
+  // Keep the last dashboard snapshot visible when navigating back while
+  // marking it stale so React Query refreshes it in the background.
   useEffect(() => {
     return () => {
-      // Remove all listGroups entries regardless of range params so any
-      // pending polls are cleared and the dashboard re-fetches from scratch.
-      queryClient.removeQueries({ queryKey: getListGroupsQueryKey(), exact: false });
-      queryClient.removeQueries({ queryKey: getGetSummaryQueryKey(), exact: false });
+      void queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey(), exact: false });
+      void queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey(), exact: false });
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -54,7 +49,8 @@ export default function GroupDetail() {
   const { data, isLoading } = useGetGroupDetail(groupId, queryParams, {
     query: {
       queryKey: getGetGroupDetailQueryKey(groupId, queryParams),
-      refetchInterval: (query) => query.state.data?.isComplete ? false : 8000,
+      refetchInterval: (query) =>
+        query.state.status === 'error' || query.state.data?.isComplete ? false : 8000,
     }
   });
 
@@ -62,7 +58,8 @@ export default function GroupDetail() {
     query: {
       queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
       refetchInterval: (query) =>
-        query.state.data?.isComplete && query.state.data.titlesComplete ? false : 8000,
+        query.state.status === 'error' ||
+        (query.state.data?.isComplete && query.state.data.titlesComplete) ? false : 8000,
       enabled: !!groupId,
     }
   });
@@ -74,6 +71,7 @@ export default function GroupDetail() {
         ? getListVisibleWorkspaceMembersQueryKey(workspaceId)
         : ['workspaceMembers', ''],
       refetchInterval: (query) => {
+        if (query.state.status === 'error') return false;
         const response = query.state.data;
         if (!response || response.connector.status !== 'available') return false;
         return response.members.some(
@@ -265,7 +263,7 @@ export default function GroupDetail() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-          <div className="overflow-x-auto">
+          <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
@@ -278,7 +276,7 @@ export default function GroupDetail() {
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Usage</th>
                 </tr>
               </thead>
-              <tbody>
+              <VirtualizedTableRows columnCount={7} estimatedRowHeight={72}>
                 {sortedMembers.map(member => {
                   const budget = workspaceMembersMap.get(member.userId);
                   const hasConnector = connector?.status === 'available';
@@ -363,7 +361,7 @@ export default function GroupDetail() {
                     </td>
                   </tr>
                 )}
-              </tbody>
+              </VirtualizedTableRows>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
                   <td className="py-3 px-4 text-sm">Group Total</td>

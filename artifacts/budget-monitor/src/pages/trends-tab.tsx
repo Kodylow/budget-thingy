@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useRange } from '@/components/range-context';
 import { buildTrendsParams, PARTIAL_BUCKET_EXPLANATION } from '@/lib/trends-ui';
+import { progressivePollInterval } from '@/lib/client-performance';
 
 const SERIES_COLORS = [
   '#0f3d62',
@@ -110,7 +111,11 @@ function useUserActivity() {
     query: {
       queryKey: getGetUserActivityQueryKey(params),
       refetchInterval: (query) =>
-        query.state.data?.isComplete === false ? 8000 : false,
+        progressivePollInterval(
+          query.state.data,
+          query.state.dataUpdateCount,
+          query.state.status,
+        ),
     },
   });
 }
@@ -387,7 +392,12 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
   const { data, isLoading, isFetching, isError } = useGetTrends(params, {
     query: {
       queryKey: getGetTrendsQueryKey(params),
-      refetchInterval: (query) => query.state.data?.isComplete === false ? 3000 : false,
+      refetchInterval: (query) =>
+        progressivePollInterval(
+          query.state.data,
+          query.state.dataUpdateCount,
+          query.state.status,
+        ),
     },
   });
 

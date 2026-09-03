@@ -101,7 +101,8 @@ export default function ClusterDetail() {
       getGetGroupDetailQueryOptions(id, queryParams, {
         query: {
           queryKey: getGetGroupDetailQueryKey(id, queryParams),
-          refetchInterval: (q: any) => (q.state.data?.group?.spendLoaded ? false : 8000),
+          refetchInterval: (q: any) =>
+            q.state.status === 'error' || q.state.data?.group?.spendLoaded ? false : 8000,
         },
       }),
     ),
@@ -112,7 +113,8 @@ export default function ClusterDetail() {
     getGetClusterProjectsQueryOptions(clusterKey, queryParams, {
       query: {
         queryKey: getGetClusterProjectsQueryKey(clusterKey, queryParams),
-        refetchInterval: (q: any) => (q.state.data?.isComplete ? false : 8000),
+        refetchInterval: (q: any) =>
+          q.state.status === 'error' || q.state.data?.isComplete ? false : 8000,
         enabled: groupIds.length > 0,
       },
     }),
@@ -121,7 +123,8 @@ export default function ClusterDetail() {
   const { data: clusterHeadline } = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
     query: {
       queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
-      refetchInterval: (q: any) => (q.state.data?.isComplete ? false : 8000),
+      refetchInterval: (q: any) =>
+        q.state.status === 'error' || q.state.data?.isComplete ? false : 8000,
       enabled: groupIds.length > 0,
     },
   });
@@ -223,6 +226,7 @@ export default function ClusterDetail() {
       enabled: !!workspaceId,
       queryKey: workspaceId ? getListVisibleWorkspaceMembersQueryKey(workspaceId) : ['workspaceMembers', ''],
       refetchInterval: (query) => {
+        if (query.state.status === 'error') return false;
         const response = query.state.data;
         if (!response || response.connector.status !== 'available') return false;
         return response.members.some(
