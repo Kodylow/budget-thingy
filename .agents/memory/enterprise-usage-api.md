@@ -3,9 +3,9 @@ name: Replit Enterprise usage API
 description: Rate-limit and query semantics of api.replit.com/v1 usage/groups endpoints
 ---
 
-- `/usage` is rate-limited ~100 req/min. Rule: all usage calls go through one serial queue with pacing + Retry-After backoff; honor X-RateLimit-Remaining/Reset headers.
-- **Why:** parallel per-group usage calls trip 429s immediately at ~220 groups; a serial queue with ~700ms pacing stays safely under budget.
-- **How to apply:** never add a second call site for `/usage`; enqueue via the queue in the enterprise client. UI must tolerate progressive loading (isComplete/pendingCount + client polling).
+- Enterprise API traffic uses interactive, scheduled, and backfill workers sharing one live header-driven request budget. Interactive capacity is reserved; background classes are capped and fixed sleeps are forbidden.
+- **Why:** one serial queue made user work wait behind long synchronizations, while unconstrained workers trip 429s. Per-request admission preserves responsiveness without overspending.
+- **How to apply:** classify queued work explicitly, keep all Enterprise requests behind shared admission, and honor the strictest reset/Retry-After boundary across out-of-order responses.
 - `groupId` filter on `/usage` requires `workspaceId`; `billingPeriod=current|previous` resolves the account's real billing interval (use the returned `interval.startTime` as the period key).
 - Orval + zod v3: avoid `format: email` in the OpenAPI spec — generates `zod.email()` which fails typecheck.
 - Per-user usage: one `/usage?groupBy=member` call per group returns all members (paginated — pace the pages like queue tasks). `/budgets` exposes platform budgets: account controls, workspace default user limits, `workspace_group_limit`, `workspace_user_limit` (all per billing_cycle). `/members` gives username/email/name + per-workspace role/isDisabled.

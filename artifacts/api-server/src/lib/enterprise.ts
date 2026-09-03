@@ -15,6 +15,7 @@ import {
   type UsageDailyFact,
 } from "@workspace/db/schema";
 import { and, eq, gt, gte, inArray, like, lt, lte, sql } from "drizzle-orm";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
@@ -56,9 +57,12 @@ async function rawFetch(
     if (v !== undefined) url.searchParams.set(k, v);
   }
 
+  const workload = workloadContext.getStore() ?? "scheduled";
+  await enterpriseBudget.admit(workload);
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${key}` },
   });
+  enterpriseBudget.observe(res.headers, res.status);
 
   if (res.status === 429) {
     const retryAfter = Number(res.headers.get("Retry-After") ?? "5");
@@ -208,21 +212,28 @@ export function isBadRangeError(err: unknown): boolean {
   return err instanceof EnterpriseApiError && err.status === 400;
 }
 
-// ---------- Serial usage queue (~100 req/min budget) ----------
-
+export type EnterpriseWorkload = "interactive" | "scheduled" | "backfill";
 type QueueTask = {
   run: () => Promise<void>;
-  priority: number; // 0 = high (interactive), 1 = low (background)
+  priority: number;
+  workload: EnterpriseWorkload;
   key: string;
   runId: string;
   enqueuedAt: number;
 };
 
-const usageQueue: QueueTask[] = [];
+const usageQueues: Record<EnterpriseWorkload, QueueTask[]> = {
+  interactive: [],
+  scheduled: [],
+  backfill: [],
+};
 const queuedKeys = new Set<string>();
-let queueRunning = false;
-let pauseUntil = 0;
-let activeQueueTask: (QueueTask & { startedAt: number }) | null = null;
+
+const runningWorkers: Record<EnterpriseWorkload, boolean> = {
+  interactive: false,
+  scheduled: false,
+  backfill: false,
+};
 let lastQueueProgressAt: number | null = null;
 let queueRunSequence = 0;
 
@@ -236,38 +247,37 @@ function markQueueProgress(event: string, fields: Record<string, unknown>): void
   logger.info({ event, ...fields }, "Enterprise usage sync progress");
 }
 
-function pumpQueue(): void {
-  if (queueRunning) return;
-  queueRunning = true;
+function totalQueuedCount(): number {
+  return usageQueues.interactive.length +
+    usageQueues.scheduled.length +
+    usageQueues.backfill.length;
+}
+function pumpQueue(workload: EnterpriseWorkload): void {
+  if (runningWorkers[workload]) return;
+  runningWorkers[workload] = true;
   void (async () => {
-    while (usageQueue.length > 0) {
-      const now = Date.now();
-      if (pauseUntil > now) {
-        markQueueProgress("usage_queue_rate_limit_pause", {
-          pauseUntil: new Date(pauseUntil).toISOString(),
-          pauseMs: pauseUntil - now,
-          queueDepth: usageQueue.length,
-        });
-        await new Promise((r) => setTimeout(r, pauseUntil - now));
-      }
-      usageQueue.sort((a, b) => a.priority - b.priority);
-      const task = usageQueue.shift();
+    const queue = usageQueues[workload];
+    while (queue.length > 0) {
+      queue.sort((a, b) => a.priority - b.priority);
+      const task = queue.shift();
       if (!task) break;
       const startedAt = Date.now();
-      activeQueueTask = { ...task, startedAt };
+      activeQueueTasks.set(workload, { ...task, startedAt });
       markQueueProgress("usage_queue_start", {
         runId: task.runId,
         key: task.key,
         priority: task.priority,
-        queueDepth: usageQueue.length,
+        workload,
+        queueDepth: totalQueuedCount(),
         waitMs: startedAt - task.enqueuedAt,
       });
       try {
-        await task.run();
+        await workloadContext.run(workload, task.run);
         markQueueProgress("usage_queue_finish", {
           runId: task.runId,
           key: task.key,
-          queueDepth: usageQueue.length,
+          workload,
+          queueDepth: totalQueuedCount(),
           durationMs: Date.now() - startedAt,
           outcome: "success",
         });
@@ -280,7 +290,8 @@ function pumpQueue(): void {
           err,
           runId: task.runId,
           key: task.key,
-          queueDepth: usageQueue.length,
+          workload,
+          queueDepth: totalQueuedCount(),
           durationMs: Date.now() - startedAt,
           outcome: "failed",
         }, "Enterprise usage queue task failed");
@@ -288,29 +299,43 @@ function pumpQueue(): void {
         // Keep the key registered while the task is active so polling cannot
         // enqueue the same Enterprise API request again.
         queuedKeys.delete(task.key);
-        activeQueueTask = null;
+        activeQueueTasks.delete(workload);
         lastQueueProgressAt = Date.now();
       }
-      // Gentle pacing: keeps well under 100/min with headroom.
-      await new Promise((r) => setTimeout(r, 700));
     }
-    queueRunning = false;
+    runningWorkers[workload] = false;
   })();
 }
 
-function enqueueUsage(key: string, priority: number, run: () => Promise<void>): boolean {
+function enqueueUsage(
+  key: string,
+  priority: number,
+  run: () => Promise<void>,
+  explicitWorkload?: EnterpriseWorkload,
+): boolean {
+  const workload = explicitWorkload ?? workloadForPriority(priority);
   if (queuedKeys.has(key)) {
     // An interactive detail request may arrive after the dashboard already
     // queued the same cold scope in the background. Promote the queued copy
     // instead of leaving the user behind hundreds of unrelated group fetches.
-    const queued = usageQueue.find((task) => task.key === key);
+    const queued = Object.values(usageQueues).flat().find((task) => task.key === key);
     if (queued) {
       const previousPriority = queued.priority;
+      const previousWorkload = queued.workload;
       queued.priority = Math.min(queued.priority, priority);
+      queued.workload = explicitWorkload ?? workloadForPriority(queued.priority);
+      if (queued.workload !== previousWorkload) {
+        const oldQueue = usageQueues[previousWorkload];
+        const index = oldQueue.indexOf(queued);
+        if (index >= 0) oldQueue.splice(index, 1);
+        usageQueues[queued.workload].push(queued);
+        pumpQueue(queued.workload);
+      }
       markQueueProgress("usage_queue_duplicate", {
         runId: queued.runId,
         key,
-        queueDepth: usageQueue.length,
+        workload: queued.workload,
+        queueDepth: totalQueuedCount(),
         promoted: queued.priority < previousPriority,
         priority: queued.priority,
         ageMs: Date.now() - queued.enqueuedAt,
@@ -321,19 +346,20 @@ function enqueueUsage(key: string, priority: number, run: () => Promise<void>): 
   const enqueuedAt = Date.now();
   const runId = nextQueueRunId();
   queuedKeys.add(key);
-  usageQueue.push({ key, priority, run, runId, enqueuedAt });
+  usageQueues[workload].push({ key, priority, workload, run, runId, enqueuedAt });
   markQueueProgress("usage_queue_enqueue", {
     runId,
     key,
     priority,
-    queueDepth: usageQueue.length,
+    workload,
+    queueDepth: totalQueuedCount(),
   });
-  pumpQueue();
+  pumpQueue(workload);
   return true;
 }
 
 export function pendingUsageCount(): number {
-  return usageQueue.length + (activeQueueTask ? 1 : 0);
+  return totalQueuedCount() + activeQueueTasks.size;
 }
 
 export interface UsageOperationalDiagnostics {
@@ -351,6 +377,13 @@ export interface UsageOperationalDiagnostics {
   oldestQueuedAgeMs: number | null;
   lastProgressAt: string | null;
   pauseUntil: string | null;
+  rateLimit: {
+    limit: number;
+    remaining: number;
+    resetAt: string;
+    observed: boolean;
+    used: Record<EnterpriseWorkload, number>;
+  };
   scopes: Array<{
     mode: UsageSyncMode;
     rangeKey: string;
@@ -364,6 +397,11 @@ export interface UsageOperationalDiagnostics {
 
 export function getUsageOperationalDiagnostics(): UsageOperationalDiagnostics {
   const now = Date.now();
+  const budget = enterpriseBudget.snapshot();
+  const activeQueueTask = activeQueueTasks.get("interactive") ??
+    activeQueueTasks.get("scheduled") ??
+    activeQueueTasks.get("backfill") ??
+    null;
   const active = activeQueueTask
     ? {
         runId: activeQueueTask.runId,
@@ -375,7 +413,8 @@ export function getUsageOperationalDiagnostics(): UsageOperationalDiagnostics {
         waitMs: activeQueueTask.startedAt - activeQueueTask.enqueuedAt,
       }
     : null;
-  const oldestQueuedAt = usageQueue.reduce<number | null>(
+  const allQueued = Object.values(usageQueues).flat();
+  const oldestQueuedAt = allQueued.reduce<number | null>(
     (oldest, task) => oldest === null ? task.enqueuedAt : Math.min(oldest, task.enqueuedAt),
     null,
   );
@@ -396,18 +435,30 @@ export function getUsageOperationalDiagnostics(): UsageOperationalDiagnostics {
       };
     });
   return {
-    queueDepth: usageQueue.length + (active ? 1 : 0),
-    queuedCount: usageQueue.length,
+    queueDepth: totalQueuedCount() + activeQueueTasks.size,
+    queuedCount: totalQueuedCount(),
     active,
     oldestQueuedAgeMs: oldestQueuedAt === null ? null : now - oldestQueuedAt,
     lastProgressAt: lastQueueProgressAt === null
       ? null
       : new Date(lastQueueProgressAt).toISOString(),
-    pauseUntil: pauseUntil > now ? new Date(pauseUntil).toISOString() : null,
+    pauseUntil: budget.resetAt > now && budget.remaining <= 0
+      ? new Date(budget.resetAt).toISOString()
+      : null,
+    rateLimit: {
+      limit: budget.limit,
+      remaining: budget.remaining,
+      resetAt: new Date(budget.resetAt).toISOString(),
+      observed: budget.observed,
+      used: budget.used,
+    },
     scopes,
   };
 }
 
+export function __getEnterpriseBudgetForTests() {
+  return enterpriseBudget.snapshot();
+}
 interface UsageMetricEntry {
   id: string;
   name: string;
@@ -620,31 +671,20 @@ async function usageFetch(
   for (;;) {
     attempts += 1;
     try {
-      const { body, headers } = await rawFetch("/usage", params);
+      const { body } = await rawFetch("/usage", params);
       lastApiOk = true;
       lastApiError = null;
-      const remaining = Number(headers.get("X-RateLimit-Remaining") ?? "10");
-      if (remaining <= 3) {
-        const reset = Number(headers.get("X-RateLimit-Reset") ?? "10");
-        // The API may return either seconds-until-reset or a Unix timestamp.
-        const resetDelayMs = reset > 1_000_000_000
-          ? reset * 1000 - Date.now()
-          : reset * 1000;
-        pauseUntil = Date.now() + Math.max(2000, resetDelayMs);
-        logger.warn({ remaining }, "Usage rate budget low; pausing queue");
-      }
       return (body as { data: UsageData }).data;
     } catch (err) {
       const e = err as EnterpriseApiError & { retryAfterMs?: number };
       if (e.status === 429 && attempts <= 5) {
-        pauseUntil = Date.now() + (e.retryAfterMs ?? 5000);
         logger.warn({
           event: "usage_rate_limit_pause",
           attempts,
-          pauseUntil: new Date(pauseUntil).toISOString(),
           pauseMs: e.retryAfterMs ?? 5000,
         }, "Usage 429; backing off");
-        await new Promise((r) => setTimeout(r, e.retryAfterMs ?? 5000));
+        // Admission is shared across workers. It will reopen at the stricter
+        // Retry-After or reset boundary observed by rawFetch.
         continue;
       }
       lastApiOk = false;
@@ -1031,7 +1071,6 @@ async function fetchUsageChunk(
           cursorlessShardDepth + 1,
           telemetry,
         );
-        await new Promise((resolve) => setTimeout(resolve, 700));
         const right = await fetchUsageChunk(
           mode,
           baseParams,
@@ -1068,7 +1107,6 @@ async function fetchUsageChunk(
       };
     }
     cursor = data.pagination.cursor;
-    await new Promise((r) => setTimeout(r, 700));
   }
   throw new Error(`Usage pagination exceeded ${MAX_USAGE_PAGES} pages`);
 }
@@ -1337,12 +1375,14 @@ async function queueDailyFactRefreshes(): Promise<void> {
           `daily-fact:${usageDate}:${scope.mode}:${scope.scopeKey}`,
           priority,
           () => syncDailyFactDay(usageDate, scope),
+          isCurrent ? "scheduled" : "backfill",
         );
       }
       enqueueUsage(
         `daily-facts-finalize:${monthStart}:${scope.mode}:${scope.scopeKey}`,
         priority,
         () => finalizeDailyFactMonth(monthStart, scope, new Date()),
+        isCurrent ? "scheduled" : "backfill",
       );
     }
   }
@@ -1358,7 +1398,7 @@ async function queueDailyFactRefreshes(): Promise<void> {
         ? "Daily usage facts passed current-month parity"
         : "Daily usage facts failed current-month parity; legacy reads remain active",
     );
-  });
+  }, "scheduled");
 }
 
 export function startDailyFactJob(): void {
@@ -1973,7 +2013,18 @@ async function paginate<T>(
   const out: T[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < maxPages; page++) {
-    const { body } = await rawFetch(path, { ...params, limit: "100", cursor });
+    let body: unknown;
+    for (let attempts = 1;; attempts++) {
+      try {
+        ({ body } = await rawFetch(path, { ...params, limit: "100", cursor }));
+        break;
+      } catch (err) {
+        const apiError = err as EnterpriseApiError;
+        if (apiError.status !== 429 || attempts > 5) throw err;
+        // rawFetch has already applied Retry-After to the shared budget.
+        // Retry this exact cursor after admission reopens.
+      }
+    }
     lastApiOk = true;
     lastApiError = null;
     const resp = body as { data: T[]; pagination: Pagination };
@@ -1985,6 +2036,12 @@ async function paginate<T>(
   return out;
 }
 
+export async function __paginateEnterpriseForTests<T>(
+  path: string,
+  params: Record<string, string | undefined> = {},
+): Promise<T[]> {
+  return workloadContext.run("interactive", () => paginate<T>(path, params));
+}
 export interface EnterpriseWorkspace {
   id: string;
   name: string;
@@ -2224,7 +2281,7 @@ function deserializeDirectory(s: SerializedDirectory): DirectoryCache {
   };
 }
 
-// ---------- DB write-through helpers (fire-and-forget) ----------
+// ---------- DB write-through helpers ----------
 
 function persistDirectoryToDb(d: DirectoryCache): void {
   const serialized = serializeDirectory(d);
@@ -2237,8 +2294,12 @@ function persistDirectoryToDb(d: DirectoryCache): void {
     .catch((err: unknown) => logger.warn({ err }, "Failed to persist directory cache to DB"));
 }
 
-function persistSpendToDb(rangeKey: string, groupId: string, spend: GroupSpend): void {
-  db.insert(apiSpendCacheTable)
+async function persistSpendToDb(
+  rangeKey: string,
+  groupId: string,
+  spend: GroupSpend,
+): Promise<void> {
+  await db.insert(apiSpendCacheTable)
     .values({
       rangeKey,
       groupId,
@@ -2654,7 +2715,8 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
     return directoryCache;
   }
   if (directoryPromise) return directoryPromise;
-  directoryPromise = (async () => {
+  const workload = workloadContext.getStore() ?? "interactive";
+  directoryPromise = workloadContext.run(workload, async () => {
     try {
       const workspaces = await paginate<EnterpriseWorkspace>("/workspaces", {});
       const wsMap = new Map(workspaces.map((w) => [w.id, w]));
@@ -2737,7 +2799,7 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
     } finally {
       directoryPromise = null;
     }
-  })();
+  });
   return directoryPromise;
 }
 
@@ -2839,7 +2901,7 @@ export function queueGroupSpendFetch(
       }, force);
       const spend = aggregateGroupSpend(rows);
       spendCache.set(cacheKey, spend);
-      persistSpendToDb(range.key, group.id, spend);
+      await persistSpendToDb(range.key, group.id, spend);
       // The network request has landed and cache is current. Release the queue
       // key before callbacks run so a callback-triggered forced refresh is a
       // new request rather than being reported as a duplicate of the finished one.
@@ -3362,7 +3424,7 @@ export function queueFullRangeRebuild(
   groups: readonly EnterpriseGroup[],
   workspaceIds: readonly string[],
 ): boolean {
-  return enqueueUsage(`full-range-rebuild:${range.key}`, 0, async () => {
+  return enqueueUsage(`full-range-rebuild:${range.key}`, 2, async () => {
     try {
       const scopes: FullRebuildScope[] = [
         { mode: "account_total", scopeKey: ACCOUNT_USAGE_SCOPE, params: {} },
@@ -3410,7 +3472,7 @@ export function queueFullRangeRebuild(
         } else if (mode === "group_total") {
           const spend = aggregateGroupSpend(result.rows);
           spendCache.set(`${range.key}|${scopeKey}`, spend);
-          persistSpendToDb(range.key, scopeKey, spend);
+          await persistSpendToDb(range.key, scopeKey, spend);
         } else if (mode === "group_member") {
           memberUsageCache.set(
             `${range.key}|${scopeKey}`,
@@ -3433,7 +3495,7 @@ export function queueFullRangeRebuild(
       logger.error({ err, range: range.key }, "Full usage range rebuild failed");
       throw err;
     }
-  });
+  }, "backfill");
 }
 
 /** Test-only seam for account summary and authorization fixtures. */
@@ -4958,6 +5020,8 @@ export async function __getDurableRangeRowsForTests(
     );
 }
 
+const INTERACTIVE_RESERVATION_RATIO = 0.2;
+
 /**
  * Build a canonical-checker range solely from durable daily facts. The common
  * contiguous prefix prevents a partially refreshed scope from being evaluated
@@ -5043,4 +5107,192 @@ export async function getStoredBudgetEvaluationSnapshot(): Promise<
     });
   hydrateDurableUsage(rows);
   return { snapshot: { directory, rangeKey, dataAsOf }, skipReason: null };
+}
+
+const activeQueueTasks = new Map<EnterpriseWorkload, QueueTask & { startedAt: number }>();
+
+const DEFAULT_WINDOW_MS = 60_000;
+
+function rateHeader(headers: Headers, names: string[]): number | null {
+  for (const name of names) {
+    const raw = headers.get(name);
+    if (raw !== null && raw.trim() !== "") {
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 0) return value;
+    }
+  }
+  return null;
+}
+
+function workloadForPriority(priority: number): EnterpriseWorkload {
+  if (priority <= 0) return "interactive";
+  if (priority === 1) return "scheduled";
+  return "backfill";
+}
+
+function resetTimestamp(value: number, now: number): number {
+  if (value > 10_000_000_000) return value;
+  if (value > 1_000_000_000) return value * 1000;
+  return now + value * 1000;
+}
+
+const workloadContext = new AsyncLocalStorage<EnterpriseWorkload>();
+
+const SCHEDULED_CAP_RATIO = 0.55;
+const DEFAULT_RATE_LIMIT = 100;
+const BACKFILL_CAP_RATIO = 0.25;
+
+type RateBudgetSnapshot = {
+  limit: number;
+  remaining: number;
+  resetAt: number;
+  observed: boolean;
+};
+
+class EnterpriseRateBudget {
+  private state: RateBudgetSnapshot = {
+    limit: DEFAULT_RATE_LIMIT,
+    remaining: DEFAULT_RATE_LIMIT,
+    resetAt: Date.now() + DEFAULT_WINDOW_MS,
+    observed: false,
+  };
+  private used: Record<EnterpriseWorkload, number> = {
+    interactive: 0,
+    scheduled: 0,
+    backfill: 0,
+  };
+  private waiters = new Set<() => void>();
+
+  private rollWindow(now: number): void {
+    if (now < this.state.resetAt) return;
+    this.state = {
+      ...this.state,
+      remaining: this.state.limit,
+      resetAt: now + DEFAULT_WINDOW_MS,
+    };
+    this.used = { interactive: 0, scheduled: 0, backfill: 0 };
+  }
+
+  private canAdmit(workload: EnterpriseWorkload): boolean {
+    const { limit, remaining } = this.state;
+    if (remaining <= 0) return false;
+    if (workload === "interactive") return true;
+    const interactiveReserve = Math.max(1, Math.ceil(limit * INTERACTIVE_RESERVATION_RATIO));
+    if (remaining <= interactiveReserve) return false;
+    const cap = workload === "scheduled"
+      ? Math.max(1, Math.floor(limit * SCHEDULED_CAP_RATIO))
+      : Math.max(1, Math.floor(limit * BACKFILL_CAP_RATIO));
+    return this.used[workload] < cap;
+  }
+
+  async admit(workload: EnterpriseWorkload): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      this.rollWindow(now);
+      if (this.canAdmit(workload)) {
+        // Reserve before issuing the request. A later response may lower this
+        // estimate further, but concurrent workers can never spend one token twice.
+        this.state.remaining -= 1;
+        this.used[workload] += 1;
+        return;
+      }
+      const delay = Math.max(1, this.state.resetAt - now);
+      await new Promise<void>((resolve) => {
+        const wake = () => {
+          clearTimeout(timer);
+          this.waiters.delete(wake);
+          resolve();
+        };
+        const timer = setTimeout(wake, delay);
+        this.waiters.add(wake);
+      });
+    }
+  }
+
+  observe(headers: Headers, status: number): void {
+    const now = Date.now();
+    this.rollWindow(now);
+    const hadObservedBudget = this.state.observed;
+    const limit = rateHeader(headers, [
+      "X-RateLimit-Limit",
+      "RateLimit-Limit",
+    ]);
+    const remaining = rateHeader(headers, [
+      "X-RateLimit-Remaining",
+      "RateLimit-Remaining",
+    ]);
+    const reset = rateHeader(headers, [
+      "X-RateLimit-Reset",
+      "RateLimit-Reset",
+    ]);
+    const retryAfter = rateHeader(headers, ["Retry-After"]);
+    if (limit !== null) this.state.limit = Math.max(1, Math.floor(limit));
+    if (remaining !== null) {
+      this.state.remaining = Math.min(this.state.remaining, Math.floor(remaining));
+    }
+    if (reset !== null) {
+      const reportedResetAt = Math.max(now + 1, resetTimestamp(reset, now));
+      // Once exhausted (especially by a 429), an older in-flight success must
+      // never shorten the stricter embargo established by Retry-After.
+      this.state.resetAt = hadObservedBudget && this.state.remaining <= 0
+        ? Math.max(this.state.resetAt, reportedResetAt)
+        : reportedResetAt;
+    }
+    if (status === 429) {
+      this.state.remaining = 0;
+      this.state.resetAt = Math.max(
+        this.state.resetAt,
+        now + Math.max(1000, (retryAfter ?? 5) * 1000),
+      );
+    }
+    this.state.observed ||=
+      limit !== null || remaining !== null || reset !== null || retryAfter !== null || status === 429;
+    for (const wake of [...this.waiters]) wake();
+  }
+
+  snapshot(): RateBudgetSnapshot & { used: Record<EnterpriseWorkload, number> } {
+    this.rollWindow(Date.now());
+    return { ...this.state, used: { ...this.used } };
+  }
+
+  resetForTests(snapshot?: Partial<RateBudgetSnapshot>): void {
+    this.state = {
+      limit: snapshot?.limit ?? DEFAULT_RATE_LIMIT,
+      remaining: snapshot?.remaining ?? snapshot?.limit ?? DEFAULT_RATE_LIMIT,
+      resetAt: snapshot?.resetAt ?? Date.now() + DEFAULT_WINDOW_MS,
+      observed: snapshot?.observed ?? false,
+    };
+    this.used = { interactive: 0, scheduled: 0, backfill: 0 };
+    for (const wake of [...this.waiters]) wake();
+  }
+}
+
+const enterpriseBudget = new EnterpriseRateBudget();
+
+export function __observeEnterpriseRateLimitForTests(
+  values: Record<string, string>,
+  status = 200,
+): void {
+  enterpriseBudget.observe(new Headers(values), status);
+}
+
+export async function __admitEnterpriseRequestForTests(
+  workload: EnterpriseWorkload,
+): Promise<void> {
+  await enterpriseBudget.admit(workload);
+}
+
+export function __resetEnterpriseSchedulerForTests(
+  snapshot?: Partial<RateBudgetSnapshot>,
+): void {
+  enterpriseBudget.resetForTests(snapshot);
+}
+
+export function __enqueueEnterpriseTaskForTests(
+  key: string,
+  workload: EnterpriseWorkload,
+  run: () => Promise<void>,
+): boolean {
+  const priority = workload === "interactive" ? 0 : workload === "scheduled" ? 1 : 2;
+  return enqueueUsage(key, priority, run, workload);
 }

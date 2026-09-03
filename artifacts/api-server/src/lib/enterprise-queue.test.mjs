@@ -31,7 +31,14 @@ globalThis.fetch = async (input) => {
   return {
     ok: true,
     status: 200,
-    headers: { get: () => "10" },
+    headers: {
+      get: (name) => {
+        if (name.toLowerCase() === "x-ratelimit-limit") return "100";
+        if (name.toLowerCase() === "x-ratelimit-remaining") return "90";
+        if (name.toLowerCase() === "x-ratelimit-reset") return "60";
+        return null;
+      },
+    },
     json: async () => ({
       data: {
         interval: {
