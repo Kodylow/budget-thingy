@@ -18,6 +18,7 @@ let noCursorWorkspaceMode = false;
 let projectMetadataFetchCount = 0;
 let failNextProjectMetadataFetch = false;
 let accountTotalUsd = 25;
+let heldUsageFetch = null;
 const usageRequestUrls = [];
 const testNow = new Date();
 const testBillingStart = new Date(Date.UTC(
@@ -68,6 +69,14 @@ globalThis.fetch = async (input) => {
       text: async () => "forced rebuild failure",
     };
   }
+  let heldAccountTotalUsd = null;
+  if (heldUsageFetch && url.pathname.endsWith("/usage")) {
+    const held = heldUsageFetch;
+    heldUsageFetch = null;
+    heldAccountTotalUsd = accountTotalUsd;
+    held.started();
+    await held.release;
+  }
   const groupBy = url.searchParams.get("groupBy");
   const cursor = url.searchParams.get("cursor");
   const isProject = groupBy === "project";
@@ -107,7 +116,7 @@ globalThis.fetch = async (input) => {
       : [{ key: { userId: "member-1" }, totalCostUsd: 3 }];
     totalCostUsd = 5;
   } else if (!url.searchParams.has("workspaceId") && !url.searchParams.has("groupId")) {
-    totalCostUsd = accountTotalUsd;
+    totalCostUsd = heldAccountTotalUsd ?? accountTotalUsd;
     pagination.hasMore = false;
     pagination.cursor = null;
   } else {
@@ -1215,23 +1224,21 @@ test("open ranges reconcile seven days and custom ranges close only after the gr
   );
 });
 
-test("failed full rebuild preserves the previously committed account snapshot", async () => {
+test("failed full rebuild staging preserves the previously committed account snapshot", async () => {
   const rollbackRange = {
     ...range,
     key: `custom:rollback-${crypto.randomUUID()}`,
   };
-  const initial = await enterprise.__rebuildAccountUsageForTests(rollbackRange);
+  await enterprise.__rebuildAccountUsageForTests(rollbackRange);
+  const initial = await enterprise.__getDurableRangeRowsForTests(rollbackRange.key);
   assert.ok(initial.length > 0);
   failNextUsageFetch = true;
   await assert.rejects(
     enterprise.__rebuildAccountUsageForTests(rollbackRange),
     /forced rebuild failure/,
   );
-  const afterFailure = await enterprise.__rebuildAccountUsageForTests(rollbackRange);
-  assert.deepEqual(
-    afterFailure.map((row) => row.payloadJson),
-    initial.map((row) => row.payloadJson),
-  );
+  const afterFailure = await enterprise.__getDurableRangeRowsForTests(rollbackRange.key);
+  assert.deepEqual(afterFailure, initial);
 });
 
 test("failure after one staged scope rolls back the entire selected range", async () => {
@@ -1251,4 +1258,85 @@ test("failure after one staged scope rolls back the entire selected range", asyn
   );
   const after = await enterprise.__getDurableRangeRowsForTests(atomicRange.key);
   assert.deepEqual(after, before);
+});
+
+test("failed full rebuild commit preserves the previously committed snapshot", async () => {
+  const commitRange = {
+    ...range,
+    key: `custom:commit-rollback-${crypto.randomUUID()}`,
+  };
+  await enterprise.__rebuildAccountAndWorkspaceUsageForTests(commitRange, workspaceId);
+  const before = await enterprise.__getDurableRangeRowsForTests(commitRange.key);
+  assert.ok(before.length >= 2);
+
+  const triggerSuffix = crypto.randomUUID().replaceAll("-", "_");
+  const functionName = `fail_usage_rebuild_${triggerSuffix}`;
+  const triggerName = `fail_usage_rebuild_${triggerSuffix}`;
+  await pool.query(`
+    create function ${functionName}() returns trigger
+    language plpgsql as $$
+    begin
+      if new.range_key = '${commitRange.key}' then
+        raise exception 'forced rebuild commit failure';
+      end if;
+      return new;
+    end;
+    $$;
+    create trigger ${triggerName}
+      before insert on usage_sync_chunks
+      for each row execute function ${functionName}();
+  `);
+
+  try {
+    await assert.rejects(
+      enterprise.__rebuildAccountAndWorkspaceUsageForTests(commitRange, workspaceId),
+      (error) => error?.cause?.message === "forced rebuild commit failure",
+    );
+  } finally {
+    await pool.query(`drop trigger ${triggerName} on usage_sync_chunks`);
+    await pool.query(`drop function ${functionName}()`);
+  }
+
+  const after = await enterprise.__getDurableRangeRowsForTests(commitRange.key);
+  assert.deepEqual(after, before);
+});
+
+test("an older staged rebuild cannot replace a newer committed snapshot", async () => {
+  const fencedRange = {
+    ...range,
+    key: `custom:concurrent-rebuild-${crypto.randomUUID()}`,
+  };
+  await enterprise.__rebuildAccountUsageForTests(fencedRange);
+
+  let signalStarted;
+  let releaseFetch;
+  const started = new Promise((resolve) => {
+    signalStarted = resolve;
+  });
+  const release = new Promise((resolve) => {
+    releaseFetch = resolve;
+  });
+  heldUsageFetch = { started: signalStarted, release };
+
+  try {
+    accountTotalUsd = 40;
+    const olderRebuild = enterprise.__rebuildAccountUsageForTests(fencedRange);
+    await started;
+
+    accountTotalUsd = 50;
+    await enterprise.__rebuildAccountUsageForTests(fencedRange);
+    releaseFetch();
+    await assert.rejects(
+      olderRebuild,
+      /Usage range changed while the rebuild was staged/,
+    );
+
+    const durable = await enterprise.__getDurableRangeRowsForTests(fencedRange.key);
+    assert.equal(durable.length, 1);
+    assert.equal(durable[0].payloadJson.totalCostUsd, 50);
+  } finally {
+    releaseFetch?.();
+    heldUsageFetch = null;
+    accountTotalUsd = 25;
+  }
 });

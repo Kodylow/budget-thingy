@@ -3165,18 +3165,87 @@ interface FullRebuildResult {
   metadata: SyncMetadata;
 }
 
+interface StagedFullRebuildScope {
+  scope: FullRebuildScope;
+  chunks: Array<{
+    start: Date;
+    end: Date;
+    payload: StoredUsagePayload;
+    partial: boolean;
+    error: string | null;
+  }>;
+  isClosed: boolean;
+}
+
+interface UsageRangeVersion {
+  mode: string;
+  scopeKey: string;
+  completedAt: Date;
+}
+
+function usageRangeVersionKey(states: UsageRangeVersion[]): string {
+  return states
+    .map((state) => `${state.mode}|${state.scopeKey}|${state.completedAt.toISOString()}`)
+    .sort()
+    .join("\n");
+}
+
 async function rebuildUsageRangeAtomically(
   range: UsageRange,
   scopes: FullRebuildScope[],
 ): Promise<FullRebuildResult[]> {
   await maybePruneExpiredCustomUsage();
   const runId = nextQueueRunId();
+  const baselineStates = await db
+    .select({
+      mode: usageSyncStateTable.mode,
+      scopeKey: usageSyncStateTable.scopeKey,
+      completedAt: usageSyncStateTable.completedAt,
+    })
+    .from(usageSyncStateTable)
+    .where(eq(usageSyncStateTable.rangeKey, range.key));
+  const baselineVersion = usageRangeVersionKey(baselineStates);
   logger.info({
     event: "usage_rebuild_start",
     runId,
     rangeKey: range.key,
     scopeCount: scopes.length,
   }, "Starting atomic usage range rebuild");
+
+  const staged: StagedFullRebuildScope[] = [];
+  for (const scope of scopes) {
+    const plan = planSyncChunks(range, undefined);
+    logger.info({
+      event: "usage_rebuild_scope_plan",
+      runId,
+      rangeKey: range.key,
+      mode: scope.mode,
+      scopeKey: scope.scopeKey,
+      chunkCount: plan.chunks.length,
+    }, "Planned atomic rebuild scope");
+    const chunks: StagedFullRebuildScope["chunks"] = [];
+    for (const chunk of plan.chunks) {
+      if (chunks.length > 0 || staged.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      }
+      const fetched = await fetchUsageChunk(
+        scope.mode,
+        scope.params,
+        chunk.start,
+        chunk.end,
+        0,
+        { runId, rangeKey: range.key, scopeKey: scope.scopeKey },
+      );
+      if (fetched.partial) {
+        throw new Error(
+          fetched.error ?? `Incomplete usage response for ${scope.mode}:${scope.scopeKey}`,
+        );
+      }
+      chunks.push({ ...chunk, ...fetched });
+    }
+    staged.push({ scope, chunks, isClosed: plan.isClosed });
+  }
+
   return db.transaction(async (tx) => {
     const existingStates = await tx
       .select({
@@ -3197,53 +3266,20 @@ async function rebuildUsageRangeAtomically(
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${id}))`);
     }
 
-    const staged: Array<{
-      scope: FullRebuildScope;
-      chunks: Array<{
-        start: Date;
-        end: Date;
-        payload: StoredUsagePayload;
-        partial: boolean;
-        error: string | null;
-      }>;
-      isClosed: boolean;
-    }> = [];
-    for (const scope of scopes) {
-      const plan = planSyncChunks(range, undefined);
-      logger.info({
-        event: "usage_rebuild_scope_plan",
-        runId,
-        rangeKey: range.key,
-        mode: scope.mode,
-        scopeKey: scope.scopeKey,
-        chunkCount: plan.chunks.length,
-      }, "Planned atomic rebuild scope");
-      const chunks: Array<{
-        start: Date;
-        end: Date;
-        payload: StoredUsagePayload;
-        partial: boolean;
-        error: string | null;
-      }> = [];
-      for (const chunk of plan.chunks) {
-        if (chunks.length > 0 || staged.length > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 700));
-        }
-        const fetched = await fetchUsageChunk(
-          scope.mode,
-          scope.params,
-          chunk.start,
-          chunk.end,
-          0,
-          { runId, rangeKey: range.key, scopeKey: scope.scopeKey },
-        );
-        chunks.push({ ...chunk, ...fetched });
-      }
-      staged.push({ scope, chunks, isClosed: plan.isClosed });
+    const currentStates = await tx
+      .select({
+        mode: usageSyncStateTable.mode,
+        scopeKey: usageSyncStateTable.scopeKey,
+        completedAt: usageSyncStateTable.completedAt,
+      })
+      .from(usageSyncStateTable)
+      .where(eq(usageSyncStateTable.rangeKey, range.key));
+    if (usageRangeVersionKey(currentStates) !== baselineVersion) {
+      throw new Error("Usage range changed while the rebuild was staged");
     }
 
-    // Nothing is removed until every upstream fetch succeeds. Any thrown error
-    // rolls back the whole selected range, not just the currently fetched scope.
+    // Staging completed before this transaction opened. From here on, the lock
+    // protects only the short atomic replacement of the validated snapshot.
     await tx.delete(usageSyncChunksTable)
       .where(eq(usageSyncChunksTable.rangeKey, range.key));
     await tx.delete(usageSyncStateTable)
