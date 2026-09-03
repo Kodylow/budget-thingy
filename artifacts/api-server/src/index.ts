@@ -20,12 +20,6 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// Durable usage/directory caches must be available before the server accepts a
-// dashboard request; otherwise an early request can race hydration and trigger
-// an unnecessary full bootstrap.
-await applyAnnualTeamBudgetBackfill();
-await initCache({ revalidateOnStartup: false });
-
 const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -33,11 +27,20 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  // None of these tasks may delay the listening socket. In particular, cache
+  // hydration is database-only and completes before Enterprise work is started.
   startChecker();
   startSnapshotJob();
   startTeamBudgetSyncJob();
-  startDailyFactJob();
-  startUsageCoordinator();
+  void Promise.all([
+    initCache({ revalidateOnStartup: false }),
+    applyAnnualTeamBudgetBackfill(),
+  ]).then(() => {
+    startDailyFactJob();
+    startUsageCoordinator();
+  }).catch((err) => {
+    logger.error({ err }, "Post-listen startup initialization failed");
+  });
 });
 
 function shutdown(signal: string) {

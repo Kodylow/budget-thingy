@@ -1,4 +1,4 @@
-import { pgTable, text, doublePrecision, timestamp, jsonb, primaryKey, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, text, doublePrecision, timestamp, jsonb, primaryKey, boolean, index, integer } from "drizzle-orm/pg-core";
 
 // One row — stores the full serialised directory as JSON + when it was fetched.
 export const apiDirectoryCacheTable = pgTable("api_directory_cache", {
@@ -18,6 +18,18 @@ export const apiBillingPeriodCacheTable = pgTable("api_billing_period_cache", {
 });
 
 export type ApiBillingPeriodCache = typeof apiBillingPeriodCacheTable.$inferSelect;
+
+/** Candidate billing interval awaiting a second identical upstream observation. */
+export const apiBillingPeriodObservationTable = pgTable("api_billing_period_observation", {
+  id: text("id").primaryKey().default("current"),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  consecutiveCount: integer("consecutive_count").notNull().default(1),
+  observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+});
+
+export type ApiBillingPeriodObservation =
+  typeof apiBillingPeriodObservationTable.$inferSelect;
 
 /** Last account-wide exact-range verification of the durable usage aggregate. */
 export const apiAccountTotalVerificationTable = pgTable("api_account_total_verification", {

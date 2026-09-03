@@ -89,11 +89,20 @@ test("duplicate-queued callbacks fan out with the fetched (not stale) value", as
   assert.ok(bootstrapFetchCount >= 1);
   assert.equal(requestedStarts[0], "2026-05-20T00:00:00.000Z");
 
-  // Simulate a server restart: in-memory state disappears, then initCache
-  // immediately reconstructs the same complete aggregate from PostgreSQL.
+  // Simulate a server restart. Metadata-only startup deliberately leaves usage
+  // cold; the next read reconstructs it on demand instead.
   __resetDurableUsageCachesForTests();
   assert.equal(getSpend(group.id, queueRange.key), undefined);
   await initCache({ revalidateOnStartup: false });
+  assert.equal(getSpend(group.id, queueRange.key), undefined);
+  pendingSpend = 10;
+  assert.equal(
+    queueGroupSpendFetch(group, 0, false, undefined, queueRange),
+    "queued",
+  );
+  while (pendingUsageCount() > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
   assert.equal(getSpend(group.id, queueRange.key)?.spendUsd, 10);
 
   // Fresh cache: no fetch, no callback registration.

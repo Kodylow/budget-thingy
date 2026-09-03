@@ -127,6 +127,13 @@
       "when": 1788550000000,
       "tag": "0017_recurring_job_claims",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788551000000,
+      "tag": "0018_billing_period_observation",
+      "breakpoints": true
     }
   ]
 }

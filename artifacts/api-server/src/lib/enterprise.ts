@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import {
   apiDirectoryCacheTable,
   apiBillingPeriodCacheTable,
+  apiBillingPeriodObservationTable,
   apiAccountTotalVerificationTable,
   apiSpendCacheTable,
   apiProjectMetadataTable,
@@ -17,7 +18,7 @@ import {
   type UsageDailyFact,
   type CanonicalMonthlyGroupUserRollup,
 } from "@workspace/db/schema";
-import { and, eq, gt, gte, inArray, like, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, like, lt, lte, or, sql } from "drizzle-orm";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   computeDedupedMemberCounts,
@@ -102,8 +103,6 @@ const VERIFICATION_HEAL_THRESHOLD_USD = 1;
 const VERIFICATION_RETRY_BASE_MS = 60 * 1000;
 const VERIFICATION_RETRY_MAX_MS = 60 * 60 * 1000;
 export const DAILY_FACT_MONTH_GRACE_MS = 24 * 60 * 60 * 1000;
-const DAILY_FACT_ROLLOUT_ENV = "ENTERPRISE_DAILY_FACTS_READS";
-
 export type RangeType = "billing" | "mtd" | "ytd" | "custom" | "full-term";
 
 export interface UsageRange {
@@ -114,6 +113,8 @@ export interface UsageRange {
 
 function resolvedRange(range: UsageRange): UsageRange {
   resolvedUsageRanges.set(range.key, range);
+  // Test fixtures and freshly committed facts can be materialized synchronously;
+  // persisted facts that are not hot are loaded by synchronizeUsage on demand.
   prepareUsageRangeFromDailyFacts(range);
   return range;
 }
@@ -519,8 +520,15 @@ interface StoredBillingPeriod {
   fetchedAt: number;
 }
 
+interface StoredBillingObservation {
+  start: string;
+  end: string;
+  count: number;
+  observedAt: number;
+}
 let billingPeriodCache: StoredBillingPeriod | null = null;
-let billingPeriodRefreshTimer: NodeJS.Timeout | null = null;
+
+let billingPeriodObservation: StoredBillingObservation | null = null;
 let accountVerificationRetryTimer: NodeJS.Timeout | null = null;
 let accountVerificationFailureCount = 0;
 
@@ -578,15 +586,72 @@ function validateBillingInterval(interval: UsageData["interval"]): StoredBilling
   };
 }
 
-async function persistBillingPeriod(period: StoredBillingPeriod): Promise<void> {
-  await db.insert(apiBillingPeriodCacheTable)
-    .values({
-      id: "current",
+async function observeBillingPeriod(
+  period: StoredBillingPeriod,
+  persistResult: boolean,
+  persistenceId = "current",
+): Promise<StoredBillingPeriod | null> {
+  const sameAsAdopted = billingPeriodCache?.start === period.start &&
+    billingPeriodCache.end === period.end;
+  const nextCount = billingPeriodObservation?.start === period.start &&
+      billingPeriodObservation.end === period.end
+    ? billingPeriodObservation.count + 1
+    : 1;
+  const observation: StoredBillingObservation = {
+    start: period.start,
+    end: period.end,
+    count: nextCount,
+    observedAt: period.fetchedAt,
+  };
+
+  if (!persistResult) {
+    billingPeriodObservation = observation;
+    if (sameAsAdopted || nextCount >= 2) return period;
+    return null;
+  }
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('billing-period-observation'))`);
+    const [adoptedRow] = await tx.select().from(apiBillingPeriodCacheTable)
+      .where(eq(apiBillingPeriodCacheTable.id, persistenceId));
+    const [observedRow] = await tx.select().from(apiBillingPeriodObservationTable)
+      .where(eq(apiBillingPeriodObservationTable.id, persistenceId));
+    const adoptedMatches = adoptedRow?.periodStart.toISOString() === period.start &&
+      adoptedRow.periodEnd.toISOString() === period.end;
+    const persistedCount = observedRow?.periodStart.toISOString() === period.start &&
+        observedRow.periodEnd.toISOString() === period.end
+      ? observedRow.consecutiveCount + 1
+      : 1;
+
+    await tx.insert(apiBillingPeriodObservationTable).values({
+      id: persistenceId,
+      periodStart: new Date(period.start),
+      periodEnd: new Date(period.end),
+      consecutiveCount: persistedCount,
+      observedAt: new Date(period.fetchedAt),
+    }).onConflictDoUpdate({
+      target: apiBillingPeriodObservationTable.id,
+      set: {
+        periodStart: new Date(period.start),
+        periodEnd: new Date(period.end),
+        consecutiveCount: persistedCount,
+        observedAt: new Date(period.fetchedAt),
+      },
+    });
+    billingPeriodObservation = {
+      start: period.start,
+      end: period.end,
+      count: persistedCount,
+      observedAt: period.fetchedAt,
+    };
+    if (!adoptedMatches && persistedCount < 2) return null;
+
+    await tx.insert(apiBillingPeriodCacheTable).values({
+      id: persistenceId,
       periodStart: new Date(period.start),
       periodEnd: new Date(period.end),
       fetchedAt: new Date(period.fetchedAt),
-    })
-    .onConflictDoUpdate({
+    }).onConflictDoUpdate({
       target: apiBillingPeriodCacheTable.id,
       set: {
         periodStart: new Date(period.start),
@@ -594,8 +659,9 @@ async function persistBillingPeriod(period: StoredBillingPeriod): Promise<void> 
         fetchedAt: new Date(period.fetchedAt),
       },
     });
+    return period;
+  });
 }
-
 export function getBillingPeriodMetadata(): BillingPeriodMetadata {
   const cached = getActiveBillingPeriod();
   const start = cached?.start ?? SPEND_DATA_CUTOFF_ISO;
@@ -649,6 +715,7 @@ export function refreshBillingPeriodMetadata(
   if (!isConfigured()) return Promise.resolve(false);
   if (
     !force &&
+    getActiveBillingPeriod() &&
     billingPeriodCache &&
     Date.now() - billingPeriodCache.fetchedAt < BILLING_PERIOD_REFRESH_MS
   ) {
@@ -659,9 +726,16 @@ export function refreshBillingPeriodMetadata(
       try {
         const data = await usageFetch({ billingPeriod: "current" });
         const next = validateBillingInterval(data.interval);
-        if (persistResult) await persistBillingPeriod(next);
-        billingPeriodCache = next;
-        logger.info({ start: next.start, end: next.end }, "Current billing interval refreshed");
+        const adopted = await observeBillingPeriod(next, persistResult);
+        if (adopted) {
+          billingPeriodCache = adopted;
+          logger.info({ start: next.start, end: next.end }, "Current billing interval refreshed");
+        } else {
+          logger.info(
+            { start: next.start, end: next.end },
+            "Current billing interval observed; awaiting confirmation",
+          );
+        }
       } catch (err) {
         logger.warn({ err }, "Failed to refresh current billing interval; retaining prior metadata");
       } finally {
@@ -719,23 +793,20 @@ interface StoredUsagePayload {
 }
 
 const dailyFactCache = new Map<string, UsageDailyFact>();
-const materializedFactRanges = new Set<string>();
+
+const materializedFactScopes = new Set<string>();
 
 const resolvedUsageRanges = new Map<string, UsageRange>();
 const verifiedDailyFactScopes = new Set<string>();
 let dailyFactParityReady = false;
 let dailyFactRefreshTimer: NodeJS.Timeout | null = null;
 
+let dailyFactReadsOverrideForTests: boolean | null = null;
 function dailyFactId(mode: UsageSyncMode, scopeKey: string, usageDate: string): string {
   return `${mode}|${scopeKey}|${usageDate}`;
 }
-
-function dailyFactReadsRequested(): boolean {
-  return process.env[DAILY_FACT_ROLLOUT_ENV] === "true";
-}
-
 export function dailyFactReadsEnabled(): boolean {
-  return dailyFactReadsRequested() && dailyFactParityReady;
+  return dailyFactReadsOverrideForTests ?? true;
 }
 
 function dateRangeDays(start: Date, end: Date): string[] {
@@ -774,29 +845,27 @@ function factRowsForRange(
 }
 
 /**
- * Materialize a requested reporting identity from normalized facts. This is
- * synchronous because facts are hydrated before the server starts accepting
- * requests; no dashboard range causes an upstream call on this path.
+ * Materialize a requested reporting identity from facts already in the bounded
+ * hot-range cache. Cold ranges are loaded from Postgres by synchronizeUsage.
  */
 export function prepareUsageRangeFromDailyFacts(range: UsageRange): boolean {
   if (!dailyFactReadsEnabled()) return false;
-  return materializeUsageRangeFromDailyFacts(range);
-}
-
-function materializeUsageRangeFromDailyFacts(range: UsageRange): boolean {
-  if (materializedFactRanges.has(range.key)) return true;
   const scopes = new Set(
     [...dailyFactCache.values()].map((fact) => `${fact.mode}|${fact.scopeKey}`),
   );
   const rows: UsageSyncChunk[] = [];
+  const newlyMaterialized: string[] = [];
   for (const scope of scopes) {
     const separator = scope.indexOf("|");
     const mode = scope.slice(0, separator) as UsageSyncMode;
     const scopeKey = scope.slice(separator + 1);
+    const materializedId = syncId(mode, range.key, scopeKey);
+    if (materializedFactScopes.has(materializedId)) continue;
     const selected = factRowsForRange(mode, scopeKey, range);
     if (selected) {
       rows.push(...selected);
-      syncMetadata.set(syncId(mode, range.key, scopeKey), {
+      newlyMaterialized.push(materializedId);
+      syncMetadata.set(materializedId, {
         syncedThrough: new Date(range.params.endTime).getTime(),
         completedAt: Date.now(),
         isClosed: false,
@@ -805,12 +874,94 @@ function materializeUsageRangeFromDailyFacts(range: UsageRange): boolean {
       });
     }
   }
-  if (!rows.some((row) => row.mode === "account_total" && row.scopeKey === ACCOUNT_USAGE_SCOPE)) {
+  if (!factRowsForRange("account_total", ACCOUNT_USAGE_SCOPE, range)) {
     return false;
   }
   hydrateDurableUsage(rows);
-  materializedFactRanges.add(range.key);
+  for (const id of newlyMaterialized) materializedFactScopes.add(id);
   return true;
+}
+
+async function prepareUsageRangeFromStoredDailyFacts(
+  range: UsageRange,
+  mode: UsageSyncMode,
+  scopeKey: string,
+): Promise<boolean> {
+  if (!dailyFactReadsEnabled()) return false;
+  await prepareCanonicalRangeFromStoredRollups(range);
+  prepareUsageRangeFromDailyFacts(range);
+  if (factRowsForRange(mode, scopeKey, range)) return true;
+  const { start, end } = rangeBounds(range);
+  if (
+    start.getTime() !== utcDayStart(start.getTime()) ||
+    end.getTime() !== utcDayStart(end.getTime())
+  ) return false;
+  const cacheKey =
+    `${range.key}|${mode}|${scopeKey}|${start.toISOString()}|${end.toISOString()}`;
+  let entry = dailyFactRangeCache.get(cacheKey);
+  let facts: UsageDailyFact[];
+  if (entry) {
+    dailyFactRangeCache.delete(cacheKey);
+    dailyFactRangeCache.set(cacheKey, entry);
+    facts = entry.facts;
+  } else {
+    const requestedScope = and(
+      eq(usageDailyFactsTable.mode, mode),
+      eq(usageDailyFactsTable.scopeKey, scopeKey),
+    );
+    const accountScope = and(
+      eq(usageDailyFactsTable.mode, "account_total"),
+      eq(usageDailyFactsTable.scopeKey, ACCOUNT_USAGE_SCOPE),
+    );
+    facts = await db.select().from(usageDailyFactsTable).where(and(
+      gte(usageDailyFactsTable.usageDate, start.toISOString().slice(0, 10)),
+      lt(usageDailyFactsTable.usageDate, end.toISOString().slice(0, 10)),
+      mode === "account_total" && scopeKey === ACCOUNT_USAGE_SCOPE
+        ? requestedScope
+        : or(requestedScope, accountScope),
+    ));
+    entry = {
+      rangeKey: range.key,
+      mode,
+      scopeKey,
+      startMs: start.getTime(),
+      endMs: end.getTime(),
+      facts,
+    };
+    dailyFactRangeCache.set(cacheKey, entry);
+    let evicted = false;
+    while (dailyFactRangeCache.size > DAILY_FACT_RANGE_CACHE_MAX) {
+      const oldest = dailyFactRangeCache.keys().next().value;
+      if (oldest === undefined) break;
+      const removed = dailyFactRangeCache.get(oldest);
+      dailyFactRangeCache.delete(oldest);
+      if (removed) evictMaterializedFactRange(removed.rangeKey);
+      evicted = true;
+    }
+    if (evicted) {
+      dailyFactCache.clear();
+      for (const cached of dailyFactRangeCache.values()) {
+        for (const fact of cached.facts) {
+          dailyFactCache.set(
+            dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
+            fact,
+          );
+        }
+      }
+    }
+  }
+  for (const fact of facts) {
+    dailyFactCache.set(
+      dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
+      fact,
+    );
+  }
+  prepareUsageRangeFromDailyFacts(range);
+  return factRowsForRange(mode, scopeKey, range) !== null;
+}
+
+function materializeUsageRangeFromDailyFacts(range: UsageRange): boolean {
+  return prepareUsageRangeFromDailyFacts(range);
 }
 interface SyncMetadata {
   syncedThrough: number;
@@ -1181,8 +1332,9 @@ async function syncDailyFactDay(
     });
   });
   // Never publish data that has not survived the transaction commit.
-  dailyFactCache.set(dailyFactId(scope.mode, scope.scopeKey, usageDate), committedFact);
-  materializedFactRanges.clear();
+  invalidateDailyFactRangeEntries(scope.mode, scope.scopeKey, usageDate);
+  materializedFactScopes.clear();
+  dailyFactRangeCache.clear();
 }
 
 async function finalizeDailyFactMonth(
@@ -1450,7 +1602,7 @@ async function synchronizeUsage(
   baseParams: Record<string, string | undefined>,
   force = false,
 ): Promise<UsageSyncChunk[]> {
-  if (prepareUsageRangeFromDailyFacts(range)) {
+  if (await prepareUsageRangeFromStoredDailyFacts(range, mode, scopeKey)) {
     const rows = factRowsForRange(mode, scopeKey, range);
     if (rows) return rows;
   }
@@ -2367,87 +2519,40 @@ async function persistSpendToDb(
 // ---------- Cold-start cache hydration ----------
 
 export async function initCache(
-  options: { revalidateOnStartup?: boolean } = {},
+  _options: { revalidateOnStartup?: boolean } = {},
 ): Promise<void> {
   try {
-    await maybePruneExpiredCustomUsage();
-    await adoptLegacyFullTermUsage();
-    const backfilledFacts = await backfillDailyFactsFromLegacyChunks();
-    if (backfilledFacts > 0) {
-      logger.info({ rows: backfilledFacts }, "Backfilled normalized daily usage facts");
-    }
     const [
       dirRow,
       billingPeriodRow,
+      billingObservationRow,
       verificationRow,
-      spendRows,
-      projectRows,
-      projectStates,
-      durable,
-      facts,
-      canonicalDurable,
     ] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
       db.query.apiBillingPeriodCacheTable.findFirst({
         where: eq(apiBillingPeriodCacheTable.id, "current"),
       }),
+      db.query.apiBillingPeriodObservationTable.findFirst({
+        where: eq(apiBillingPeriodObservationTable.id, "current"),
+      }),
       db.query.apiAccountTotalVerificationTable.findFirst({
         where: eq(apiAccountTotalVerificationTable.id, "singleton"),
       }),
-      db.select().from(apiSpendCacheTable),
-      db.select().from(apiProjectMetadataTable),
-      db.select().from(apiProjectMetadataStateTable),
-      db.transaction(async (tx) => {
-        await tx.execute(sql`set transaction isolation level repeatable read read only`);
-        const states = await tx.select().from(usageSyncStateTable);
-        const chunks = await tx.select().from(usageSyncChunksTable);
-        return { states, chunks };
-      }),
-      db.select().from(usageDailyFactsTable),
-      db.transaction(async (tx) => {
-        await tx.execute(sql`set transaction isolation level repeatable read read only`);
-        const rows = await tx.select().from(canonicalMonthlyGroupUserRollupsTable);
-        const states = await tx.select().from(canonicalMonthlyRollupStateTable);
-        return { rows, states };
-      }),
     ]);
-    const { rows: canonicalRows, states: canonicalStates } = canonicalDurable;
-    const { states, chunks } = durable;
-    for (const fact of facts) {
-      canonicalCandidateMonths.add(`${fact.usageDate.slice(0, 7)}-01`);
-      dailyFactCache.set(
-        dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
-        fact,
-      );
-    }
-    if (facts.length > 0) logger.info({ facts: facts.length }, "Daily usage facts hydrated from DB");
-    for (const row of canonicalRows) {
-      const rows = canonicalMonthlyRows.get(row.monthStart) ?? [];
-      rows.push(row);
-      canonicalMonthlyRows.set(row.monthStart, rows);
-    }
-    for (const state of canonicalStates) {
-      canonicalCandidateMonths.add(state.monthStart);
-      if (state.status === "success") {
-        canonicalMonthlyFingerprints.set(state.monthStart, state.inputFingerprint);
-        canonicalMonthlyBounds.set(state.monthStart, {
-          start: state.rangeStart.getTime(),
-          end: state.rangeEnd.getTime(),
-        });
-      }
-    }
-    if (canonicalRows.length > 0) {
-      logger.info(
-        { months: canonicalMonthlyRows.size, rows: canonicalRows.length },
-        "Canonical monthly usage rollups hydrated from DB",
-      );
-    }
 
     if (billingPeriodRow) {
       billingPeriodCache = {
         start: billingPeriodRow.periodStart.toISOString(),
         end: billingPeriodRow.periodEnd.toISOString(),
         fetchedAt: billingPeriodRow.fetchedAt.getTime(),
+      };
+    }
+    if (billingObservationRow) {
+      billingPeriodObservation = {
+        start: billingObservationRow.periodStart.toISOString(),
+        end: billingObservationRow.periodEnd.toISOString(),
+        count: billingObservationRow.consecutiveCount,
+        observedAt: billingObservationRow.observedAt.getTime(),
       };
     }
     if (verificationRow) {
@@ -2476,88 +2581,9 @@ export async function initCache(
         logger.warn({ err }, "Failed to deserialize directory cache from DB");
       }
     }
-    if (directoryCache) {
-      for (const monthStart of canonicalCandidateMonths) {
-        if (
-          canonicalMonthlyFingerprints.get(monthStart) !==
-          canonicalInputFingerprint(monthStart, directoryCache)
-        ) {
-          queueCanonicalMonthRebuild(monthStart);
-        }
-      }
-    }
 
-    for (const row of spendRows) {
-      const cacheKey = `${row.rangeKey}|${row.groupId}`;
-      if (!spendCache.has(cacheKey)) {
-        spendCache.set(cacheKey, {
-          spendUsd: row.spendUsd,
-          fetchedAt: row.fetchedAt.getTime(),
-          periodStart: row.periodStart,
-          periodEnd: row.periodEnd,
-        });
-      }
-    }
-    if (spendRows.length > 0) {
-      logger.info({ count: spendRows.length }, "Spend cache hydrated from DB");
-    }
-
-    for (const state of states) {
-      syncMetadata.set(syncId(
-        state.mode as UsageSyncMode,
-        state.rangeKey,
-        state.scopeKey,
-      ), {
-        syncedThrough: state.syncedThrough.getTime(),
-        completedAt: state.completedAt.getTime(),
-        isClosed: state.isClosed,
-          status: state.status as UsageSyncStatus,
-          error: state.errorMessage,
-      });
-    }
-    hydrateDurableUsage(chunks);
-    if (chunks.length > 0) {
-      logger.info({ chunks: chunks.length, scopes: states.length }, "Incremental usage cache hydrated from DB");
-    }
-    const projectsByWorkspace = new Map<string, Map<string, ProjectInfo>>();
-    for (const state of projectStates) {
-      if (state.status !== "success") continue;
-      projectsByWorkspace.set(state.workspaceId, new Map());
-    }
-    for (const row of projectRows) {
-      const workspace = projectsByWorkspace.get(row.workspaceId);
-      if (!workspace) continue;
-      workspace.set(row.projectId, { title: row.title, creatorId: row.creatorId });
-    }
-    for (const [workspaceId, projects] of projectsByWorkspace) {
-      if (!projectInfoCache.has(workspaceId)) {
-        projectInfoCache.set(workspaceId, projects);
-        const completedAt = projectStates.find(
-          (state) => state.workspaceId === workspaceId && state.status === "success",
-        )?.completedAt;
-        if (completedAt) projectInfoFetchedAt.set(workspaceId, completedAt.getTime());
-      }
-    }
-    if (projectStates.length > 0) {
-      logger.info({ workspaces: projectStates.length, projects: projectRows.length }, "Project metadata hydrated from DB");
-    }
   } catch (err) {
     logger.warn({ err }, "Failed to hydrate caches from DB — will fetch fresh on first request");
-  }
-  if (options.revalidateOnStartup !== false) {
-    // Revalidate on process startup before resolving the account anchor. Hydrated
-    // metadata remains the immediate fallback if this live request fails.
-    void refreshBillingPeriodMetadata(0, true)
-      .then(() => queueAccountTotalVerification(-10))
-      .catch((err) => logger.warn({ err }, "Startup billing metadata refresh failed"));
-    // Publish the one-call account anchor before hundreds of newly keyed group
-    // warm-up scopes can occupy the serial queue.
-    if (!billingPeriodRefreshTimer) {
-      billingPeriodRefreshTimer = setInterval(() => {
-        void refreshBillingPeriodMetadata(1).then(() => queueAccountTotalVerification(1));
-      }, BILLING_PERIOD_REFRESH_MS);
-      billingPeriodRefreshTimer.unref();
-    }
   }
 }
 
@@ -5275,9 +5301,12 @@ export function __resetDurableUsageCachesForTests(): void {
   canonicalCandidateMonths.clear();
   canonicalMonthRebuilds.clear();
   canonicalMonthsNeedingRebuild.clear();
+  preparedCanonicalRanges.clear();
+  canonicalRangeLoads.clear();
   resolvedUsageRanges.clear();
   syncMetadata.clear();
   billingPeriodCache = null;
+  billingPeriodObservation = null;
   accountTotalVerificationState = null;
   if (accountVerificationRetryTimer) clearTimeout(accountVerificationRetryTimer);
   accountVerificationRetryTimer = null;
@@ -5287,9 +5316,14 @@ export function __resetDurableUsageCachesForTests(): void {
   for (const timer of accountUsageRetryTimers.values()) clearTimeout(timer);
   accountUsageRetryTimers.clear();
   dailyFactCache.clear();
-  materializedFactRanges.clear();
+  materializedFactScopes.clear();
+  dailyFactRangeCache.clear();
   verifiedDailyFactScopes.clear();
   dailyFactParityReady = false;
+}
+
+export function __getDailyFactRangeCacheSizeForTests(): number {
+  return dailyFactRangeCache.size;
 }
 
 export function __canonicalInputFingerprintForTests(monthStart: string): string {
@@ -5301,7 +5335,8 @@ export function __setDailyFactsForTests(
   parityReady = true,
 ): void {
   dailyFactCache.clear();
-  materializedFactRanges.clear();
+  materializedFactScopes.clear();
+  dailyFactRangeCache.clear();
   for (const fact of facts) {
     dailyFactCache.set(
       dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
@@ -5331,6 +5366,12 @@ export function __setBillingPeriodForTests(period: StoredBillingPeriod | null): 
   billingPeriodCache = period;
 }
 
+export async function __observeBillingPeriodForTests(
+  period: StoredBillingPeriod,
+  persistenceId: string,
+): Promise<StoredBillingPeriod | null> {
+  return observeBillingPeriod(period, true, persistenceId);
+}
 export function __planSyncChunksForTests(
   range: UsageRange,
   previous: SyncMetadata | undefined,
@@ -5796,9 +5837,13 @@ export async function runUsageCoordinator(): Promise<boolean> {
     async (claim) => {
       if (!isConfigured()) return;
       claim.signal?.throwIfAborted();
+      // Stabilize the reporting anchor before planning any range-bound work.
+      await refreshBillingPeriodMetadata(1);
+      claim.signal?.throwIfAborted();
       const dir = await getDirectory(true);
       claim.signal?.throwIfAborted();
       const range = resolveRange("billing");
+      queueAccountTotalVerification(-10);
 
       // Workspace-member observations establish the canonical current-month
       // view and deliberately enter the scheduled queue before every other
@@ -5836,10 +5881,6 @@ export async function runUsageCoordinator(): Promise<boolean> {
         }
       }
       await updateJobClaimCursor(claim, rotation.cursor);
-      claim.signal?.throwIfAborted();
-      // Billing metadata is recurring enterprise work too. It shares this
-      // owner and is queued after current-month usage, never during startup.
-      await refreshBillingPeriodMetadata(1);
       claim.signal?.throwIfAborted();
     },
   );
@@ -6080,6 +6121,97 @@ const canonicalMonthlyRows = new Map<string, CanonicalMonthlyGroupUserRollup[]>(
 
 let bypassCanonicalMonthlyRead = false;
 
+const CANONICAL_RANGE_CACHE_MAX = 24;
+const preparedCanonicalRanges = new Map<string, Set<string>>();
+const canonicalRangeLoads = new Map<string, Promise<void>>();
+
+function touchPreparedCanonicalRange(rangeKey: string, months: Set<string>): void {
+  preparedCanonicalRanges.delete(rangeKey);
+  preparedCanonicalRanges.set(rangeKey, months);
+  while (preparedCanonicalRanges.size > CANONICAL_RANGE_CACHE_MAX) {
+    const oldest = preparedCanonicalRanges.keys().next().value;
+    if (oldest === undefined) break;
+    const evictedMonths = preparedCanonicalRanges.get(oldest) ?? new Set<string>();
+    preparedCanonicalRanges.delete(oldest);
+    const retainedMonths = new Set(
+      [...preparedCanonicalRanges.values()].flatMap((entry) => [...entry]),
+    );
+    for (const monthStart of evictedMonths) {
+      if (retainedMonths.has(monthStart)) continue;
+      canonicalMonthlyRows.delete(monthStart);
+      canonicalMonthlyFingerprints.delete(monthStart);
+      canonicalMonthlyBounds.delete(monthStart);
+      canonicalCandidateMonths.delete(monthStart);
+    }
+  }
+}
+
+async function prepareCanonicalRangeFromStoredRollups(range: UsageRange): Promise<void> {
+  const existing = preparedCanonicalRanges.get(range.key);
+  if (existing) {
+    touchPreparedCanonicalRange(range.key, existing);
+    return;
+  }
+  const pending = canonicalRangeLoads.get(range.key);
+  if (pending) return pending;
+  const load = (async () => {
+    try {
+      const { start, end } = rangeBounds(range);
+      const startDay = start.toISOString().slice(0, 10);
+      const endDay = end.toISOString().slice(0, 10);
+      const [rows, states] = await Promise.all([
+        db.select().from(canonicalMonthlyGroupUserRollupsTable).where(and(
+          gte(canonicalMonthlyGroupUserRollupsTable.monthStart, startDay),
+          lt(canonicalMonthlyGroupUserRollupsTable.monthStart, endDay),
+        )),
+        db.select().from(canonicalMonthlyRollupStateTable).where(and(
+          gte(canonicalMonthlyRollupStateTable.monthStart, startDay),
+          lt(canonicalMonthlyRollupStateTable.monthStart, endDay),
+        )),
+      ]);
+      const stateMonths = new Set(states.map((state) => state.monthStart));
+      const validMonths = new Set(
+        states.filter((state) => state.status === "success").map((state) => state.monthStart),
+      );
+      for (const state of states) {
+        canonicalCandidateMonths.add(state.monthStart);
+        if (state.status !== "success") continue;
+        canonicalMonthlyFingerprints.set(state.monthStart, state.inputFingerprint);
+        canonicalMonthlyBounds.set(state.monthStart, {
+          start: state.rangeStart.getTime(),
+          end: state.rangeEnd.getTime(),
+        });
+        if (
+          directoryCache &&
+          state.inputFingerprint !== canonicalInputFingerprint(state.monthStart, directoryCache)
+        ) {
+          queueCanonicalMonthRebuild(state.monthStart);
+        }
+      }
+      const rowsByMonth = new Map<string, CanonicalMonthlyGroupUserRollup[]>();
+      for (const row of rows) {
+        if (!validMonths.has(row.monthStart)) continue;
+        const monthRows = rowsByMonth.get(row.monthStart) ?? [];
+        monthRows.push(row);
+        rowsByMonth.set(row.monthStart, monthRows);
+      }
+      for (const monthStart of validMonths) {
+        canonicalMonthlyRows.set(monthStart, rowsByMonth.get(monthStart) ?? []);
+      }
+      touchPreparedCanonicalRange(range.key, stateMonths);
+    } catch (err) {
+      touchPreparedCanonicalRange(range.key, new Set());
+      logger.warn({ err, rangeKey: range.key }, "Failed to load canonical rollups on demand");
+    }
+  })();
+  canonicalRangeLoads.set(range.key, load);
+  try {
+    await load;
+  } finally {
+    canonicalRangeLoads.delete(range.key);
+  }
+}
+
 function canonicalMonthsForRange(
   rangeKey: string,
   dir: DirectoryCache,
@@ -6104,4 +6236,101 @@ function canonicalMonthsForRange(
     cursor = bounds.end;
   }
   return cursor === end.getTime() && months.length > 0 ? months : null;
+}
+
+const dailyFactRangeCache = new Map<string, {
+  rangeKey: string;
+  mode: UsageSyncMode;
+  scopeKey: string;
+  startMs: number;
+  endMs: number;
+  facts: UsageDailyFact[];
+}>();
+
+function invalidateDailyFactRangeEntries(
+  mode: UsageSyncMode,
+  scopeKey: string,
+  usageDate: string,
+): void {
+  const changedAt = new Date(`${usageDate}T00:00:00.000Z`).getTime();
+  const evictedRanges = new Set<string>();
+  for (const [key, entry] of dailyFactRangeCache) {
+    const includesChangedScope =
+      (entry.mode === mode && entry.scopeKey === scopeKey) ||
+      (mode === "account_total" && scopeKey === ACCOUNT_USAGE_SCOPE);
+    if (!includesChangedScope) continue;
+    if (changedAt < entry.startMs || changedAt >= entry.endMs) continue;
+    dailyFactRangeCache.delete(key);
+    evictedRanges.add(entry.rangeKey);
+  }
+  for (const rangeKey of evictedRanges) evictMaterializedFactRange(rangeKey);
+  if (evictedRanges.size === 0) return;
+  dailyFactCache.clear();
+  for (const entry of dailyFactRangeCache.values()) {
+    for (const fact of entry.facts) {
+      dailyFactCache.set(
+        dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
+        fact,
+      );
+    }
+  }
+}
+
+export function __setDailyFactReadsForTests(enabled: boolean | null): void {
+  dailyFactReadsOverrideForTests = enabled;
+}
+
+export const DAILY_FACT_RANGE_CACHE_MAX = 24;
+
+export async function __hydrateBillingPeriodStateForTests(
+  persistenceId: string,
+): Promise<void> {
+  const [adoptedRow, observedRow] = await Promise.all([
+    db.query.apiBillingPeriodCacheTable.findFirst({
+      where: eq(apiBillingPeriodCacheTable.id, persistenceId),
+    }),
+    db.query.apiBillingPeriodObservationTable.findFirst({
+      where: eq(apiBillingPeriodObservationTable.id, persistenceId),
+    }),
+  ]);
+  billingPeriodCache = adoptedRow
+    ? {
+        start: adoptedRow.periodStart.toISOString(),
+        end: adoptedRow.periodEnd.toISOString(),
+        fetchedAt: adoptedRow.fetchedAt.getTime(),
+      }
+    : null;
+  billingPeriodObservation = observedRow
+    ? {
+        start: observedRow.periodStart.toISOString(),
+        end: observedRow.periodEnd.toISOString(),
+        count: observedRow.consecutiveCount,
+        observedAt: observedRow.observedAt.getTime(),
+      }
+    : null;
+}
+
+function evictMaterializedFactRange(rangeKey: string): void {
+  for (const id of materializedFactScopes) {
+    if (id.includes(`|${rangeKey}|`)) materializedFactScopes.delete(id);
+  }
+  accountUsageCache.delete(rangeKey);
+  for (const cache of [
+    spendCache,
+    memberUsageCache,
+    wsSpendCache,
+    wsSpendCachedAt,
+    projectUsageCache,
+  ]) {
+    for (const key of cache.keys()) {
+      if (key.startsWith(`${rangeKey}|`)) cache.delete(key);
+    }
+  }
+  for (const id of syncMetadata.keys()) {
+    if (id.includes(`|${rangeKey}|`)) syncMetadata.delete(id);
+  }
+}
+
+export function __getDailyFactHotRowCountForTests(): number {
+  return dailyFactCache.size;
 }

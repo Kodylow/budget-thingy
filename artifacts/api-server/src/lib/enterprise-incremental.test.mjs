@@ -153,6 +153,7 @@ globalThis.fetch = async (input) => {
 
 const enterprise = await import("./enterprise.ts");
 const { pool } = await import("@workspace/db");
+enterprise.__setDailyFactReadsForTests(false);
 test.beforeEach(() => {
   enterprise.__resetEnterpriseSchedulerForTests({
     limit: 1_000_000,
@@ -189,7 +190,7 @@ test("daily fact day identities are normalized to UTC", () => {
 });
 
 test("fact-backed UTC ranges hydrate without queueing an upstream request", () => {
-  process.env["ENTERPRISE_DAILY_FACTS_READS"] = "true";
+  enterprise.__setDailyFactReadsForTests(true);
   enterprise.__resetDurableUsageCachesForTests();
   enterprise.__setDailyFactsForTests([{
     mode: "account_total",
@@ -209,11 +210,11 @@ test("fact-backed UTC ranges hydrate without queueing an upstream request", () =
   assert.equal(enterprise.queueAccountUsageFetch(factRange, 0), false);
 
   enterprise.__resetDurableUsageCachesForTests();
-  delete process.env["ENTERPRISE_DAILY_FACTS_READS"];
+  enterprise.__setDailyFactReadsForTests(false);
 });
 
 test("fact reads fail closed for a non-midnight range start", () => {
-  process.env["ENTERPRISE_DAILY_FACTS_READS"] = "true";
+  enterprise.__setDailyFactReadsForTests(true);
   enterprise.__resetDurableUsageCachesForTests();
   enterprise.__setDailyFactsForTests([{
     mode: "account_total",
@@ -240,11 +241,11 @@ test("fact reads fail closed for a non-midnight range start", () => {
   assert.equal(enterprise.getAccountUsage(partialRange.key), undefined);
 
   enterprise.__resetDurableUsageCachesForTests();
-  delete process.env["ENTERPRISE_DAILY_FACTS_READS"];
+  enterprise.__setDailyFactReadsForTests(false);
 });
 
 test("fact reads fail closed for a non-midnight range end", () => {
-  process.env["ENTERPRISE_DAILY_FACTS_READS"] = "true";
+  enterprise.__setDailyFactReadsForTests(true);
   enterprise.__resetDurableUsageCachesForTests();
   enterprise.__setDailyFactsForTests([{
     mode: "account_total",
@@ -271,7 +272,123 @@ test("fact reads fail closed for a non-midnight range end", () => {
   assert.equal(enterprise.getAccountUsage(partialRange.key), undefined);
 
   enterprise.__resetDurableUsageCachesForTests();
-  delete process.env["ENTERPRISE_DAILY_FACTS_READS"];
+  enterprise.__setDailyFactReadsForTests(false);
+});
+
+test("cold usage ranges read daily storage on demand and keep the hot cache bounded", async () => {
+  enterprise.__setDailyFactReadsForTests(true);
+  enterprise.__resetDurableUsageCachesForTests();
+  // Keep account-scope fixtures outside any real reporting interval because
+  // this suite shares the development database with the preview.
+  const firstDay = new Date("2099-01-01T00:00:00.000Z");
+  const dates = Array.from(
+    { length: enterprise.DAILY_FACT_RANGE_CACHE_MAX + 2 },
+    (_, index) => new Date(firstDay.getTime() + index * 86_400_000)
+      .toISOString()
+      .slice(0, 10),
+  );
+  const source = `startup-lru-${crypto.randomUUID()}`;
+  await pool.query(
+    `insert into usage_daily_facts
+       (mode, scope_key, usage_date, payload_json, source, fetched_at)
+     select 'account_total', 'enterprise', day::date,
+       '{"totalCostUsd":1,"attributableTotalCostUsd":1,"unattributableTotalCostUsd":0,"groups":[]}'::jsonb,
+       $1, now()
+     from unnest($2::text[]) as day
+     on conflict (mode, scope_key, usage_date) do update
+       set payload_json = excluded.payload_json,
+           source = excluded.source,
+           fetched_at = excluded.fetched_at`,
+    [source, dates],
+  );
+  await pool.query(
+    `insert into usage_daily_facts
+       (mode, scope_key, usage_date, payload_json, source, fetched_at)
+     select 'group_total', 'unrelated-' || series::text, $2::date,
+       '{"totalCostUsd":999,"attributableTotalCostUsd":999,"unattributableTotalCostUsd":0,"groups":[]}'::jsonb,
+       $1, now()
+     from generate_series(1, 100) as series
+     on conflict (mode, scope_key, usage_date) do update
+       set payload_json = excluded.payload_json,
+           source = excluded.source,
+           fetched_at = excluded.fetched_at`,
+    [source, dates[0]],
+  );
+  const requestsBefore = usageRequestUrls.length;
+  try {
+    for (const day of dates) {
+      const factRange = enterprise.resolveRange("custom", day, day);
+      assert.equal(enterprise.queueAccountUsageFetch(factRange, 0), true);
+      await waitForQueue();
+      assert.equal(enterprise.getAccountUsage(factRange.key)?.totalCostUsd, 1);
+    }
+    assert.equal(usageRequestUrls.length, requestsBefore);
+    assert.equal(
+      enterprise.__getDailyFactRangeCacheSizeForTests(),
+      enterprise.DAILY_FACT_RANGE_CACHE_MAX,
+    );
+    assert.ok(
+      enterprise.__getDailyFactHotRowCountForTests() <=
+        enterprise.DAILY_FACT_RANGE_CACHE_MAX,
+      "unrelated scopes and evicted ranges must not remain in the hot cache",
+    );
+  } finally {
+    await pool.query("delete from usage_daily_facts where source = $1", [source]);
+    enterprise.__resetDurableUsageCachesForTests();
+    enterprise.__setDailyFactReadsForTests(false);
+  }
+});
+
+test("a hot account anchor does not skip a stored group scope for the same range", async () => {
+  enterprise.__setDailyFactReadsForTests(true);
+  enterprise.__resetDurableUsageCachesForTests();
+  const source = `scope-aware-lru-${crypto.randomUUID()}`;
+  const scopeGroup = {
+    id: `stored-group-${crypto.randomUUID()}`,
+    workspaceId,
+    name: "Stored group",
+    type: "custom",
+  };
+  const day = "2099-03-01";
+  const factRange = enterprise.resolveRange("custom", day, day);
+  await pool.query(
+    `insert into usage_daily_facts
+       (mode, scope_key, usage_date, payload_json, source, fetched_at)
+     values
+       ('account_total', 'enterprise', $2::date,
+        '{"totalCostUsd":7,"attributableTotalCostUsd":7,"unattributableTotalCostUsd":0,"groups":[]}'::jsonb,
+        $1, now()),
+       ('group_total', $3, $2::date,
+        '{"totalCostUsd":7,"attributableTotalCostUsd":7,"unattributableTotalCostUsd":0,"groups":[]}'::jsonb,
+        $1, now())
+     on conflict (mode, scope_key, usage_date) do update
+       set payload_json = excluded.payload_json,
+           source = excluded.source,
+           fetched_at = excluded.fetched_at`,
+    [source, day, scopeGroup.id],
+  );
+  const requestsBefore = usageRequestUrls.length;
+  try {
+    assert.equal(enterprise.queueAccountUsageFetch(factRange, 0), true);
+    await waitForQueue();
+    assert.equal(
+      enterprise.queueGroupSpendFetch(
+        scopeGroup,
+        0,
+        false,
+        undefined,
+        factRange,
+      ),
+      "queued",
+    );
+    await waitForQueue();
+    assert.equal(enterprise.getSpend(scopeGroup.id, factRange.key)?.spendUsd, 7);
+    assert.equal(usageRequestUrls.length, requestsBefore);
+  } finally {
+    await pool.query("delete from usage_daily_facts where source = $1", [source]);
+    enterprise.__resetDurableUsageCachesForTests();
+    enterprise.__setDailyFactReadsForTests(false);
+  }
 });
 
 test("materialized monthly rollups aggregate aligned months and fail closed on gaps or attribution changes", () => {
@@ -420,7 +537,7 @@ async function waitForQueue() {
   }
 }
 
-test("all usage modes paginate, persist, hydrate, and reuse closed ranges", async () => {
+test("all usage modes paginate and persist without startup hydration", async () => {
   enterprise.queueAccountUsageFetch(accountRange, 0);
   enterprise.queueGroupSpendFetch(group, 0, false, undefined, range);
   enterprise.queueMemberUsageFetch(group, range, 0);
@@ -467,15 +584,11 @@ test("all usage modes paginate, persist, hydrate, and reuse closed ranges", asyn
 
   enterprise.__resetDurableUsageCachesForTests();
   await enterprise.initCache({ revalidateOnStartup: false });
-  assert.equal(enterprise.getAccountUsage(accountRange.key)?.totalCostUsd, 25);
-  assert.equal(enterprise.getAccountUsage(accountRange.key)?.unattributableTotalCostUsd, 5);
-  assert.equal(enterprise.getSpend(groupId, range.key)?.spendUsd, 10);
-  assert.equal(enterprise.getMemberUsage(groupId, range.key)?.byUser.get("member-2"), 6);
-  assert.equal(enterprise.getWsSpendByUser(extraWorkspaceId, range.key)?.get("member-1"), 3);
-  assert.equal(
-    enterprise.getProjectUsage(groupId, range.key)?.byProject.get("project-2")?.totalCostUsd,
-    7,
-  );
+  assert.equal(enterprise.getAccountUsage(accountRange.key), undefined);
+  assert.equal(enterprise.getSpend(groupId, range.key), undefined);
+  assert.equal(enterprise.getMemberUsage(groupId, range.key), undefined);
+  assert.equal(enterprise.getWsSpendByUser(extraWorkspaceId, range.key), undefined);
+  assert.equal(enterprise.getProjectUsage(groupId, range.key), undefined);
 });
 
 test("an incremental refresh keeps the successful Postgres snapshot complete", async () => {
@@ -606,17 +719,17 @@ test("cursorless workspace refresh retains the last usable snapshot across retry
 
   enterprise.__resetDurableUsageCachesForTests();
   await enterprise.initCache({ revalidateOnStartup: false });
+  noCursorWorkspaceMode = false;
   assert.equal(
-    enterprise.getWsSpendByUser(retainedWorkspaceId, retainedRange.key)?.get("member-2"),
-    2,
-    "the retained usable snapshot must hydrate after restart",
+    enterprise.getWsSpendByUser(retainedWorkspaceId, retainedRange.key),
+    undefined,
+    "startup must not hydrate historical workspace usage",
   );
   assert.equal(
     enterprise.isWorkspaceMemberUsageComplete(retainedWorkspaceId, retainedRange.key),
     false,
   );
 
-  noCursorWorkspaceMode = false;
   assert.equal(enterprise.queueWsSpendFetch(retainedWorkspaceId, retainedRange, 0, true), true);
   await waitForQueue();
   assert.equal(
@@ -696,7 +809,7 @@ test("stable full-term range reuses same-day data and advances only the trailing
   );
 });
 
-test("startup adopts the newest successful legacy cutoff snapshot without an API replay", async () => {
+test("startup does not scan or adopt legacy usage snapshots", async () => {
   const legacyScope = `legacy-full-term-${crypto.randomUUID()}`;
   const legacyKey = "custom:2026-05-20:2026-09-02";
   const completedAt = new Date("2026-09-03T00:05:00.000Z");
@@ -741,18 +854,14 @@ test("startup adopts the newest successful legacy cutoff snapshot without an API
   const requestsBeforeRestart = usageRequestUrls.length;
   enterprise.__resetDurableUsageCachesForTests();
   await enterprise.initCache({ revalidateOnStartup: false });
-  assert.equal(
-    enterprise.getProjectUsage(legacyScope, enterprise.FULL_TERM_RANGE_KEY)
-      ?.byProject.get("legacy-project")?.totalCostUsd,
-    9,
-  );
+  assert.equal(enterprise.getProjectUsage(legacyScope, enterprise.FULL_TERM_RANGE_KEY), undefined);
   assert.equal(usageRequestUrls.length, requestsBeforeRestart);
   const adoptedRows = await enterprise.__getDurableRangeRowsForTests(
     enterprise.FULL_TERM_RANGE_KEY,
   );
-  assert.ok(adoptedRows.some((row) =>
+  assert.equal(adoptedRows.some((row) =>
     row.mode === "group_project" && row.scopeKey === legacyScope
-  ));
+  ), false);
   await pool.query(
     `delete from usage_sync_chunks
      where mode = 'group_project' and scope_key = $1
@@ -807,8 +916,8 @@ test("failed usage scopes become terminal and do not remain pending", async () =
   await enterprise.initCache({ revalidateOnStartup: false });
   assert.equal(
     enterprise.isUsageSyncRetryable("group_project", failedRange.key, group.id),
-    true,
-    "failed scopes must remain retryable after restart hydration",
+    false,
+    "startup must not hydrate historical synchronization state",
   );
 });
 
@@ -839,7 +948,7 @@ test("queue diagnostics expose active work, backlog age, and recent progress", a
   assert.equal(complete.active, null);
 });
 
-test("project metadata persists and hydrates without an API refetch", async () => {
+test("project metadata persists without startup hydration", async () => {
   const metadataWorkspace = `metadata-${crypto.randomUUID()}`;
   assert.equal(enterprise.queueProjectTitlesFetch(metadataWorkspace, 0), true);
   await waitForQueue();
@@ -851,12 +960,10 @@ test("project metadata persists and hydrates without an API refetch", async () =
 
   enterprise.__resetDurableUsageCachesForTests();
   await enterprise.initCache({ revalidateOnStartup: false });
-  assert.deepEqual(enterprise.getProjectInfo(metadataWorkspace, "persisted-project"), {
-    title: "Persisted project",
-    creatorId: "creator-1",
-  });
-  assert.equal(enterprise.queueProjectTitlesFetch(metadataWorkspace, 0), false);
-  assert.equal(projectMetadataFetchCount, completedFetches);
+  assert.equal(enterprise.getProjectInfo(metadataWorkspace, "persisted-project"), undefined);
+  assert.equal(enterprise.queueProjectTitlesFetch(metadataWorkspace, 0), true);
+  await waitForQueue();
+  assert.ok(projectMetadataFetchCount > completedFetches);
 });
 
 test("failed project metadata refresh preserves the stored snapshot across restart", async () => {
@@ -878,10 +985,11 @@ test("failed project metadata refresh preserves the stored snapshot across resta
   await enterprise.initCache({ revalidateOnStartup: false });
   assert.equal(
     enterprise.hasProjectInfo(failedWorkspace),
-    true,
-    "a failed refresh must not invalidate usable Postgres metadata",
+    false,
+    "startup must not hydrate project metadata",
   );
-  assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0), false);
+  assert.equal(enterprise.queueProjectTitlesFetch(failedWorkspace, 0), true);
+  await waitForQueue();
 });
 
 test("project attribution uses highest cross-group total and reports unattributed residual", () => {
@@ -1221,6 +1329,9 @@ test("billing period discovery exposes freshness, mismatch, fallback, and restar
 
   await enterprise.refreshBillingPeriodMetadata(0, false, false);
   await waitForQueue();
+  assert.equal(enterprise.getBillingPeriodMetadata().isFallback, true);
+  await enterprise.refreshBillingPeriodMetadata(0, false, false);
+  await waitForQueue();
   const discovered = enterprise.getBillingPeriodMetadata();
   assert.equal(discovered.start, testBillingStart);
   assert.equal(discovered.end, testBillingEnd);
@@ -1242,6 +1353,40 @@ test("billing period discovery exposes freshness, mismatch, fallback, and restar
   );
 
   enterprise.__setBillingPeriodForTests(null);
+});
+
+test("billing rollover adopts only the second identical persisted observation after restart", async () => {
+  const persistenceId = `billing-observation-${crypto.randomUUID()}`;
+  const period = {
+    start: "2099-01-01T00:00:00.000Z",
+    end: "2099-02-01T00:00:00.000Z",
+    fetchedAt: Date.now(),
+  };
+  try {
+    enterprise.__resetDurableUsageCachesForTests();
+    assert.equal(
+      await enterprise.__observeBillingPeriodForTests(period, persistenceId),
+      null,
+    );
+    enterprise.__resetDurableUsageCachesForTests();
+    await enterprise.__hydrateBillingPeriodStateForTests(persistenceId);
+    const adopted = await enterprise.__observeBillingPeriodForTests(
+      { ...period, fetchedAt: period.fetchedAt + 1_000 },
+      persistenceId,
+    );
+    assert.equal(adopted?.start, period.start);
+    assert.equal(adopted?.end, period.end);
+  } finally {
+    await pool.query(
+      "delete from api_billing_period_observation where id = $1",
+      [persistenceId],
+    );
+    await pool.query(
+      "delete from api_billing_period_cache where id = $1",
+      [persistenceId],
+    );
+    enterprise.__resetDurableUsageCachesForTests();
+  }
 });
 
 test("expired metadata falls back and pre-cutoff billing does not trigger a window banner", () => {
