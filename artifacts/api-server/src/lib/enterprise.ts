@@ -25,6 +25,7 @@ import {
 
 const BASE_URL = "https://api.replit.com/v1";
 
+export const ENTERPRISE_REQUEST_TIMEOUT_MS = 30_000;
 export function isConfigured(): boolean {
   return !!process.env["REPLIT_ENTERPRISE_API_KEY"];
 }
@@ -59,8 +60,9 @@ async function rawFetch(
 
   const workload = workloadContext.getStore() ?? "scheduled";
   await enterpriseBudget.admit(workload);
-  const res = await fetch(url, {
+  const res = await enterpriseFetch(url, {
     headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(ENTERPRISE_REQUEST_TIMEOUT_MS),
   });
   enterpriseBudget.observe(res.headers, res.status);
 
@@ -815,6 +817,8 @@ export interface UsageSyncSummary {
   failedCount: number;
   partialCount: number;
   error: string | null;
+  dataAsOf: string | null;
+  isStale: boolean;
 }
 
 export const RECONCILIATION_OVERLAP_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1890,19 +1894,23 @@ export function getUsageSyncSummary(
       ...(!wsSpendCache.has(`${rangeKey}|${group.workspaceId}`) ? [{
         id: syncId("group_member", rangeKey, group.id),
         loaded: memberUsageCache.has(`${rangeKey}|${group.id}`),
+        fetchedAt: memberUsageCache.get(`${rangeKey}|${group.id}`)?.fetchedAt,
       }] : []),
       ...(includeProjects ? [{
         id: syncId("group_project", rangeKey, group.id),
         loaded: projectUsageCache.has(`${rangeKey}|${group.id}`),
+        fetchedAt: projectUsageCache.get(`${rangeKey}|${group.id}`)?.fetchedAt,
       }] : []),
     ]),
     ...[...workspaceIds].map((workspaceId) => ({
       id: syncId("workspace_member", rangeKey, workspaceId),
       loaded: wsSpendCache.has(`${rangeKey}|${workspaceId}`),
+      fetchedAt: wsSpendCache.get(`${rangeKey}|${workspaceId}`)?.fetchedAt,
     })),
     ...(includeAccount ? [{
       id: syncId("account_total", rangeKey, ACCOUNT_USAGE_SCOPE),
       loaded: accountUsageCache.has(rangeKey),
+      fetchedAt: accountUsageCache.get(rangeKey)?.fetchedAt,
     }] : []),
   ];
   let pendingCount = 0;
@@ -1913,7 +1921,7 @@ export function getUsageSyncSummary(
     const metadata = syncMetadata.get(id);
     // The loaded fallback supports in-process test seams and upgrades from
     // pre-ledger caches. Normal runtime hydration always supplies metadata.
-    if ((!metadata && !loaded) || metadata?.status === "syncing") pendingCount++;
+    if ((!metadata && !loaded) || (metadata?.status === "syncing" && !loaded)) pendingCount++;
     else if (metadata?.status === "failed") {
       failedCount++;
       error ??= formatUsageScopeError(id, metadata.error);
@@ -1922,6 +1930,10 @@ export function getUsageSyncSummary(
       error ??= formatUsageScopeError(id, metadata.error);
     }
   }
+  const fetchedTimes = requirements
+    .filter((requirement) => requirement.loaded && requirement.fetchedAt !== undefined)
+    .map((requirement) => requirement.fetchedAt!);
+  const oldestFetchedAt = fetchedTimes.length > 0 ? Math.min(...fetchedTimes) : null;
   return {
     status: failedCount > 0
       ? "failed"
@@ -1934,6 +1946,8 @@ export function getUsageSyncSummary(
     failedCount,
     partialCount,
     error,
+    dataAsOf: oldestFetchedAt === null ? null : new Date(oldestFetchedAt).toISOString(),
+    isStale: oldestFetchedAt !== null && Date.now() - oldestFetchedAt >= USAGE_TTL_MS,
   };
 }
 
@@ -1945,11 +1959,14 @@ export function getProjectUsageSyncSummary(
   let failedCount = 0;
   let partialCount = 0;
   let error: string | null = null;
+  const fetchedTimes: number[] = [];
   for (const group of groups) {
     const id = syncId("group_project", rangeKey, group.id);
     const metadata = syncMetadata.get(id);
     const loaded = projectUsageCache.has(`${rangeKey}|${group.id}`);
-    if ((!metadata && !loaded) || metadata?.status === "syncing") {
+    const fetchedAt = projectUsageCache.get(`${rangeKey}|${group.id}`)?.fetchedAt;
+    if (fetchedAt !== undefined) fetchedTimes.push(fetchedAt);
+    if ((!metadata && !loaded) || (metadata?.status === "syncing" && !loaded)) {
       pendingCount++;
     } else if (metadata?.status === "failed") {
       failedCount++;
@@ -1959,6 +1976,7 @@ export function getProjectUsageSyncSummary(
       error ??= formatUsageScopeError(id, metadata.error);
     }
   }
+  const oldestFetchedAt = fetchedTimes.length > 0 ? Math.min(...fetchedTimes) : null;
   return {
     status: failedCount > 0
       ? "failed"
@@ -1971,6 +1989,8 @@ export function getProjectUsageSyncSummary(
     failedCount,
     partialCount,
     error,
+    dataAsOf: oldestFetchedAt === null ? null : new Date(oldestFetchedAt).toISOString(),
+    isStale: oldestFetchedAt !== null && Date.now() - oldestFetchedAt >= USAGE_TTL_MS,
   };
 }
 
@@ -2463,10 +2483,11 @@ export async function initCache(
   if (options.revalidateOnStartup !== false) {
     // Revalidate on process startup before resolving the account anchor. Hydrated
     // metadata remains the immediate fallback if this live request fails.
-    await refreshBillingPeriodMetadata(0, true);
+    void refreshBillingPeriodMetadata(0, true)
+      .then(() => queueAccountTotalVerification(-10))
+      .catch((err) => logger.warn({ err }, "Startup billing metadata refresh failed"));
     // Publish the one-call account anchor before hundreds of newly keyed group
     // warm-up scopes can occupy the serial queue.
-    queueAccountTotalVerification(-10);
     if (!billingPeriodRefreshTimer) {
       billingPeriodRefreshTimer = setInterval(() => {
         void refreshBillingPeriodMetadata(1).then(() => queueAccountTotalVerification(1));
@@ -2572,6 +2593,11 @@ export interface DirectoryCache {
   budgets: PlatformBudgets;
 }
 
+export interface DirectoryFreshness {
+  dataAsOf: string | null;
+  isStale: boolean;
+  isRefreshing: boolean;
+}
 export interface StoredBudgetEvaluationSnapshot {
   directory: DirectoryCache;
   rangeKey: string;
@@ -2693,6 +2719,7 @@ export function __setDirectoryCacheForTests(
     groups: EnterpriseGroup[];
     groupMembers?: Map<string, string[]>;
     members: Map<string, EnterpriseMember>;
+    fetchedAt?: number;
   } | null,
 ): void {
   if (!fixture) {
@@ -2700,7 +2727,7 @@ export function __setDirectoryCacheForTests(
     return;
   }
   directoryCache = {
-    fetchedAt: Date.now(),
+    fetchedAt: fixture.fetchedAt ?? Date.now(),
     workspaces: fixture.workspaces ?? new Map(),
     groups: fixture.groups,
     allGroups: fixture.groups,
@@ -2709,98 +2736,33 @@ export function __setDirectoryCacheForTests(
     budgets: { groupLimits: new Map(), userLimits: new Map(), workspaceDefaults: new Map() },
   };
 }
+
+export function getDirectoryFreshness(now = Date.now()): DirectoryFreshness {
+  return {
+    dataAsOf: directoryCache ? new Date(directoryCache.fetchedAt).toISOString() : null,
+    isStale: !!directoryCache && now - directoryCache.fetchedAt >= DIRECTORY_TTL_MS,
+    isRefreshing: directoryPromise !== null,
+  };
+}
 export async function getDirectory(force = false): Promise<DirectoryCache> {
   const now = Date.now();
-  if (!force && directoryCache && now - directoryCache.fetchedAt < DIRECTORY_TTL_MS) {
+  if (force) return refreshDirectory();
+  if (directoryCache) {
+    if (now - directoryCache.fetchedAt >= DIRECTORY_TTL_MS) {
+      void refreshDirectory().catch((err) => {
+        lastApiOk = false;
+        lastApiError = err instanceof Error ? err.message : String(err);
+        logger.warn({ err }, "Background directory refresh failed; serving stored snapshot");
+      });
+    }
     return directoryCache;
   }
-  if (directoryPromise) return directoryPromise;
-  const workload = workloadContext.getStore() ?? "interactive";
-  directoryPromise = workloadContext.run(workload, async () => {
-    try {
-      const workspaces = await paginate<EnterpriseWorkspace>("/workspaces", {});
-      const wsMap = new Map(workspaces.map((w) => [w.id, w]));
-
-      const allGroups: EnterpriseGroup[] = [];
-      for (const ws of workspaces) {
-        const wsGroups = await paginate<EnterpriseGroup>("/groups", { workspaceId: ws.id });
-        for (const g of wsGroups) {
-          allGroups.push({ ...g, workspaceId: g.workspaceId || ws.id });
-        }
-      }
-      const groups = allGroups.filter(isCustomGroup);
-
-      const groupMembers = new Map<string, string[]>();
-      for (const g of groups) {
-        try {
-          const users = await paginate<{ userId: string }>(
-            `/groups/${encodeURIComponent(g.id)}/users`,
-            {},
-          );
-          groupMembers.set(g.id, users.map((u) => u.userId));
-        } catch (err) {
-          logger.warn({ err, groupId: g.id }, "Failed to fetch group members");
-        }
-      }
-
-      const rawMembers = await paginate<RawMember>("/members", {});
-      const members = new Map<string, EnterpriseMember>();
-      for (const rm of rawMembers) {
-        const name =
-          [rm.user.firstName, rm.user.lastName].filter(Boolean).join(" ") || null;
-        members.set(rm.user.id, {
-          userId: rm.user.id,
-          username: rm.user.username,
-          email: rm.user.email,
-          name,
-          isAccountAdmin: parseIsAccountAdmin(rm),
-          workspaces: new Map(
-            rm.workspaces.map((w) => [w.id, { role: w.role, isDisabled: w.isDisabled }]),
-          ),
-        });
-      }
-
-      const budgets: PlatformBudgets = {
-        groupLimits: new Map(),
-        userLimits: new Map(),
-        workspaceDefaults: new Map(),
-      };
-      try {
-        const rawBudgets = await paginate<RawBudget>("/budgets", {});
-        for (const b of rawBudgets) {
-          if (!b.workspaceId || b.amountUsd == null) continue;
-          if (b.type === "workspace_group_limit" && b.groupId) {
-            if (!budgets.groupLimits.has(b.workspaceId))
-              budgets.groupLimits.set(b.workspaceId, new Map());
-            budgets.groupLimits.get(b.workspaceId)!.set(b.groupId, b.amountUsd);
-          } else if (b.type === "workspace_user_limit" && b.userId) {
-            if (!budgets.userLimits.has(b.workspaceId))
-              budgets.userLimits.set(b.workspaceId, new Map());
-            budgets.userLimits.get(b.workspaceId)!.set(b.userId, b.amountUsd);
-          } else if (b.type === "workspace_default_user_limit") {
-            budgets.workspaceDefaults.set(b.workspaceId, b.amountUsd);
-          }
-        }
-      } catch (err) {
-        logger.warn({ err }, "Failed to fetch platform budgets");
-      }
-
-      directoryCache = {
-        fetchedAt: Date.now(),
-        workspaces: wsMap,
-        groups,
-        allGroups,
-        groupMembers,
-        members,
-        budgets,
-      };
-      persistDirectoryToDb(directoryCache);
-      return directoryCache;
-    } finally {
-      directoryPromise = null;
-    }
+  void refreshDirectory().catch((err) => {
+    lastApiOk = false;
+    lastApiError = err instanceof Error ? err.message : String(err);
+    logger.warn({ err }, "Initial directory sync failed");
   });
-  return directoryPromise;
+  throw new EnterpriseApiError(503, "Directory is syncing; no stored snapshot is available");
 }
 
 /**
@@ -5109,6 +5071,8 @@ export async function getStoredBudgetEvaluationSnapshot(): Promise<
   return { snapshot: { directory, rangeKey, dataAsOf }, skipReason: null };
 }
 
+type EnterpriseFetch = typeof fetch;
+
 const activeQueueTasks = new Map<EnterpriseWorkload, QueueTask & { startedAt: number }>();
 
 const DEFAULT_WINDOW_MS = 60_000;
@@ -5296,3 +5260,88 @@ export function __enqueueEnterpriseTaskForTests(
   const priority = workload === "interactive" ? 0 : workload === "scheduled" ? 1 : 2;
   return enqueueUsage(key, priority, run, workload);
 }
+
+function refreshDirectory(): Promise<DirectoryCache> {
+  if (directoryPromise) return directoryPromise;
+  const workload = workloadContext.getStore() ?? "interactive";
+  directoryPromise = workloadContext.run(workload, async () => {
+    try {
+      const workspaces = await paginate<EnterpriseWorkspace>("/workspaces", {});
+      const wsMap = new Map(workspaces.map((w) => [w.id, w]));
+
+      const allGroups: EnterpriseGroup[] = [];
+      for (const ws of workspaces) {
+        const wsGroups = await paginate<EnterpriseGroup>("/groups", { workspaceId: ws.id });
+        for (const g of wsGroups) allGroups.push({ ...g, workspaceId: g.workspaceId || ws.id });
+      }
+      const groups = allGroups.filter(isCustomGroup);
+
+      const groupMembers = new Map<string, string[]>();
+      for (const g of groups) {
+        const users = await paginate<{ userId: string }>(
+          `/groups/${encodeURIComponent(g.id)}/users`,
+          {},
+        );
+        groupMembers.set(g.id, users.map((u) => u.userId));
+      }
+
+      const rawMembers = await paginate<RawMember>("/members", {});
+      const members = new Map<string, EnterpriseMember>();
+      for (const rm of rawMembers) {
+        const name = [rm.user.firstName, rm.user.lastName].filter(Boolean).join(" ") || null;
+        members.set(rm.user.id, {
+          userId: rm.user.id,
+          username: rm.user.username,
+          email: rm.user.email,
+          name,
+          isAccountAdmin: parseIsAccountAdmin(rm),
+          workspaces: new Map(
+            rm.workspaces.map((w) => [w.id, { role: w.role, isDisabled: w.isDisabled }]),
+          ),
+        });
+      }
+
+      const budgets: PlatformBudgets = {
+        groupLimits: new Map(),
+        userLimits: new Map(),
+        workspaceDefaults: new Map(),
+      };
+      const rawBudgets = await paginate<RawBudget>("/budgets", {});
+      for (const b of rawBudgets) {
+        if (!b.workspaceId || b.amountUsd == null) continue;
+        if (b.type === "workspace_group_limit" && b.groupId) {
+          if (!budgets.groupLimits.has(b.workspaceId)) budgets.groupLimits.set(b.workspaceId, new Map());
+          budgets.groupLimits.get(b.workspaceId)!.set(b.groupId, b.amountUsd);
+        } else if (b.type === "workspace_user_limit" && b.userId) {
+          if (!budgets.userLimits.has(b.workspaceId)) budgets.userLimits.set(b.workspaceId, new Map());
+          budgets.userLimits.get(b.workspaceId)!.set(b.userId, b.amountUsd);
+        } else if (b.type === "workspace_default_user_limit") {
+          budgets.workspaceDefaults.set(b.workspaceId, b.amountUsd);
+        }
+      }
+
+      directoryCache = {
+        fetchedAt: Date.now(),
+        workspaces: wsMap,
+        groups,
+        allGroups,
+        groupMembers,
+        members,
+        budgets,
+      };
+      persistDirectoryToDb(directoryCache);
+      return directoryCache;
+    } finally {
+      directoryPromise = null;
+    }
+  });
+  return directoryPromise;
+}
+
+/** Test-only transport seam. Production always uses the platform fetch. */
+export function setEnterpriseFetchForTests(override: EnterpriseFetch | null): void {
+  enterpriseFetch = override ?? platformEnterpriseFetch;
+}
+
+const platformEnterpriseFetch: EnterpriseFetch = (input, init) => fetch(input, init);
+let enterpriseFetch: EnterpriseFetch = platformEnterpriseFetch;

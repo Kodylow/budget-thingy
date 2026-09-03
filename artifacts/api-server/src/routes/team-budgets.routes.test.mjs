@@ -254,6 +254,12 @@ test("only a true account admin can retry upstream budget reconciliation", async
     (await request("/admin/team-budgets/reconcile", "task158-workspace", "POST")).status,
     403,
   );
+  let rejectDirectory;
+  const pendingDirectory = new Promise((_resolve, reject) => {
+    rejectDirectory = reject;
+  });
+  setTeamBudgetDirectoryFetcherForTests(() => pendingDirectory);
+  const startedAt = Date.now();
   const accountAdmin = await request(
     "/admin/team-budgets/reconcile",
     "task158-account",
@@ -261,6 +267,18 @@ test("only a true account admin can retry upstream budget reconciliation", async
   );
   assert.equal(accountAdmin.status, 200);
   assert.ok(Array.isArray(accountAdmin.json.teams));
+  assert.ok(Date.now() - startedAt < 1_000, "retry response must not await Enterprise");
+
+  rejectDirectory(new Error("forced delayed directory failure"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  setTeamBudgetDirectoryFetcherForTests(async () => ({
+    allGroups: [{
+      id: GROUP_ID,
+      workspaceId: "task158-ws",
+      name: GROUP_NAME,
+      type: "custom",
+    }],
+  }));
 });
 
 test("history orders months and excludes hidden teams while retaining separate records", async () => {

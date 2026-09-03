@@ -1,4 +1,4 @@
-- [Replit Enterprise usage API](enterprise-usage-api.md) — /usage needs one serial rate-limited queue; groupId requires workspaceId; period key = resolved interval.startTime; avoid format:email in spec.
+- [Replit Enterprise usage API](enterprise-usage-api.md) — Enterprise reads are stale-first and timeout-bounded; /usage uses one serial queue; period key = resolved interval.startTime.
 - [Workspace-aware rollups](overlapping-group-rollups.md) — workspace usage is authoritative; stable group attribution plus synthetic No group rows preserves every workspace charge.
 - [Group spend display model](group-spend-display-model.md) — dashboard accounting uses deduped projects; member drill-downs and legacy alerts intentionally retain member/raw spend.
 - [Allocated pool access](allocated-pool-access.md) — editors use stable Replit IDs; true admins manage access; shared-team alerts never reveal out-of-scope spend.

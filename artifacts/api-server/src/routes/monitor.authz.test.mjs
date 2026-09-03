@@ -31,8 +31,12 @@ import {
   __setWsSpendForTests,
   __setWorkspaceMemberUsageStatusForTests,
   __setProjectUsageForTests,
+  ENTERPRISE_REQUEST_TIMEOUT_MS,
+  getDirectory,
+  getDirectoryFreshness,
   parseIsAccountAdmin,
   resolveRange,
+  setEnterpriseFetchForTests,
 } from "../lib/enterprise.ts";
 
 // ---------------------------------------------------------------------------
@@ -270,6 +274,7 @@ test.after(async () => {
   setAuthorizationResolver(null);
   setSendEmailOverrideForTests(null);
   setReplitBudgetTransportForTests(null);
+  setEnterpriseFetchForTests(null);
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
   server?.close();
 });
@@ -323,6 +328,114 @@ test("account admin sees every group", async () => {
   assert.equal(status, 200);
   const ids = json.groups.filter((g) => !g.isSynthetic).map((g) => g.groupId).sort();
   assert.deepEqual(ids, ["g-ws1-a", "g-ws2-a"]);
+  assert.equal(typeof json.directoryDataAsOf, "string");
+  assert.equal(typeof json.directoryStale, "boolean");
+  assert.equal(json.usageDataAsOf === null || typeof json.usageDataAsOf === "string", true);
+  assert.equal(typeof json.usageStale, "boolean");
+});
+
+test("stale directory authorization and handlers do not wait for an in-progress or failed refresh", async () => {
+  let rejectRefresh;
+  let enterpriseRequests = 0;
+  const refreshFailure = new Promise((_resolve, reject) => {
+    rejectRefresh = reject;
+  });
+  setEnterpriseFetchForTests(async () => {
+    enterpriseRequests++;
+    return refreshFailure;
+  });
+  __setDirectoryCacheForTests({
+    workspaces,
+    groups,
+    members,
+    groupMembers,
+    fetchedAt: Date.now() - 60 * 60 * 1000,
+  });
+
+  const startedAt = Date.now();
+  const first = await req("/groups", { user: "acct" });
+  const second = await req("/groups", { user: "acct" });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.ok(Date.now() - startedAt < 1_000, "requests should return from stored data");
+  assert.equal(first.json.directoryStale, true);
+  assert.equal(enterpriseRequests, 1, "concurrent polling must share one directory refresh");
+  assert.equal(getDirectoryFreshness().isRefreshing, true);
+
+  rejectRefresh(new Error("forced Enterprise outage"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const afterFailure = await req("/groups", { user: "acct" });
+  assert.equal(afterFailure.status, 200);
+  assert.equal(afterFailure.json.directoryStale, true);
+
+  setEnterpriseFetchForTests(null);
+  __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+});
+
+test("every Enterprise directory request carries the common 30-second timeout signal", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  const timeoutValues = [];
+  AbortSignal.timeout = (milliseconds) => {
+    timeoutValues.push(milliseconds);
+    return new AbortController().signal;
+  };
+  setEnterpriseFetchForTests(async () => new Response(JSON.stringify({
+    data: [],
+    pagination: { cursor: null, hasMore: false },
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  }));
+
+  try {
+    await getDirectory(true);
+    assert.ok(timeoutValues.length >= 3);
+    assert.deepEqual(
+      [...new Set(timeoutValues)],
+      [ENTERPRISE_REQUEST_TIMEOUT_MS],
+    );
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    setEnterpriseFetchForTests(null);
+    __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+  }
+});
+
+test("a partial directory refresh cannot replace the last complete snapshot", async () => {
+  __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+  setEnterpriseFetchForTests(async (input) => {
+    const pathname = new URL(String(input)).pathname;
+    if (pathname.endsWith("/workspaces")) {
+      return new Response(JSON.stringify({
+        data: [{ id: "replacement-ws", name: "Replacement" }],
+        pagination: { cursor: null, hasMore: false },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (pathname.endsWith("/groups")) {
+      return new Response(JSON.stringify({
+        data: [{
+          id: "replacement-group",
+          workspaceId: "replacement-ws",
+          name: "Replacement",
+          type: "custom",
+        }],
+        pagination: { cursor: null, hasMore: false },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("forced membership outage", { status: 503 });
+  });
+
+  try {
+    await assert.rejects(getDirectory(true), /503/);
+    const retained = await getDirectory();
+    assert.deepEqual(
+      retained.groups.map((group) => group.id).sort(),
+      ["g-ws1-a", "g-ws2-a"],
+    );
+  } finally {
+    setEnterpriseFetchForTests(null);
+    __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+  }
 });
 
 test("group directory is account-admin-only and returns alphabetized directory metadata", async () => {

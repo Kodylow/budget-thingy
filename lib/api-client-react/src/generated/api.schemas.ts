@@ -231,6 +231,20 @@ export interface GroupsResponse {
   partialCount: number;
   /** Number of outstanding headline workspace/member inputs */
   pendingCount: number;
+  /**
+     * Fetch time of the stored Enterprise directory snapshot
+     * @nullable
+     */
+  directoryDataAsOf: string | null;
+  /** True when the stored directory snapshot is older than its refresh interval */
+  directoryStale: boolean;
+  /**
+     * Oldest fetch time among the stored usage inputs used by this response
+     * @nullable
+     */
+  usageDataAsOf: string | null;
+  /** True when any stored usage input used by this response is older than its refresh interval */
+  usageStale: boolean;
   projectSyncStatus: GroupsResponseProjectSyncStatus;
   /** @nullable */
   projectSyncError?: string | null;
@@ -509,6 +523,12 @@ export interface Summary {
   pendingCount: number;
   failedCount: number;
   partialCount: number;
+  /** @nullable */
+  directoryDataAsOf: string | null;
+  directoryStale: boolean;
+  /** @nullable */
+  usageDataAsOf: string | null;
+  usageStale: boolean;
   projectSyncStatus: SummaryProjectSyncStatus;
   /** @nullable */
   projectSyncError?: string | null;

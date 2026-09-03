@@ -61,6 +61,7 @@ import {
   isConfigured,
   getApiHealth,
   getDirectory,
+  getDirectoryFreshness,
   getSpend,
   getBillingPeriod,
   getBillingPeriodMetadata,
@@ -137,7 +138,7 @@ import {
   getEffectiveTeamBudgets,
   getTeamBudgetUpstreamSyncRows,
   getVisibleEffectiveTeamBudgetMap,
-  reconcileTeamBudgetsUpstream,
+  queueTeamBudgetUpstreamReconciliation,
   refreshTeamBudgetSnapshot,
   TEAM_BUDGET_REQUIRED_APPROVAL_STATUS,
   TEAM_BUDGET_SOURCE_TABLE,
@@ -650,6 +651,10 @@ router.get("/groups", async (req, res): Promise<void> => {
         unattributedProjectSpendUsd: projectAttribution.unattributedSpendUsd,
         teamRawSpend,
         teamBudgets: Object.fromEntries(effectiveTeamBudgetMap),
+        directoryDataAsOf: getDirectoryFreshness().dataAsOf,
+        directoryStale: getDirectoryFreshness().isStale,
+        usageDataAsOf: sync.dataAsOf,
+        usageStale: sync.isStale,
       }),
     );
   } catch (err) {
@@ -1607,6 +1612,10 @@ router.get("/summary", async (req, res): Promise<void> => {
             ),
             projectFailedCount: projectSync.failedCount,
             projectPartialCount: projectSync.partialCount,
+            directoryDataAsOf: getDirectoryFreshness().dataAsOf,
+            directoryStale: getDirectoryFreshness().isStale,
+            usageDataAsOf: sync.dataAsOf,
+            usageStale: sync.isStale,
           }),
         );
       })(),
@@ -1733,7 +1742,7 @@ router.post(
   "/admin/team-budgets/reconcile",
   requireTrueAccountAdmin,
   async (_req, res): Promise<void> => {
-    await reconcileTeamBudgetsUpstream();
+    queueTeamBudgetUpstreamReconciliation();
     res.json(
       RetryTeamBudgetUpstreamSyncResponse.parse(await buildTeamBudgetSyncStatus()),
     );

@@ -678,10 +678,10 @@ paths:
       operationId: retryTeamBudgetUpstreamSync
       tags: [teams]
       summary: Retry upstream Replit group budget synchronization
-      description: Available only to true Enterprise account administrators; account delegates and editors are not authorized. Reconciles per-team desired budgets with their upstream Replit groups.
+      description: Available only to true Enterprise account administrators; account delegates and editors are not authorized. Queues reconciliation of per-team desired budgets with upstream Replit groups and immediately returns the latest stored status.
       responses:
         "200":
-          description: Upstream synchronization reconciled
+          description: Reconciliation queued; latest stored synchronization status
           content:
             application/json:
               schema:
@@ -1590,7 +1590,7 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, projectSyncStatus, projectPendingCount, projectFailedCount, projectPartialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend, teamBudgets]
+      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, projectSyncStatus, projectPendingCount, projectFailedCount, projectPartialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend, teamBudgets, directoryDataAsOf, directoryStale, usageDataAsOf, usageStale]
       properties:
         groups:
           type: array
@@ -1611,6 +1611,20 @@ components:
         pendingCount:
           type: integer
           description: Number of outstanding headline workspace/member inputs
+        directoryDataAsOf:
+          type: ["string", "null"]
+          format: date-time
+          description: Fetch time of the stored Enterprise directory snapshot
+        directoryStale:
+          type: boolean
+          description: True when the stored directory snapshot is older than its refresh interval
+        usageDataAsOf:
+          type: ["string", "null"]
+          format: date-time
+          description: Oldest fetch time among the stored usage inputs used by this response
+        usageStale:
+          type: boolean
+          description: True when any stored usage input used by this response is older than its refresh interval
         projectSyncStatus:
           type: string
           enum: [complete, syncing, partial, failed]
@@ -1914,6 +1928,10 @@ components:
           projectPendingCount,
           projectFailedCount,
           projectPartialCount,
+          directoryDataAsOf,
+          directoryStale,
+          usageDataAsOf,
+          usageStale,
         ]
       properties:
         totalGroups:
@@ -1989,6 +2007,16 @@ components:
           type: integer
         partialCount:
           type: integer
+        directoryDataAsOf:
+          type: ["string", "null"]
+          format: date-time
+        directoryStale:
+          type: boolean
+        usageDataAsOf:
+          type: ["string", "null"]
+          format: date-time
+        usageStale:
+          type: boolean
         projectSyncStatus:
           type: string
           enum: [complete, syncing, partial, failed]

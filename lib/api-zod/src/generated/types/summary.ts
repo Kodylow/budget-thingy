@@ -65,6 +65,12 @@ export interface Summary {
   pendingCount: number;
   failedCount: number;
   partialCount: number;
+  /** @nullable */
+  directoryDataAsOf: Date | null;
+  directoryStale: boolean;
+  /** @nullable */
+  usageDataAsOf: Date | null;
+  usageStale: boolean;
   projectSyncStatus: SummaryProjectSyncStatus;
   /** @nullable */
   projectSyncError?: string | null;
