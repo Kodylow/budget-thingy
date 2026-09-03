@@ -1590,7 +1590,7 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend, teamBudgets]
+      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, projectSyncStatus, projectPendingCount, projectFailedCount, projectPartialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend, teamBudgets]
       properties:
         groups:
           type: array
@@ -1610,7 +1610,19 @@ components:
           type: integer
         pendingCount:
           type: integer
-          description: Number of outstanding workspace, member, project-usage, or project-metadata inputs
+          description: Number of outstanding headline workspace/member inputs
+        projectSyncStatus:
+          type: string
+          enum: [complete, syncing, partial, failed]
+        projectSyncError:
+          type: ["string", "null"]
+        projectPendingCount:
+          type: integer
+          description: Number of outstanding project-usage or project-metadata inputs
+        projectFailedCount:
+          type: integer
+        projectPartialCount:
+          type: integer
         billingPeriodLabel:
           type: string
           description: Human label of the selected range, e.g. "Jul 2026" or "Year to date"
@@ -1898,6 +1910,10 @@ components:
           pendingCount,
           failedCount,
           partialCount,
+          projectSyncStatus,
+          projectPendingCount,
+          projectFailedCount,
+          projectPartialCount,
         ]
       properties:
         totalGroups:
@@ -1972,6 +1988,17 @@ components:
         failedCount:
           type: integer
         partialCount:
+          type: integer
+        projectSyncStatus:
+          type: string
+          enum: [complete, syncing, partial, failed]
+        projectSyncError:
+          type: ["string", "null"]
+        projectPendingCount:
+          type: integer
+        projectFailedCount:
+          type: integer
+        projectPartialCount:
           type: integer
     UsageRangeRebuildInput:
       type: object
@@ -2503,6 +2530,7 @@ components:
           reportingRangeEnd,
           reportingRangeLabel,
           accountTotalVerification,
+          usageSync,
         ]
       properties:
         enterpriseApiConfigured:
@@ -2553,6 +2581,58 @@ components:
           oneOf:
             - $ref: "#/components/schemas/AccountTotalVerification"
             - type: "null"
+        usageSync:
+          $ref: "#/components/schemas/UsageOperationalDiagnostics"
+    UsageOperationalDiagnostics:
+      type: object
+      required: [queueDepth, queuedCount, active, oldestQueuedAgeMs, lastProgressAt, pauseUntil, scopes]
+      properties:
+        queueDepth:
+          type: integer
+        queuedCount:
+          type: integer
+        active:
+          oneOf:
+            - $ref: "#/components/schemas/UsageQueueActiveTask"
+            - type: "null"
+        oldestQueuedAgeMs:
+          type: ["integer", "null"]
+        lastProgressAt:
+          type: ["string", "null"]
+        pauseUntil:
+          type: ["string", "null"]
+        scopes:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/UsageScopeDiagnostic"
+    UsageQueueActiveTask:
+      type: object
+      required: [runId, key, priority, enqueuedAt, startedAt, ageMs, waitMs]
+      properties:
+        runId: { type: string }
+        key: { type: string }
+        priority: { type: integer }
+        enqueuedAt: { type: string }
+        startedAt: { type: string }
+        ageMs: { type: integer }
+        waitMs: { type: integer }
+    UsageScopeDiagnostic:
+      type: object
+      required: [mode, rangeKey, scopeKey, status, syncedThrough, completedAt, error]
+      properties:
+        mode:
+          type: string
+          enum: [account_total, group_total, group_member, workspace_member, group_project]
+        rangeKey: { type: string }
+        scopeKey: { type: string }
+        status:
+          type: string
+          enum: [syncing, success, partial, failed]
+        syncedThrough: { type: string }
+        completedAt: { type: string }
+        error:
+          type: ["string", "null"]
     AccountTotalVerification:
       type: object
       required:

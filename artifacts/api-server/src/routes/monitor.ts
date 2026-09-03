@@ -86,6 +86,8 @@ import {
   hasProjectInfo,
   getCanonicalUsage,
   getUsageSyncSummary,
+  getProjectUsageSyncSummary,
+  getUsageOperationalDiagnostics,
   isUsageSyncRetryable,
   buildCanonicalGroupMergePlan,
   resolveCanonicalMergedGroupBudget,
@@ -415,6 +417,7 @@ router.get("/groups", async (req, res): Promise<void> => {
       false,
       false,
     );
+    const projectSync = getProjectUsageSyncSummary(range.key, scoped);
 
     // Include source group IDs (alias groups) in the history query so merged
     // primaries can show the complete spend history across both workspace versions.
@@ -632,6 +635,14 @@ router.get("/groups", async (req, res): Promise<void> => {
         pendingCount: sync.pendingCount,
         failedCount: sync.failedCount,
         partialCount: sync.partialCount,
+        projectSyncStatus: projectSync.status,
+        projectSyncError: projectSync.error,
+        projectPendingCount: Math.max(
+          projectSync.pendingCount,
+          projectAttribution.pendingCount,
+        ),
+        projectFailedCount: projectSync.failedCount,
+        projectPartialCount: projectSync.partialCount,
         billingPeriodLabel: range.label,
         projectSpendLoaded: projectAttribution.isComplete,
         unattributedProjectSpendUsd: projectAttribution.unattributedSpendUsd,
@@ -1360,6 +1371,7 @@ router.get("/summary", async (req, res): Promise<void> => {
         let totalBudgetUsd = 0;
         let budgetedGroups = 0;
         let pending = 0;
+        let projectPending = 0;
         let summaryExtraComplete = true; // tracks extra-workspace load state for isComplete
         let over50 = 0;
         let over75 = 0;
@@ -1441,6 +1453,7 @@ router.get("/summary", async (req, res): Promise<void> => {
               }
             }
             pending = canonical.authoritativePendingCount;
+            projectPending = canonical.projectAttribution?.pendingCount ?? 0;
             summaryExtraComplete = canonical.authoritativeSpendComplete;
 
             // Compute over-threshold counts using the same top-level pool logic as tableTotals.
@@ -1547,6 +1560,7 @@ router.get("/summary", async (req, res): Promise<void> => {
           isAccount,
           false,
         );
+        const projectSync = getProjectUsageSyncSummary(range.key, scoped);
         res.json(
           GetSummaryResponse.parse({
             totalGroups,
@@ -1583,6 +1597,14 @@ router.get("/summary", async (req, res): Promise<void> => {
             pendingCount: sync.pendingCount,
             failedCount: sync.failedCount,
             partialCount: sync.partialCount,
+            projectSyncStatus: projectSync.status,
+            projectSyncError: projectSync.error,
+            projectPendingCount: Math.max(
+              projectSync.pendingCount,
+              projectPending,
+            ),
+            projectFailedCount: projectSync.failedCount,
+            projectPartialCount: projectSync.partialCount,
           }),
         );
       })(),
@@ -2428,6 +2450,7 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
       reportingRangeEnd: reportingRange.params.endTime,
       reportingRangeLabel: reportingRange.label,
       accountTotalVerification: getAccountTotalVerificationState(),
+      usageSync: getUsageOperationalDiagnostics(),
     }),
   );
 });

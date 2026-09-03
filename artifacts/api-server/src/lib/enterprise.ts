@@ -203,12 +203,27 @@ type QueueTask = {
   run: () => Promise<void>;
   priority: number; // 0 = high (interactive), 1 = low (background)
   key: string;
+  runId: string;
+  enqueuedAt: number;
 };
 
 const usageQueue: QueueTask[] = [];
 const queuedKeys = new Set<string>();
 let queueRunning = false;
 let pauseUntil = 0;
+let activeQueueTask: (QueueTask & { startedAt: number }) | null = null;
+let lastQueueProgressAt: number | null = null;
+let queueRunSequence = 0;
+
+function nextQueueRunId(): string {
+  queueRunSequence += 1;
+  return `usage-${Date.now().toString(36)}-${queueRunSequence.toString(36)}`;
+}
+
+function markQueueProgress(event: string, fields: Record<string, unknown>): void {
+  lastQueueProgressAt = Date.now();
+  logger.info({ event, ...fields }, "Enterprise usage sync progress");
+}
 
 function pumpQueue(): void {
   if (queueRunning) return;
@@ -217,17 +232,53 @@ function pumpQueue(): void {
     while (usageQueue.length > 0) {
       const now = Date.now();
       if (pauseUntil > now) {
+        markQueueProgress("usage_queue_rate_limit_pause", {
+          pauseUntil: new Date(pauseUntil).toISOString(),
+          pauseMs: pauseUntil - now,
+          queueDepth: usageQueue.length,
+        });
         await new Promise((r) => setTimeout(r, pauseUntil - now));
       }
       usageQueue.sort((a, b) => a.priority - b.priority);
       const task = usageQueue.shift();
       if (!task) break;
+      const startedAt = Date.now();
+      activeQueueTask = { ...task, startedAt };
+      markQueueProgress("usage_queue_start", {
+        runId: task.runId,
+        key: task.key,
+        priority: task.priority,
+        queueDepth: usageQueue.length,
+        waitMs: startedAt - task.enqueuedAt,
+      });
       try {
         await task.run();
+        markQueueProgress("usage_queue_finish", {
+          runId: task.runId,
+          key: task.key,
+          queueDepth: usageQueue.length,
+          durationMs: Date.now() - startedAt,
+          outcome: "success",
+        });
+      } catch (err) {
+        // A task wrapper should normally record its own durable failure. This
+        // boundary prevents one unexpected rejection from killing the queue
+        // pump and leaving every later scope permanently pending.
+        logger.error({
+          event: "usage_queue_finish",
+          err,
+          runId: task.runId,
+          key: task.key,
+          queueDepth: usageQueue.length,
+          durationMs: Date.now() - startedAt,
+          outcome: "failed",
+        }, "Enterprise usage queue task failed");
       } finally {
         // Keep the key registered while the task is active so polling cannot
         // enqueue the same Enterprise API request again.
         queuedKeys.delete(task.key);
+        activeQueueTask = null;
+        lastQueueProgressAt = Date.now();
       }
       // Gentle pacing: keeps well under 100/min with headroom.
       await new Promise((r) => setTimeout(r, 700));
@@ -242,17 +293,108 @@ function enqueueUsage(key: string, priority: number, run: () => Promise<void>): 
     // queued the same cold scope in the background. Promote the queued copy
     // instead of leaving the user behind hundreds of unrelated group fetches.
     const queued = usageQueue.find((task) => task.key === key);
-    if (queued) queued.priority = Math.min(queued.priority, priority);
+    if (queued) {
+      const previousPriority = queued.priority;
+      queued.priority = Math.min(queued.priority, priority);
+      markQueueProgress("usage_queue_duplicate", {
+        runId: queued.runId,
+        key,
+        queueDepth: usageQueue.length,
+        promoted: queued.priority < previousPriority,
+        priority: queued.priority,
+        ageMs: Date.now() - queued.enqueuedAt,
+      });
+    }
     return false;
   }
+  const enqueuedAt = Date.now();
+  const runId = nextQueueRunId();
   queuedKeys.add(key);
-  usageQueue.push({ key, priority, run });
+  usageQueue.push({ key, priority, run, runId, enqueuedAt });
+  markQueueProgress("usage_queue_enqueue", {
+    runId,
+    key,
+    priority,
+    queueDepth: usageQueue.length,
+  });
   pumpQueue();
   return true;
 }
 
 export function pendingUsageCount(): number {
-  return usageQueue.length + (queueRunning ? 1 : 0);
+  return usageQueue.length + (activeQueueTask ? 1 : 0);
+}
+
+export interface UsageOperationalDiagnostics {
+  queueDepth: number;
+  queuedCount: number;
+  active: {
+    runId: string;
+    key: string;
+    priority: number;
+    enqueuedAt: string;
+    startedAt: string;
+    ageMs: number;
+    waitMs: number;
+  } | null;
+  oldestQueuedAgeMs: number | null;
+  lastProgressAt: string | null;
+  pauseUntil: string | null;
+  scopes: Array<{
+    mode: UsageSyncMode;
+    rangeKey: string;
+    scopeKey: string;
+    status: UsageSyncStatus;
+    syncedThrough: string;
+    completedAt: string;
+    error: string | null;
+  }>;
+}
+
+export function getUsageOperationalDiagnostics(): UsageOperationalDiagnostics {
+  const now = Date.now();
+  const active = activeQueueTask
+    ? {
+        runId: activeQueueTask.runId,
+        key: activeQueueTask.key,
+        priority: activeQueueTask.priority,
+        enqueuedAt: new Date(activeQueueTask.enqueuedAt).toISOString(),
+        startedAt: new Date(activeQueueTask.startedAt).toISOString(),
+        ageMs: now - activeQueueTask.startedAt,
+        waitMs: activeQueueTask.startedAt - activeQueueTask.enqueuedAt,
+      }
+    : null;
+  const oldestQueuedAt = usageQueue.reduce<number | null>(
+    (oldest, task) => oldest === null ? task.enqueuedAt : Math.min(oldest, task.enqueuedAt),
+    null,
+  );
+  const scopes = [...syncMetadata.entries()]
+    .filter(([, metadata]) => metadata.status !== "success")
+    .sort((a, b) => b[1].completedAt - a[1].completedAt)
+    .slice(0, 200)
+    .map(([id, metadata]) => {
+      const [mode, rangeKey, scopeKey] = id.split("|") as [UsageSyncMode, string, string];
+      return {
+        mode,
+        rangeKey,
+        scopeKey,
+        status: metadata.status,
+        syncedThrough: new Date(metadata.syncedThrough).toISOString(),
+        completedAt: new Date(metadata.completedAt).toISOString(),
+        error: metadata.error?.slice(0, 500) ?? null,
+      };
+    });
+  return {
+    queueDepth: usageQueue.length + (active ? 1 : 0),
+    queuedCount: usageQueue.length,
+    active,
+    oldestQueuedAgeMs: oldestQueuedAt === null ? null : now - oldestQueuedAt,
+    lastProgressAt: lastQueueProgressAt === null
+      ? null
+      : new Date(lastQueueProgressAt).toISOString(),
+    pauseUntil: pauseUntil > now ? new Date(pauseUntil).toISOString() : null,
+    scopes,
+  };
 }
 
 interface UsageMetricEntry {
@@ -479,7 +621,12 @@ async function usageFetch(
       const e = err as EnterpriseApiError & { retryAfterMs?: number };
       if (e.status === 429 && attempts <= 5) {
         pauseUntil = Date.now() + (e.retryAfterMs ?? 5000);
-        logger.warn({ attempts }, "Usage 429; backing off");
+        logger.warn({
+          event: "usage_rate_limit_pause",
+          attempts,
+          pauseUntil: new Date(pauseUntil).toISOString(),
+          pauseMs: e.retryAfterMs ?? 5000,
+        }, "Usage 429; backing off");
         await new Promise((r) => setTimeout(r, e.retryAfterMs ?? 5000));
         continue;
       }
@@ -643,9 +790,10 @@ function planSyncChunks(
     return { replacementStart: end, chunks: [], isClosed: previous.isClosed };
   }
 
-  // Once grace expires, immediately perform the final complete sync and mark
-  // the range closed even if its last mutable sync is still inside the TTL.
-  if (isClosed) {
+  // A cold closed range still needs one complete snapshot. An already durable
+  // range only re-fetches its bounded reconciliation tail before it is closed;
+  // never replay the full reporting term merely because the grace window ended.
+  if (isClosed && !previous) {
     return { replacementStart: start, chunks: [{ start, end }], isClosed: true };
   }
 
@@ -679,7 +827,7 @@ function planSyncChunks(
     chunks.push({ start: new Date(cursor), end: new Date(next) });
     cursor = next;
   }
-  return { replacementStart: new Date(recentStartMs), chunks, isClosed: false };
+  return { replacementStart: new Date(recentStartMs), chunks, isClosed };
 }
 
 interface FetchedUsageChunk {
@@ -709,6 +857,7 @@ async function fetchUsageChunk(
   start: Date,
   end: Date,
   cursorlessShardDepth = 0,
+  telemetry: { runId: string; rangeKey: string; scopeKey: string } | null = null,
 ): Promise<FetchedUsageChunk> {
   const groups: UsageGroupEntry[] = [];
   let first: UsageData | undefined;
@@ -721,6 +870,14 @@ async function fetchUsageChunk(
         : undefined;
 
   for (let page = 0; page < MAX_USAGE_PAGES; page++) {
+    markQueueProgress("usage_sync_page_start", {
+      ...telemetry,
+      mode,
+      page: page + 1,
+      shardDepth: cursorlessShardDepth,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    });
     const data = await usageFetch({
       ...baseParams,
       groupBy,
@@ -731,6 +888,16 @@ async function fetchUsageChunk(
     });
     first ??= data;
     groups.push(...(data.groups ?? []));
+    markQueueProgress("usage_sync_page_finish", {
+      ...telemetry,
+      mode,
+      page: page + 1,
+      shardDepth: cursorlessShardDepth,
+      rowCount: data.groups?.length ?? 0,
+      accumulatedRowCount: groups.length,
+      hasMore: data.pagination?.hasMore ?? false,
+      hasCursor: !!data.pagination?.cursor,
+    });
     if (!groupBy || !data.pagination?.hasMore) {
       return {
         payload: {
@@ -756,6 +923,7 @@ async function fetchUsageChunk(
           start,
           midpoint,
           cursorlessShardDepth + 1,
+          telemetry,
         );
         await new Promise((resolve) => setTimeout(resolve, 700));
         const right = await fetchUsageChunk(
@@ -764,6 +932,7 @@ async function fetchUsageChunk(
           midpoint,
           end,
           cursorlessShardDepth + 1,
+          telemetry,
         );
         return {
           payload: combineUsagePayloads([left.payload, right.payload]),
@@ -771,6 +940,16 @@ async function fetchUsageChunk(
           error: left.error ?? right.error,
         };
       }
+      logger.warn({
+        event: "usage_sync_malformed_pagination",
+        ...telemetry,
+        mode,
+        page: page + 1,
+        shardDepth: cursorlessShardDepth,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        accumulatedRowCount: groups.length,
+      }, "Usage pagination reported more pages without a cursor");
       return {
         payload: {
           totalCostUsd: first.totalCostUsd,
@@ -798,6 +977,7 @@ async function synchronizeUsage(
   await maybePruneExpiredCustomUsage();
   const id = syncId(mode, range.key, scopeKey);
   const priorMetadata = syncMetadata.get(id);
+  const runId = nextQueueRunId();
   const { start: attemptedStart } = rangeBounds(range);
   const startedAt = new Date();
   // Running state is process-local until the advisory-lock transaction commits.
@@ -839,6 +1019,21 @@ async function synchronizeUsage(
       ? { ...storedPrevious, completedAt: 0 }
       : storedPrevious;
     const plan = planSyncChunks(range, previous);
+    logger.info({
+      event: "usage_sync_plan",
+      runId,
+      mode,
+      rangeKey: range.key,
+      scopeKey,
+      force,
+      chunkCount: plan.chunks.length,
+      replacementStart: plan.replacementStart.toISOString(),
+      priorWatermark: storedPrevious
+        ? new Date(storedPrevious.syncedThrough).toISOString()
+        : null,
+      targetWatermark: rangeBounds(range).end.toISOString(),
+      isClosed: plan.isClosed,
+    }, "Planned incremental usage synchronization");
     if (plan.chunks.length === 0) {
       const rows = await tx
         .select()
@@ -860,12 +1055,41 @@ async function synchronizeUsage(
       partial: boolean;
       error: string | null;
     }> = [];
-    for (const chunk of plan.chunks) {
+    for (const [chunkIndex, chunk] of plan.chunks.entries()) {
       if (fetched.length > 0) {
         await new Promise((r) => setTimeout(r, 700));
       }
-      const result = await fetchUsageChunk(mode, baseParams, chunk.start, chunk.end);
+      logger.info({
+        event: "usage_sync_chunk_start",
+        runId,
+        mode,
+        rangeKey: range.key,
+        scopeKey,
+        chunkIndex: chunkIndex + 1,
+        chunkCount: plan.chunks.length,
+        start: chunk.start.toISOString(),
+        end: chunk.end.toISOString(),
+      }, "Fetching incremental usage chunk");
+      const result = await fetchUsageChunk(
+        mode,
+        baseParams,
+        chunk.start,
+        chunk.end,
+        0,
+        { runId, rangeKey: range.key, scopeKey },
+      );
       fetched.push({ ...chunk, ...result });
+      logger.info({
+        event: "usage_sync_chunk_finish",
+        runId,
+        mode,
+        rangeKey: range.key,
+        scopeKey,
+        chunkIndex: chunkIndex + 1,
+        chunkCount: plan.chunks.length,
+        partial: result.partial,
+        error: result.error,
+      }, "Fetched incremental usage chunk");
       // A cursorless workspace-member response cannot be made complete by
       // fetching later chunks. Stop after the bounded recovery for the first
       // affected interval instead of multiplying that bound across the range.
@@ -876,7 +1100,7 @@ async function synchronizeUsage(
     const { start: rangeStart, end: syncedThrough } = rangeBounds(range);
     const partialError = fetched.find((chunk) => chunk.partial)?.error ?? null;
     const status: UsageSyncStatus = partialError ? "partial" : "success";
-    if (mode === "workspace_member" && partialError && storedState) {
+    if (partialError && storedState) {
       const retainedRows = await tx
         .select()
         .from(usageSyncChunksTable)
@@ -971,6 +1195,21 @@ async function synchronizeUsage(
     };
   });
   syncMetadata.set(id, result.metadata);
+  logger.info({
+    event: "usage_sync_commit",
+    runId,
+    mode,
+    rangeKey: range.key,
+    scopeKey,
+    status: result.metadata.status,
+    priorWatermark: priorMetadata
+      ? new Date(priorMetadata.syncedThrough).toISOString()
+      : null,
+    newWatermark: new Date(result.metadata.syncedThrough).toISOString(),
+    rowCount: result.rows.length,
+    retainedSnapshot: result.metadata.status === "partial" && !!priorMetadata,
+    durationMs: Date.now() - startedAt.getTime(),
+  }, "Committed incremental usage synchronization");
   return result.rows;
   } catch (err) {
     const completedAt = new Date();
@@ -1028,6 +1267,21 @@ async function synchronizeUsage(
       };
     });
     syncMetadata.set(id, failureMetadata);
+    logger.error({
+      event: "usage_sync_rollback",
+      err,
+      runId,
+      mode,
+      rangeKey: range.key,
+      scopeKey,
+      status: failureMetadata.status,
+      retainedSnapshot: priorMetadata?.status === "success" ||
+        priorMetadata?.status === "partial",
+      priorWatermark: priorMetadata
+        ? new Date(priorMetadata.syncedThrough).toISOString()
+        : null,
+      durationMs: Date.now() - startedAt.getTime(),
+    }, "Incremental usage synchronization failed; prior snapshot retained");
     throw err;
   }
 }
@@ -1209,6 +1463,43 @@ export function getUsageSyncSummary(
     // pre-ledger caches. Normal runtime hydration always supplies metadata.
     if ((!metadata && !loaded) || metadata?.status === "syncing") pendingCount++;
     else if (metadata?.status === "failed") {
+      failedCount++;
+      error ??= formatUsageScopeError(id, metadata.error);
+    } else if (metadata?.status === "partial") {
+      partialCount++;
+      error ??= formatUsageScopeError(id, metadata.error);
+    }
+  }
+  return {
+    status: failedCount > 0
+      ? "failed"
+      : partialCount > 0
+        ? "partial"
+        : pendingCount > 0
+          ? "syncing"
+          : "complete",
+    pendingCount,
+    failedCount,
+    partialCount,
+    error,
+  };
+}
+
+export function getProjectUsageSyncSummary(
+  rangeKey: string,
+  groups: readonly EnterpriseGroup[],
+): UsageSyncSummary {
+  let pendingCount = 0;
+  let failedCount = 0;
+  let partialCount = 0;
+  let error: string | null = null;
+  for (const group of groups) {
+    const id = syncId("group_project", rangeKey, group.id);
+    const metadata = syncMetadata.get(id);
+    const loaded = projectUsageCache.has(`${rangeKey}|${group.id}`);
+    if ((!metadata && !loaded) || metadata?.status === "syncing") {
+      pendingCount++;
+    } else if (metadata?.status === "failed") {
       failedCount++;
       error ??= formatUsageScopeError(id, metadata.error);
     } else if (metadata?.status === "partial") {
@@ -2128,6 +2419,7 @@ export function queueGroupSpendFetch(
       logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch group usage");
       // Drop pending callbacks so they don't fire with a later, unrelated fetch.
       spendCallbacks.delete(cacheKey);
+      throw err;
     }
   });
   return queued ? "queued" : "duplicate_queued";
@@ -2200,7 +2492,7 @@ export function queueAccountUsageFetch(
   )) {
     return false;
   }
-  const queued = enqueueUsage(`account-usage:${range.key}`, cached ? priority : 0, async () => {
+  const queued = enqueueUsage(`account-usage:${range.key}`, priority, async () => {
     try {
       const rows = await synchronizeUsage(
         "account_total",
@@ -2225,6 +2517,7 @@ export function queueAccountUsageFetch(
     } catch (err) {
       logger.error({ err, range: range.key }, "Failed to fetch account usage");
       scheduleAccountUsageRetry(range, priority);
+      throw err;
     }
   });
   if (queued) markUsageSyncQueued("account_total", range.key, ACCOUNT_USAGE_SCOPE);
@@ -2452,6 +2745,13 @@ async function rebuildUsageRangeAtomically(
   scopes: FullRebuildScope[],
 ): Promise<FullRebuildResult[]> {
   await maybePruneExpiredCustomUsage();
+  const runId = nextQueueRunId();
+  logger.info({
+    event: "usage_rebuild_start",
+    runId,
+    rangeKey: range.key,
+    scopeCount: scopes.length,
+  }, "Starting atomic usage range rebuild");
   return db.transaction(async (tx) => {
     const existingStates = await tx
       .select({
@@ -2485,6 +2785,14 @@ async function rebuildUsageRangeAtomically(
     }> = [];
     for (const scope of scopes) {
       const plan = planSyncChunks(range, undefined);
+      logger.info({
+        event: "usage_rebuild_scope_plan",
+        runId,
+        rangeKey: range.key,
+        mode: scope.mode,
+        scopeKey: scope.scopeKey,
+        chunkCount: plan.chunks.length,
+      }, "Planned atomic rebuild scope");
       const chunks: Array<{
         start: Date;
         end: Date;
@@ -2501,6 +2809,8 @@ async function rebuildUsageRangeAtomically(
           scope.params,
           chunk.start,
           chunk.end,
+          0,
+          { runId, rangeKey: range.key, scopeKey: scope.scopeKey },
         );
         chunks.push({ ...chunk, ...fetched });
       }
@@ -2546,7 +2856,7 @@ async function rebuildUsageRangeAtomically(
       })));
     }
 
-    return staged.map(({ scope, chunks, isClosed }) => ({
+    const rebuilt = staged.map(({ scope, chunks, isClosed }) => ({
       scope,
       rows: chunks.map((chunk) => ({
         mode: scope.mode,
@@ -2565,6 +2875,14 @@ async function rebuildUsageRangeAtomically(
         error: chunks.find((chunk) => chunk.partial)?.error ?? null,
       },
     }));
+    logger.info({
+      event: "usage_rebuild_commit",
+      runId,
+      rangeKey: range.key,
+      scopeCount: rebuilt.length,
+      chunkCount: chunkValues.length,
+    }, "Committed atomic usage range rebuild");
+    return rebuilt;
   });
 }
 
@@ -2647,6 +2965,7 @@ export function queueFullRangeRebuild(
       logger.info({ range: range.key }, "Full usage range rebuild completed");
     } catch (err) {
       logger.error({ err, range: range.key }, "Full usage range rebuild failed");
+      throw err;
     }
   });
 }
@@ -2686,7 +3005,7 @@ export function queueMemberUsageFetch(
   }
   const queued = enqueueUsage(
     `member-usage:${cacheKey}`,
-    cached ? priority : Math.min(priority, 0),
+    priority,
     async () => {
       try {
         const rows = await synchronizeUsage("group_member", range, group.id, {
@@ -2696,6 +3015,7 @@ export function queueMemberUsageFetch(
         memberUsageCache.set(cacheKey, aggregateMemberUsage(rows));
       } catch (err) {
         logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch member usage");
+        throw err;
       }
     },
   );
@@ -2765,7 +3085,7 @@ export function queueWsSpendFetch(
   if (cached && isDurablyFresh("workspace_member", range.key, wsId, cachedAt, force)) return false;
   if (wsSpendFetching.has(cacheKey)) return false;
   wsSpendFetching.add(cacheKey);
-  const queued = enqueueUsage(`ws-spend:${cacheKey}`, cached ? priority : 0, async () => {
+  const queued = enqueueUsage(`ws-spend:${cacheKey}`, priority, async () => {
     try {
       const rows = await synchronizeUsage("workspace_member", range, wsId, {
         workspaceId: wsId,
@@ -2777,6 +3097,7 @@ export function queueWsSpendFetch(
       );
     } catch (err) {
       logger.error({ err, wsId, range: range.key }, "Failed to fetch workspace member spend");
+      throw err;
     } finally {
       wsSpendFetching.delete(cacheKey);
     }
@@ -3033,7 +3354,7 @@ export function queueProjectUsageFetch(
   }
   const queued = enqueueUsage(
     `project-usage:${cacheKey}`,
-    cached ? priority : Math.min(priority, 0),
+    priority,
     async () => {
       try {
         const rows = await synchronizeUsage("group_project", range, group.id, {
@@ -3043,6 +3364,7 @@ export function queueProjectUsageFetch(
         projectUsageCache.set(cacheKey, aggregateProjectUsage(rows));
       } catch (err) {
         logger.error({ err, groupId: group.id, range: range.key }, "Failed to fetch project usage");
+        throw err;
       }
     },
   );
@@ -3149,7 +3471,7 @@ export function queueProjectTitlesFetch(
     return false;
   }
   projectTitlesFetching.add(workspaceId);
-  return enqueueUsage(`project-titles:${workspaceId}`, hasStoredSnapshot ? priority : 0, async () => {
+  return enqueueUsage(`project-titles:${workspaceId}`, priority, async () => {
     const startedAt = new Date();
     try {
       if (!hasStoredSnapshot) {
@@ -3213,6 +3535,7 @@ export function queueProjectTitlesFetch(
         }).catch((dbErr: unknown) => logger.warn({ err: dbErr, workspaceId }, "Failed to persist project metadata failure"));
       }
       logger.warn({ err, workspaceId }, "Failed to fetch project titles");
+      throw err;
     } finally {
       projectTitlesFetching.delete(workspaceId);
     }

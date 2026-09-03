@@ -409,6 +409,32 @@ test("stable full-term range reuses same-day data and advances only the trailing
   assert.equal(rolloverPlan.chunks.at(-1)?.end, nextDay.params.endTime);
   assert.ok(rolloverPlan.chunks.length <= 8, "rollover must not replay full-term history");
   assert.equal(rolloverPlan.isClosed, false);
+
+  const closedRange = {
+    key: `custom:closed-tail-${crypto.randomUUID()}`,
+    label: "Closed tail",
+    params: {
+      startTime: "2026-05-20T00:00:00.000Z",
+      endTime: "2026-08-01T00:00:00.000Z",
+    },
+  };
+  const closedPlan = enterprise.__planSyncChunksForTests(closedRange, {
+    syncedThrough: Date.parse(closedRange.params.endTime),
+    completedAt: 0,
+    isClosed: false,
+    status: "success",
+    error: null,
+  }, Date.parse("2026-08-03T00:00:01.000Z"));
+  assert.equal(closedPlan.isClosed, true);
+  assert.notEqual(
+    closedPlan.replacementStart,
+    closedRange.params.startTime,
+    "closing a durable range must preserve immutable history",
+  );
+  assert.ok(
+    closedPlan.chunks.length <= 8,
+    "final closure must synchronize only the reconciliation tail",
+  );
 });
 
 test("startup adopts the newest successful legacy cutoff snapshot without an API replay", async () => {
@@ -507,6 +533,51 @@ test("failed usage scopes become terminal and do not remain pending", async () =
     enterprise.isUsageSyncRetryable("group_project", failedRange.key, group.id),
     true,
   );
+  const diagnostics = enterprise.getUsageOperationalDiagnostics();
+  assert.ok(
+    diagnostics.scopes.some((scope) =>
+      scope.mode === "group_project" &&
+      scope.rangeKey === failedRange.key &&
+      scope.scopeKey === group.id &&
+      scope.status === "failed"
+    ),
+    "account diagnostics must identify the exact failed scope",
+  );
+
+  enterprise.__resetDurableUsageCachesForTests();
+  await enterprise.initCache({ revalidateOnStartup: false });
+  assert.equal(
+    enterprise.isUsageSyncRetryable("group_project", failedRange.key, group.id),
+    true,
+    "failed scopes must remain retryable after restart hydration",
+  );
+});
+
+test("queue diagnostics expose active work, backlog age, and recent progress", async () => {
+  const diagnosticRange = {
+    key: `custom:queue-diagnostics-${crypto.randomUUID()}`,
+    label: "Queue diagnostics",
+    params: {
+      startTime: "2026-09-01T00:00:00.000Z",
+      endTime: "2026-09-01T02:00:00.000Z",
+    },
+  };
+  const secondGroup = {
+    ...group,
+    id: `diagnostic-group-${crypto.randomUUID()}`,
+  };
+  assert.equal(enterprise.queueMemberUsageFetch(group, diagnosticRange, 1), true);
+  assert.equal(enterprise.queueProjectUsageFetch(secondGroup, diagnosticRange, 1), true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const active = enterprise.getUsageOperationalDiagnostics();
+  assert.ok(active.queueDepth >= 1);
+  assert.ok(active.active || active.queuedCount > 0);
+  assert.ok(active.lastProgressAt);
+  assert.ok(active.oldestQueuedAgeMs === null || active.oldestQueuedAgeMs >= 0);
+  await waitForQueue();
+  const complete = enterprise.getUsageOperationalDiagnostics();
+  assert.equal(complete.queueDepth, 0);
+  assert.equal(complete.active, null);
 });
 
 test("project metadata persists and hydrates without an API refetch", async () => {

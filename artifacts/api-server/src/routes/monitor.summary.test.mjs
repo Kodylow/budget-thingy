@@ -596,6 +596,8 @@ test("/groups and /summary finish while project detail continues in the backgrou
   assert.equal(groupsJson.syncStatus, "complete");
   assert.equal(groupsJson.pendingCount, 0);
   assert.equal(groupsJson.projectSpendLoaded, false);
+  assert.equal(groupsJson.projectSyncStatus, "syncing");
+  assert.ok(groupsJson.projectPendingCount > 0);
   assert.equal(groupsJson.groups.find((group) => group.groupId === "sg-alpha")?.spendLoaded, true);
   assert.equal(groupsJson.groups.find((group) => group.groupId === "sg-beta")?.spendLoaded, true);
 
@@ -603,6 +605,8 @@ test("/groups and /summary finish while project detail continues in the backgrou
   assert.equal(summaryJson.isComplete, true);
   assert.equal(summaryJson.syncStatus, "complete");
   assert.equal(summaryJson.pendingCount, 0);
+  assert.equal(summaryJson.projectSyncStatus, "syncing");
+  assert.ok(summaryJson.projectPendingCount > 0);
 
   setProjectSpend(40, 10);
 });

@@ -195,6 +195,16 @@ export const GroupsResponseSyncStatus = {
   failed: 'failed',
 } as const;
 
+export type GroupsResponseProjectSyncStatus = typeof GroupsResponseProjectSyncStatus[keyof typeof GroupsResponseProjectSyncStatus];
+
+
+export const GroupsResponseProjectSyncStatus = {
+  complete: 'complete',
+  syncing: 'syncing',
+  partial: 'partial',
+  failed: 'failed',
+} as const;
+
 /**
  * Per-team member-deduped rollup spend, with each member counted once across groups
  */
@@ -219,8 +229,15 @@ export interface GroupsResponse {
   syncError?: string | null;
   failedCount: number;
   partialCount: number;
-  /** Number of outstanding workspace, member, project-usage, or project-metadata inputs */
+  /** Number of outstanding headline workspace/member inputs */
   pendingCount: number;
+  projectSyncStatus: GroupsResponseProjectSyncStatus;
+  /** @nullable */
+  projectSyncError?: string | null;
+  /** Number of outstanding project-usage or project-metadata inputs */
+  projectPendingCount: number;
+  projectFailedCount: number;
+  projectPartialCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
   /** True when project usage for every visible custom group is loaded */
@@ -425,6 +442,16 @@ export const SummarySyncStatus = {
   failed: 'failed',
 } as const;
 
+export type SummaryProjectSyncStatus = typeof SummaryProjectSyncStatus[keyof typeof SummaryProjectSyncStatus];
+
+
+export const SummaryProjectSyncStatus = {
+  complete: 'complete',
+  syncing: 'syncing',
+  partial: 'partial',
+  failed: 'failed',
+} as const;
+
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
@@ -482,6 +509,12 @@ export interface Summary {
   pendingCount: number;
   failedCount: number;
   partialCount: number;
+  projectSyncStatus: SummaryProjectSyncStatus;
+  /** @nullable */
+  projectSyncError?: string | null;
+  projectPendingCount: number;
+  projectFailedCount: number;
+  projectPartialCount: number;
 }
 
 export type UsageRangeRebuildInputRangeType = typeof UsageRangeRebuildInputRangeType[keyof typeof UsageRangeRebuildInputRangeType];
@@ -938,6 +971,62 @@ export interface AccountTotalVerification {
   deltaUsd: number | null;
 }
 
+export interface UsageQueueActiveTask {
+  runId: string;
+  key: string;
+  priority: number;
+  enqueuedAt: string;
+  startedAt: string;
+  ageMs: number;
+  waitMs: number;
+}
+
+export type UsageScopeDiagnosticMode = typeof UsageScopeDiagnosticMode[keyof typeof UsageScopeDiagnosticMode];
+
+
+export const UsageScopeDiagnosticMode = {
+  account_total: 'account_total',
+  group_total: 'group_total',
+  group_member: 'group_member',
+  workspace_member: 'workspace_member',
+  group_project: 'group_project',
+} as const;
+
+export type UsageScopeDiagnosticStatus = typeof UsageScopeDiagnosticStatus[keyof typeof UsageScopeDiagnosticStatus];
+
+
+export const UsageScopeDiagnosticStatus = {
+  syncing: 'syncing',
+  success: 'success',
+  partial: 'partial',
+  failed: 'failed',
+} as const;
+
+export interface UsageScopeDiagnostic {
+  mode: UsageScopeDiagnosticMode;
+  rangeKey: string;
+  scopeKey: string;
+  status: UsageScopeDiagnosticStatus;
+  syncedThrough: string;
+  completedAt: string;
+  /** @nullable */
+  error: string | null;
+}
+
+export interface UsageOperationalDiagnostics {
+  queueDepth: number;
+  queuedCount: number;
+  active: UsageQueueActiveTask | null;
+  /** @nullable */
+  oldestQueuedAgeMs: number | null;
+  /** @nullable */
+  lastProgressAt: string | null;
+  /** @nullable */
+  pauseUntil: string | null;
+  /** @maxItems 200 */
+  scopes: UsageScopeDiagnostic[];
+}
+
 export interface SystemStatus {
   /** Whether REPLIT_ENTERPRISE_API_KEY is set */
   enterpriseApiConfigured: boolean;
@@ -971,6 +1060,7 @@ export interface SystemStatus {
   /** Label that describes the effective reporting bounds */
   reportingRangeLabel: string;
   accountTotalVerification: AccountTotalVerification | null;
+  usageSync: UsageOperationalDiagnostics;
 }
 
 /**

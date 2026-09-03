@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AccountTotalVerification } from './accountTotalVerification';
+import type { UsageOperationalDiagnostics } from './usageOperationalDiagnostics';
 
 export interface SystemStatus {
   /** Whether REPLIT_ENTERPRISE_API_KEY is set */
@@ -40,4 +41,5 @@ export interface SystemStatus {
   /** Label that describes the effective reporting bounds */
   reportingRangeLabel: string;
   accountTotalVerification: AccountTotalVerification | null;
+  usageSync: UsageOperationalDiagnostics;
 }

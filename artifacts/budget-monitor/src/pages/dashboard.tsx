@@ -114,6 +114,7 @@ export default function Dashboard() {
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [retryingSync, setRetryingSync] = useState(false);
+  const [retrySyncError, setRetrySyncError] = useState<string | null>(null);
   const [retryPollingStartedAt, setRetryPollingStartedAt] = useState<number | null>(null);
 
   const queryParams = useMemo(
@@ -124,9 +125,17 @@ export default function Dashboard() {
     [rangeType, startDate, endDate],
   );
 
-  const { data: groupsData, isLoading: groupsLoading } = useListGroups(queryParams, {
+  const {
+    data: groupsData,
+    isLoading: groupsLoading,
+    isError: groupsRequestFailed,
+    error: groupsRequestError,
+    refetch: refetchGroups,
+    isFetching: groupsFetching,
+  } = useListGroups(queryParams, {
     query: {
       queryKey: getListGroupsQueryKey(queryParams),
+      placeholderData: (previousData) => previousData,
       refetchInterval: (query) => {
         const data = query.state.data;
         const paceComplete = rangeType !== 'billing' ||
@@ -138,9 +147,17 @@ export default function Dashboard() {
     },
   });
 
-  const { data: summary, isLoading: summaryLoading } = useGetSummary(queryParams, {
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    isError: summaryRequestFailed,
+    error: summaryRequestError,
+    refetch: refetchSummary,
+    isFetching: summaryFetching,
+  } = useGetSummary(queryParams, {
     query: {
       queryKey: getGetSummaryQueryKey(queryParams),
+      placeholderData: (previousData) => previousData,
       refetchInterval: (query) => {
         const status = query.state.data?.syncStatus;
         const retryPolling = retryPollingStartedAt !== null;
@@ -181,6 +198,8 @@ export default function Dashboard() {
   const isComplete = groupsData?.isComplete ?? false;
   const pendingCount = groupsData?.pendingCount ?? 0;
   const projectSpendLoaded = groupsData?.projectSpendLoaded ?? false;
+  const projectSyncStatus = groupsData?.projectSyncStatus ?? 'syncing';
+  const projectPendingCount = groupsData?.projectPendingCount ?? 0;
   const syncStatus = groupsData?.syncStatus ?? 'syncing';
   useEffect(() => {
     if (
@@ -192,6 +211,7 @@ export default function Dashboard() {
   }, [retryPollingStartedAt, syncStatus]);
   const retrySync = async () => {
     setRetryingSync(true);
+    setRetrySyncError(null);
     try {
       const params = new URLSearchParams();
       params.set('rangeType', rangeType);
@@ -209,10 +229,38 @@ export default function Dashboard() {
         queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey(queryParams) }),
         queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey(queryParams) }),
       ]);
+    } catch (error) {
+      setRetrySyncError(
+        error instanceof Error ? error.message : 'Could not retry usage synchronization.',
+      );
     } finally {
       setRetryingSync(false);
     }
   };
+
+  const retryRequests = async () => {
+    setRetrySyncError(null);
+    const [groupsResult, summaryResult] = await Promise.all([
+      refetchGroups(),
+      refetchSummary(),
+    ]);
+    const error = groupsResult.error ?? summaryResult.error;
+    if (error) {
+      setRetrySyncError(
+        error instanceof Error ? error.message : 'Dashboard data is still unavailable.',
+      );
+    }
+  };
+
+  const requestErrorMessage = groupsRequestFailed
+    ? (groupsRequestError instanceof Error
+        ? groupsRequestError.message
+        : 'Group data is unavailable.')
+    : summaryRequestFailed
+      ? (summaryRequestError instanceof Error
+          ? summaryRequestError.message
+          : 'Summary data is unavailable.')
+      : null;
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
@@ -867,19 +915,17 @@ export default function Dashboard() {
               className="flex items-center gap-2"
               data-testid="badge-loading-status"
               title={
-                projectSpendLoaded
-                  ? "Stored usage is available as each group finishes its one-time member-level history sync."
-                  : "Existing member totals remain visible while project-level spend is synchronized."
+                "Stored usage remains visible while headline workspace/member usage synchronizes."
               }
             >
               <RefreshCw className="h-3 w-3 animate-spin" />
               <span className="hidden sm:inline">
-                {projectSpendLoaded ? "Syncing history" : "Syncing project spend"} · {pendingCount} remaining
+                Syncing headline usage · {pendingCount} remaining
               </span>
               <span className="sm:hidden">Syncing...</span>
             </Badge>
           )}
-          {syncStatus === 'complete' && !projectSpendLoaded && (
+          {(projectSyncStatus === 'syncing' || (syncStatus === 'complete' && !projectSpendLoaded)) && (
             <Badge
               variant="outline"
               className="flex items-center gap-2"
@@ -887,8 +933,32 @@ export default function Dashboard() {
               title="Headline and workspace usage are ready. Project detail is updating in the background."
             >
               <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="hidden sm:inline">Updating project detail in background</span>
+              <span className="hidden sm:inline">
+                Updating project detail in background
+                {projectPendingCount > 0 ? ` · ${projectPendingCount} remaining` : ''}
+              </span>
               <span className="sm:hidden">Updating detail...</span>
+            </Badge>
+          )}
+          {(projectSyncStatus === 'failed' || projectSyncStatus === 'partial') && (
+            <Badge
+              variant="outline"
+              className="flex items-center gap-2 border-yellow-500/50 text-yellow-700 dark:text-yellow-300"
+              data-testid="badge-project-sync-error"
+              title={groupsData?.projectSyncError ?? 'Some project detail could not be synchronized.'}
+            >
+              <AlertTriangle className="h-3 w-3" />
+              <span className="hidden sm:inline">
+                Project detail {projectSyncStatus === 'failed' ? 'failed' : 'degraded'}
+              </span>
+              <button
+                type="button"
+                className="underline underline-offset-2 disabled:opacity-50"
+                disabled={retryingSync}
+                onClick={() => void retrySync()}
+              >
+                {retryingSync ? 'Retrying…' : 'Retry'}
+              </button>
             </Badge>
           )}
           {(syncStatus === 'failed' || syncStatus === 'partial') && (
@@ -916,6 +986,38 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+      {requestErrorMessage && (
+        <div
+          className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+          data-testid="dashboard-request-error"
+        >
+          <div>
+            <p className="font-medium text-destructive">Dashboard data could not be refreshed.</p>
+            <p className="text-muted-foreground">
+              {groupsData || summary
+                ? 'Showing the last available data. '
+                : ''}
+              {requestErrorMessage}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="self-start rounded-md border px-3 py-1.5 font-medium hover:bg-muted disabled:opacity-50 sm:self-auto"
+            disabled={groupsFetching || summaryFetching}
+            onClick={() => void retryRequests()}
+          >
+            {groupsFetching || summaryFetching ? 'Retrying…' : 'Retry requests'}
+          </button>
+        </div>
+      )}
+      {retrySyncError && (
+        <div
+          className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          data-testid="dashboard-retry-error"
+        >
+          {retrySyncError}
+        </div>
+      )}
       {summary && (
         <p className="text-xs text-muted-foreground">
           Pace period: {summary.pacePeriodLabel}

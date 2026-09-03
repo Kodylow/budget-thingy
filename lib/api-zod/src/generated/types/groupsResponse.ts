@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Group } from './group';
+import type { GroupsResponseProjectSyncStatus } from './groupsResponseProjectSyncStatus';
 import type { GroupsResponseSyncStatus } from './groupsResponseSyncStatus';
 import type { GroupsResponseTeamBudgets } from './groupsResponseTeamBudgets';
 import type { GroupsResponseTeamRawSpend } from './groupsResponseTeamRawSpend';
@@ -19,8 +20,15 @@ export interface GroupsResponse {
   syncError?: string | null;
   failedCount: number;
   partialCount: number;
-  /** Number of outstanding workspace, member, project-usage, or project-metadata inputs */
+  /** Number of outstanding headline workspace/member inputs */
   pendingCount: number;
+  projectSyncStatus: GroupsResponseProjectSyncStatus;
+  /** @nullable */
+  projectSyncError?: string | null;
+  /** Number of outstanding project-usage or project-metadata inputs */
+  projectPendingCount: number;
+  projectFailedCount: number;
+  projectPartialCount: number;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
   /** True when project usage for every visible custom group is loaded */

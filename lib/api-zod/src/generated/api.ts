@@ -160,7 +160,12 @@ export const ListGroupsResponse = zod.object({
   "syncError": zod.string().nullish(),
   "failedCount": zod.number(),
   "partialCount": zod.number(),
-  "pendingCount": zod.number().describe('Number of outstanding workspace, member, project-usage, or project-metadata inputs'),
+  "pendingCount": zod.number().describe('Number of outstanding headline workspace\/member inputs'),
+  "projectSyncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
+  "projectSyncError": zod.string().nullish(),
+  "projectPendingCount": zod.number().describe('Number of outstanding project-usage or project-metadata inputs'),
+  "projectFailedCount": zod.number(),
+  "projectPartialCount": zod.number(),
   "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"'),
   "projectSpendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded'),
   "unattributedProjectSpendUsd": zod.number().describe('True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members'),
@@ -407,7 +412,12 @@ export const GetSummaryResponse = zod.object({
   "syncError": zod.string().nullish(),
   "pendingCount": zod.number(),
   "failedCount": zod.number(),
-  "partialCount": zod.number()
+  "partialCount": zod.number(),
+  "projectSyncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
+  "projectSyncError": zod.string().nullish(),
+  "projectPendingCount": zod.number(),
+  "projectFailedCount": zod.number(),
+  "projectPartialCount": zod.number()
 })
 
 
@@ -1042,6 +1052,10 @@ export const SendTestAlertResponse = zod.object({
  * Enterprise API connectivity, email configuration, and background checker state.
  * @summary System status
  */
+export const getStatusResponseUsageSyncScopesMax = 200;
+
+
+
 export const GetStatusResponse = zod.object({
   "enterpriseApiConfigured": zod.boolean().describe('Whether REPLIT_ENTERPRISE_API_KEY is set'),
   "enterpriseApiOk": zod.boolean().describe('Whether the last Enterprise API call succeeded'),
@@ -1071,7 +1085,32 @@ export const GetStatusResponse = zod.object({
   "upstreamTotalUsd": zod.number().nullable(),
   "storedTotalUsd": zod.number().nullable(),
   "deltaUsd": zod.number().nullable()
-}),zod.null()])
+}),zod.null()]),
+  "usageSync": zod.object({
+  "queueDepth": zod.number(),
+  "queuedCount": zod.number(),
+  "active": zod.union([zod.object({
+  "runId": zod.string(),
+  "key": zod.string(),
+  "priority": zod.number(),
+  "enqueuedAt": zod.string(),
+  "startedAt": zod.string(),
+  "ageMs": zod.number(),
+  "waitMs": zod.number()
+}),zod.null()]),
+  "oldestQueuedAgeMs": zod.number().nullable(),
+  "lastProgressAt": zod.string().nullable(),
+  "pauseUntil": zod.string().nullable(),
+  "scopes": zod.array(zod.object({
+  "mode": zod.enum(['account_total', 'group_total', 'group_member', 'workspace_member', 'group_project']),
+  "rangeKey": zod.string(),
+  "scopeKey": zod.string(),
+  "status": zod.enum(['syncing', 'success', 'partial', 'failed']),
+  "syncedThrough": zod.string(),
+  "completedAt": zod.string(),
+  "error": zod.string().nullable()
+})).max(getStatusResponseUsageSyncScopesMax)
+})
 })
 
 

@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { SummaryProjectSyncStatus } from './summaryProjectSyncStatus';
 import type { SummarySyncStatus } from './summarySyncStatus';
 
 export interface Summary {
@@ -64,4 +65,10 @@ export interface Summary {
   pendingCount: number;
   failedCount: number;
   partialCount: number;
+  projectSyncStatus: SummaryProjectSyncStatus;
+  /** @nullable */
+  projectSyncError?: string | null;
+  projectPendingCount: number;
+  projectFailedCount: number;
+  projectPartialCount: number;
 }
