@@ -1,10 +1,6 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
 
 const CONNECTOR = "replit";
-const BUDGETS_API_BASE_URL = "https://api.replit.com";
-const BUDGETS_API_KEY_ENV = "REPLIT_ENTERPRISE_API_KEY_BUDGETS";
-const BUDGETS_WRITE_ENABLED_ENV =
-  "REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED";
 const MAX_PAGES = 200;
 
 export type BudgetConnectorStatus = "available" | "unavailable" | "error";
@@ -85,13 +81,12 @@ function containsScope(value: unknown, expected: string): boolean {
 
 async function connectorCanWrite(): Promise<boolean> {
   if (writeCapabilityOverride != null) return writeCapabilityOverride;
-  if (process.env[BUDGETS_API_KEY_ENV]) {
-    return process.env[BUDGETS_WRITE_ENABLED_ENV]?.trim().toLowerCase() === "true";
-  }
   try {
     const connections = await new ReplitConnectors().listConnections({
-      connector_names: CONNECTOR,
-      expand: ["connector", "integration"],
+      // The current connector API rejects the unsupported "integration"
+      // expansion. Request only connector metadata so capability discovery
+      // does not fail closed for every otherwise healthy connection.
+      expand: ["connector"],
       refresh_policy: "auto",
     });
     const active = connections.find(
@@ -116,29 +111,6 @@ async function connectorTransport(
   return new ReplitConnectors().proxy(CONNECTOR, path, init);
 }
 
-async function enterpriseBudgetTransport(
-  path: string,
-  init: ReplitBudgetRequest,
-): Promise<Response> {
-  const key = process.env[BUDGETS_API_KEY_ENV];
-  if (!key) {
-    throw new Error(`${BUDGETS_API_KEY_ENV} is not configured`);
-  }
-  return fetch(`${BUDGETS_API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      ...init.headers,
-      Authorization: `Bearer ${key}`,
-    },
-  });
-}
-
-function configuredTransport(): ReplitBudgetTransport {
-  return process.env[BUDGETS_API_KEY_ENV]
-    ? enterpriseBudgetTransport
-    : connectorTransport;
-}
-
 function errorKind(message: string): "unavailable" | "error" {
   return /(not.?connected|not configured|connector.*unavailable|identity|renewal|hostname)/i.test(
     message,
@@ -153,7 +125,7 @@ async function request(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await (transportOverride ?? configuredTransport())(path, init);
+    response = await (transportOverride ?? connectorTransport)(path, init);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Replit connector unavailable";

@@ -959,6 +959,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/members/budget:
+    put:
+      operationId: bulkSetWorkspaceMemberBudgets
+      tags: [directory, budgets]
+      summary: Set one Agent usage limit for multiple workspace members
+      description: >
+        Account-wide operators only. User IDs are deduplicated, every requested
+        user must be a current member of the visible workspace, and each
+        non-transactional Replit connector outcome is returned explicitly.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceMemberBulkBudgetInput"
+      responses:
+        "200":
+          description: Per-member desired-limit outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMemberBulkBudgetResult"
+        "400":
+          description: Invalid limit or member list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or any requested member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Replit connector lacks write:budgets or is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /directory/workspaces/{workspaceId}/members/{userId}/budget:
     put:
       operationId: setWorkspaceMemberBudget
@@ -2011,6 +2057,45 @@ components:
           type: string
         budgetUsd:
           type: [number, "null"]
+    WorkspaceMemberBulkBudgetInput:
+      type: object
+      additionalProperties: false
+      required: [userIds, amountUsd]
+      properties:
+        userIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+    WorkspaceMemberBulkBudgetOutcome:
+      type: object
+      required: [userId, success, budgetUsd, error]
+      properties:
+        userId:
+          type: string
+        success:
+          type: boolean
+        budgetUsd:
+          type: [number, "null"]
+        error:
+          type: [string, "null"]
+    WorkspaceMemberBulkBudgetResult:
+      type: object
+      required: [workspaceId, amountUsd, outcomes]
+      properties:
+        workspaceId:
+          type: string
+        amountUsd:
+          type: number
+        outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceMemberBulkBudgetOutcome"
     TeamBudget:
       type: object
       required: [teamName, amountUsd, workspaceIds]

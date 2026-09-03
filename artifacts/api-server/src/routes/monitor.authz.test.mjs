@@ -78,6 +78,8 @@ const workspaces = new Map([
 
 let server;
 let baseUrl;
+let budgetWriteFailures = new Set();
+let budgetWriteUserIds = [];
 
 test.before(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key"; // marks isConfigured()
@@ -98,6 +100,16 @@ test.before(async () => {
           : [],
         pagination: { hasMore: false, cursor: null },
       }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const body = init.body ? JSON.parse(init.body) : {};
+    if (init.method === "PUT") {
+      budgetWriteUserIds.push(body.userId);
+      if (budgetWriteFailures.has(body.userId)) {
+        return new Response(JSON.stringify({ error: `Rejected ${body.userId}` }), {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        });
+      }
     }
     return new Response(null, { status: 204 });
   });
@@ -565,6 +577,56 @@ test("workspace admins cannot mutate member budgets while account operators can 
   });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.json.budgetUsd, null);
+});
+
+test("bulk member limits deduplicate users and expose mixed upstream outcomes", async () => {
+  budgetWriteFailures = new Set(["plain"]);
+  budgetWriteUserIds = [];
+  try {
+    const result = await req("/directory/workspaces/ws-1/members/budget", {
+      user: "editor",
+      method: "PUT",
+      body: { userIds: ["ws1admin", "plain", "ws1admin"], amountUsd: 75 },
+    });
+    assert.equal(result.status, 200);
+    assert.deepEqual(budgetWriteUserIds, ["ws1admin", "plain"]);
+    assert.deepEqual(result.json.outcomes.map(({ userId, success }) => ({ userId, success })), [
+      { userId: "ws1admin", success: true },
+      { userId: "plain", success: false },
+    ]);
+    assert.match(result.json.outcomes[1].error, /Rejected plain/);
+  } finally {
+    budgetWriteFailures = new Set();
+    budgetWriteUserIds = [];
+  }
+});
+
+test("bulk member limits reject unauthorized, invalid, and stale members before writing", async () => {
+  budgetWriteUserIds = [];
+  assert.equal((await req("/directory/workspaces/ws-1/members/budget", {
+    user: "ws1admin",
+    method: "PUT",
+    body: { userIds: ["plain"], amountUsd: 10 },
+  })).status, 403);
+  assert.equal((await req("/directory/workspaces/ws-1/members/budget", {
+    user: "editor",
+    method: "PUT",
+    body: { userIds: ["plain"], amountUsd: 0 },
+  })).status, 400);
+  assert.equal((await req("/directory/workspaces/ws-1/members/budget", {
+    user: "editor",
+    method: "PUT",
+    body: {
+      userIds: Array.from({ length: 101 }, (_, index) => `member-${index}`),
+      amountUsd: 10,
+    },
+  })).status, 400);
+  assert.equal((await req("/directory/workspaces/ws-1/members/budget", {
+    user: "editor",
+    method: "PUT",
+    body: { userIds: ["plain", "ws2user"], amountUsd: 10 },
+  })).status, 404);
+  assert.deepEqual(budgetWriteUserIds, []);
 });
 
 test("workspace admin alerts are scoped and recipient addresses are redacted", async () => {

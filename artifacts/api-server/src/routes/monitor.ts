@@ -52,6 +52,8 @@ import {
   SetWorkspaceMemberBudgetBody,
   SetWorkspaceMemberBudgetResponse,
   ClearWorkspaceMemberBudgetResponse,
+  BulkSetWorkspaceMemberBudgetsBody,
+  BulkSetWorkspaceMemberBudgetsResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -3073,13 +3075,15 @@ router.get(
   },
 );
 
-async function validateWorkspaceMember(
+async function validateWorkspaceMembers(
   workspaceId: string,
-  userId: string,
+  userIds: readonly string[],
 ): Promise<boolean> {
   const dir = await getDirectory();
   return dir.workspaces.has(workspaceId) &&
-    dir.members.get(userId)?.workspaces.has(workspaceId) === true;
+    userIds.every((userId) =>
+      dir.members.get(userId)?.workspaces.has(workspaceId) === true
+    );
 }
 
 function sendBudgetConnectorError(
@@ -3096,6 +3100,60 @@ function sendBudgetConnectorError(
 }
 
 router.put(
+  "/directory/workspaces/:workspaceId/members/budget",
+  requireAccountOperator,
+  async (req, res): Promise<void> => {
+    const parsed = BulkSetWorkspaceMemberBudgetsBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.message });
+      return;
+    }
+    const workspaceId = String(req.params["workspaceId"]);
+    const userIds = [...new Set(parsed.data.userIds)];
+    try {
+      if (!(await validateWorkspaceMembers(workspaceId, userIds))) {
+        res.status(404).json({ error: "Workspace member not found" });
+        return;
+      }
+      const outcomes = await Promise.all(userIds.map(async (userId) => {
+        try {
+          await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
+          return {
+            userId,
+            success: true,
+            budgetUsd: parsed.data.amountUsd,
+            error: null,
+          };
+        } catch (error) {
+          return {
+            userId,
+            success: false,
+            budgetUsd: null,
+            error: error instanceof Error
+              ? error.message
+              : "Replit budgets API request failed",
+          };
+        }
+      }));
+      if (
+        outcomes.every((outcome) => !outcome.success) &&
+        outcomes.some((outcome) => /write:budgets|connector/i.test(outcome.error ?? ""))
+      ) {
+        res.status(503).json({ error: outcomes[0]?.error ?? "Budget editing unavailable" });
+        return;
+      }
+      res.json(BulkSetWorkspaceMemberBudgetsResponse.parse({
+        workspaceId,
+        amountUsd: parsed.data.amountUsd,
+        outcomes,
+      }));
+    } catch (error) {
+      sendBudgetConnectorError(error, res);
+    }
+  },
+);
+
+router.put(
   "/directory/workspaces/:workspaceId/members/:userId/budget",
   requireAccountOperator,
   async (req, res): Promise<void> => {
@@ -3107,7 +3165,7 @@ router.put(
     const workspaceId = String(req.params["workspaceId"]);
     const userId = String(req.params["userId"]);
     try {
-      if (!(await validateWorkspaceMember(workspaceId, userId))) {
+      if (!(await validateWorkspaceMembers(workspaceId, [userId]))) {
         res.status(404).json({ error: "Workspace member not found" });
         return;
       }
@@ -3130,7 +3188,7 @@ router.delete(
     const workspaceId = String(req.params["workspaceId"]);
     const userId = String(req.params["userId"]);
     try {
-      if (!(await validateWorkspaceMember(workspaceId, userId))) {
+      if (!(await validateWorkspaceMembers(workspaceId, [userId]))) {
         res.status(404).json({ error: "Workspace member not found" });
         return;
       }

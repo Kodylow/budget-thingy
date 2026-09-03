@@ -72,6 +72,8 @@ import type {
   VisibleWorkspace,
   WorkspaceMemberBudgetInput,
   WorkspaceMemberBudgetMutation,
+  WorkspaceMemberBulkBudgetInput,
+  WorkspaceMemberBulkBudgetResult,
   WorkspaceMembersResponse
 } from './api.schemas';
 
@@ -134,7 +136,6 @@ export const getGetCurrentAuthUserQueryKey = () => {
     `/api/auth/user`
     ] as const;
     }
-
 
 export const getGetCurrentAuthUserQueryOptions = <TData = Awaited<ReturnType<typeof getCurrentAuthUser>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCurrentAuthUser>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
@@ -2874,6 +2875,79 @@ export function useListVisibleWorkspaceMembers<TData = Awaited<ReturnType<typeof
 
 
 
+export const getBulkSetWorkspaceMemberBudgetsUrl = (workspaceId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${workspaceId}/members/budget`
+}
+
+/**
+ * Account-wide operators only. User IDs are deduplicated, every requested user must be a current member of the visible workspace, and each non-transactional Replit connector outcome is returned explicitly.
+ * @summary Set one Agent usage limit for multiple workspace members
+ */
+export const bulkSetWorkspaceMemberBudgets = async (workspaceId: string,
+    workspaceMemberBulkBudgetInput: WorkspaceMemberBulkBudgetInput, options?: RequestInit): Promise<WorkspaceMemberBulkBudgetResult> => {
+
+  return customFetch<WorkspaceMemberBulkBudgetResult>(getBulkSetWorkspaceMemberBudgetsUrl(workspaceId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(workspaceMemberBulkBudgetInput)
+  }
+);}
+
+
+
+
+
+export const getBulkSetWorkspaceMemberBudgetsMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkSetWorkspaceMemberBudgets>>, TError,{workspaceId: string;data: BodyType<WorkspaceMemberBulkBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof bulkSetWorkspaceMemberBudgets>>, TError,{workspaceId: string;data: BodyType<WorkspaceMemberBulkBudgetInput>}, TContext> => {
+
+const mutationKey = ['bulkSetWorkspaceMemberBudgets'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof bulkSetWorkspaceMemberBudgets>>, {workspaceId: string;data: BodyType<WorkspaceMemberBulkBudgetInput>}> = (props) => {
+          const {workspaceId,data} = props ?? {};
+
+          return  bulkSetWorkspaceMemberBudgets(workspaceId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BulkSetWorkspaceMemberBudgetsMutationResult = NonNullable<Awaited<ReturnType<typeof bulkSetWorkspaceMemberBudgets>>>
+    export type BulkSetWorkspaceMemberBudgetsMutationBody = BodyType<WorkspaceMemberBulkBudgetInput>
+    export type BulkSetWorkspaceMemberBudgetsMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Set one Agent usage limit for multiple workspace members
+ */
+export const useBulkSetWorkspaceMemberBudgets = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkSetWorkspaceMemberBudgets>>, TError,{workspaceId: string;data: BodyType<WorkspaceMemberBulkBudgetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof bulkSetWorkspaceMemberBudgets>>,
+        TError,
+        {workspaceId: string;data: BodyType<WorkspaceMemberBulkBudgetInput>},
+        TContext
+      > => {
+      return useMutation(getBulkSetWorkspaceMemberBudgetsMutationOptions(options));
+    }
+
 export const getSetWorkspaceMemberBudgetUrl = (workspaceId: string,
     userId: string,) => {
 
@@ -3557,3 +3631,4 @@ export const useRebuildUsageRange = <TError = ErrorType<ApiError | UnauthorizedR
       > => {
       return useMutation(getRebuildUsageRangeMutationOptions(options));
     }
+

@@ -21,88 +21,29 @@ function json(body: unknown, status = 200): Response {
 afterEach(() => setReplitBudgetTransportForTests(null));
 
 describe("Replit budgets connector", () => {
-  it("prefers the scoped Enterprise budgets key and sends it only as a bearer credential", async () => {
+  it("ignores Enterprise budget API keys and honors connector write capability only", async () => {
     const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
     const previousWriteEnabled =
       process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
     process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "scoped-test-key";
     process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED = "true";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const connectorCalls: string[] = [];
+    setReplitBudgetTransportForTests(async (path) => {
+      connectorCalls.push(path);
+      return json({
       data: [],
       pagination: { hasMore: false, cursor: null },
-    }));
+      });
+    }, false);
     try {
       const result = await listReplitGroupBudgets("ws");
-      expect(result).toMatchObject({ status: "available", canWrite: true });
-      expect(fetchMock).toHaveBeenCalledOnce();
-      const [url, init] = fetchMock.mock.calls[0]!;
-      expect(String(url)).toContain("https://api.replit.com/v1/budgets?");
-      expect(init?.headers).toMatchObject({
-        Authorization: "Bearer scoped-test-key",
-      });
-    } finally {
-      fetchMock.mockRestore();
-      if (previousKey === undefined) {
-        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
-      } else {
-        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = previousKey;
-      }
-      if (previousWriteEnabled === undefined) {
-        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
-      } else {
-        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED =
-          previousWriteEnabled;
-      }
-    }
-  });
-
-  it("keeps a scoped key read-only without separate write approval", async () => {
-    const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
-    const previousWriteEnabled =
-      process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
-    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "read-only-test-key";
-    delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
-      data: [],
-      pagination: { hasMore: false, cursor: null },
-    }));
-    try {
-      const snapshot = await listReplitGroupBudgets("ws");
-      expect(snapshot).toMatchObject({ status: "available", canWrite: false });
+      expect(result).toMatchObject({ status: "available", canWrite: false });
       await expect(setReplitGroupBudget("ws", "g", 25)).rejects.toMatchObject({
         kind: "unavailable",
       });
-      expect(fetchMock).toHaveBeenCalledOnce();
-    } finally {
-      fetchMock.mockRestore();
-      if (previousKey === undefined) {
-        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
-      } else {
-        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = previousKey;
-      }
-      if (previousWriteEnabled === undefined) {
-        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
-      } else {
-        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED =
-          previousWriteEnabled;
-      }
-    }
-  });
-
-  it("reports direct scoped-key authorization failures as non-writable", async () => {
-    const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
-    const previousWriteEnabled =
-      process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
-    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "denied-test-key";
-    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED = "true";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      json({ error: { message: "insufficient_scope" } }, 403),
-    );
-    try {
-      const snapshot = await listReplitGroupBudgets("ws");
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.canWrite).toBe(false);
-      expect(snapshot.error).toContain("insufficient_scope");
+      expect(connectorCalls).toHaveLength(1);
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       fetchMock.mockRestore();
       if (previousKey === undefined) {

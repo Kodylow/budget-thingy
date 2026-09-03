@@ -15,9 +15,16 @@ interface MemberBudgetInputProps {
   userId: string;
   currentBudget: number | null;
   canWrite: boolean;
+  disabledReason?: string;
 }
 
-export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite }: MemberBudgetInputProps) {
+export function MemberBudgetInput({
+  workspaceId,
+  userId,
+  currentBudget,
+  canWrite,
+  disabledReason,
+}: MemberBudgetInputProps) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(currentBudget?.toString() || '');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,7 +47,19 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
 
   if (!canWrite) {
     return (
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-1.5">
+        {disabledReason && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 shrink-0"
+            disabled
+            title={disabledReason}
+            aria-label={`Edit usage limit unavailable: ${disabledReason}`}
+          >
+            <Pencil className="h-3 w-3" />
+          </Button>
+        )}
         {currentBudget !== null ? (
           <span className="font-mono text-sm tabular-nums" data-testid={`text-budget-${userId}`}>
             ${currentBudget.toFixed(2)}
@@ -58,8 +77,8 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
     const numValue = Number(value);
     if (!Number.isFinite(numValue) || numValue <= 0) {
       toast({
-        title: 'Invalid budget',
-        description: 'Budget must be a positive number',
+        title: 'Invalid usage limit',
+        description: 'Usage limit must be a positive number',
         variant: 'destructive',
       });
       return;
@@ -74,13 +93,13 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
           }
           setEditing(false);
           toast({
-            title: 'Budget updated',
+            title: 'Usage limit updated',
             description: `Set to $${numValue.toFixed(2)}`,
           });
         },
         onError: (error) => {
           toast({
-            title: 'Failed to update budget',
+            title: 'Failed to update usage limit',
             description: error instanceof Error
               ? error.message
               : 'The Replit integration rejected the change.',
@@ -102,12 +121,12 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
           setEditing(false);
           setValue('');
           toast({
-            title: 'Budget cleared',
+            title: 'Usage limit cleared',
           });
         },
         onError: (error) => {
           toast({
-            title: 'Failed to clear budget',
+            title: 'Failed to clear usage limit',
             description: error instanceof Error
               ? error.message
               : 'The Replit integration rejected the change.',
@@ -145,7 +164,7 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
           onKeyDown={handleKeyDown}
           className="h-7 w-20 text-xs font-mono px-2"
           data-testid={`input-budget-${userId}`}
-          aria-label="Individual budget in US dollars"
+          aria-label="Usage limit in US dollars"
         />
         <Button
           size="sm"
@@ -154,7 +173,7 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
           onClick={handleSave}
           disabled={setBudget.isPending || clearBudget.isPending}
           data-testid={`button-save-budget-${userId}`}
-          aria-label="Save budget"
+          aria-label="Save usage limit"
         >
           <Check className="h-3.5 w-3.5 text-chart-1" />
         </Button>
@@ -182,7 +201,7 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
           onClick={handleRemove}
           disabled={clearBudget.isPending || setBudget.isPending}
           data-testid={`button-remove-budget-${userId}`}
-          aria-label="Clear budget"
+          aria-label="Clear usage limit"
         >
           <X className="h-3 w-3" />
         </Button>
@@ -193,7 +212,7 @@ export function MemberBudgetInput({ workspaceId, userId, currentBudget, canWrite
         className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity shrink-0"
         onClick={() => setEditing(true)}
         data-testid={`button-edit-budget-${userId}`}
-        aria-label="Edit budget"
+        aria-label="Edit usage limit"
       >
         <Pencil className="h-3 w-3" />
       </Button>

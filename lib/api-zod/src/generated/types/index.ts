@@ -98,5 +98,8 @@ export * from './visibleWorkspace';
 export * from './workspaceMemberBudget';
 export * from './workspaceMemberBudgetInput';
 export * from './workspaceMemberBudgetMutation';
+export * from './workspaceMemberBulkBudgetInput';
+export * from './workspaceMemberBulkBudgetOutcome';
+export * from './workspaceMemberBulkBudgetResult';
 export * from './workspaceMembersResponse';
 export * from './workspaceMembersResponseBillingPeriod';

@@ -800,6 +800,41 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
 
 
 /**
+ * Account-wide operators only. User IDs are deduplicated, every requested user must be a current member of the visible workspace, and each non-transactional Replit connector outcome is returned explicitly.
+ * @summary Set one Agent usage limit for multiple workspace members
+ */
+
+
+
+export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1)
+})
+
+
+export const bulkSetWorkspaceMemberBudgetsBodyUserIdsMax = 100;
+
+export const bulkSetWorkspaceMemberBudgetsBodyAmountUsdExclusiveMin = 0;
+
+
+
+export const BulkSetWorkspaceMemberBudgetsBody = zod.object({
+  "userIds": zod.array(zod.string().min(1)).min(1).max(bulkSetWorkspaceMemberBudgetsBodyUserIdsMax),
+  "amountUsd": zod.number().gt(bulkSetWorkspaceMemberBudgetsBodyAmountUsdExclusiveMin)
+})
+
+export const BulkSetWorkspaceMemberBudgetsResponse = zod.object({
+  "workspaceId": zod.string(),
+  "amountUsd": zod.number(),
+  "outcomes": zod.array(zod.object({
+  "userId": zod.string(),
+  "success": zod.boolean(),
+  "budgetUsd": zod.number().nullable(),
+  "error": zod.string().nullable()
+}))
+})
+
+
+/**
  * Account-wide operators only. The Replit connector is the sole credential source.
  * @summary Set or replace a member's desired Agent budget
  */

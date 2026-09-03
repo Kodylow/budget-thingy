@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { indexMemberBudgets } from './member-budgets.ts';
+import {
+  chunkMemberIds,
+  failedBulkSelection,
+  indexMemberBudgets,
+  toggleDisplayedSelection,
+} from './member-budgets.ts';
 
 test('one workspace budget is joined once for duplicate role membership', () => {
   const clusterMembers = [{ userId: 'member-1' }, { userId: 'member-1' }];
@@ -42,4 +47,29 @@ test('members outside the visible cluster are not joined', () => {
     }],
   );
   assert.equal(indexed.size, 0);
+});
+
+test('select all only changes displayed members and can clear them again', () => {
+  const selected = toggleDisplayedSelection(new Set(['off-page']), ['one', 'two'], true);
+  assert.deepEqual([...selected].sort(), ['off-page', 'one', 'two']);
+  assert.deepEqual(
+    [...toggleDisplayedSelection(selected, ['one', 'two'], false)],
+    ['off-page'],
+  );
+});
+
+test('only failed bulk outcomes remain selected for retry', () => {
+  const selected = failedBulkSelection([
+    { userId: 'one', success: true },
+    { userId: 'two', success: false },
+    { userId: 'three', success: true },
+  ]);
+  assert.deepEqual([...selected], ['two']);
+});
+
+test('large select-all updates are split into bounded API batches', () => {
+  const ids = Array.from({ length: 205 }, (_, index) => `user-${index}`);
+  const chunks = chunkMemberIds(ids);
+  assert.deepEqual(chunks.map((chunk) => chunk.length), [100, 100, 5]);
+  assert.deepEqual(chunks.flat(), ids);
 });

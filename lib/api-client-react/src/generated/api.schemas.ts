@@ -587,6 +587,32 @@ export interface WorkspaceMemberBudgetMutation {
   budgetUsd: number | null;
 }
 
+export interface WorkspaceMemberBulkBudgetInput {
+  /**
+     * @minItems 1
+     * @maxItems 100
+     * @items.minLength 1
+     */
+  userIds: string[];
+  /** @exclusiveMinimum 0 */
+  amountUsd: number;
+}
+
+export interface WorkspaceMemberBulkBudgetOutcome {
+  userId: string;
+  success: boolean;
+  /** @nullable */
+  budgetUsd: number | null;
+  /** @nullable */
+  error: string | null;
+}
+
+export interface WorkspaceMemberBulkBudgetResult {
+  workspaceId: string;
+  amountUsd: number;
+  outcomes: WorkspaceMemberBulkBudgetOutcome[];
+}
+
 export interface TeamBudget {
   teamName: string;
   /** @nullable */

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'wouter';
 import { useSearch } from 'wouter';
 import { useQueries, useQuery } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import {
   useListVisibleWorkspaceMembers,
   getListVisibleWorkspaceMembersQueryKey,
   type WorkspaceMemberBudget,
+  useBulkSetWorkspaceMemberBudgets,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -29,7 +30,17 @@ import {
 import { GroupUserExport } from '@/components/group-user-export';
 import { useCanWrite } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
-import { indexMemberBudgets } from '@/lib/member-budgets';
+import {
+  chunkMemberIds,
+  failedBulkSelection,
+  indexMemberBudgets,
+  toggleDisplayedSelection,
+} from '@/lib/member-budgets';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { useQueryClient } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
 
 interface MergedMember {
   userId: string;
@@ -66,6 +77,12 @@ export default function ClusterDetail() {
   const groupIds = rawIds ? rawIds.split(',').filter(Boolean) : [];
 
   const canWrite = useCanWrite();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const bulkSetLimits = useBulkSetWorkspaceMemberBudgets();
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
+  const [bulkLimit, setBulkLimit] = useState('');
+  const [bulkApplying, setBulkApplying] = useState(false);
 
   const { rangeType, startDate, endDate } = useRange();
   const clusterKey = groupIds.join(',');
@@ -226,6 +243,77 @@ export default function ClusterDetail() {
     canWrite &&
     workspaceMembersData?.connector.status === 'available' &&
     !workspaceMembersData.connector.canWrite;
+  const canEditLimits = Boolean(
+    canWrite &&
+    workspaceId &&
+    workspaceMembersData?.connector.status === 'available' &&
+    workspaceMembersData.connector.canWrite,
+  );
+  const editingDisabledReason = mutationUnavailable || connectorUnavailable || workspaceMembersQuery.isError
+    ? 'Ask your workspace admin to enable the approved Replit integration with write:budgets permission.'
+    : !workspaceMembersData
+      ? 'Checking Replit integration permissions…'
+      : undefined;
+  const displayedMemberIds = useMemo(
+    () => mergedMembers.map((member) => member.userId),
+    [mergedMembers],
+  );
+  const allDisplayedSelected =
+    displayedMemberIds.length > 0 &&
+    displayedMemberIds.every((userId) => selectedMemberIds.has(userId));
+  const someDisplayedSelected =
+    displayedMemberIds.some((userId) => selectedMemberIds.has(userId));
+  const displayedSelectedCount =
+    displayedMemberIds.filter((userId) => selectedMemberIds.has(userId)).length;
+
+  const applyBulkLimit = async () => {
+    const amountUsd = Number(bulkLimit);
+    if (!workspaceId || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+      toast({
+        title: 'Invalid usage limit',
+        description: 'Enter a positive USD amount.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const userIds = displayedMemberIds.filter((userId) => selectedMemberIds.has(userId));
+    if (userIds.length === 0) return;
+    setBulkApplying(true);
+    const outcomes: Array<{ userId: string; success: boolean }> = [];
+    let lastError: unknown;
+    for (const batch of chunkMemberIds(userIds)) {
+      try {
+        const result = await bulkSetLimits.mutateAsync({
+          workspaceId,
+          data: { userIds: batch, amountUsd },
+        });
+        outcomes.push(...result.outcomes);
+      } catch (error) {
+        lastError = error;
+        outcomes.push(...batch.map((userId) => ({ userId, success: false })));
+      }
+    }
+    const failed = failedBulkSelection(outcomes);
+    const succeeded = outcomes.length - failed.size;
+    setSelectedMemberIds(failed);
+    if (succeeded > 0) {
+      await queryClient.invalidateQueries({
+        queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId),
+      });
+    }
+    setBulkApplying(false);
+    toast({
+      title: failed.size === 0
+        ? `Updated ${succeeded} usage limit${succeeded === 1 ? '' : 's'}`
+        : `Updated ${succeeded}; ${failed.size} failed`,
+      description: failed.size === 0
+        ? `Set selected members to $${amountUsd.toFixed(2)}.`
+        : lastError instanceof Error
+          ? `${lastError.message} Failed members remain selected so you can retry.`
+          : 'Failed members remain selected so you can retry.',
+      variant: failed.size === 0 ? 'default' : 'destructive',
+    });
+  };
 
   if (!allLoaded && results.every((r) => !r.data)) {
     return (
@@ -330,10 +418,10 @@ export default function ClusterDetail() {
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <div>
             <p className="font-medium">
-              {mutationUnavailable ? 'Budget editing unavailable' : 'Member budgets unavailable'}
+              {mutationUnavailable ? 'Usage limit editing unavailable' : 'Member usage limits unavailable'}
             </p>
             <p className="text-xs opacity-90 mt-0.5">
-              A workspace administrator must enable the approved Replit integration
+               Reach out to your workspace admin to enable the approved Replit integration
               with <code>write:budgets</code> permission. No API key or token can be
               entered here.
             </p>
@@ -351,14 +439,55 @@ export default function ClusterDetail() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {canWrite && (
+            <div className="mb-4 flex flex-col gap-2 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center">
+              <div className="text-sm font-medium min-w-fit">
+                {displayedSelectedCount} selected
+              </div>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={bulkLimit}
+                onChange={(event) => setBulkLimit(event.target.value)}
+                placeholder="Usage limit (USD)"
+                aria-label="Bulk usage limit in US dollars"
+                className="sm:max-w-48"
+                disabled={!canEditLimits || bulkApplying}
+              />
+              <Button
+                onClick={applyBulkLimit}
+                disabled={!canEditLimits || displayedSelectedCount === 0 || bulkApplying}
+              >
+                {bulkApplying ? 'Applying…' : 'Apply usage limit'}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {editingDisabledReason ??
+                  'Applies one workspace-scoped Agent limit to each selected member.'}
+              </span>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
+                  {canWrite && (
+                    <th className="w-10 py-3 pl-4">
+                      <Checkbox
+                        checked={allDisplayedSelected ? true : someDisplayedSelected ? 'indeterminate' : false}
+                        onCheckedChange={(checked) =>
+                          setSelectedMemberIds((current) =>
+                            toggleDisplayedSelection(current, displayedMemberIds, checked === true),
+                          )
+                        }
+                        aria-label="Select all displayed members"
+                        disabled={!canEditLimits || bulkApplying}
+                      />
+                    </th>
+                  )}
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Role</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Ind. Budget</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Remaining</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Usage limit</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
                 </tr>
               </thead>
@@ -371,6 +500,23 @@ export default function ClusterDetail() {
                       key={member.userId}
                       className="border-b border-border/50 hover:bg-muted/30 transition-colors"
                     >
+                      {canWrite && (
+                        <td className="py-3 pl-4 align-middle">
+                          <Checkbox
+                            checked={selectedMemberIds.has(member.userId)}
+                            onCheckedChange={(checked) =>
+                              setSelectedMemberIds((current) => {
+                                const next = new Set(current);
+                                if (checked === true) next.add(member.userId);
+                                else next.delete(member.userId);
+                                return next;
+                              })
+                            }
+                            aria-label={`Select ${member.name || member.username || member.userId}`}
+                            disabled={!canEditLimits || bulkApplying}
+                          />
+                        </td>
+                      )}
                       <td className="py-3 px-4 align-middle">
                         <div className="flex flex-col">
                           <span className="text-sm font-medium">
@@ -408,18 +554,8 @@ export default function ClusterDetail() {
                             userId={member.userId}
                             currentBudget={wsm?.budgetUsd ?? null}
                             canWrite={canWrite && workspaceMembersData.connector.canWrite}
+                            disabledReason={editingDisabledReason}
                           />
-                        ) : (
-                          <span className="text-muted-foreground text-sm">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right align-middle w-32">
-                        {workspaceMembersQuery.isLoading ? (
-                          <div className="flex justify-end"><LoadingCell /></div>
-                        ) : hasConnector && wsm?.remainingUsd !== undefined && wsm?.remainingUsd !== null ? (
-                          <span className={`text-sm font-mono tabular-nums ${wsm.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
-                            {wsm.remainingUsd < 0 ? '-' : ''}${Math.abs(wsm.remainingUsd).toFixed(2)}
-                          </span>
                         ) : (
                           <span className="text-muted-foreground text-sm">—</span>
                         )}
@@ -441,6 +577,7 @@ export default function ClusterDetail() {
 
                 {allComplete && totalUnattributedSpend > 0.005 && (
                   <tr className="border-b border-border/50 bg-muted/10">
+                    {canEditLimits && <td className="py-3 pl-4" />}
                     <td className="py-3 px-4">
                       <div className="flex flex-col">
                         <span className="text-sm font-medium italic">Unattributed residual</span>
@@ -449,7 +586,6 @@ export default function ClusterDetail() {
                         </span>
                       </div>
                     </td>
-                    <td className="py-3 px-4" />
                     <td className="py-3 px-4" />
                     <td className="py-3 px-4" />
                     <td className="py-3 px-4 text-right">
@@ -462,8 +598,8 @@ export default function ClusterDetail() {
               </tbody>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
+                  {canEditLimits && <td className="py-3 pl-4" />}
                   <td className="py-3 px-4 text-sm">Combined Total</td>
-                  <td className="py-3 px-4" />
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
