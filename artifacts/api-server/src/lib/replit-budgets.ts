@@ -1,6 +1,8 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
 
 const CONNECTOR = "replit";
+const BUDGETS_API_BASE_URL = "https://api.replit.com";
+const BUDGETS_API_KEY_ENV = "REPLIT_ENTERPRISE_API_KEY_BUDGETS";
 const MAX_PAGES = 200;
 
 export type BudgetConnectorStatus = "available" | "unavailable" | "error";
@@ -81,6 +83,11 @@ function containsScope(value: unknown, expected: string): boolean {
 
 async function connectorCanWrite(): Promise<boolean> {
   if (writeCapabilityOverride != null) return writeCapabilityOverride;
+  // Enterprise budget keys are provisioned with their scopes upstream. Do not
+  // add a second local feature flag that can contradict the key's real grants;
+  // the Budgets API remains the source of truth and will reject unauthorized
+  // writes with 401/403.
+  if (process.env[BUDGETS_API_KEY_ENV]) return true;
   try {
     const connections = await new ReplitConnectors().listConnections({
       // The current connector API rejects the unsupported "integration"
@@ -107,8 +114,30 @@ async function connectorTransport(
   path: string,
   init: ReplitBudgetRequest,
 ): Promise<Response> {
-  // The connector is deliberately the only credential source for this API.
   return new ReplitConnectors().proxy(CONNECTOR, path, init);
+}
+
+async function enterpriseBudgetTransport(
+  path: string,
+  init: ReplitBudgetRequest,
+): Promise<Response> {
+  const key = process.env[BUDGETS_API_KEY_ENV];
+  if (!key) {
+    throw new Error(`${BUDGETS_API_KEY_ENV} is not configured`);
+  }
+  return fetch(`${BUDGETS_API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...init.headers,
+      Authorization: `Bearer ${key}`,
+    },
+  });
+}
+
+function configuredTransport(): ReplitBudgetTransport {
+  return process.env[BUDGETS_API_KEY_ENV]
+    ? enterpriseBudgetTransport
+    : connectorTransport;
 }
 
 function errorKind(message: string): "unavailable" | "error" {
@@ -125,7 +154,7 @@ async function request(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await (transportOverride ?? connectorTransport)(path, init);
+    response = await (transportOverride ?? configuredTransport())(path, init);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Replit connector unavailable";

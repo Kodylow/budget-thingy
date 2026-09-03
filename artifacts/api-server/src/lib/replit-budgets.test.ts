@@ -21,29 +21,26 @@ function json(body: unknown, status = 200): Response {
 afterEach(() => setReplitBudgetTransportForTests(null));
 
 describe("Replit budgets connector", () => {
-  it("ignores Enterprise budget API keys and honors connector write capability only", async () => {
+  it("uses the configured Enterprise budget API key as write-capable access", async () => {
     const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
-    const previousWriteEnabled =
-      process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
     process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "scoped-test-key";
-    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED = "true";
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-    const connectorCalls: string[] = [];
-    setReplitBudgetTransportForTests(async (path) => {
-      connectorCalls.push(path);
-      return json({
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
       data: [],
       pagination: { hasMore: false, cursor: null },
-      });
-    }, false);
+    }));
     try {
       const result = await listReplitGroupBudgets("ws");
-      expect(result).toMatchObject({ status: "available", canWrite: false });
-      await expect(setReplitGroupBudget("ws", "g", 25)).rejects.toMatchObject({
-        kind: "unavailable",
-      });
-      expect(connectorCalls).toHaveLength(1);
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ status: "available", canWrite: true });
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("https://api.replit.com/v1/budgets?"),
+        expect.objectContaining({
+          method: "GET",
+          headers: expect.objectContaining({
+            Authorization: "Bearer scoped-test-key",
+          }),
+        }),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       fetchMock.mockRestore();
       if (previousKey === undefined) {
@@ -51,11 +48,27 @@ describe("Replit budgets connector", () => {
       } else {
         process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = previousKey;
       }
-      if (previousWriteEnabled === undefined) {
-        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED;
+    }
+  });
+
+  it("lets the Budgets API reject a write the configured key cannot perform", async () => {
+    const previousKey = process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
+    process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = "scoped-test-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      json({ error: "forbidden" }, 403),
+    );
+    try {
+      await expect(setReplitGroupBudget("ws", "g", 25)).rejects.toMatchObject({
+        kind: "error",
+        upstreamStatus: 403,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchMock.mockRestore();
+      if (previousKey === undefined) {
+        delete process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS;
       } else {
-        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED =
-          previousWriteEnabled;
+        process.env.REPLIT_ENTERPRISE_API_KEY_BUDGETS = previousKey;
       }
     }
   });
