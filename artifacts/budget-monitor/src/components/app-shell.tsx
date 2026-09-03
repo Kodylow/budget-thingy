@@ -135,7 +135,7 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   return (
-    <div className="flex min-h-[100dvh] bg-background flex-col md:flex-row">
+    <div className="flex min-h-[100dvh] bg-background flex-col md:h-[100dvh] md:flex-row md:overflow-hidden">
       {/* Mobile Top Bar */}
       <div className="md:hidden flex-none h-14 border-b border-border bg-background flex items-center justify-between px-4 sticky top-0 z-30">
         <div className="flex items-center gap-3">
@@ -168,12 +168,12 @@ export function AppShell({ children }: AppShellProps) {
         id="app-navigation"
         aria-label="Primary navigation"
         className={`
-          fixed inset-y-0 left-0 z-50 w-72 md:w-64 border-r border-sidebar-border bg-sidebar flex flex-col transform transition-transform duration-200 ease-in-out
-          md:relative md:translate-x-0
+          fixed inset-y-0 left-0 z-50 flex h-[100dvh] w-72 flex-col border-r border-sidebar-border bg-sidebar transform transition-transform duration-200 ease-in-out
+          md:relative md:inset-auto md:w-64 md:shrink-0 md:translate-x-0
           ${isMobileMenuOpen ? 'translate-x-0 visible' : '-translate-x-full invisible md:visible'}
         `}
       >
-        <div className="p-4 md:p-6 border-b border-sidebar-border flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between border-b border-sidebar-border p-4 md:p-6">
           <div>
             <h1 className="text-lg font-bold text-sidebar-foreground tracking-tight">
               Budget Monitor
@@ -193,7 +193,7 @@ export function AppShell({ children }: AppShellProps) {
             <span className="sr-only">Close menu</span>
           </Button>
         </div>
-        <nav className="flex-1 p-4 overflow-y-auto">
+        <nav className="min-h-0 flex-1 overflow-y-auto p-4">
           <div className="space-y-5">
             {navSections.map((section) => (
               <section key={section.label} aria-labelledby={`nav-section-${section.label.toLowerCase()}`}>
@@ -232,7 +232,7 @@ export function AppShell({ children }: AppShellProps) {
 
         {user && (
           <div
-            className="p-4 border-t border-sidebar-border space-y-3 bg-sidebar"
+            className="shrink-0 space-y-3 border-t border-sidebar-border bg-sidebar p-4"
             data-testid="auth-identity"
           >
             <div className="space-y-2">
@@ -323,7 +323,7 @@ export function AppShell({ children }: AppShellProps) {
           </div>
         )}
       </aside>
-      <main className="flex-1 overflow-x-hidden md:overflow-auto min-w-0">
+      <main className="min-w-0 flex-1 overflow-x-hidden md:overflow-y-auto">
         {children}
       </main>
     </div>
