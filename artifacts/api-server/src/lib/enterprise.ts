@@ -252,6 +252,22 @@ function nextQueueRunId(): string {
 
 function markQueueProgress(event: string, fields: Record<string, unknown>): void {
   lastQueueProgressAt = Date.now();
+  const queueDepth = typeof fields["queueDepth"] === "number"
+    ? fields["queueDepth"]
+    : 0;
+  const workload = fields["workload"];
+  // A cold daily-fact backfill can enqueue thousands of low-priority tasks.
+  // Sample those enqueue messages so start/finish/failure telemetry remains
+  // visible, while interactive requests and periodic depth checkpoints are
+  // always logged.
+  if (
+    event === "usage_queue_enqueue" &&
+    workload !== "interactive" &&
+    queueDepth > 20 &&
+    queueDepth % 250 !== 0
+  ) {
+    return;
+  }
   logger.info({ event, ...fields }, "Enterprise usage sync progress");
 }
 
@@ -1512,6 +1528,8 @@ async function queueDailyFactRefreshes(): Promise<void> {
   );
   dailyFactParityReady = false;
   verifiedDailyFactScopes.clear();
+  let scheduledQueued = 0;
+  let backfillQueued = 0;
   const cutoff = new Date(SPEND_DATA_CUTOFF_MS);
   const months: string[] = [];
   for (
@@ -1539,19 +1557,27 @@ async function queueDailyFactRefreshes(): Promise<void> {
         const needsRefresh = !existingFacts.has(factId) ||
           (isCurrent && dayMs >= mutableTailStart);
         if (!needsRefresh) continue;
-        enqueueUsage(
+        const queued = enqueueUsage(
           `daily-fact:${usageDate}:${scope.mode}:${scope.scopeKey}`,
           priority,
           () => syncDailyFactDay(usageDate, scope),
           isCurrent ? "scheduled" : "backfill",
         );
+        if (queued) {
+          if (isCurrent) scheduledQueued++;
+          else backfillQueued++;
+        }
       }
-      enqueueUsage(
+      const finalizerQueued = enqueueUsage(
         `daily-facts-finalize:${monthStart}:${scope.mode}:${scope.scopeKey}`,
         priority,
         () => finalizeDailyFactMonth(monthStart, scope, new Date()),
         isCurrent ? "scheduled" : "backfill",
       );
+      if (finalizerQueued) {
+        if (isCurrent) scheduledQueued++;
+        else backfillQueued++;
+      }
     }
   }
   // Current-month finalizers are inserted before this gate at the same
@@ -1567,6 +1593,14 @@ async function queueDailyFactRefreshes(): Promise<void> {
         : "Daily usage facts failed current-month parity; legacy reads remain active",
     );
   }, "scheduled");
+  logger.info({
+    event: "daily_fact_refresh_planned",
+    scopes: scopes.length,
+    months: months.length,
+    scheduledQueued,
+    backfillQueued,
+    queueDepth: totalQueuedCount(),
+  }, "Daily usage fact refresh planned");
 }
 
 export function startDailyFactJob(): void {

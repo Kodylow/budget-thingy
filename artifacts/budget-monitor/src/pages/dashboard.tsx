@@ -116,6 +116,7 @@ export default function Dashboard() {
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [retryingSync, setRetryingSync] = useState(false);
   const [retrySyncError, setRetrySyncError] = useState<string | null>(null);
+  const autoQueuedRanges = useRef(new Set<string>());
 
   const queryParams = useMemo(
     () => ({
@@ -226,6 +227,25 @@ export default function Dashboard() {
       setRetryingSync(false);
     }
   };
+  useEffect(() => {
+    if (!groupsData || retryingSync) return;
+    if (pendingCount + projectPendingCount === 0) return;
+    if (syncStatus !== 'syncing' && projectSyncStatus !== 'syncing') return;
+    const rangeKey = `${rangeType}:${startDate ?? ''}:${endDate ?? ''}`;
+    if (autoQueuedRanges.current.has(rangeKey)) return;
+    autoQueuedRanges.current.add(rangeKey);
+    void retrySync();
+  }, [
+    endDate,
+    groupsData,
+    pendingCount,
+    projectPendingCount,
+    projectSyncStatus,
+    rangeType,
+    retryingSync,
+    startDate,
+    syncStatus,
+  ]);
 
   const retryRequests = async () => {
     setRetrySyncError(null);

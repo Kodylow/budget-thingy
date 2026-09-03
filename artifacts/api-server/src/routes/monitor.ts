@@ -293,6 +293,51 @@ function alertToJson(
   };
 }
 
+function queueUsageForRequest(
+  range: UsageRange,
+  groups: EnterpriseGroup[],
+  workspaceIds: ReadonlySet<string>,
+  options: {
+    includeProjects?: boolean;
+    includeAccount?: boolean;
+    priority?: number;
+  } = {},
+): {
+  member: number;
+  project: number;
+  workspace: number;
+  account: number;
+  total: number;
+} {
+  const priority = options.priority ?? 0;
+  let member = 0;
+  let project = 0;
+  let workspace = 0;
+  let account = 0;
+  for (const group of groups) {
+    if (queueMemberUsageFetch(group, range, priority)) member++;
+    if (
+      options.includeProjects &&
+      queueProjectUsageFetch(group, range, priority)
+    ) {
+      project++;
+    }
+  }
+  for (const workspaceId of workspaceIds) {
+    if (queueWsSpendFetch(workspaceId, range, priority)) workspace++;
+  }
+  if (options.includeAccount && queueAccountUsageFetch(range, priority)) {
+    account++;
+  }
+  return {
+    member,
+    project,
+    workspace,
+    account,
+    total: member + project + workspace + account,
+  };
+}
+
 router.get("/groups", async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
@@ -327,7 +372,6 @@ router.get("/groups", async (req, res): Promise<void> => {
     const paceRange = range.key.startsWith("billing:")
       ? (paceMetadata.isFallback ? range : resolvePaceUsageRange())
       : null;
-
     const [budgets, groupTeams, effectiveTeamSnapshot, allTeamRows] = await Promise.all([
       db.select().from(groupBudgetsTable),
       db.select().from(groupTeamsTable),
@@ -708,6 +752,33 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const scopedWorkspaceIds = isAccountAdmin
       ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
       : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
+    const sourceGroups = sourceIds
+      .map((id) => scoped.find((candidate) => candidate.id === id))
+      .filter((candidate): candidate is EnterpriseGroup => candidate !== undefined);
+    const sourceWorkspaceIds = new Set(
+      sourceGroups.map((candidate) => candidate.workspaceId),
+    );
+    const queuedUsage = queueUsageForRequest(
+      range,
+      sourceGroups,
+      sourceWorkspaceIds,
+      { priority: -20 },
+    );
+    for (const sourceGroup of sourceGroups) {
+      if (queueProjectUsageFetch(sourceGroup, range, -20)) {
+        queuedUsage.project++;
+        queuedUsage.total++;
+      }
+    }
+    if (queuedUsage.total > 0) {
+      req.log.info({
+        event: "usage_request_queued",
+        route: "group-detail",
+        range: range.key,
+        requestedGroupId: group.id,
+        ...queuedUsage,
+      }, "Queued missing usage scopes for group detail request");
+    }
     const canonical = getCanonicalUsage(
       scoped,
       range.key,
@@ -924,6 +995,18 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
       res.status(404).json({ error: "Group not found" });
       return;
     }
+    const projectQueued = queueProjectUsageFetch(group, range, -20);
+    const titlesQueued = queueProjectTitlesFetch(group.workspaceId, -20);
+    if (projectQueued || titlesQueued) {
+      req.log.info({
+        event: "usage_request_queued",
+        route: "group-projects",
+        range: range.key,
+        requestedGroupId: group.id,
+        project: Number(projectQueued),
+        titles: Number(titlesQueued),
+      }, "Queued missing project data for group request");
+    }
 
     const projectUsage = getProjectUsage(group.id, range.key);
     const titleMap = getProjectTitles(group.workspaceId);
@@ -1027,6 +1110,31 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
     const scopedWorkspaceIds = isAccountAdmin
       ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
       : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
+    const relevantGroups = scoped.filter((group) => relevantGroupIds.has(group.id));
+    const relevantWorkspaceIds = new Set(
+      relevantGroups.map((group) => group.workspaceId),
+    );
+    const queuedUsage = queueUsageForRequest(
+      range,
+      relevantGroups,
+      relevantWorkspaceIds,
+      { priority: -20 },
+    );
+    for (const relevantGroup of relevantGroups) {
+      if (queueProjectUsageFetch(relevantGroup, range, -20)) {
+        queuedUsage.project++;
+        queuedUsage.total++;
+      }
+    }
+    if (queuedUsage.total > 0) {
+      req.log.info({
+        event: "usage_request_queued",
+        route: "cluster-headline",
+        range: range.key,
+        requestedGroupIds: groupIds,
+        ...queuedUsage,
+      }, "Queued missing usage scopes for cluster headline request");
+    }
     const canonical = getCanonicalUsage(
       scoped,
       range.key,
@@ -1094,6 +1202,24 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
     const groups = requestedGroups;
 
     const workspaceIds = new Set(groups.map((g) => g.workspaceId));
+    let projectQueued = 0;
+    let titlesQueued = 0;
+    for (const group of groups) {
+      if (queueProjectUsageFetch(group, range, -20)) projectQueued++;
+    }
+    for (const workspaceId of workspaceIds) {
+      if (queueProjectTitlesFetch(workspaceId, -20)) titlesQueued++;
+    }
+    if (projectQueued + titlesQueued > 0) {
+      req.log.info({
+        event: "usage_request_queued",
+        route: "cluster-projects",
+        range: range.key,
+        requestedGroupIds: groupIds,
+        project: projectQueued,
+        titles: titlesQueued,
+      }, "Queued missing project data for cluster request");
+    }
 
     // Member set — union of all members across constituent groups
     const memberSet = new Set<string>();
@@ -1238,24 +1364,44 @@ router.post("/usage/retry", async (req, res): Promise<void> => {
   const workspaceIds = isAccountWide(req.authz)
     ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
     : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
+  let memberQueued = 0;
+  let projectQueued = 0;
+  let workspaceQueued = 0;
+  let accountQueued = 0;
   for (const group of scoped) {
-    if (isUsageSyncRetryable("group_member", range.key, group.id)) {
-      queueMemberUsageFetch(group, range, -20, true);
-    }
-    if (isUsageSyncRetryable("group_project", range.key, group.id)) {
-      queueProjectUsageFetch(group, range, 10, true);
-    }
+    const retryMember = isUsageSyncRetryable("group_member", range.key, group.id);
+    const retryProject = isUsageSyncRetryable("group_project", range.key, group.id);
+    if (queueMemberUsageFetch(group, range, -20, retryMember)) memberQueued++;
+    if (queueProjectUsageFetch(group, range, 0, retryProject)) projectQueued++;
   }
   for (const workspaceId of workspaceIds) {
-    if (isUsageSyncRetryable("workspace_member", range.key, workspaceId)) {
-      queueWsSpendFetch(workspaceId, range, -20, true);
+    const retryWorkspace = isUsageSyncRetryable(
+      "workspace_member",
+      range.key,
+      workspaceId,
+    );
+    if (queueWsSpendFetch(workspaceId, range, -20, retryWorkspace)) {
+      workspaceQueued++;
     }
   }
-  if (
-    isAccountWide(req.authz) &&
-    isUsageSyncRetryable("account_total", range.key, "enterprise")
-  ) {
-    queueAccountUsageFetch(range, -20, true);
+  if (isAccountWide(req.authz)) {
+    const retryAccount = isUsageSyncRetryable(
+      "account_total",
+      range.key,
+      "enterprise",
+    );
+    if (queueAccountUsageFetch(range, -20, retryAccount)) accountQueued++;
+  }
+  if (memberQueued + projectQueued + workspaceQueued + accountQueued > 0) {
+    req.log.info({
+      event: "usage_request_queued",
+      route: "usage-retry",
+      range: range.key,
+      member: memberQueued,
+      project: projectQueued,
+      workspace: workspaceQueued,
+      account: accountQueued,
+    }, "Queued missing or retryable usage scopes");
   }
   res.status(202).json(RefreshGroupUsageResponse.parse({ ok: true }));
 });
