@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import {
   POLL_FAST_MS,
   POLL_SLOW_MS,
+  DASHBOARD_MAX_POLL_RESPONSES,
+  dashboardPollInterval,
   isPollingQueryError,
   pollingRetryDelay,
   progressivePollInterval,
@@ -70,11 +72,29 @@ test('trend polling is terminal and never retries faster than eight seconds', ()
 
 test('dashboard and detail polling stop after failed requests or terminal responses', () => {
   assert.doesNotMatch(dashboardSource, /retryPollingStartedAt/);
-  assert.match(dashboardSource, /query\.state\.status === 'error'/g);
-  assert.match(dashboardSource, /status === 'failed' \|\| status === 'partial'/);
+  assert.match(dashboardSource, /dashboardPollInterval/g);
   assert.match(detailSource, /query\.state\.status === 'error'/g);
   assert.match(clusterDetailSource, /state\.status === 'error'/g);
   assert.match(directorySource, /progressivePollInterval/);
+});
+
+test('dashboard polling has a finite response budget for non-converging syncs', () => {
+  assert.equal(dashboardPollInterval(undefined, 0, 'success'), POLL_FAST_MS);
+  assert.equal(
+    dashboardPollInterval({ isComplete: false, syncStatus: 'syncing' }, 2, 'success'),
+    POLL_SLOW_MS,
+  );
+  assert.equal(
+    dashboardPollInterval(
+      { isComplete: false, syncStatus: 'syncing' },
+      DASHBOARD_MAX_POLL_RESPONSES,
+      'success',
+    ),
+    false,
+  );
+  assert.equal(dashboardPollInterval({ syncStatus: 'partial' }, 1, 'success'), false);
+  assert.equal(dashboardPollInterval({ syncStatus: 'failed' }, 1, 'success'), false);
+  assert.equal(dashboardPollInterval(undefined, 0, 'error'), false);
 });
 
 test('large dashboard and member tables only mount a visible row window', () => {

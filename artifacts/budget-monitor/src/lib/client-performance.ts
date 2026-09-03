@@ -1,6 +1,7 @@
 export const QUERY_STALE_TIME_MS = 60_000;
 export const POLL_FAST_MS = 8_000;
 export const POLL_SLOW_MS = 30_000;
+export const DASHBOARD_MAX_POLL_RESPONSES = 6;
 
 export function pollingRetryDelay(): number {
   return POLL_FAST_MS;
@@ -24,6 +25,15 @@ export function progressivePollInterval(
   if (data?.isComplete || data?.syncStatus === 'complete') return false;
   if (data?.syncStatus === 'partial' || data?.syncStatus === 'failed') return false;
   return dataUpdateCount > 1 ? POLL_SLOW_MS : POLL_FAST_MS;
+}
+
+export function dashboardPollInterval(
+  data: PollableResponse | undefined,
+  dataUpdateCount: number,
+  queryStatus?: string,
+): number | false {
+  if (dataUpdateCount >= DASHBOARD_MAX_POLL_RESPONSES) return false;
+  return progressivePollInterval(data, dataUpdateCount, queryStatus);
 }
 
 export interface VirtualWindow {

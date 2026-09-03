@@ -9,10 +9,9 @@ export function isCanonicalSummaryPending(
   isComplete: boolean | null | undefined,
   syncStatus?: string | null,
 ): boolean {
-  // Data that won't improve from further polling should be shown immediately.
-  if (syncStatus === 'partial' || syncStatus === 'failed') return false;
-  // Otherwise preserve the original canonical-completeness check.
-  return isLoading || isComplete !== true;
+  // Dashboard values are always rendered from the best available response.
+  // Synchronization status controls polling/retry, never visible readiness.
+  return false;
 }
 
 export function isTotalSpendHeadlinePending({
@@ -30,8 +29,7 @@ export function isTotalSpendHeadlinePending({
 }): boolean {
   // The account headline is independently anchored by one unfiltered request.
   // Do not hide it while unrelated group/project scopes continue warming.
-  if (isAccountWide) return isLoading || accountUsageTotalSpendUsd == null;
-  return isCanonicalSummaryPending(isLoading, isComplete, syncStatus);
+  return false;
 }
 
 export function reconcileDashboardSpend({

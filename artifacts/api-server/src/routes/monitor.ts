@@ -647,6 +647,8 @@ router.get("/groups", async (req, res): Promise<void> => {
     res.json(
       ListGroupsResponse.parse({
         groups,
+        // Dashboard readiness is headline/workspace-only. Project attribution
+        // remains separately reported below and never blocks this response.
         isComplete: sync.status === "complete" && canonical.authoritativeSpendComplete,
         syncStatus: sync.status,
         syncError: sync.error,
@@ -1659,6 +1661,8 @@ router.get("/summary", async (req, res): Promise<void> => {
             pacePeriodEnd: pacePeriod.end,
             pacePeriodLabel: pacePeriod.label,
             pacePeriodIsFallback: pacePeriod.isFallback,
+            // Project usage has its own status and cannot hold dashboard
+            // headline readiness open.
             isComplete:
               sync.status === "complete" &&
               pending === 0 &&

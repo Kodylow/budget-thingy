@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown, Loader2 } from 'lucide-react';
+import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown } from 'lucide-react';
 
 import { useAuthContext, useCanWrite } from '@/components/auth-context';
 
@@ -83,7 +83,6 @@ import {
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ThresholdBadge } from '@/components/threshold-badge';
-import { LoadingCell } from '@/components/loading-cell';
 import { BudgetInput } from '@/components/budget-input';
 import { useLocation } from 'wouter';
 import { useRange } from '@/components/range-context';
@@ -93,6 +92,7 @@ import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupClus
 import { filterGroupsForView } from '@/lib/rbac-view';
 import { compareTeamNames, formatTeamName } from '@/lib/team-names';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
+import { dashboardPollInterval } from '@/lib/client-performance';
 
 interface TeamSection {
   teamName: string;
@@ -128,7 +128,6 @@ export default function Dashboard() {
 
   const {
     data: groupsData,
-    isLoading: groupsLoading,
     isError: groupsRequestFailed,
     error: groupsRequestError,
     refetch: refetchGroups,
@@ -139,18 +138,16 @@ export default function Dashboard() {
       placeholderData: (previousData) => previousData,
       refetchInterval: (query) => {
         const data = query.state.data;
-        if (query.state.status === 'error') return false;
         const paceComplete = rangeType !== 'billing' ||
           (data?.groups.every((group) => group.paceSpendLoaded) ?? false);
-        return (data?.syncStatus === 'failed' || data?.syncStatus === 'partial') ||
-          (data?.isComplete && paceComplete) ? false : 8000;
+        if (data?.isComplete && paceComplete) return false;
+        return dashboardPollInterval(data, query.state.dataUpdateCount, query.state.status);
       },
     },
   });
 
   const {
     data: summary,
-    isLoading: summaryLoading,
     isError: summaryRequestFailed,
     error: summaryRequestError,
     refetch: refetchSummary,
@@ -160,11 +157,11 @@ export default function Dashboard() {
       queryKey: getGetSummaryQueryKey(queryParams),
       placeholderData: (previousData) => previousData,
       refetchInterval: (query) => {
-        if (query.state.status === 'error') return false;
-        const status = query.state.data?.syncStatus;
-        if (status === 'failed' || status === 'partial') return false;
-        if (query.state.data?.isComplete) return false;
-        return 8000;
+        return dashboardPollInterval(
+          query.state.data,
+          query.state.dataUpdateCount,
+          query.state.status,
+        );
       },
     },
   });
@@ -194,9 +191,7 @@ export default function Dashboard() {
       }),
     [groupsData?.groups, role, preview],
   );
-  const isComplete = groupsData?.isComplete ?? false;
   const pendingCount = groupsData?.pendingCount ?? 0;
-  const projectSpendLoaded = groupsData?.projectSpendLoaded ?? false;
   const projectSyncStatus = groupsData?.projectSyncStatus ?? 'syncing';
   const projectPendingCount = groupsData?.projectPendingCount ?? 0;
   const syncStatus = groupsData?.syncStatus ?? 'syncing';
@@ -298,8 +293,8 @@ export default function Dashboard() {
     const teamSections: TeamSection[] = [];
     for (const [teamName, teamGroups] of teamMap) {
       const { memberCount } = sumAttributedRollup(teamGroups);
-      // Financial values remain server-owned. Missing canonical data stays in a
-      // loading state instead of being re-derived from partial browser data.
+      // Financial values remain server-owned. Provisional server values stay
+      // visible while canonical data refreshes in the background.
       const serverTeamSpend = groupsData?.teamRawSpend?.[teamName];
       const spendUsd = isPreviewing
         ? teamGroups.reduce((sum, group) => sum + (group.spendUsd ?? 0), 0)
@@ -314,8 +309,8 @@ export default function Dashboard() {
       );
       const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
-      const remainingUsd = spendLoaded && hasBudget ? budgetUsd! - spendUsd : null;
-      const percentUsed = spendLoaded && hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
+      const remainingUsd = hasBudget ? budgetUsd! - spendUsd : null;
+      const percentUsed = hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
 
       teamSections.push({
         teamName,
@@ -380,7 +375,6 @@ export default function Dashboard() {
       if (budgetUsd === null || budgetUsd <= 0) return;
       totalBudgetUsd += budgetUsd;
       budgetedPools += 1;
-      if (!spendLoaded) return;
       budgetedSpendUsd += spendUsd;
       if (!rowPaceSpendLoaded) {
         paceSpendLoaded = false;
@@ -428,7 +422,7 @@ export default function Dashboard() {
     );
     const budgetedSpendUsd = teamSections.reduce(
       (sum, team) =>
-        sum + (team.spendLoaded && team.budgetUsd != null && team.budgetUsd > 0 ? team.spendUsd : 0),
+        sum + (team.budgetUsd != null && team.budgetUsd > 0 ? team.spendUsd : 0),
       0,
     );
     const budgetedPaceSpendUsd = teamSections.reduce(
@@ -471,16 +465,14 @@ export default function Dashboard() {
       value: role === 'workspace_admin' && isPreviewing
         ? `$${tableTotals.totalSpendUsd.toFixed(2)}`
         : `$${(summary?.totalSpendUsd ?? tableTotals.totalSpendUsd).toFixed(2)}`,
-      description: summary?.billingPeriodLabel || 'Loading...',
+      description: summary?.billingPeriodLabel ?? groupsData?.billingPeriodLabel ?? 'Current period',
       icon: DollarSign,
-      loading: !summary && !groupsData,
     },
     {
       title: 'Total Budget',
       value: `$${tableTotals.totalBudgetUsd.toFixed(2)}`,
       description: `${tableTotals.budgetedPools} visible pools budgeted`,
       icon: TrendingUp,
-      loading: groupsLoading || teamBudgetsLoading,
     },
     {
       title: 'Remaining',
@@ -489,7 +481,6 @@ export default function Dashboard() {
         : `$${(summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd).toFixed(2)}`,
       description: 'Across visible budgeted pools',
       icon: Wallet,
-      loading: !summary && !groupsData,
       valueClassName: (role === 'workspace_admin' && isPreviewing
         ? tableTotals.totalRemainingUsd
         : (summary?.totalRemainingUsd ?? 0)) < 0 ? 'text-destructive' : '',
@@ -503,14 +494,12 @@ export default function Dashboard() {
         ? `${groups.filter((group) => (group.percentUsed ?? 0) >= 100).length} over budget`
         : `${summary?.groupsOver100 ?? 0} over budget`,
       icon: AlertTriangle,
-      loading: !summary && !groupsData,
     },
     {
       title: 'Alerts Sent',
       value: summary ? summary.alertsSentThisPeriod.toString() : '—',
       description: 'This billing period',
       icon: RefreshCw,
-      loading: summaryLoading,
     },
   ].filter((card) => !(role === 'workspace_admin' && card.title === 'Alerts Sent'));
 
@@ -864,13 +853,9 @@ export default function Dashboard() {
         </span>
       </td>
       <td className="py-3 px-4 text-right">
-        {!assignedGroupsSubtotal.spendLoaded && assignedGroupsSubtotal.spendUsd === 0 ? (
-          <div className="flex justify-end"><LoadingCell /></div>
-        ) : (
-          <span className={`text-sm font-mono tabular-nums${!assignedGroupsSubtotal.spendLoaded ? ' text-muted-foreground' : ''}`}>
-            ${assignedGroupsSubtotal.spendUsd.toFixed(2)}
-          </span>
-        )}
+        <span className={`text-sm font-mono tabular-nums${!assignedGroupsSubtotal.spendLoaded ? ' text-muted-foreground' : ''}`}>
+          ${assignedGroupsSubtotal.spendUsd.toFixed(2)}
+        </span>
       </td>
       <td className="py-3 px-4 text-right">
         <span className="text-sm font-mono tabular-nums">
@@ -878,16 +863,12 @@ export default function Dashboard() {
         </span>
       </td>
       <td className="py-3 px-4 text-right">
-        {assignedGroupsSubtotal.spendLoaded ? (
-          <span className={`text-sm font-mono tabular-nums ${assignedGroupsSubtotal.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
-            ${assignedGroupsSubtotal.totalRemainingUsd.toFixed(2)}
-          </span>
-        ) : (
-          <span className="text-sm text-muted-foreground">—</span>
-        )}
+        <span className={`text-sm font-mono tabular-nums ${assignedGroupsSubtotal.totalRemainingUsd < 0 ? 'text-destructive' : ''}${!assignedGroupsSubtotal.spendLoaded ? ' text-muted-foreground' : ''}`}>
+          ${assignedGroupsSubtotal.totalRemainingUsd.toFixed(2)}
+        </span>
       </td>
       <td className="py-3 px-4 text-right">
-        {assignedGroupsSubtotal.spendLoaded && assignedGroupsSubtotal.totalBudgetUsd > 0 ? (
+        {assignedGroupsSubtotal.totalBudgetUsd > 0 ? (
           <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
             <span className={`text-xs font-mono tabular-nums ${assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd >= 1 ? 'text-destructive' : ''}`}>
               {((assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd) * 100).toFixed(1)}%
@@ -932,7 +913,7 @@ export default function Dashboard() {
             Dashboard
           </h1>
           <p className="text-muted-foreground mt-1" data-testid="text-billing-period">
-            {groupsData?.billingPeriodLabel || 'Loading...'}
+            {groupsData?.billingPeriodLabel ?? summary?.billingPeriodLabel ?? 'Current period'}
           </p>
           <p className="text-[10px] md:text-xs text-muted-foreground mt-1" data-testid="text-reconciliation-scope">
             {role === 'workspace_admin'
@@ -942,37 +923,6 @@ export default function Dashboard() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <RangeFilter />
-          {!isComplete && syncStatus === 'syncing' && (
-            <Badge
-              variant="outline"
-              className="flex items-center gap-2"
-              data-testid="badge-loading-status"
-              title={
-                "Stored usage remains visible while headline workspace/member usage synchronizes."
-              }
-            >
-              <RefreshCw className="h-3 w-3 animate-spin" />
-              <span className="hidden sm:inline">
-                Syncing headline usage · {pendingCount} remaining
-              </span>
-              <span className="sm:hidden">Syncing...</span>
-            </Badge>
-          )}
-          {(projectSyncStatus === 'syncing' || (syncStatus === 'complete' && !projectSpendLoaded)) && (
-            <Badge
-              variant="outline"
-              className="flex items-center gap-2"
-              data-testid="badge-project-sync-background"
-              title="Headline and workspace usage are ready. Project detail is updating in the background."
-            >
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="hidden sm:inline">
-                Updating project detail in background
-                {projectPendingCount > 0 ? ` · ${projectPendingCount} remaining` : ''}
-              </span>
-              <span className="sm:hidden">Updating detail...</span>
-            </Badge>
-          )}
           {(projectSyncStatus === 'failed' || projectSyncStatus === 'partial') && (
             <Badge
               variant="outline"
@@ -1078,13 +1028,9 @@ export default function Dashboard() {
                 <Icon className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
                 <CardContent className="px-4 pb-4 md:px-6 md:pb-6">
-                {stat.loading ? (
-                  <div className="h-8 w-24 bg-muted animate-pulse-glow rounded" />
-                ) : (
-                  <div className={`text-xl sm:text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ''}`} data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
-                    {stat.value}
-                  </div>
-                )}
+                <div className={`text-xl sm:text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ''}`} data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                  {stat.value}
+                </div>
                 <p className="text-xs text-muted-foreground mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
                   {stat.description}
                 </p>
@@ -1107,13 +1053,6 @@ export default function Dashboard() {
           </p>
         </CardHeader>
         <CardContent>
-          {groupsLoading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-12 bg-muted animate-pulse-glow rounded" />
-              ))}
-            </div>
-          ) : (
             <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
               <table className="w-full" data-testid="table-groups">
                 <thead>
@@ -1210,22 +1149,14 @@ export default function Dashboard() {
                       </td>
                       <td className="py-3 px-4" />
                       <td className="py-3 px-4 text-right">
-                        {isComplete ? (
-                          <span className="text-sm font-mono tabular-nums">
-                            {groups.reduce((s, g) => s + g.rollupMemberCount, 0)}
-                          </span>
-                        ) : (
-                          <div className="flex justify-end"><LoadingCell /></div>
-                        )}
+                        <span className="text-sm font-mono tabular-nums">
+                          {groups.reduce((s, g) => s + g.rollupMemberCount, 0)}
+                        </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete && (summary || isPreviewing) ? (
-                          <span className="text-sm font-mono tabular-nums">
-                            ${(isPreviewing ? tableTotals.totalSpendUsd : summary!.totalSpendUsd).toFixed(2)}
-                          </span>
-                        ) : (
-                          <div className="flex justify-end"><LoadingCell /></div>
-                        )}
+                        <span className="text-sm font-mono tabular-nums">
+                          ${(isPreviewing ? tableTotals.totalSpendUsd : (summary?.totalSpendUsd ?? tableTotals.totalSpendUsd)).toFixed(2)}
+                        </span>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
@@ -1233,16 +1164,12 @@ export default function Dashboard() {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete ? (
-                          <span className={`text-sm font-mono tabular-nums ${tableTotals.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
-                            ${tableTotals.totalRemainingUsd.toFixed(2)}
-                          </span>
-                        ) : (
-                          <div className="flex justify-end"><LoadingCell /></div>
-                        )}
+                        <span className={`text-sm font-mono tabular-nums ${tableTotals.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
+                          ${tableTotals.totalRemainingUsd.toFixed(2)}
+                        </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete && tableTotals.totalBudgetUsd > 0 ? (
+                        {tableTotals.totalBudgetUsd > 0 ? (
                           <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
                             <span className={`text-xs font-mono tabular-nums ${(tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100 >= 100 ? 'text-destructive' : ''}`}>
                               {((tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100).toFixed(1)}%
@@ -1259,7 +1186,7 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {isComplete && tableTotals.paceSpendLoaded && tableTotals.totalBudgetUsd > 0 ? (
+                        {tableTotals.totalBudgetUsd > 0 ? (
                           <PaceCell
                             spendUsd={tableTotals.budgetedPaceSpendUsd}
                             budgetUsd={tableTotals.totalBudgetUsd}
@@ -1284,7 +1211,6 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-          )}
         </CardContent>
       </Card>
         </TabsContent>
