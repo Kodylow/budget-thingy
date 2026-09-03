@@ -57,6 +57,8 @@ let directoryGroups: EnterpriseGroup[] = [];
 // groupId -> member userId[] fixture.
 let groupMembersFixture = new Map<string, string[]>();
 let billingStart: string | null = null;
+const CHECK_DATA_AS_OF = new Date("2026-07-15T00:00:00.000Z");
+let storedSnapshotSkipReason: string | null = null;
 
 vi.mock("./enterprise", () => ({
   isConfigured: () => true,
@@ -69,6 +71,32 @@ vi.mock("./enterprise", () => ({
       ["ws-2", { id: "ws-2", name: "Beta Workspace" }],
     ]),
     groupMembers: groupMembersFixture,
+  }),
+  getStoredBudgetEvaluationSnapshot: async () => storedSnapshotSkipReason ? ({
+    snapshot: null,
+    skipReason: storedSnapshotSkipReason,
+  }) : ({
+    snapshot: {
+      directory: {
+        fetchedAt: Date.now(),
+        groups: directoryGroups,
+        allGroups: directoryGroups,
+        members: new Map(),
+        workspaces: new Map([
+          ["ws-1", { id: "ws-1", name: "Acme Workspace" }],
+          ["ws-2", { id: "ws-2", name: "Beta Workspace" }],
+        ]),
+        groupMembers: groupMembersFixture,
+        budgets: {
+          groupLimits: new Map(),
+          userLimits: new Map(),
+          workspaceDefaults: new Map(),
+        },
+      },
+      rangeKey: "budget-check:fixture",
+      dataAsOf: CHECK_DATA_AS_OF,
+    },
+    skipReason: null,
   }),
   getBillingPeriod: () => ({ label: "July 2026", start: billingStart }),
   // Spend is provided synchronously via getSpendMock, so report a fresh cache to
@@ -328,6 +356,7 @@ beforeEach(async () => {
     DROP TABLE IF EXISTS team_budgets;
     DROP TABLE IF EXISTS group_teams;
     DROP TABLE IF EXISTS admin_emails;
+    DROP TABLE IF EXISTS budget_checker_state;
     CREATE TABLE alerts (
       id SERIAL PRIMARY KEY,
       group_id TEXT NOT NULL,
@@ -342,6 +371,7 @@ beforeEach(async () => {
       recipients TEXT[] NOT NULL,
       status TEXT NOT NULL,
       error_message TEXT,
+      data_as_of TIMESTAMPTZ,
       sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE alert_delivery_claims (
@@ -417,6 +447,13 @@ beforeEach(async () => {
       email TEXT NOT NULL UNIQUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE budget_checker_state (
+      id TEXT PRIMARY KEY DEFAULT 'singleton',
+      last_successful_evaluation_at TIMESTAMPTZ,
+      last_evaluated_data_as_of TIMESTAMPTZ,
+      last_attempt_at TIMESTAMPTZ,
+      last_skip_reason TEXT
+    );
     INSERT INTO group_budgets (group_id, amount_usd) VALUES ('grp-1', 1000);
     INSERT INTO admin_emails (email) VALUES ('admin@example.com');
   `);
@@ -431,6 +468,7 @@ beforeEach(async () => {
   groupMembersFixture = new Map();
   directoryGroups = [GROUP];
   billingStart = PERIOD_JUL;
+  storedSnapshotSkipReason = null;
   periodStartAfterRawRefresh = null;
   rawSpendRefreshGroupIds = [];
   rawSpendCallbacks = new Map();
@@ -654,7 +692,7 @@ describe("canonical group alert parity", () => {
     expect(await getFiredThresholds("grp-1", PERIOD_JUL)).toEqual([]);
   });
 
-  it("startChecker callback defers until every group member payload is complete", async () => {
+  it("startChecker warm-up queues ingestion without evaluating alerts", async () => {
     const unrelated = {
       ...GROUP,
       id: "unrelated-group",
@@ -677,17 +715,16 @@ describe("canonical group alert parity", () => {
     );
     try {
       startChecker();
-      await vi.waitFor(() => expect(rawSpendCallbacks.has(GROUP.id)).toBe(true));
-
-      rawSpendCallbacks.get(GROUP.id)!();
+      await vi.waitFor(() => expect(rawSpendRefreshGroupIds).toContain(GROUP.id));
+      expect(rawSpendCallbacks.size).toBe(0);
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(sendEmailMock).not.toHaveBeenCalled();
       expect(await getFiredThresholds(GROUP.id, PERIOD_JUL, "group")).toEqual([]);
 
       memberUsageFixture.set(unrelated.id, new Map([["u-unrelated", 0]]));
-      rawSpendCallbacks.get(GROUP.id)!();
-      await vi.waitFor(() => expect(sendEmailMock).toHaveBeenCalledTimes(1));
-      expect(await getFiredThresholds(GROUP.id, PERIOD_JUL, "group")).toEqual([50]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sendEmailMock).not.toHaveBeenCalled();
+      expect(await getFiredThresholds(GROUP.id, PERIOD_JUL, "group")).toEqual([]);
     } finally {
       intervalSpy.mockRestore();
     }
@@ -785,15 +822,74 @@ describe("team allocated pool checks", () => {
     expect(alert.threshold).toBe(50);
     expect(alert.spendUsd).toBeCloseTo(600);
     expect(alert.budgetUsd).toBe(1000);
+    expect(alert.dataAsOf).toEqual(CHECK_DATA_AS_OF);
     // Both contributing workspaces recorded for scoping.
     expect([...alert.workspaceIds].sort()).toEqual(["ws-1", "ws-2"]);
     expect(await getFiredThresholds("Platform", PERIOD_JUL, "team")).toEqual([50]);
   });
 
-  it("establishes a billing-period anchor when only team pools are configured", async () => {
+  it("records a skipped attempt without replacing the prior successful evaluation", async () => {
+    await configureTeam(1000);
+    memberUsageFixture = new Map([
+      ["gA", new Map([["u1", 100]])],
+      ["gB", new Map([["u3", 100]])],
+    ]);
+    const successful = await runCheck();
+    expect(successful.skipped).toBe(false);
+    expect(successful.evaluatedAt).toBeInstanceOf(Date);
+
+    storedSnapshotSkipReason = "Stored usage is missing for workspace_member|ws-2";
+    const skipped = await runCheck();
+    expect(skipped).toMatchObject({
+      checkedGroups: 0,
+      checkedTeams: 0,
+      skipped: true,
+      skipReason: storedSnapshotSkipReason,
+      evaluatedAt: null,
+      dataAsOf: null,
+    });
+    const [state] = await testDb.select().from(schema.budgetCheckerStateTable);
+    expect(state?.lastSuccessfulEvaluationAt?.getTime()).toBe(successful.evaluatedAt?.getTime());
+    expect(state?.lastEvaluatedDataAsOf).toEqual(CHECK_DATA_AS_OF);
+    expect(state?.lastSkipReason).toBe(storedSnapshotSkipReason);
+  });
+
+  it("preserves durable success when an immediate skipped run races startup hydration", async () => {
+    const priorSuccess = new Date("2026-07-14T12:00:00.000Z");
+    const priorDataAsOf = new Date("2026-07-14T00:00:00.000Z");
+    await testDb.insert(schema.budgetCheckerStateTable).values({
+      id: "singleton",
+      lastSuccessfulEvaluationAt: priorSuccess,
+      lastEvaluatedDataAsOf: priorDataAsOf,
+    });
+    storedSnapshotSkipReason = "Stored directory is unavailable";
+
+    const skipped = await runCheck();
+    expect(skipped.skipped).toBe(true);
+    const [state] = await testDb.select().from(schema.budgetCheckerStateTable);
+    expect(state?.lastSuccessfulEvaluationAt).toEqual(priorSuccess);
+    expect(state?.lastEvaluatedDataAsOf).toEqual(priorDataAsOf);
+    expect(state?.lastSkipReason).toBe(storedSnapshotSkipReason);
+  });
+
+  it("completes a database-only no-alert evaluation in under one second", async () => {
+    await configureTeam(1000);
+    memberUsageFixture = new Map([
+      ["gA", new Map([["u1", 100]])],
+      ["gB", new Map([["u3", 100]])],
+    ]);
+    const startedAt = performance.now();
+    const result = await runCheck();
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    expect(result.skipped).toBe(false);
+    expect(rawSpendRefreshGroupIds).toEqual([]);
+    expect(lastExtraWorkspaceForce).toBe(false);
+  });
+
+  it("uses the stored billing-period anchor when only team pools are configured", async () => {
     await configureTeam(1000);
     billingStart = null;
-    periodStartAfterRawRefresh = PERIOD_JUL;
+    billingStart = PERIOD_JUL;
     memberUsageFixture = new Map([
       ["gA", new Map([["u1", 400]])],
       ["gB", new Map([["u3", 200]])],
@@ -801,7 +897,7 @@ describe("team allocated pool checks", () => {
 
     const result = await runCheck(true);
     expect(result.checkedGroups).toBe(0);
-    expect(rawSpendRefreshGroupIds).toContain("gA");
+    expect(rawSpendRefreshGroupIds).toEqual([]);
     expect(result.checkedTeams).toBe(1);
     expect(result.alerts).toHaveLength(1);
     expect(result.alerts[0]!.entityType).toBe("team");
@@ -825,23 +921,21 @@ describe("team allocated pool checks", () => {
     expect(result.alerts[0]!.threshold).toBe(50);
   });
 
-  it("force-refreshes extra-workspace spend before evaluating a team", async () => {
+  it("does not refresh extra-workspace spend before evaluating a team", async () => {
     await configureTeam(1000);
     memberUsageFixture = new Map([
       ["gA", new Map([["u1", 100]])],
       ["gB", new Map([["u3", 100]])],
     ]);
-    // The previously complete cache would put the team at 40%, while the
-    // refreshed upstream value puts it at 60% and should fire 50%.
+    // The stored value puts the team at 40%; a newer upstream value must not be
+    // fetched or used by the checker.
     extraSpendFixture = new Map([["u1", 200]]);
     extraSpendAfterForce = new Map([["u1", 400]]);
 
     const result = await runCheck(true);
-    expect(lastExtraWorkspaceForce).toBe(true);
+    expect(lastExtraWorkspaceForce).toBe(false);
     expect(result.checkedTeams).toBe(1);
-    expect(result.alerts).toHaveLength(1);
-    expect(result.alerts[0]!.spendUsd).toBeCloseTo(600);
-    expect(result.alerts[0]!.threshold).toBe(50);
+    expect(result.alerts).toHaveLength(0);
   });
 
   it("team thresholds dedup per period and reset on rollover", async () => {

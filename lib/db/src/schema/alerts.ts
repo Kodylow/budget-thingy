@@ -34,6 +34,7 @@ export const alertsTable = pgTable("alerts", {
   recipients: text("recipients").array().notNull(),
   status: text("status").notNull(), // "sent" | "failed"
   errorMessage: text("error_message"),
+  dataAsOf: timestamp("data_as_of", { withTimezone: true }),
   sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

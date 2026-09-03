@@ -182,7 +182,13 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground">
                       Runs every {status.checkerIntervalMinutes} minutes
                       {status.lastCheckAt && (
-                        <> · Last check {formatDistanceToNow(new Date(status.lastCheckAt), { addSuffix: true })}</>
+                        <> · Last successful evaluation {formatDistanceToNow(new Date(status.lastCheckAt), { addSuffix: true })}</>
+                      )}
+                      {status.lastEvaluatedDataAsOf && (
+                        <> · Data through {new Date(status.lastEvaluatedDataAsOf).toLocaleString()}</>
+                      )}
+                      {status.lastCheckerSkipReason && (
+                        <> · Last attempt skipped: {status.lastCheckerSkipReason}</>
                       )}
                     </p>
                   </div>

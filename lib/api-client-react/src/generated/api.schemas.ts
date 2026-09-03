@@ -927,6 +927,11 @@ export interface Alert {
   /** @nullable */
   errorMessage?: string | null;
   /**
+     * Exclusive timestamp through which stored usage facts were evaluated
+     * @nullable
+     */
+  dataAsOf?: string | null;
+  /**
      * Current canonical spend for the entity; null while usage is incomplete
      * @nullable
      */
@@ -944,6 +949,13 @@ export interface CheckResult {
   checkedTeams: number;
   alertsSent: number;
   alerts?: Alert[];
+  /** @nullable */
+  evaluatedAt: string | null;
+  /** @nullable */
+  dataAsOf: string | null;
+  skipped: boolean;
+  /** @nullable */
+  skipReason: string | null;
 }
 
 export type AccountTotalVerificationOutcome = typeof AccountTotalVerificationOutcome[keyof typeof AccountTotalVerificationOutcome];
@@ -1040,8 +1052,20 @@ export interface SystemStatus {
   /** Whether the email connector is set up */
   emailConfigured: boolean;
   checkerIntervalMinutes: number;
+  /**
+     * Alias for lastSuccessfulEvaluationAt
+     * @deprecated
+     * @nullable
+     */
+  lastCheckAt: string | null;
   /** @nullable */
-  lastCheckAt?: string | null;
+  lastSuccessfulEvaluationAt: string | null;
+  /** @nullable */
+  lastEvaluatedDataAsOf: string | null;
+  /** @nullable */
+  lastCheckerAttemptAt: string | null;
+  /** @nullable */
+  lastCheckerSkipReason: string | null;
   billingPeriodStart: string;
   billingPeriodEnd: string;
   billingPeriodLabel: string;

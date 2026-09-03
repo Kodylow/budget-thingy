@@ -25,6 +25,11 @@ export interface Alert {
   /** @nullable */
   errorMessage?: string | null;
   /**
+     * Exclusive timestamp through which stored usage facts were evaluated
+     * @nullable
+     */
+  dataAsOf?: string | null;
+  /**
      * Current canonical spend for the entity; null while usage is incomplete
      * @nullable
      */

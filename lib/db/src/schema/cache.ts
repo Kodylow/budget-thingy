@@ -36,6 +36,17 @@ export const apiAccountTotalVerificationTable = pgTable("api_account_total_verif
 export type ApiAccountTotalVerification =
   typeof apiAccountTotalVerificationTable.$inferSelect;
 
+/** Durable status for the database-only allocated-pool checker. */
+export const budgetCheckerStateTable = pgTable("budget_checker_state", {
+  id: text("id").primaryKey().default("singleton"),
+  lastSuccessfulEvaluationAt: timestamp("last_successful_evaluation_at", { withTimezone: true }),
+  lastEvaluatedDataAsOf: timestamp("last_evaluated_data_as_of", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  lastSkipReason: text("last_skip_reason"),
+});
+
+export type BudgetCheckerState = typeof budgetCheckerStateTable.$inferSelect;
+
 // One row per (range_key, group_id) — stores the spend value + when it was fetched.
 export const apiSpendCacheTable = pgTable(
   "api_spend_cache",

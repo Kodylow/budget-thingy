@@ -14,7 +14,7 @@ import {
   type UsageSyncChunk,
   type UsageDailyFact,
 } from "@workspace/db/schema";
-import { and, eq, gt, gte, like, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, like, lt, lte, sql } from "drizzle-orm";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
@@ -2511,6 +2511,11 @@ export interface DirectoryCache {
   budgets: PlatformBudgets;
 }
 
+export interface StoredBudgetEvaluationSnapshot {
+  directory: DirectoryCache;
+  rangeKey: string;
+  dataAsOf: Date;
+}
 let directoryCache: DirectoryCache | null = null;
 let directoryPromise: Promise<DirectoryCache> | null = null;
 function setSuccessfulSyncMetadataForTests(
@@ -4951,4 +4956,91 @@ export async function __getDurableRangeRowsForTests(
       usageSyncChunksTable.scopeKey,
       usageSyncChunksTable.chunkStart,
     );
+}
+
+/**
+ * Build a canonical-checker range solely from durable daily facts. The common
+ * contiguous prefix prevents a partially refreshed scope from being evaluated
+ * against newer data than its peers.
+ */
+export async function getStoredBudgetEvaluationSnapshot(): Promise<
+  { snapshot: StoredBudgetEvaluationSnapshot; skipReason: null } |
+  { snapshot: null; skipReason: string }
+> {
+  const dirRow = await db.query.apiDirectoryCacheTable.findFirst({
+    where: eq(apiDirectoryCacheTable.id, "singleton"),
+  });
+  if (!dirRow) return { snapshot: null, skipReason: "Stored directory is unavailable" };
+
+  let directory: DirectoryCache;
+  try {
+    directory = deserializeDirectory(dirRow.directoryJson as SerializedDirectory);
+  } catch {
+    return { snapshot: null, skipReason: "Stored directory is invalid" };
+  }
+  const billing = getBillingPeriod();
+  if (!billing.start) return { snapshot: null, skipReason: "Billing period is unavailable" };
+  const start = new Date(Math.max(new Date(billing.start).getTime(), SPEND_DATA_CUTOFF_MS));
+  if (!Number.isFinite(start.getTime())) {
+    return { snapshot: null, skipReason: "Billing period start is invalid" };
+  }
+  const requestedEnd = new Date(utcDayStart(Date.now()) + 86_400_000);
+  const facts = await db.select().from(usageDailyFactsTable).where(and(
+    inArray(usageDailyFactsTable.mode, ["group_member", "workspace_member", "group_project"]),
+    gte(usageDailyFactsTable.usageDate, start.toISOString().slice(0, 10)),
+    lt(usageDailyFactsTable.usageDate, requestedEnd.toISOString().slice(0, 10)),
+  ));
+
+  const requiredScopes = [
+    ...directory.groups.map((group) => `group_member|${group.id}`),
+    ...directory.groups.map((group) => `group_project|${group.id}`),
+    ...[...directory.workspaces.keys()].map((workspaceId) => `workspace_member|${workspaceId}`),
+  ];
+  const requiredScopeSet = new Set(requiredScopes);
+  if (requiredScopes.length === 0) {
+    return { snapshot: null, skipReason: "No stored usage scopes are configured" };
+  }
+  const datesByScope = new Map<string, Set<string>>();
+  for (const fact of facts) {
+    const scope = `${fact.mode}|${fact.scopeKey}`;
+    if (!requiredScopeSet.has(scope)) continue;
+    const dates = datesByScope.get(scope) ?? new Set<string>();
+    dates.add(fact.usageDate);
+    datesByScope.set(scope, dates);
+  }
+
+  let commonEnd = requestedEnd.getTime();
+  for (const scope of requiredScopes) {
+    const dates = datesByScope.get(scope);
+    if (!dates) return { snapshot: null, skipReason: `Stored usage is missing for ${scope}` };
+    let cursor = utcDayStart(start.getTime());
+    while (dates.has(new Date(cursor).toISOString().slice(0, 10))) cursor += 86_400_000;
+    commonEnd = Math.min(commonEnd, cursor);
+  }
+  if (commonEnd <= start.getTime()) {
+    return { snapshot: null, skipReason: "Stored usage has no complete billing-period day" };
+  }
+
+  const dataAsOf = new Date(commonEnd);
+  const rangeKey = `budget-check:${start.toISOString()}:${dataAsOf.toISOString()}`;
+  const rows: UsageSyncChunk[] = facts
+    .filter((fact) => {
+      const day = new Date(`${fact.usageDate}T00:00:00.000Z`).getTime();
+      return requiredScopeSet.has(`${fact.mode}|${fact.scopeKey}`) &&
+        day >= start.getTime() && day < commonEnd;
+    })
+    .map((fact) => {
+      const chunkStart = new Date(`${fact.usageDate}T00:00:00.000Z`);
+      return {
+        mode: fact.mode,
+        rangeKey,
+        scopeKey: fact.scopeKey,
+        chunkStart,
+        chunkEnd: new Date(chunkStart.getTime() + 86_400_000),
+        payloadJson: fact.payloadJson,
+        completedAt: fact.fetchedAt,
+      };
+    });
+  hydrateDurableUsage(rows);
+  return { snapshot: { directory, rangeKey, dataAsOf }, skipReason: null };
 }

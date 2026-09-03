@@ -3427,7 +3427,7 @@ export const getRunAlertCheckUrl = () => {
 }
 
 /**
- * Refreshes usage for all budgeted groups and sends any due alert emails immediately.
+ * Evaluates stored daily usage facts and sends any due alert emails immediately without refreshing Enterprise usage.
  * @summary Run the budget threshold check now
  */
 export const runAlertCheck = async ( options?: RequestInit): Promise<CheckResult> => {

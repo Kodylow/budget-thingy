@@ -105,6 +105,7 @@ import {
   runCheck,
   getFiredThresholds,
   getLastCheckAt,
+  getCheckerState,
   CHECK_INTERVAL_MINUTES,
 } from "../lib/checker";
 import {
@@ -285,6 +286,7 @@ function alertToJson(
     sentAt: a.sentAt.toISOString(),
     status: a.status,
     errorMessage: a.errorMessage,
+    dataAsOf: a.dataAsOf?.toISOString() ?? null,
     currentSpendUsd: current?.spendUsd ?? null,
     currentPercentUsed: current?.percentUsed ?? null,
     currentUsageComplete: current?.isComplete ?? false,
@@ -2355,6 +2357,10 @@ router.post("/alerts/check", requireAccountOperator, async (req, res): Promise<v
         checkedTeams: result.checkedTeams,
         alertsSent: result.alerts.filter((a) => a.status === "sent").length,
         alerts: result.alerts.map((alert) => alertToJson(alert)),
+        evaluatedAt: result.evaluatedAt?.toISOString() ?? null,
+        dataAsOf: result.dataAsOf?.toISOString() ?? null,
+        skipped: result.skipped,
+        skipReason: result.skipReason,
       }),
     );
   } catch (err) {
@@ -2413,6 +2419,7 @@ router.post(
         recipients: result.deliveredTo ?? recipients,
         status: result.ok ? "sent" : "failed",
         errorMessage: result.ok ? null : (result.error ?? "unknown error"),
+        dataAsOf: source.dataAsOf,
       })
       .returning();
     if (!activity) {
@@ -2429,6 +2436,7 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
   const emailConfigured = await isEmailConfigured();
   const billingPeriod = getBillingPeriodMetadata();
   const reportingRange = resolveRange("billing");
+  const checker = getCheckerState();
   res.json(
     GetStatusResponse.parse({
       enterpriseApiConfigured: isConfigured(),
@@ -2437,6 +2445,10 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
       emailConfigured,
       checkerIntervalMinutes: CHECK_INTERVAL_MINUTES,
       lastCheckAt: getLastCheckAt()?.toISOString() ?? null,
+      lastSuccessfulEvaluationAt: checker.lastSuccessfulEvaluationAt?.toISOString() ?? null,
+      lastEvaluatedDataAsOf: checker.lastEvaluatedDataAsOf?.toISOString() ?? null,
+      lastCheckerAttemptAt: checker.lastAttemptAt?.toISOString() ?? null,
+      lastCheckerSkipReason: checker.lastSkipReason,
       billingPeriodStart: billingPeriod.start,
       billingPeriodEnd: billingPeriod.end,
       billingPeriodLabel: billingPeriod.label,

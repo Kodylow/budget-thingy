@@ -1198,7 +1198,7 @@ paths:
       operationId: runAlertCheck
       tags: [alerts]
       summary: Run the budget threshold check now
-      description: Refreshes usage for all budgeted groups and sends any due alert emails immediately.
+      description: Evaluates stored daily usage facts and sends any due alert emails immediately without refreshing Enterprise usage.
       responses:
         "200":
           description: Check completed
@@ -2487,6 +2487,9 @@ components:
           description: sent or failed
         errorMessage:
           type: ["string", "null"]
+        dataAsOf:
+          type: ["string", "null"]
+          description: Exclusive timestamp through which stored usage facts were evaluated
         currentSpendUsd:
           type: ["number", "null"]
           description: Current canonical spend for the entity; null while usage is incomplete
@@ -2497,7 +2500,7 @@ components:
           type: boolean
     CheckResult:
       type: object
-      required: [checkedGroups, checkedTeams, alertsSent]
+      required: [checkedGroups, checkedTeams, alertsSent, evaluatedAt, dataAsOf, skipped, skipReason]
       properties:
         checkedGroups:
           type: integer
@@ -2509,6 +2512,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Alert"
+        evaluatedAt:
+          type: ["string", "null"]
+        dataAsOf:
+          type: ["string", "null"]
+        skipped:
+          type: boolean
+        skipReason:
+          type: ["string", "null"]
     SystemStatus:
       type: object
       required:
@@ -2517,6 +2528,11 @@ components:
           enterpriseApiOk,
           emailConfigured,
           checkerIntervalMinutes,
+          lastCheckAt,
+          lastSuccessfulEvaluationAt,
+          lastEvaluatedDataAsOf,
+          lastCheckerAttemptAt,
+          lastCheckerSkipReason,
           billingPeriodStart,
           billingPeriodEnd,
           billingPeriodLabel,
@@ -2548,6 +2564,16 @@ components:
         checkerIntervalMinutes:
           type: integer
         lastCheckAt:
+          type: ["string", "null"]
+          deprecated: true
+          description: Alias for lastSuccessfulEvaluationAt
+        lastSuccessfulEvaluationAt:
+          type: ["string", "null"]
+        lastEvaluatedDataAsOf:
+          type: ["string", "null"]
+        lastCheckerAttemptAt:
+          type: ["string", "null"]
+        lastCheckerSkipReason:
           type: ["string", "null"]
         billingPeriodStart:
           type: string

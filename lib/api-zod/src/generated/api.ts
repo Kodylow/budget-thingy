@@ -986,6 +986,7 @@ export const ListAlertsResponseItem = zod.object({
   "sentAt": zod.string(),
   "status": zod.string().describe('sent or failed'),
   "errorMessage": zod.string().nullish(),
+  "dataAsOf": zod.string().nullish().describe('Exclusive timestamp through which stored usage facts were evaluated'),
   "currentSpendUsd": zod.number().nullable().describe('Current canonical spend for the entity; null while usage is incomplete'),
   "currentPercentUsed": zod.number().nullable().describe('Current canonical spend as a percent of the current allocated pool'),
   "currentUsageComplete": zod.boolean()
@@ -994,7 +995,7 @@ export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
 
 
 /**
- * Refreshes usage for all budgeted groups and sends any due alert emails immediately.
+ * Evaluates stored daily usage facts and sends any due alert emails immediately without refreshing Enterprise usage.
  * @summary Run the budget threshold check now
  */
 export const RunAlertCheckResponse = zod.object({
@@ -1014,10 +1015,15 @@ export const RunAlertCheckResponse = zod.object({
   "sentAt": zod.string(),
   "status": zod.string().describe('sent or failed'),
   "errorMessage": zod.string().nullish(),
+  "dataAsOf": zod.string().nullish().describe('Exclusive timestamp through which stored usage facts were evaluated'),
   "currentSpendUsd": zod.number().nullable().describe('Current canonical spend for the entity; null while usage is incomplete'),
   "currentPercentUsed": zod.number().nullable().describe('Current canonical spend as a percent of the current allocated pool'),
   "currentUsageComplete": zod.boolean()
-})).optional()
+})).optional(),
+  "evaluatedAt": zod.string().nullable(),
+  "dataAsOf": zod.string().nullable(),
+  "skipped": zod.boolean(),
+  "skipReason": zod.string().nullable()
 })
 
 
@@ -1042,6 +1048,7 @@ export const SendTestAlertResponse = zod.object({
   "sentAt": zod.string(),
   "status": zod.string().describe('sent or failed'),
   "errorMessage": zod.string().nullish(),
+  "dataAsOf": zod.string().nullish().describe('Exclusive timestamp through which stored usage facts were evaluated'),
   "currentSpendUsd": zod.number().nullable().describe('Current canonical spend for the entity; null while usage is incomplete'),
   "currentPercentUsed": zod.number().nullable().describe('Current canonical spend as a percent of the current allocated pool'),
   "currentUsageComplete": zod.boolean()
@@ -1062,7 +1069,11 @@ export const GetStatusResponse = zod.object({
   "enterpriseApiError": zod.string().nullish().describe('Last Enterprise API error message, if any'),
   "emailConfigured": zod.boolean().describe('Whether the email connector is set up'),
   "checkerIntervalMinutes": zod.number(),
-  "lastCheckAt": zod.string().nullish(),
+  "lastCheckAt": zod.string().nullable().describe('Alias for lastSuccessfulEvaluationAt'),
+  "lastSuccessfulEvaluationAt": zod.string().nullable(),
+  "lastEvaluatedDataAsOf": zod.string().nullable(),
+  "lastCheckerAttemptAt": zod.string().nullable(),
+  "lastCheckerSkipReason": zod.string().nullable(),
   "billingPeriodStart": zod.string(),
   "billingPeriodEnd": zod.string(),
   "billingPeriodLabel": zod.string(),

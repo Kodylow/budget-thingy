@@ -106,6 +106,13 @@
       "when": 1788455880000,
       "tag": "0014_usage_daily_facts",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1788460000000,
+      "tag": "0015_budget_checker_state",
+      "breakpoints": true
     }
   ]
 }

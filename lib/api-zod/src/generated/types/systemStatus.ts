@@ -21,8 +21,20 @@ export interface SystemStatus {
   /** Whether the email connector is set up */
   emailConfigured: boolean;
   checkerIntervalMinutes: number;
+  /**
+     * Alias for lastSuccessfulEvaluationAt
+     * @deprecated
+     * @nullable
+     */
+  lastCheckAt: string | null;
   /** @nullable */
-  lastCheckAt?: string | null;
+  lastSuccessfulEvaluationAt: string | null;
+  /** @nullable */
+  lastEvaluatedDataAsOf: string | null;
+  /** @nullable */
+  lastCheckerAttemptAt: string | null;
+  /** @nullable */
+  lastCheckerSkipReason: string | null;
   billingPeriodStart: string;
   billingPeriodEnd: string;
   billingPeriodLabel: string;

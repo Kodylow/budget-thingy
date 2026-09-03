@@ -12,4 +12,11 @@ export interface CheckResult {
   checkedTeams: number;
   alertsSent: number;
   alerts?: Alert[];
+  /** @nullable */
+  evaluatedAt: string | null;
+  /** @nullable */
+  dataAsOf: string | null;
+  skipped: boolean;
+  /** @nullable */
+  skipReason: string | null;
 }
