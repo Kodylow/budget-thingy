@@ -1094,11 +1094,6 @@ export default function Dashboard() {
         })}
       </div>
 
-      {role === 'workspace_admin' && isPreviewing && (
-        <div className="rounded-md border border-amber-500/50 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid="banner-rbac-preview">
-          Previewing Group admin access for {preview?.groupName}. Data remains limited by your real server authorization.
-        </div>
-      )}
       <Tabs defaultValue="groups" className="space-y-4">
         <TabsContent value="groups">
       <Card>
