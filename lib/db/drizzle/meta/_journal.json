@@ -113,6 +113,20 @@
       "when": 1788460000000,
       "tag": "0015_budget_checker_state",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788542280000,
+      "tag": "0016_canonical_monthly_rollups",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788550000000,
+      "tag": "0017_recurring_job_claims",
+      "breakpoints": true
     }
   ]
 }

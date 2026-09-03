@@ -322,6 +322,7 @@ vi.mock("./logger", () => ({
 import {
   evaluateGroup,
   getFiredThresholds,
+  getFiredThresholdsBatch,
   runCheck,
   startChecker,
   THRESHOLDS,
@@ -497,6 +498,26 @@ function setSpend(
 // ---------------------------------------------------------------------------
 
 describe("threshold dedup per (group, period, threshold)", () => {
+  it("loads threshold state for many displayed groups in one set-based read", async () => {
+    await pglite.exec(`
+      INSERT INTO fired_thresholds
+        (group_id, entity_type, entity_id, billing_period, threshold)
+      VALUES
+        ('grp-1', 'group', 'grp-1', '${PERIOD_JUL}', 50),
+        ('grp-2', 'group', 'grp-2', '${PERIOD_JUL}', 75),
+        ('other', 'group', 'other', '${PERIOD_AUG}', 90)
+    `);
+    const fired = await getFiredThresholdsBatch(
+      ["grp-2", "grp-1", "missing", "grp-1"],
+      PERIOD_JUL,
+    );
+    expect(fired).toEqual(new Map([
+      ["grp-2", [75]],
+      ["grp-1", [50]],
+      ["missing", []],
+    ]));
+  });
+
   it("fires a threshold exactly once for the same period", async () => {
     setSpend(520); // 52% -> 50 due
     const first = await evaluateGroup(GROUP);

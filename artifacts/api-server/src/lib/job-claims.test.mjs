@@ -64,6 +64,36 @@ test("a worker observes ownership loss when another owner recovers its lease", a
   await releaseJobClaim(recovered);
 });
 
+test("failed claimed work becomes retryable on its failure cadence", async () => {
+  const key = `test:failure-retry:${crypto.randomUUID()}`;
+  const failureRetryMs = 15 * 60_000;
+  await assert.rejects(
+    withJobClaim(
+      key,
+      60_000,
+      5_000,
+      async () => {
+        throw new Error("transient failure");
+      },
+      failureRetryMs,
+    ),
+    /transient failure/,
+  );
+  const [failed] = await db.select().from(recurringJobClaimsTable)
+    .where(eq(recurringJobClaimsTable.jobKey, key));
+  assert.equal(failed.ownerToken, null);
+  assert.ok(
+    failed.notBefore.getTime() >= Date.now() + failureRetryMs - 5_000,
+    "failure cadence replaces the normal success cadence",
+  );
+  await db.update(recurringJobClaimsTable).set({
+    notBefore: new Date(Date.now() - 1_000),
+  }).where(eq(recurringJobClaimsTable.jobKey, key));
+  const retry = await acquireJobClaim(key, 60_000, 5_000);
+  assert.ok(retry, "failure retry is not blocked by the normal cadence");
+  await releaseJobClaim(retry);
+});
+
 test("persistable round-robin cursor rotates every scope fairly", () => {
   const items = ["d", "b", "a", "c"].map((key) => ({
     key,

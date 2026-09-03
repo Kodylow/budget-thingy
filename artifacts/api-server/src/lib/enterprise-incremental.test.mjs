@@ -32,6 +32,7 @@ const testBillingEnd = new Date(Date.UTC(
   1,
 )).toISOString();
 
+const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input) => {
   fetchCount += 1;
   const url = new URL(String(input));
@@ -50,7 +51,7 @@ globalThis.fetch = async (input) => {
     return {
       ok: true,
       status: 200,
-      headers: { get: () => "10" },
+      headers: { get: () => null },
       json: async () => ({
         data: [
           { id: "persisted-project", title: "Persisted project", creatorId: "creator-1" },
@@ -128,7 +129,7 @@ globalThis.fetch = async (input) => {
   return {
     ok: true,
     status: 200,
-    headers: { get: () => "10" },
+    headers: { get: () => null },
     json: async () => ({
       data: {
         interval: url.searchParams.get("billingPeriod") === "current"
@@ -152,6 +153,19 @@ globalThis.fetch = async (input) => {
 
 const enterprise = await import("./enterprise.ts");
 const { pool } = await import("@workspace/db");
+test.beforeEach(() => {
+  enterprise.__resetEnterpriseSchedulerForTests({
+    limit: 1_000_000,
+    remaining: 1_000_000,
+    resetAt: Date.now() + 60_000,
+  });
+});
+test.afterEach(() => {
+  enterprise.__resetEnterpriseSchedulerForTests();
+});
+test.after(() => {
+  globalThis.fetch = originalFetch;
+});
 const range = enterprise.resolveRange("custom", "2026-06-01", "2026-06-01");
 const accountRange = {
   ...range,
@@ -258,6 +272,135 @@ test("fact reads fail closed for a non-midnight range end", () => {
 
   enterprise.__resetDurableUsageCachesForTests();
   delete process.env["ENTERPRISE_DAILY_FACTS_READS"];
+});
+
+test("materialized monthly rollups aggregate aligned months and fail closed on gaps or attribution changes", () => {
+  enterprise.__resetDurableUsageCachesForTests();
+  const materializedGroup = {
+    id: `materialized-${crypto.randomUUID()}`,
+    workspaceId: `materialized-ws-${crypto.randomUUID()}`,
+    name: "Materialized",
+    type: "custom",
+  };
+  const directory = {
+    workspaces: new Map([[materializedGroup.workspaceId, {
+      id: materializedGroup.workspaceId,
+      name: "Materialized Workspace",
+      slug: "materialized",
+      memberCount: 1,
+    }]]),
+    groups: [materializedGroup],
+    groupMembers: new Map([[materializedGroup.id, ["member"]]]),
+    members: new Map([["member", {
+      userId: "member",
+      username: "member",
+      email: "member@example.com",
+      name: "Member",
+      isAccountAdmin: true,
+      workspaces: new Map([[materializedGroup.workspaceId, {
+        role: "member",
+        isDisabled: false,
+      }]]),
+    }]]),
+  };
+  enterprise.__setDirectoryCacheForTests(directory);
+  const fingerprintBefore = enterprise.__canonicalInputFingerprintForTests("2026-06-01");
+  enterprise.__setDirectoryCacheForTests(directory);
+  assert.equal(
+    enterprise.__canonicalInputFingerprintForTests("2026-06-01"),
+    fingerprintBefore,
+    "a no-op directory refresh must not invalidate a historical rollup",
+  );
+  const row = (monthStart, aiSpendUsd, residualSpendUsd) => ({
+    monthStart,
+    groupId: materializedGroup.id,
+    workspaceId: materializedGroup.workspaceId,
+    userKey: "member",
+    aiSpendUsd,
+    nonAiSpendUsd: 0,
+    residualSpendUsd: 0,
+    authoritativeSpendUsd: aiSpendUsd,
+    updatedAt: new Date(),
+  });
+  const residual = (monthStart, residualSpendUsd) => ({
+    ...row(monthStart, 0, 0),
+    userKey: "\u0001canonical-residual",
+    residualSpendUsd,
+    authoritativeSpendUsd: 0,
+  });
+  const authoritativeOnly = (monthStart, authoritativeSpendUsd) => ({
+    ...row(monthStart, 0, 0),
+    userKey: "residual-member",
+    authoritativeSpendUsd,
+  });
+  enterprise.__setCanonicalMonthlyRollupsForTests([
+    {
+      monthStart: "2026-06-01",
+      startTime: "2026-06-01T00:00:00.000Z",
+      endTime: "2026-07-01T00:00:00.000Z",
+      rows: [
+        row("2026-06-01", 10, 0),
+        authoritativeOnly("2026-06-01", 4),
+        residual("2026-06-01", 2),
+      ],
+    },
+    {
+      monthStart: "2026-07-01",
+      startTime: "2026-07-01T00:00:00.000Z",
+      endTime: "2026-08-01T00:00:00.000Z",
+      rows: [
+        row("2026-07-01", 20, 0),
+        authoritativeOnly("2026-07-01", 3),
+        residual("2026-07-01", 3),
+      ],
+    },
+  ]);
+  const aligned = enterprise.resolveRange("custom", "2026-06-01", "2026-07-31");
+  const canonical = enterprise.getCanonicalUsage(
+    [materializedGroup],
+    aligned.key,
+    new Set([materializedGroup.workspaceId]),
+    directory.groupMembers,
+    directory.members,
+    undefined,
+    directory.workspaces,
+  );
+  assert.equal(canonical.isComplete, true);
+  assert.equal(canonical.byUser.get("member"), 30);
+  assert.equal(canonical.byGroup.get(materializedGroup.id)?.spendUsd, 35);
+  assert.equal(canonical.aiSpendByGroup.get(materializedGroup.id)?.get("member"), 30);
+  assert.equal(canonical.authoritativeSpendByGroup.get(materializedGroup.id)?.get("member"), 30);
+  assert.equal(
+    canonical.authoritativeSpendByGroup.get(materializedGroup.id)?.get("residual-member"),
+    7,
+  );
+  assert.equal(canonical.byGroup.get(materializedGroup.id)?.byUser.get("residual-member"), 0);
+  assert.equal(canonical.residualSpendByGroup.get(materializedGroup.id), 5);
+
+  const unsafe = enterprise.resolveRange("custom", "2026-06-01", "2026-08-31");
+  assert.equal(
+    enterprise.getCanonicalUsage(
+      [materializedGroup], unsafe.key, new Set([materializedGroup.workspaceId]),
+      directory.groupMembers, directory.members, undefined, directory.workspaces,
+    ).isComplete,
+    false,
+    "a missing monthly segment must use the normal incomplete fallback",
+  );
+  const changedDirectory = {
+    ...directory,
+    groupMembers: new Map([[materializedGroup.id, ["member", "new-member"]]]),
+  };
+  enterprise.__setDirectoryCacheForTests(changedDirectory);
+  assert.notEqual(enterprise.__canonicalInputFingerprintForTests("2026-06-01"), fingerprintBefore);
+  assert.equal(
+    enterprise.getCanonicalUsage(
+      [materializedGroup], aligned.key, new Set([materializedGroup.workspaceId]),
+      changedDirectory.groupMembers, changedDirectory.members, undefined, changedDirectory.workspaces,
+    ).isComplete,
+    false,
+    "stale materialized attribution must not be served after membership changes",
+  );
+  enterprise.__setDirectoryCacheForTests(null);
 });
 
 test("a month cannot close when a persisted daily fact is missing", async () => {

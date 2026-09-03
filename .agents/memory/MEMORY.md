@@ -8,3 +8,4 @@
 - [Member budget accounting](member-budget-accounting.md) — Replit limits are workspace/user scoped; Remaining uses complete current-cycle workspace Agent metrics, never selected-range cluster spend.
 - [Upstream team budget targets](upstream-team-budget-targets.md) — force a fresh directory and fail closed on cross-workspace name reuse before writing Member-group limits.
 - [Recurring job claims](recurring-job-claims.md) — DB leases separate crash recovery from cadence; recovery must reset cadence and workers must surface ownership loss.
+- [Canonical monthly rollups](canonical-monthly-rollups.md) — serve materialized attribution only for exact contiguous bounds and full-directory scope; scoped reads must recompute.

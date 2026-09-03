@@ -83,10 +83,17 @@ export async function updateJobClaimCursor(
   return !!row;
 }
 
-export async function releaseJobClaim(claim: JobClaim): Promise<void> {
+export async function releaseJobClaim(
+  claim: JobClaim,
+  retryAfterMs?: number,
+): Promise<void> {
+  const retryAt = retryAfterMs === undefined
+    ? undefined
+    : sql`now() + (${Math.max(1, Math.floor(retryAfterMs))}::text || ' milliseconds')::interval`;
   await db.update(recurringJobClaimsTable).set({
     ownerToken: null,
     leaseExpiresAt: sql`now()`,
+    ...(retryAt ? { notBefore: retryAt } : {}),
     updatedAt: sql`now()`,
   }).where(and(
     eq(recurringJobClaimsTable.jobKey, claim.jobKey),
@@ -103,6 +110,7 @@ export async function withJobClaim<T>(
   cadenceMs: number,
   leaseMs: number,
   work: (claim: JobClaim) => Promise<T>,
+  failureRetryMs = cadenceMs,
 ): Promise<{ acquired: false } | { acquired: true; value: T }> {
   const claim = await acquireJobClaim(jobKey, cadenceMs, leaseMs);
   if (!claim) return { acquired: false };
@@ -125,13 +133,15 @@ export async function withJobClaim<T>(
     Math.max(1_000, claim.leaseMs / 3),
   );
   timer.unref();
+  let succeeded = false;
   try {
     controller.signal.throwIfAborted();
     const value = await work(activeClaim);
     controller.signal.throwIfAborted();
+    succeeded = true;
     return { acquired: true, value };
   } finally {
     clearInterval(timer);
-    await releaseJobClaim(activeClaim);
+    await releaseJobClaim(activeClaim, succeeded ? undefined : failureRetryMs);
   }
 }

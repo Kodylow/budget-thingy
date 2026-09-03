@@ -11,8 +11,11 @@ import {
   usageSyncStateTable,
   usageDailyFactsTable,
   usageFactMonthsTable,
+  canonicalMonthlyGroupUserRollupsTable,
+  canonicalMonthlyRollupStateTable,
   type UsageSyncChunk,
   type UsageDailyFact,
+  type CanonicalMonthlyGroupUserRollup,
 } from "@workspace/db/schema";
 import { and, eq, gt, gte, inArray, like, lt, lte, sql } from "drizzle-orm";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -110,6 +113,7 @@ export interface UsageRange {
 }
 
 function resolvedRange(range: UsageRange): UsageRange {
+  resolvedUsageRanges.set(range.key, range);
   prepareUsageRangeFromDailyFacts(range);
   return range;
 }
@@ -459,6 +463,7 @@ export function getUsageOperationalDiagnostics(): UsageOperationalDiagnostics {
   };
 }
 
+const CANONICAL_RESIDUAL_USER_KEY = "\u0001canonical-residual";
 export function __getEnterpriseBudgetForTests() {
   return enterpriseBudget.snapshot();
 }
@@ -715,6 +720,8 @@ interface StoredUsagePayload {
 
 const dailyFactCache = new Map<string, UsageDailyFact>();
 const materializedFactRanges = new Set<string>();
+
+const resolvedUsageRanges = new Map<string, UsageRange>();
 const verifiedDailyFactScopes = new Set<string>();
 let dailyFactParityReady = false;
 let dailyFactRefreshTimer: NodeJS.Timeout | null = null;
@@ -773,6 +780,10 @@ function factRowsForRange(
  */
 export function prepareUsageRangeFromDailyFacts(range: UsageRange): boolean {
   if (!dailyFactReadsEnabled()) return false;
+  return materializeUsageRangeFromDailyFacts(range);
+}
+
+function materializeUsageRangeFromDailyFacts(range: UsageRange): boolean {
   if (materializedFactRanges.has(range.key)) return true;
   const scopes = new Set(
     [...dailyFactCache.values()].map((fact) => `${fact.mode}|${fact.scopeKey}`),
@@ -801,7 +812,6 @@ export function prepareUsageRangeFromDailyFacts(range: UsageRange): boolean {
   materializedFactRanges.add(range.key);
   return true;
 }
-
 interface SyncMetadata {
   syncedThrough: number;
   completedAt: number;
@@ -1255,6 +1265,7 @@ async function finalizeDailyFactMonth(
       set: { isClosed, status: "success", errorMessage: null, syncedThrough: end, completedAt },
     });
   });
+  queueCanonicalMonthRebuild(monthStart);
 }
 
 /**
@@ -2374,6 +2385,7 @@ export async function initCache(
       projectStates,
       durable,
       facts,
+      canonicalDurable,
     ] = await Promise.all([
       db.query.apiDirectoryCacheTable.findFirst({ where: eq(apiDirectoryCacheTable.id, "singleton") }),
       db.query.apiBillingPeriodCacheTable.findFirst({
@@ -2392,15 +2404,44 @@ export async function initCache(
         return { states, chunks };
       }),
       db.select().from(usageDailyFactsTable),
+      db.transaction(async (tx) => {
+        await tx.execute(sql`set transaction isolation level repeatable read read only`);
+        const rows = await tx.select().from(canonicalMonthlyGroupUserRollupsTable);
+        const states = await tx.select().from(canonicalMonthlyRollupStateTable);
+        return { rows, states };
+      }),
     ]);
+    const { rows: canonicalRows, states: canonicalStates } = canonicalDurable;
     const { states, chunks } = durable;
     for (const fact of facts) {
+      canonicalCandidateMonths.add(`${fact.usageDate.slice(0, 7)}-01`);
       dailyFactCache.set(
         dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
         fact,
       );
     }
     if (facts.length > 0) logger.info({ facts: facts.length }, "Daily usage facts hydrated from DB");
+    for (const row of canonicalRows) {
+      const rows = canonicalMonthlyRows.get(row.monthStart) ?? [];
+      rows.push(row);
+      canonicalMonthlyRows.set(row.monthStart, rows);
+    }
+    for (const state of canonicalStates) {
+      canonicalCandidateMonths.add(state.monthStart);
+      if (state.status === "success") {
+        canonicalMonthlyFingerprints.set(state.monthStart, state.inputFingerprint);
+        canonicalMonthlyBounds.set(state.monthStart, {
+          start: state.rangeStart.getTime(),
+          end: state.rangeEnd.getTime(),
+        });
+      }
+    }
+    if (canonicalRows.length > 0) {
+      logger.info(
+        { months: canonicalMonthlyRows.size, rows: canonicalRows.length },
+        "Canonical monthly usage rollups hydrated from DB",
+      );
+    }
 
     if (billingPeriodRow) {
       billingPeriodCache = {
@@ -2433,6 +2474,16 @@ export async function initCache(
         }
       } catch (err) {
         logger.warn({ err }, "Failed to deserialize directory cache from DB");
+      }
+    }
+    if (directoryCache) {
+      for (const monthStart of canonicalCandidateMonths) {
+        if (
+          canonicalMonthlyFingerprints.get(monthStart) !==
+          canonicalInputFingerprint(monthStart, directoryCache)
+        ) {
+          queueCanonicalMonthRebuild(monthStart);
+        }
       }
     }
 
@@ -3727,6 +3778,23 @@ export function getProjectAttribution(
   _workspaces: ReadonlyMap<string, EnterpriseWorkspace>,
   groupMembers?: ReadonlyMap<string, readonly string[]>,
 ): ProjectAttribution {
+  const creatorOwnerByWorkspaceUser = new Map<string, EnterpriseGroup>();
+  if (groupMembers) {
+    const orderedGroups = [...groups].sort(
+      (a, b) =>
+        a.workspaceId.localeCompare(b.workspaceId) ||
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+        a.id.localeCompare(b.id),
+    );
+    for (const group of orderedGroups) {
+      for (const userId of groupMembers.get(group.id) ?? []) {
+        const key = `${group.workspaceId}\u0000${userId}`;
+        if (!creatorOwnerByWorkspaceUser.has(key)) {
+          creatorOwnerByWorkspaceUser.set(key, group);
+        }
+      }
+    }
+  }
   const candidates = new Map<string, Array<{
     group: EnterpriseGroup;
     project: ProjectUsageEntry;
@@ -3764,9 +3832,16 @@ export function getProjectAttribution(
   for (const [projectId, projectCandidates] of candidates) {
     // The same project can be reported by several group filters. The single
     // highest-total observation is authoritative; a stable ID resolves ties.
-    const winner = projectCandidates.slice().sort(
-      (a, b) => b.spendUsd - a.spendUsd || a.group.id.localeCompare(b.group.id),
-    )[0]!;
+    let winner = projectCandidates[0]!;
+    for (let i = 1; i < projectCandidates.length; i++) {
+      const candidate = projectCandidates[i]!;
+      if (
+        candidate.spendUsd > winner.spendUsd ||
+        (candidate.spendUsd === winner.spendUsd && candidate.group.id < winner.group.id)
+      ) {
+        winner = candidate;
+      }
+    }
 
     projectToGroup.set(projectId, winner.group.id);
     spendByGroup.set(
@@ -3797,15 +3872,7 @@ export function getProjectAttribution(
     creatorByProject.set(projectId, creatorId);
     const creatorOwner = creatorId === null
       ? undefined
-      : [...groups]
-        .filter((group) => group.workspaceId === winner.group.workspaceId)
-        .sort(
-          (a, b) =>
-            a.workspaceId.localeCompare(b.workspaceId) ||
-            a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
-            a.id.localeCompare(b.id),
-        )
-        .find((group) => (groupMembers?.get(group.id) ?? []).includes(creatorId));
+      : creatorOwnerByWorkspaceUser.get(`${winner.group.workspaceId}\u0000${creatorId}`);
     if (!groupMembers) {
       continue;
     } else if (creatorOwner && creatorId !== null) {
@@ -4031,6 +4098,9 @@ export function queueProjectTitlesFetch(
       });
       projectInfoCache.set(workspaceId, infoMap);
       projectInfoFetchedAt.set(workspaceId, completedAt.getTime());
+      for (const monthStart of canonicalCandidateMonths) {
+        queueCanonicalMonthRebuild(monthStart);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!hasStoredSnapshot) {
@@ -4151,6 +4221,14 @@ export function getDedupedUsageRollup(
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
       a.id.localeCompare(b.id),
   );
+  const groupsByWorkspace = new Map<string, EnterpriseGroup[]>();
+  const memberIdsByGroup = new Map<string, ReadonlySet<string>>();
+  for (const group of ordered) {
+    const workspaceGroups = groupsByWorkspace.get(group.workspaceId) ?? [];
+    workspaceGroups.push(group);
+    groupsByWorkspace.set(group.workspaceId, workspaceGroups);
+    memberIdsByGroup.set(group.id, new Set(groupMembers?.get(group.id) ?? []));
+  }
 
   let pendingCount = 0;
   const usageByGroup = new Map<string, MemberUsage>();
@@ -4172,6 +4250,19 @@ export function getDedupedUsageRollup(
   const crossWorkspaceAttributedUsersByGroup = new Map<string, Set<string>>();
   const scopedWorkspaceIds =
     workspaceIds ?? new Set(ordered.map((group) => group.workspaceId));
+  const ownerByWorkspaceUser = new Map<string, Map<string, EnterpriseGroup>>();
+  for (const [workspaceId, workspaceGroups] of groupsByWorkspace) {
+    const owners = new Map<string, EnterpriseGroup>();
+    for (const group of workspaceGroups) {
+      for (const userId of memberIdsByGroup.get(group.id) ?? []) {
+        if (!owners.has(userId)) owners.set(userId, group);
+      }
+      for (const userId of usageByGroup.get(group.id)?.byUser.keys() ?? []) {
+        if (!owners.has(userId)) owners.set(userId, group);
+      }
+    }
+    ownerByWorkspaceUser.set(workspaceId, owners);
+  }
 
   let totalMemberCount = 0;
   let totalSpendUsd = 0;
@@ -4231,7 +4322,7 @@ export function getDedupedUsageRollup(
   const userComcastSpend = new Map<string, number>();
 
   for (const workspaceId of [...scopedWorkspaceIds].sort()) {
-    const workspaceGroups = ordered.filter((group) => group.workspaceId === workspaceId);
+    const workspaceGroups = groupsByWorkspace.get(workspaceId) ?? [];
     const workspaceUsage = wsSpendCache.get(`${rangeKey}|${workspaceId}`);
     if (!workspaceUsage) pendingCount += 1;
 
@@ -4241,7 +4332,7 @@ export function getDedupedUsageRollup(
     }
     for (const userId of workspaceUsage?.byUser.keys() ?? []) candidates.add(userId);
     for (const group of workspaceGroups) {
-      for (const userId of groupMembers?.get(group.id) ?? []) candidates.add(userId);
+      for (const userId of memberIdsByGroup.get(group.id) ?? []) candidates.add(userId);
       for (const userId of usageByGroup.get(group.id)?.byUser.keys() ?? []) candidates.add(userId);
     }
 
@@ -4274,18 +4365,14 @@ export function getDedupedUsageRollup(
         parentWorkspaceIds.has(workspaceId)
           ? (comcastGroupsByWorkspace.get(workspaceId) ?? []).find(
           (group) =>
-            (groupMembers?.get(group.id) ?? []).includes(userId) ||
+            memberIdsByGroup.get(group.id)?.has(userId) ||
             usageByGroup.get(group.id)?.byUser.has(userId),
           )
           : undefined;
 
       // Otherwise find the first group in this workspace (stable order) whose
       // directory or usage membership contains the user.
-      let owner = parentComcastOwner ?? workspaceGroups.find(
-        (group) =>
-          (groupMembers?.get(group.id) ?? []).includes(userId) ||
-          usageByGroup.get(group.id)?.byUser.has(userId),
-      );
+      let owner = parentComcastOwner ?? ownerByWorkspaceUser.get(workspaceId)?.get(userId);
 
       // Workspace-admin fallback: workspace admins often lack explicit Comcast
       // group membership but their spend belongs to the team they administer.
@@ -4430,7 +4517,7 @@ export function getDedupedUsageRollup(
       const primaryComcastOwner =
         primaryMatchingGroups.find(
           (group) =>
-            (groupMembers?.get(group.id) ?? []).includes(userId) ||
+            memberIdsByGroup.get(group.id)?.has(userId) ||
             usageByGroup.get(group.id)?.byUser.has(userId),
         ) ??
         primaryMatchingGroups[0];
@@ -4609,14 +4696,24 @@ export function getCanonicalUsage(
     requireGroupMemberUsage = false,
     requiredDetailGroupIds,
   ] = options;
-  const rollup = getDedupedUsageRollup(
-    groups,
-    rangeKey,
-    workspaceIds,
-    groupMembers,
-    directoryMembers,
-    workspaces,
-  );
+  const materializedMonths = bypassCanonicalMonthlyRead
+    ? null
+    : (directoryCache ? canonicalMonthsForRange(rangeKey, directoryCache) : null);
+  const materializedRollup =
+    materializedMonths &&
+    directoryCache &&
+    !requiredDetailGroupIds &&
+    isFullDirectoryCanonicalScope(groups, workspaceIds, directoryCache)
+      ? aggregateMaterializedCanonicalRollups(materializedMonths, groups)
+      : null;
+  const rollup = materializedRollup ?? getDedupedUsageRollup(
+      groups,
+      rangeKey,
+      workspaceIds,
+      groupMembers,
+      directoryMembers,
+      workspaces,
+    );
   // Preserve the authoritative workspace-derived per-user allocation before
   // canonical AI/non-AI attribution replaces rollup.byGroup.byUser below.
   // Total-spend-only surfaces can render this even when the optional breakdown
@@ -4633,6 +4730,108 @@ export function getCanonicalUsage(
     workspaces,
     groupMembers,
   );
+  if (materializedMonths && materializedRollup) {
+    const rows = materializedMonths.flatMap((monthStart) =>
+      canonicalMonthlyRows.get(monthStart) ?? []
+    );
+    const aiSpendByUser = new Map<string, number>();
+    const nonAiSpendByUser = new Map<string, number>();
+    const aiSpendByGroup = new Map<string, Map<string, number>>();
+    const nonAiSpendByGroup = new Map<string, Map<string, number>>();
+    const authoritativeSpendByGroup = new Map<string, Map<string, number>>();
+    const residualSpendByGroup = new Map<string, number>();
+    for (const group of groups) {
+      aiSpendByGroup.set(group.id, new Map());
+      nonAiSpendByGroup.set(group.id, new Map());
+      authoritativeSpendByGroup.set(group.id, new Map());
+      residualSpendByGroup.set(group.id, 0);
+    }
+    for (const row of rows) {
+      if (row.userKey === CANONICAL_RESIDUAL_USER_KEY) {
+        if (residualSpendByGroup.has(row.groupId)) {
+          residualSpendByGroup.set(
+            row.groupId,
+            (residualSpendByGroup.get(row.groupId) ?? 0) + row.residualSpendUsd,
+          );
+        }
+        continue;
+      }
+      if (!aiSpendByGroup.has(row.groupId)) continue;
+      const groupAi = aiSpendByGroup.get(row.groupId)!;
+      const groupNonAi = nonAiSpendByGroup.get(row.groupId)!;
+      const groupAuthoritative = authoritativeSpendByGroup.get(row.groupId)!;
+      groupAi.set(
+        row.userKey,
+        (groupAi.get(row.userKey) ?? 0) + row.aiSpendUsd,
+      );
+      groupNonAi.set(
+        row.userKey,
+        (groupNonAi.get(row.userKey) ?? 0) + row.nonAiSpendUsd,
+      );
+      groupAuthoritative.set(
+        row.userKey,
+        (groupAuthoritative.get(row.userKey) ?? 0) + row.authoritativeSpendUsd,
+      );
+      aiSpendByUser.set(
+        row.userKey,
+        (aiSpendByUser.get(row.userKey) ?? 0) + row.aiSpendUsd,
+      );
+      nonAiSpendByUser.set(
+        row.userKey,
+        (nonAiSpendByUser.get(row.userKey) ?? 0) + row.nonAiSpendUsd,
+      );
+    }
+    const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces);
+    const displayGroups = groups.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
+    const spendByPrimaryGroup = new Map<string, number>();
+    for (const group of displayGroups) {
+      spendByPrimaryGroup.set(
+        group.id,
+        (mergePlan.mergeMap.get(group.id) ?? [group.id]).reduce(
+          (sum, id) => sum + (materializedRollup.byGroup.get(id)?.spendUsd ?? 0),
+          0,
+        ),
+      );
+    }
+    const byTeam = new Map<string, number>();
+    for (const group of displayGroups) {
+      const teamName = teamByGroupName?.get(group.name);
+      if (teamName) {
+        byTeam.set(
+          teamName,
+          (byTeam.get(teamName) ?? 0) + (spendByPrimaryGroup.get(group.id) ?? 0),
+        );
+      }
+    }
+    const accountUsage = includeAccountMetadata ? (getAccountUsage(rangeKey) ?? null) : null;
+    const residualSpendUsd = [...residualSpendByGroup.values()]
+      .reduce((sum, value) => sum + value, 0) +
+      [...materializedRollup.ungroupedByWorkspace.values()]
+        .reduce((sum, value) => sum + value.spendUsd, 0);
+    return {
+      ...materializedRollup,
+      rangeKey,
+      mergePlan,
+      displayGroups,
+      spendByPrimaryGroup,
+      byTeam,
+      accountUsage,
+      accountReconciliationSpendUsd: accountUsage
+        ? accountUsage.totalCostUsd - materializedRollup.totalSpendUsd
+        : null,
+      projectAttribution,
+      aiSpendByUser,
+      nonAiSpendByUser,
+      aiSpendByGroup,
+      nonAiSpendByGroup,
+      authoritativeSpendByGroup,
+      authoritativeSpendComplete: true,
+      authoritativePendingCount: 0,
+      residualSpendByGroup,
+      residualSpendUsd,
+      creatorAttributionRequired: residualSpendUsd > 1e-9,
+    };
+  }
 
   // Member-grouped usage is the canonical AI observation. Deduplicate a
   // user/workspace across overlapping groups, then add only creator-attributed
@@ -4649,19 +4848,45 @@ export function getCanonicalUsage(
   const aiSpendByGroup = new Map<string, Map<string, number>>();
   const nonAiSpendByGroup = new Map<string, Map<string, number>>();
   const attributedByGroup = new Map<string, Map<string, number>>();
+  const attributedTotalByGroup = new Map<string, number>();
+  const canonicalGroupsByWorkspace = new Map<string, EnterpriseGroup[]>();
+  const canonicalMemberIdsByGroup = new Map<string, ReadonlySet<string>>();
   for (const group of orderedGroups) {
     attributedByGroup.set(group.id, new Map());
     aiSpendByGroup.set(group.id, new Map());
     nonAiSpendByGroup.set(group.id, new Map());
+    attributedTotalByGroup.set(group.id, 0);
+    const workspaceGroups = canonicalGroupsByWorkspace.get(group.workspaceId) ?? [];
+    workspaceGroups.push(group);
+    canonicalGroupsByWorkspace.set(group.workspaceId, workspaceGroups);
+    canonicalMemberIdsByGroup.set(group.id, new Set(groupMembers?.get(group.id) ?? []));
+  }
+  const canonicalOwnerByWorkspaceUser =
+    new Map<string, Map<string, EnterpriseGroup>>();
+  const canonicalMembersByWorkspace = new Map<string, Set<string>>();
+  for (const [workspaceId, workspaceGroups] of canonicalGroupsByWorkspace) {
+    const owners = new Map<string, EnterpriseGroup>();
+    const members = new Set<string>();
+    for (const group of workspaceGroups) {
+      for (const userId of rollup.byGroup.get(group.id)?.byUser.keys() ?? []) {
+        if (!owners.has(userId)) owners.set(userId, group);
+      }
+    }
+    for (const group of workspaceGroups) {
+      for (const userId of canonicalMemberIdsByGroup.get(group.id) ?? []) {
+        members.add(userId);
+        if (!owners.has(userId)) owners.set(userId, group);
+      }
+    }
+    canonicalOwnerByWorkspaceUser.set(workspaceId, owners);
+    canonicalMembersByWorkspace.set(workspaceId, members);
   }
   const remainingGroupCapacity = (groupId: string): number => {
     const groupTotal = rollup.byGroup.get(groupId)?.spendUsd ?? 0;
-    const attributed = [...(attributedByGroup.get(groupId)?.values() ?? [])]
-      .reduce((sum, value) => sum + value, 0);
+    const attributed = attributedTotalByGroup.get(groupId) ?? 0;
     return Math.max(0, groupTotal - attributed);
   };
-  for (const workspaceId of new Set(orderedGroups.map((group) => group.workspaceId))) {
-    const workspaceGroups = orderedGroups.filter((group) => group.workspaceId === workspaceId);
+  for (const [workspaceId, workspaceGroups] of canonicalGroupsByWorkspace) {
     const users = new Set<string>();
     for (const group of workspaceGroups) {
       for (const userId of getMemberUsage(group.id, rangeKey)?.byUser.keys() ?? []) users.add(userId);
@@ -4675,11 +4900,7 @@ export function getCanonicalUsage(
       // so its byUser map is the authoritative record of which group owns
       // each user for this range. Fall back to groupMembers only when the
       // rollup has no entry (e.g. member with $0 spend not yet cached).
-      const owner =
-        workspaceGroups.find((group) => rollup.byGroup.get(group.id)?.byUser.has(userId)) ??
-        workspaceGroups.find((group) =>
-          (groupMembers?.get(group.id) ?? []).includes(userId),
-        );
+      const owner = canonicalOwnerByWorkspaceUser.get(workspaceId)?.get(userId);
       if (!owner) continue;
       // Observed AI spend comes from per-group member-usage APIs.
       // Exception: users attributed via the workspace-admin fallback are absent
@@ -4689,9 +4910,7 @@ export function getCanonicalUsage(
       // fall back to the rollup's per-user total (workspace spend from
       // wsSpendCache). Regular members with $0 AI spend intentionally stay
       // as residual; the inGroupMembers guard preserves that invariant.
-      const inGroupMembers = workspaceGroups.some((group) =>
-        (groupMembers?.get(group.id) ?? []).includes(userId),
-      );
+      const inGroupMembers = canonicalMembersByWorkspace.get(workspaceId)?.has(userId) ?? false;
       const observedAiSpendUsd = (() => {
         const fromApi = workspaceGroups.reduce(
           (max, group) => Math.max(max, getMemberUsage(group.id, rangeKey)?.byUser.get(userId) ?? 0),
@@ -4714,15 +4933,17 @@ export function getCanonicalUsage(
       const aiSpendUsd = Math.min(observedAiSpendUsd, remainingGroupCapacity(owner.id));
       aiSpendByUser.set(userId, (aiSpendByUser.get(userId) ?? 0) + aiSpendUsd);
       attributedByGroup.get(owner.id)!.set(userId, aiSpendUsd);
+      attributedTotalByGroup.set(
+        owner.id,
+        (attributedTotalByGroup.get(owner.id) ?? 0) + aiSpendUsd,
+      );
       aiSpendByGroup.get(owner.id)!.set(userId, aiSpendUsd);
     }
   }
   for (const [winnerGroupId, nonAiByUser] of projectAttribution.creatorNonAiSpendByGroup) {
     const winnerGroup = orderedGroups.find((group) => group.id === winnerGroupId);
     if (!winnerGroup) continue;
-    const workspaceGroups = orderedGroups.filter(
-      (group) => group.workspaceId === winnerGroup.workspaceId,
-    );
+    const workspaceGroups = canonicalGroupsByWorkspace.get(winnerGroup.workspaceId) ?? [];
     for (const [userId, nonAiSpendUsd] of nonAiByUser) {
       // Project deduplication selects the highest-total winning observation,
       // but per-user ownership follows the same stable member owner as AI.
@@ -4732,11 +4953,8 @@ export function getCanonicalUsage(
       // already encodes Comcast re-homing and workspace-admin attribution) over
       // groupMembers, so re-homed users' non-AI spend lands in the destination
       // group rather than the (now zero-capacity) source group.
-      const owner =
-        workspaceGroups.find((group) => rollup.byGroup.get(group.id)?.byUser.has(userId)) ??
-        workspaceGroups.find((group) =>
-          (groupMembers?.get(group.id) ?? []).includes(userId),
-        );
+      const owner = canonicalOwnerByWorkspaceUser
+        .get(winnerGroup.workspaceId)?.get(userId);
       if (!owner) continue;
       const groupByUser = attributedByGroup.get(owner.id)!;
       const attributedNonAiSpendUsd = Math.min(
@@ -4750,6 +4968,10 @@ export function getCanonicalUsage(
       groupByUser.set(
         userId,
         (groupByUser.get(userId) ?? 0) + attributedNonAiSpendUsd,
+      );
+      attributedTotalByGroup.set(
+        owner.id,
+        (attributedTotalByGroup.get(owner.id) ?? 0) + attributedNonAiSpendUsd,
       );
       const nonAiGroupByUser = nonAiSpendByGroup.get(owner.id)!;
       nonAiGroupByUser.set(
@@ -4885,6 +5107,152 @@ export function getCanonicalUsage(
   };
 }
 
+export async function rebuildCanonicalMonthlyRollup(
+  monthStart: string,
+): Promise<boolean> {
+  const existing = canonicalMonthRebuilds.get(monthStart);
+  if (existing) return existing;
+  const rebuild = (async () => {
+    const dir = directoryCache ?? await getDirectory();
+    const inputFingerprint = canonicalInputFingerprint(monthStart, dir);
+    if (
+      canonicalMonthlyRows.has(monthStart) &&
+      canonicalMonthlyFingerprints.get(monthStart) === inputFingerprint
+    ) return true;
+    const { start: rawStart, end } = monthBounds(monthStart);
+    const start = new Date(Math.max(rawStart.getTime(), SPEND_DATA_CUTOFF_MS));
+    const rangeEnd = new Date(Math.min(
+      end.getTime(),
+      utcDayStart(Date.now()) + 86_400_000,
+    ));
+    if (rangeEnd <= start) return false;
+    const range: UsageRange = {
+      key: `canonical-month:${monthStart}`,
+      label: monthStart,
+      params: { startTime: start.toISOString(), endTime: rangeEnd.toISOString() },
+    };
+    resolvedUsageRanges.set(range.key, range);
+    if (!materializeUsageRangeFromDailyFacts(range)) return false;
+    bypassCanonicalMonthlyRead = true;
+    let canonical: CanonicalUsageResult;
+    try {
+      canonical = getCanonicalUsage(
+        dir.groups,
+        range.key,
+        new Set(dir.workspaces.keys()),
+        dir.groupMembers,
+        dir.members,
+        undefined,
+        dir.workspaces,
+        false,
+        true,
+      );
+    } finally {
+      bypassCanonicalMonthlyRead = false;
+    }
+    if (!canonical.isComplete || !canonical.authoritativeSpendComplete) return false;
+
+    const updatedAt = new Date();
+    const rows: Array<typeof canonicalMonthlyGroupUserRollupsTable.$inferInsert> = [];
+    for (const group of dir.groups) {
+      const ai = canonical.aiSpendByGroup.get(group.id) ?? new Map();
+      const nonAi = canonical.nonAiSpendByGroup.get(group.id) ?? new Map();
+      const authoritative = canonical.authoritativeSpendByGroup.get(group.id) ?? new Map();
+      // Keep users whose workspace-authoritative spend remains entirely
+      // residual. Compatible detail/export reads still need their per-user
+      // authoritative observation even when no AI/project amount was allocated.
+      const userIds = new Set([
+        ...authoritative.keys(),
+        ...ai.keys(),
+        ...nonAi.keys(),
+      ]);
+      for (const userKey of userIds) {
+        rows.push({
+          monthStart,
+          groupId: group.id,
+          workspaceId: group.workspaceId,
+          userKey,
+          aiSpendUsd: ai.get(userKey) ?? 0,
+          nonAiSpendUsd: nonAi.get(userKey) ?? 0,
+          residualSpendUsd: 0,
+          authoritativeSpendUsd: authoritative.get(userKey) ?? 0,
+          updatedAt,
+        });
+      }
+      const residualSpendUsd = canonical.residualSpendByGroup.get(group.id) ?? 0;
+      if (residualSpendUsd !== 0 || userIds.size === 0) {
+        rows.push({
+          monthStart,
+          groupId: group.id,
+          workspaceId: group.workspaceId,
+          userKey: CANONICAL_RESIDUAL_USER_KEY,
+          residualSpendUsd,
+          authoritativeSpendUsd: 0,
+          updatedAt,
+        });
+      }
+    }
+    for (const [workspaceId, ungrouped] of canonical.ungroupedByWorkspace) {
+      rows.push({
+        monthStart,
+        groupId: `synthetic:no-group:${workspaceId}`,
+        workspaceId,
+        userKey: CANONICAL_RESIDUAL_USER_KEY,
+        residualSpendUsd: ungrouped.spendUsd,
+        authoritativeSpendUsd: ungrouped.spendUsd,
+        updatedAt,
+      });
+    }
+    const lockId = `canonical-monthly-rollup|${monthStart}`;
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${lockId}))`);
+      await tx.delete(canonicalMonthlyGroupUserRollupsTable)
+        .where(eq(canonicalMonthlyGroupUserRollupsTable.monthStart, monthStart));
+      if (rows.length > 0) await tx.insert(canonicalMonthlyGroupUserRollupsTable).values(rows);
+      await tx.insert(canonicalMonthlyRollupStateTable).values({
+        monthStart,
+        rangeStart: start,
+        rangeEnd,
+        inputFingerprint,
+        status: "success",
+        completedAt: updatedAt,
+      }).onConflictDoUpdate({
+        target: canonicalMonthlyRollupStateTable.monthStart,
+        set: {
+          rangeStart: start,
+          rangeEnd,
+          inputFingerprint,
+          status: "success",
+          completedAt: updatedAt,
+        },
+      });
+    });
+    canonicalMonthlyRows.set(
+      monthStart,
+      rows.map((row) => ({
+        monthStart: row.monthStart,
+        groupId: row.groupId,
+        workspaceId: row.workspaceId,
+        userKey: row.userKey,
+        aiSpendUsd: row.aiSpendUsd ?? 0,
+        nonAiSpendUsd: row.nonAiSpendUsd ?? 0,
+        residualSpendUsd: row.residualSpendUsd ?? 0,
+        authoritativeSpendUsd: row.authoritativeSpendUsd ?? 0,
+        updatedAt,
+      })),
+    );
+    canonicalMonthlyFingerprints.set(monthStart, inputFingerprint);
+    canonicalMonthlyBounds.set(monthStart, {
+      start: start.getTime(),
+      end: rangeEnd.getTime(),
+    });
+    return true;
+  })().finally(() => {
+    canonicalMonthRebuilds.delete(monthStart);
+  });
+  canonicalMonthRebuilds.set(monthStart, rebuild);
+  return rebuild;
+}
 export function getDedupedMemberCounts(
   groups: EnterpriseGroup[],
   membersByGroup: ReadonlyMap<string, readonly string[]>,
@@ -4901,6 +5269,13 @@ export function __resetDurableUsageCachesForTests(): void {
   wsSpendCachedAt.clear();
   projectUsageCache.clear();
   projectInfoCache.clear();
+  canonicalMonthlyRows.clear();
+  canonicalMonthlyFingerprints.clear();
+  canonicalMonthlyBounds.clear();
+  canonicalCandidateMonths.clear();
+  canonicalMonthRebuilds.clear();
+  canonicalMonthsNeedingRebuild.clear();
+  resolvedUsageRanges.clear();
   syncMetadata.clear();
   billingPeriodCache = null;
   accountTotalVerificationState = null;
@@ -4917,6 +5292,10 @@ export function __resetDurableUsageCachesForTests(): void {
   dailyFactParityReady = false;
 }
 
+export function __canonicalInputFingerprintForTests(monthStart: string): string {
+  if (!directoryCache) throw new Error("Directory fixture is required");
+  return canonicalInputFingerprint(monthStart, directoryCache);
+}
 export function __setDailyFactsForTests(
   facts: UsageDailyFact[],
   parityReady = true,
@@ -5141,11 +5520,13 @@ class EnterpriseRateBudget {
     resetAt: Date.now() + DEFAULT_WINDOW_MS,
     observed: false,
   };
+
   private used: Record<EnterpriseWorkload, number> = {
     interactive: 0,
     scheduled: 0,
     backfill: 0,
   };
+
   private waiters = new Set<() => void>();
 
   private rollWindow(now: number): void {
@@ -5196,6 +5577,8 @@ class EnterpriseRateBudget {
 
   observe(headers: Headers, status: number): void {
     const now = Date.now();
+    const previousResetAt = this.state.resetAt;
+    const startedNewWindow = now >= previousResetAt;
     this.rollWindow(now);
     const hadObservedBudget = this.state.observed;
     const limit = rateHeader(headers, [
@@ -5217,9 +5600,10 @@ class EnterpriseRateBudget {
     }
     if (reset !== null) {
       const reportedResetAt = Math.max(now + 1, resetTimestamp(reset, now));
-      // Once exhausted (especially by a 429), an older in-flight success must
-      // never shorten the stricter embargo established by Retry-After.
-      this.state.resetAt = hadObservedBudget && this.state.remaining <= 0
+      // Responses can complete out of order. Within one active window, retain
+      // the strictest boundary even while tokens remain. Once the prior window
+      // has elapsed, the first observation establishes the next boundary.
+      this.state.resetAt = hadObservedBudget && !startedNewWindow
         ? Math.max(this.state.resetAt, reportedResetAt)
         : reportedResetAt;
     }
@@ -5280,6 +5664,18 @@ export function __enqueueEnterpriseTaskForTests(
 ): boolean {
   const priority = workload === "interactive" ? 0 : workload === "scheduled" ? 1 : 2;
   return enqueueUsage(key, priority, run, workload);
+}
+
+function isFullDirectoryCanonicalScope(
+  groups: readonly EnterpriseGroup[],
+  workspaceIds: ReadonlySet<string> | undefined,
+  dir: DirectoryCache,
+): boolean {
+  if (groups.length !== dir.groups.length) return false;
+  const groupIds = new Set(groups.map((group) => group.id));
+  if (dir.groups.some((group) => !groupIds.has(group.id))) return false;
+  if (!workspaceIds || workspaceIds.size !== dir.workspaces.size) return false;
+  return [...dir.workspaces.keys()].every((id) => workspaceIds.has(id));
 }
 
 function refreshDirectory(): Promise<DirectoryCache> {
@@ -5351,6 +5747,9 @@ function refreshDirectory(): Promise<DirectoryCache> {
         budgets,
       };
       persistDirectoryToDb(directoryCache);
+      for (const monthStart of canonicalCandidateMonths) {
+        queueCanonicalMonthRebuild(monthStart);
+      }
       return directoryCache;
     } finally {
       directoryPromise = null;
@@ -5471,3 +5870,238 @@ export function selectRoundRobinUsageItems(
 }
 
 const USAGE_COORDINATOR_LEASE_MS = 4 * 60 * 1000;
+
+function canonicalInputFingerprint(monthStart: string, dir: DirectoryCache): string {
+  const parts: string[] = [];
+  for (const workspace of [...dir.workspaces.values()].sort((a, b) => a.id.localeCompare(b.id))) {
+    parts.push(`w:${workspace.id}:${workspace.name}:${workspace.slug ?? ""}`);
+  }
+  for (const group of [...dir.groups].sort((a, b) => a.id.localeCompare(b.id))) {
+    parts.push(`g:${group.id}:${group.workspaceId}:${group.name}:${group.type ?? ""}`);
+    parts.push(`gm:${group.id}:${[...(dir.groupMembers.get(group.id) ?? [])].sort().join(",")}`);
+  }
+  for (const member of [...dir.members.values()].sort((a, b) => a.userId.localeCompare(b.userId))) {
+    parts.push(`m:${member.userId}:${[...member.workspaces.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, value]) => `${id}:${value.role}:${value.isDisabled}`).join(",")}`);
+  }
+  const groupIds = new Set(dir.groups.map((group) => group.id));
+  const workspaceIds = new Set(dir.workspaces.keys());
+  for (const fact of [...dailyFactCache.values()].sort((a, b) =>
+    `${a.mode}|${a.scopeKey}|${a.usageDate}`.localeCompare(`${b.mode}|${b.scopeKey}|${b.usageDate}`)
+  )) {
+    if (!fact.usageDate.startsWith(monthStart.slice(0, 7))) continue;
+    if (
+      (fact.mode.startsWith("group_") && !groupIds.has(fact.scopeKey)) ||
+      (fact.mode === "workspace_member" && !workspaceIds.has(fact.scopeKey))
+    ) continue;
+    parts.push(`f:${fact.mode}:${fact.scopeKey}:${fact.usageDate}:${JSON.stringify(fact.payloadJson)}`);
+  }
+  for (const workspaceId of [...workspaceIds].sort()) {
+    const projects = projectInfoCache.get(workspaceId);
+    if (!projects) {
+      parts.push(`p:${workspaceId}:missing`);
+      continue;
+    }
+    for (const [projectId, info] of [...projects].sort(([a], [b]) => a.localeCompare(b))) {
+      // Titles are presentation metadata; only creator identity affects attribution.
+      parts.push(`p:${workspaceId}:${projectId}:${info.creatorId ?? ""}`);
+    }
+  }
+  return stableFingerprint(parts);
+}
+
+function stableFingerprint(parts: Iterable<string>): string {
+  // FNV-1a is used only to keep the durable identity compact; this is an input
+  // change detector, not a security primitive.
+  let hash = 0x811c9dc5;
+  for (const part of parts) {
+    for (let i = 0; i < part.length; i++) {
+      hash ^= part.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    // Preserve part boundaries so ["ab", "c"] cannot hash as ["a", "bc"].
+    hash ^= 0;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+const canonicalMonthlyBounds = new Map<string, { start: number; end: number }>();
+
+const canonicalMonthRebuilds = new Map<string, Promise<boolean>>();
+
+const canonicalMonthlyFingerprints = new Map<string, string>();
+
+export function __setCanonicalMonthlyRollupsForTests(
+  entries: Array<{
+    monthStart: string;
+    startTime: string;
+    endTime: string;
+    rows: CanonicalMonthlyGroupUserRollup[];
+  }>,
+): void {
+  for (const entry of entries) {
+    canonicalCandidateMonths.add(entry.monthStart);
+    canonicalMonthlyRows.set(entry.monthStart, entry.rows);
+    canonicalMonthlyBounds.set(entry.monthStart, {
+      start: new Date(entry.startTime).getTime(),
+      end: new Date(entry.endTime).getTime(),
+    });
+    canonicalMonthlyFingerprints.set(
+      entry.monthStart,
+      directoryCache
+        ? canonicalInputFingerprint(entry.monthStart, directoryCache)
+        : "missing-directory",
+    );
+  }
+}
+
+function materializedCanonicalRollup(
+  monthStart: string,
+  groups: EnterpriseGroup[],
+): DedupedUsageRollup | null {
+  const rows = canonicalMonthlyRows.get(monthStart);
+  if (!rows) return null;
+  const groupIds = new Set(groups.map((group) => group.id));
+  const byGroup = new Map<string, DedupedGroupRollup>(
+    groups.map((group) => [
+      group.id,
+      { spendUsd: 0, memberCount: 0, byUser: new Map<string, number>() },
+    ]),
+  );
+  const byUser = new Map<string, number>();
+  const ungroupedByWorkspace = new Map<string, DedupedGroupRollup>();
+  let totalSpendUsd = 0;
+  let totalMemberCount = 0;
+  for (const row of rows) {
+    const isUngrouped = row.groupId.startsWith("synthetic:no-group:");
+    if (!isUngrouped && !groupIds.has(row.groupId)) continue;
+    const target = isUngrouped
+      ? (ungroupedByWorkspace.get(row.workspaceId) ?? {
+          spendUsd: 0,
+          memberCount: 0,
+          byUser: new Map<string, number>(),
+        })
+      : byGroup.get(row.groupId)!;
+    if (isUngrouped) ungroupedByWorkspace.set(row.workspaceId, target);
+    const spend = row.aiSpendUsd + row.nonAiSpendUsd;
+    (target as { spendUsd: number }).spendUsd += spend + row.residualSpendUsd;
+    totalSpendUsd += spend + row.residualSpendUsd;
+    if (row.userKey !== CANONICAL_RESIDUAL_USER_KEY) {
+      (target.byUser as Map<string, number>).set(row.userKey, spend);
+      byUser.set(row.userKey, (byUser.get(row.userKey) ?? 0) + spend);
+      (target as { memberCount: number }).memberCount += 1;
+      totalMemberCount += 1;
+    }
+  }
+  return {
+    byGroup,
+    byUser,
+    ungroupedByWorkspace,
+    totalSpendUsd,
+    totalMemberCount,
+    pendingCount: 0,
+    isComplete: true,
+  };
+}
+
+function aggregateMaterializedCanonicalRollups(
+  months: readonly string[],
+  groups: EnterpriseGroup[],
+): DedupedUsageRollup | null {
+  const aggregate = materializedCanonicalRollup(months[0]!, groups);
+  if (!aggregate) return null;
+  for (const monthStart of months.slice(1)) {
+    const next = materializedCanonicalRollup(monthStart, groups);
+    if (!next) return null;
+    for (const [groupId, nextGroup] of next.byGroup) {
+      const target = aggregate.byGroup.get(groupId);
+      if (!target) continue;
+      (target as { spendUsd: number }).spendUsd += nextGroup.spendUsd;
+      const targetUsers = target.byUser as Map<string, number>;
+      for (const [userId, spend] of nextGroup.byUser) {
+        targetUsers.set(userId, (targetUsers.get(userId) ?? 0) + spend);
+      }
+      (target as { memberCount: number }).memberCount = targetUsers.size;
+    }
+    for (const [workspaceId, nextGroup] of next.ungroupedByWorkspace) {
+      const target = aggregate.ungroupedByWorkspace.get(workspaceId) ?? {
+        spendUsd: 0,
+        memberCount: 0,
+        byUser: new Map<string, number>(),
+      };
+      (target as { spendUsd: number }).spendUsd += nextGroup.spendUsd;
+      const targetUsers = target.byUser as Map<string, number>;
+      for (const [userId, spend] of nextGroup.byUser) {
+        targetUsers.set(userId, (targetUsers.get(userId) ?? 0) + spend);
+      }
+      (target as { memberCount: number }).memberCount = targetUsers.size;
+      aggregate.ungroupedByWorkspace.set(workspaceId, target);
+    }
+    aggregate.totalSpendUsd += next.totalSpendUsd;
+  }
+  aggregate.byUser = new Map();
+  aggregate.totalMemberCount = 0;
+  for (const group of aggregate.byGroup.values()) {
+    aggregate.totalMemberCount += group.memberCount;
+    for (const [userId, spend] of group.byUser) {
+      aggregate.byUser.set(userId, (aggregate.byUser.get(userId) ?? 0) + spend);
+    }
+  }
+  for (const group of aggregate.ungroupedByWorkspace.values()) {
+    aggregate.totalMemberCount += group.memberCount;
+  }
+  return aggregate;
+}
+
+function queueCanonicalMonthRebuild(monthStart: string): void {
+  canonicalCandidateMonths.add(monthStart);
+  canonicalMonthsNeedingRebuild.add(monthStart);
+  enqueueUsage(`canonical-monthly-rollup:${monthStart}`, 2, async () => {
+    canonicalMonthsNeedingRebuild.delete(monthStart);
+    const rebuilt = await rebuildCanonicalMonthlyRollup(monthStart);
+    if (!rebuilt) {
+      logger.info({ monthStart }, "Canonical monthly rollup deferred until inputs are complete");
+    }
+    // A source may commit while this task is active. The queue deduplicates the
+    // active key, so schedule one follow-up after the pump releases that key.
+    if (canonicalMonthsNeedingRebuild.has(monthStart)) {
+      setTimeout(() => queueCanonicalMonthRebuild(monthStart), 0);
+    }
+  });
+}
+
+const canonicalMonthsNeedingRebuild = new Set<string>();
+
+const canonicalCandidateMonths = new Set<string>();
+
+const canonicalMonthlyRows = new Map<string, CanonicalMonthlyGroupUserRollup[]>();
+
+let bypassCanonicalMonthlyRead = false;
+
+function canonicalMonthsForRange(
+  rangeKey: string,
+  dir: DirectoryCache,
+): string[] | null {
+  const range = resolvedUsageRanges.get(rangeKey);
+  if (!range) return null;
+  const { start, end } = rangeBounds(range);
+  const candidates = [...canonicalMonthlyBounds.entries()]
+    .sort(([, a], [, b]) => a.start - b.start);
+  const months: string[] = [];
+  let cursor = start.getTime();
+  while (cursor < end.getTime()) {
+    const match = candidates.find(([, bounds]) => bounds.start === cursor);
+    if (!match || match[1].end > end.getTime()) return null;
+    const [monthStart, bounds] = match;
+    if (
+      !canonicalMonthlyRows.has(monthStart) ||
+      canonicalMonthlyFingerprints.get(monthStart) !==
+        canonicalInputFingerprint(monthStart, dir)
+    ) return null;
+    months.push(monthStart);
+    cursor = bounds.end;
+  }
+  return cursor === end.getTime() && months.length > 0 ? months : null;
+}

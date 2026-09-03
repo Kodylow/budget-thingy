@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   db,
   groupBudgetsTable,
@@ -114,6 +114,30 @@ export async function getFiredThresholds(
   return rows.map((r) => r.threshold).sort((a, b) => a - b);
 }
 
+/** Load displayed threshold state with one set-based query. */
+export async function getFiredThresholdsBatch(
+  entityIds: readonly string[],
+  billingPeriod: string,
+  entityType: "group" | "team" = "group",
+): Promise<Map<string, number[]>> {
+  const uniqueIds = [...new Set(entityIds)];
+  const result = new Map(uniqueIds.map((id) => [id, [] as number[]]));
+  if (uniqueIds.length === 0) return result;
+  const rows = await db
+    .select({
+      entityId: firedThresholdsTable.entityId,
+      threshold: firedThresholdsTable.threshold,
+    })
+    .from(firedThresholdsTable)
+    .where(and(
+      eq(firedThresholdsTable.entityType, entityType),
+      eq(firedThresholdsTable.billingPeriod, billingPeriod),
+      inArray(firedThresholdsTable.entityId, uniqueIds),
+    ));
+  for (const row of rows) result.get(row.entityId)?.push(row.threshold);
+  for (const thresholds of result.values()) thresholds.sort((a, b) => a - b);
+  return result;
+}
 /**
  * Shared evaluation for one allocated-pool entity (group or team).
  *

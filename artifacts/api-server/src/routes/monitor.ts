@@ -103,6 +103,7 @@ import { resolveAlertRecipients } from "../lib/alert-recipients";
 import {
   runCheck,
   getFiredThresholds,
+  getFiredThresholdsBatch,
   getLastCheckAt,
   getCheckerState,
   CHECK_INTERVAL_MINUTES,
@@ -353,6 +354,12 @@ router.get("/groups", async (req, res): Promise<void> => {
         .map((gt) => [gt.groupName, gt.teamName]),
     );
     const billing = getBillingPeriod();
+    const dashboardFiredThresholds = billing.start
+      ? await getFiredThresholdsBatch(
+          displayGroups.map((group) => group.id),
+          billing.start,
+        )
+      : new Map<string, number[]>();
     // Pass ALL scoped groups (including aliases) so the dedup rollup correctly
     // attributes shared users across both the old and new workspace versions.
     const canonical = getCanonicalUsage(
@@ -459,10 +466,9 @@ router.get("/groups", async (req, res): Promise<void> => {
         const budget = effectiveGroupBudget(mergedBudget?.amountUsd);
         // Threshold state is always tracked against the cutoff-anchored billing period.
         const billingPeriodStart = getBillingPeriod().start;
-        const fired =
-          billingPeriodStart && budget.amountUsd != null
-            ? await getFiredThresholds(g.id, billingPeriodStart)
-            : [];
+        const fired = billingPeriodStart && budget.amountUsd != null
+          ? (dashboardFiredThresholds.get(g.id) ?? [])
+          : [];
         const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
 
         // Merge history entries from all source groups by date (sum same-date spend).

@@ -1,6 +1,7 @@
 import {
   boolean,
   date,
+  doublePrecision,
   index,
   jsonb,
   pgTable,
@@ -52,3 +53,51 @@ export const usageFactMonthsTable = pgTable(
 
 export type UsageDailyFact = typeof usageDailyFactsTable.$inferSelect;
 export type UsageFactMonth = typeof usageFactMonthsTable.$inferSelect;
+
+/**
+ * Canonical attribution for one reporting month. `userKey` is a real user ID
+ * for member rows and the stable `residual` sentinel for the group's
+ * unattributed remainder. This avoids nullable primary-key semantics and makes
+ * group totals and user drill-downs equally indexable.
+ */
+export const canonicalMonthlyGroupUserRollupsTable = pgTable(
+  "canonical_monthly_group_user_rollups",
+  {
+    monthStart: date("month_start", { mode: "string" }).notNull(),
+    groupId: text("group_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    userKey: text("user_key").notNull(),
+    aiSpendUsd: doublePrecision("ai_spend_usd").notNull().default(0),
+    nonAiSpendUsd: doublePrecision("non_ai_spend_usd").notNull().default(0),
+    residualSpendUsd: doublePrecision("residual_spend_usd").notNull().default(0),
+    authoritativeSpendUsd: doublePrecision("authoritative_spend_usd").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.monthStart, t.groupId, t.userKey] }),
+    index("canonical_monthly_rollups_group_idx").on(t.groupId, t.monthStart),
+    index("canonical_monthly_rollups_user_idx").on(t.userKey, t.monthStart),
+    index("canonical_monthly_rollups_workspace_idx").on(t.workspaceId, t.monthStart),
+  ],
+);
+
+/** Commit marker and attribution-input identity for a complete month rebuild. */
+export const canonicalMonthlyRollupStateTable = pgTable(
+  "canonical_monthly_rollup_state",
+  {
+    monthStart: date("month_start", { mode: "string" }).primaryKey(),
+    rangeStart: timestamp("range_start", { withTimezone: true }).notNull(),
+    rangeEnd: timestamp("range_end", { withTimezone: true }).notNull(),
+    inputFingerprint: text("input_fingerprint").notNull(),
+    status: text("status").notNull().default("success"),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("canonical_monthly_rollup_state_status_idx").on(t.status, t.monthStart),
+  ],
+);
+
+export type CanonicalMonthlyGroupUserRollup =
+  typeof canonicalMonthlyGroupUserRollupsTable.$inferSelect;
+export type CanonicalMonthlyRollupState =
+  typeof canonicalMonthlyRollupStateTable.$inferSelect;

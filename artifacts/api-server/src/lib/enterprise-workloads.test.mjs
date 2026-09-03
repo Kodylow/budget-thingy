@@ -112,40 +112,69 @@ test("an older success cannot shorten a 429 embargo", async () => {
   await request;
 });
 
+test("an older success cannot shorten an active successful reset window", () => {
+  enterprise.__resetEnterpriseSchedulerForTests({
+    limit: 10,
+    remaining: 10,
+    resetAt: Date.now() + 10,
+    observed: true,
+  });
+  enterprise.__observeEnterpriseRateLimitForTests({
+    "X-RateLimit-Limit": "10",
+    "X-RateLimit-Remaining": "8",
+    "X-RateLimit-Reset": "2",
+  });
+  const newerReset = enterprise.__getEnterpriseBudgetForTests().resetAt;
+  enterprise.__observeEnterpriseRateLimitForTests({
+    "X-RateLimit-Limit": "10",
+    "X-RateLimit-Remaining": "9",
+    "X-RateLimit-Reset": "0.01",
+  });
+  const merged = enterprise.__getEnterpriseBudgetForTests();
+  assert.equal(merged.resetAt, newerReset);
+  assert.equal(merged.remaining, 8);
+});
+
 test("paginated requests retry the same cursor after a 429", async () => {
   enterprise.__resetEnterpriseSchedulerForTests();
   const cursors = [];
   let calls = 0;
-  globalThis.fetch = async (input) => {
-    const url = new URL(String(input));
-    cursors.push(url.searchParams.get("cursor"));
-    calls += 1;
-    if (calls === 1) {
-      return new Response("", {
-        status: 429,
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (input) => {
+      const url = new URL(String(input));
+      cursors.push(url.searchParams.get("cursor"));
+      calls += 1;
+      if (calls === 1) {
+        return new Response("", {
+          status: 429,
+          headers: {
+            "Retry-After": "0",
+            "X-RateLimit-Limit": "10",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": "0.01",
+          },
+        });
+      }
+      return Response.json({
+        data: [{ id: "one" }],
+        pagination: { hasMore: false, cursor: null },
+      }, {
         headers: {
-          "Retry-After": "0",
           "X-RateLimit-Limit": "10",
-          "X-RateLimit-Remaining": "0",
-          "X-RateLimit-Reset": "0.01",
+          "X-RateLimit-Remaining": "9",
+          "X-RateLimit-Reset": "60",
         },
       });
-    }
-    return Response.json({
-      data: [{ id: "one" }],
-      pagination: { hasMore: false, cursor: null },
-    }, {
-      headers: {
-        "X-RateLimit-Limit": "10",
-        "X-RateLimit-Remaining": "9",
-        "X-RateLimit-Reset": "60",
-      },
-    });
-  };
+    };
 
-  const rows = await enterprise.__paginateEnterpriseForTests("/test");
-  assert.deepEqual(rows, [{ id: "one" }]);
-  assert.deepEqual(cursors, [null, null], "the failed page cursor is retried unchanged");
+    const rows = await enterprise.__paginateEnterpriseForTests("/test");
+    assert.deepEqual(rows, [{ id: "one" }]);
+    assert.deepEqual(cursors, [null, null], "the failed page cursor is retried unchanged");
+  } finally {
+    globalThis.fetch = originalFetch;
+    enterprise.__resetEnterpriseSchedulerForTests();
+  }
 });
 
 test("scheduled and backfill class caps stay within the reported limit", async () => {

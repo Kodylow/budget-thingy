@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import express from "express";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import {
   alertsTable,
   db,
@@ -89,6 +89,12 @@ let budgetWriteUserIds = [];
 const delegateManagedEmail = `delegate-managed-${randomUUID()}@example.com`;
 
 test.before(async () => {
+  // Validation may reuse a shared test database created before the latest
+  // additive alert migration.
+  await db.execute(sql`
+    ALTER TABLE alerts
+    ADD COLUMN IF NOT EXISTS data_as_of timestamp with time zone
+  `);
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key"; // marks isConfigured()
   setSendEmailOverrideForTests(async (to) => ({
     ok: true,

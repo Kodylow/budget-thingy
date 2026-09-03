@@ -170,6 +170,7 @@ export function startSnapshotJob(): void {
           await snapshotAllGroups();
           claim.signal?.throwIfAborted();
         },
+        SNAPSHOT_RETRY_MS,
       )
         .then((result) => schedule(
           result.acquired ? millisecondsUntilNextSnapshot() : SNAPSHOT_RETRY_MS,
