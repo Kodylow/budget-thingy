@@ -806,6 +806,36 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
 
 
 /**
+ * Available only to true Enterprise account administrators.
+ * @summary Review member usage-limit changes for a workspace
+ */
+
+
+
+export const ListWorkspaceUsageLimitAuditsParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1)
+})
+
+export const ListWorkspaceUsageLimitAuditsResponseItem = zod.object({
+  "id": zod.number(),
+  "operatorUserId": zod.string(),
+  "operatorEmail": zod.string().nullable(),
+  "operatorName": zod.string().nullable(),
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "memberUserId": zod.string(),
+  "memberEmail": zod.string().nullable(),
+  "memberName": zod.string().nullable(),
+  "action": zod.enum(['set', 'clear']),
+  "operation": zod.enum(['individual', 'bulk']),
+  "requestedAmountUsd": zod.number().nullable(),
+  "outcome": zod.enum(['success', 'failed']),
+  "createdAt": zod.coerce.date()
+})
+export const ListWorkspaceUsageLimitAuditsResponse = zod.array(ListWorkspaceUsageLimitAuditsResponseItem)
+
+
+/**
  * Account-wide operators only. User IDs are deduplicated, every requested user must be a current member of the visible workspace, and each non-transactional Replit connector outcome is returned explicitly.
  * @summary Set one Agent usage limit for multiple workspace members
  */

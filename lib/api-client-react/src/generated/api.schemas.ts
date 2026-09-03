@@ -614,6 +614,53 @@ export interface WorkspaceMemberBulkBudgetResult {
   outcomes: WorkspaceMemberBulkBudgetOutcome[];
 }
 
+export type UsageLimitAuditAction = typeof UsageLimitAuditAction[keyof typeof UsageLimitAuditAction];
+
+
+export const UsageLimitAuditAction = {
+  set: 'set',
+  clear: 'clear',
+} as const;
+
+export type UsageLimitAuditOperation = typeof UsageLimitAuditOperation[keyof typeof UsageLimitAuditOperation];
+
+
+export const UsageLimitAuditOperation = {
+  individual: 'individual',
+  bulk: 'bulk',
+} as const;
+
+export type UsageLimitAuditOutcome = typeof UsageLimitAuditOutcome[keyof typeof UsageLimitAuditOutcome];
+
+
+export const UsageLimitAuditOutcome = {
+  success: 'success',
+  failed: 'failed',
+} as const;
+
+export interface UsageLimitAudit {
+  id: number;
+  operatorUserId: string;
+  /** @nullable */
+  operatorEmail: string | null;
+  /** @nullable */
+  operatorName: string | null;
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  memberUserId: string;
+  /** @nullable */
+  memberEmail: string | null;
+  /** @nullable */
+  memberName: string | null;
+  action: UsageLimitAuditAction;
+  operation: UsageLimitAuditOperation;
+  /** @nullable */
+  requestedAmountUsd: number | null;
+  outcome: UsageLimitAuditOutcome;
+  createdAt: string;
+}
+
 export interface TeamBudget {
   teamName: string;
   /** @nullable */

@@ -12,6 +12,7 @@ import {
   groupTeamsTable,
   teamBudgetsTable,
   usersTable,
+  usageLimitAuditsTable,
 } from "@workspace/db";
 
 import monitorRouter from "./monitor.ts";
@@ -256,6 +257,7 @@ test.after(async () => {
     inArray(editorBootstrapStateTable.userId, ["bootstrap-editor", "candidate-editor"]),
   );
   await db.delete(usersTable).where(inArray(usersTable.id, ["editor", "candidate-editor", "bootstrap-editor"]));
+  await db.delete(usageLimitAuditsTable).where(inArray(usageLimitAuditsTable.workspaceId, ["ws-1", "ws-2"]));
   __setDirectoryCacheForTests(null);
   __setAccountUsageForTests("custom:2026-05-20:2026-08-11", null);
   __setWsSpendForTests("ws-1", "custom:2026-05-20:2026-08-11", null);
@@ -595,6 +597,49 @@ test("bulk member limits deduplicate users and expose mixed upstream outcomes", 
       { userId: "plain", success: false },
     ]);
     assert.match(result.json.outcomes[1].error, /Rejected plain/);
+
+    assert.equal(
+      (await req("/directory/workspaces/ws-1/usage-limit-audits", { user: "ws1admin" })).status,
+      403,
+    );
+    assert.equal(
+      (await req("/directory/workspaces/ws-1/usage-limit-audits", { user: "editor" })).status,
+      403,
+    );
+    const audit = await req("/directory/workspaces/ws-1/usage-limit-audits", { user: "acct" });
+    assert.equal(audit.status, 200);
+    const bulkRows = audit.json.filter(
+      (row) => row.requestedAmountUsd === 75 &&
+        ["ws1admin", "plain"].includes(row.memberUserId),
+    );
+    const individualSet = audit.json.find(
+      (row) => row.memberUserId === "plain" &&
+        row.action === "set" &&
+        row.requestedAmountUsd === 50,
+    );
+    const individualClear = audit.json.find(
+      (row) => row.memberUserId === "plain" &&
+        row.action === "clear" &&
+        row.requestedAmountUsd === null,
+    );
+    assert.equal(individualSet?.outcome, "success");
+    assert.equal(individualClear?.outcome, "success");
+    assert.deepEqual(
+      bulkRows
+        .map(({ memberUserId, outcome }) => ({ memberUserId, outcome }))
+        .sort((a, b) => a.memberUserId.localeCompare(b.memberUserId)),
+      [
+        { memberUserId: "plain", outcome: "failed" },
+        { memberUserId: "ws1admin", outcome: "success" },
+      ],
+    );
+    assert.ok(bulkRows.every((row) =>
+      row.operatorUserId === "editor" &&
+      row.workspaceId === "ws-1" &&
+      row.action === "set" &&
+      row.operation === "bulk" &&
+      typeof row.createdAt === "string"
+    ));
   } finally {
     budgetWriteFailures = new Set();
     budgetWriteUserIds = [];

@@ -959,6 +959,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/usage-limit-audits:
+    get:
+      operationId: listWorkspaceUsageLimitAudits
+      tags: [directory, budgets]
+      summary: Review member usage-limit changes for a workspace
+      description: Available only to true Enterprise account administrators.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      responses:
+        "200":
+          description: Newest-first usage-limit audit history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UsageLimitAudit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /directory/workspaces/{workspaceId}/members/budget:
     put:
       operationId: bulkSetWorkspaceMemberBudgets
@@ -2096,6 +2123,45 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WorkspaceMemberBulkBudgetOutcome"
+    UsageLimitAudit:
+      type: object
+      required:
+        [id, operatorUserId, operatorEmail, operatorName, workspaceId, workspaceName,
+         memberUserId, memberEmail, memberName, action, operation, requestedAmountUsd,
+         outcome, createdAt]
+      properties:
+        id:
+          type: integer
+        operatorUserId:
+          type: string
+        operatorEmail:
+          type: [string, "null"]
+        operatorName:
+          type: [string, "null"]
+        workspaceId:
+          type: string
+        workspaceName:
+          type: [string, "null"]
+        memberUserId:
+          type: string
+        memberEmail:
+          type: [string, "null"]
+        memberName:
+          type: [string, "null"]
+        action:
+          type: string
+          enum: [set, clear]
+        operation:
+          type: string
+          enum: [individual, bulk]
+        requestedAmountUsd:
+          type: [number, "null"]
+        outcome:
+          type: string
+          enum: [success, failed]
+        createdAt:
+          type: string
+          format: date-time
     TeamBudget:
       type: object
       required: [teamName, amountUsd, workspaceIds]

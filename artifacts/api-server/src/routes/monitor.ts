@@ -11,6 +11,7 @@ import {
   editorBootstrapStateTable,
   usersTable,
   apiDirectoryCacheTable,
+  usageLimitAuditsTable,
 } from "@workspace/db";
 import {
   ListGroupsResponse,
@@ -54,6 +55,7 @@ import {
   ClearWorkspaceMemberBudgetResponse,
   BulkSetWorkspaceMemberBudgetsBody,
   BulkSetWorkspaceMemberBudgetsResponse,
+  ListWorkspaceUsageLimitAuditsResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -3095,6 +3097,35 @@ async function validateWorkspaceMembers(
     );
 }
 
+async function recordUsageLimitAudit(
+  req: Parameters<typeof requireAuth>[0],
+  workspaceId: string,
+  userId: string,
+  action: "set" | "clear",
+  operation: "individual" | "bulk",
+  requestedAmountUsd: number | null,
+  outcome: "success" | "failed",
+): Promise<void> {
+  const dir = await getDirectory();
+  const workspace = dir.workspaces.get(workspaceId);
+  const member = dir.members.get(userId);
+  const operatorName = [req.user!.firstName, req.user!.lastName].filter(Boolean).join(" ") || null;
+  await db.insert(usageLimitAuditsTable).values({
+    operatorUserId: req.user!.id,
+    operatorEmail: req.user!.email,
+    operatorName,
+    workspaceId,
+    workspaceName: workspace?.name ?? null,
+    memberUserId: userId,
+    memberEmail: member?.email ?? null,
+    memberName: member?.name ?? member?.username ?? null,
+    action,
+    operation,
+    requestedAmountUsd,
+    outcome,
+  });
+}
+
 function sendBudgetConnectorError(
   error: unknown,
   res: Response,
@@ -3127,13 +3158,16 @@ router.put(
       const outcomes = await Promise.all(userIds.map(async (userId) => {
         try {
           await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
-          return {
-            userId,
-            success: true,
-            budgetUsd: parsed.data.amountUsd,
-            error: null,
-          };
         } catch (error) {
+          await recordUsageLimitAudit(
+            req,
+            workspaceId,
+            userId,
+            "set",
+            "bulk",
+            parsed.data.amountUsd,
+            "failed",
+          );
           return {
             userId,
             success: false,
@@ -3143,6 +3177,21 @@ router.put(
               : "Replit budgets API request failed",
           };
         }
+        await recordUsageLimitAudit(
+          req,
+          workspaceId,
+          userId,
+          "set",
+          "bulk",
+          parsed.data.amountUsd,
+          "success",
+        );
+        return {
+          userId,
+          success: true,
+          budgetUsd: parsed.data.amountUsd,
+          error: null,
+        };
       }));
       if (
         outcomes.every((outcome) => !outcome.success) &&
@@ -3178,14 +3227,38 @@ router.put(
         res.status(404).json({ error: "Workspace member not found" });
         return;
       }
-      await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
+      try {
+        await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
+      } catch (error) {
+        await recordUsageLimitAudit(
+          req,
+          workspaceId,
+          userId,
+          "set",
+          "individual",
+          parsed.data.amountUsd,
+          "failed",
+        );
+        sendBudgetConnectorError(error, res);
+        return;
+      }
+      await recordUsageLimitAudit(
+        req,
+        workspaceId,
+        userId,
+        "set",
+        "individual",
+        parsed.data.amountUsd,
+        "success",
+      );
       res.json(SetWorkspaceMemberBudgetResponse.parse({
         workspaceId,
         userId,
         budgetUsd: parsed.data.amountUsd,
       }));
     } catch (error) {
-      sendBudgetConnectorError(error, res);
+      req.log.error({ err: error }, "set usage limit failed");
+      res.status(500).json({ error: "Usage limit audit could not be recorded" });
     }
   },
 );
@@ -3201,15 +3274,59 @@ router.delete(
         res.status(404).json({ error: "Workspace member not found" });
         return;
       }
-      await clearReplitMemberBudget(workspaceId, userId);
+      try {
+        await clearReplitMemberBudget(workspaceId, userId);
+      } catch (error) {
+        await recordUsageLimitAudit(
+          req,
+          workspaceId,
+          userId,
+          "clear",
+          "individual",
+          null,
+          "failed",
+        );
+        sendBudgetConnectorError(error, res);
+        return;
+      }
+      await recordUsageLimitAudit(
+        req,
+        workspaceId,
+        userId,
+        "clear",
+        "individual",
+        null,
+        "success",
+      );
       res.json(ClearWorkspaceMemberBudgetResponse.parse({
         workspaceId,
         userId,
         budgetUsd: null,
       }));
     } catch (error) {
-      sendBudgetConnectorError(error, res);
+      req.log.error({ err: error }, "clear usage limit failed");
+      res.status(500).json({ error: "Usage limit audit could not be recorded" });
     }
+  },
+);
+
+router.get(
+  "/directory/workspaces/:workspaceId/usage-limit-audits",
+  requireTrueAccountAdmin,
+  async (req, res): Promise<void> => {
+    const workspaceId = String(req.params["workspaceId"]);
+    const dir = await getDirectory();
+    if (!dir.workspaces.has(workspaceId)) {
+      res.status(404).json({ error: "Workspace not found" });
+      return;
+    }
+    const rows = await db
+      .select()
+      .from(usageLimitAuditsTable)
+      .where(eq(usageLimitAuditsTable.workspaceId, workspaceId))
+      .orderBy(desc(usageLimitAuditsTable.createdAt), desc(usageLimitAuditsTable.id))
+      .limit(200);
+    res.json(ListWorkspaceUsageLimitAuditsResponse.parse(rows));
   },
 );
 

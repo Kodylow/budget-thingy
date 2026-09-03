@@ -13,6 +13,8 @@ import {
   getListVisibleWorkspaceMembersQueryKey,
   type WorkspaceMemberBudget,
   useBulkSetWorkspaceMemberBudgets,
+  useListWorkspaceUsageLimitAudits,
+  getListWorkspaceUsageLimitAuditsQueryKey,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -28,7 +30,7 @@ import {
   ROLE_PRIORITY,
 } from '@/lib/group-clusters';
 import { GroupUserExport } from '@/components/group-user-export';
-import { useCanWrite } from '@/components/auth-context';
+import { useAuthContext, useCanWrite } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
 import {
   chunkMemberIds,
@@ -77,6 +79,7 @@ export default function ClusterDetail() {
   const groupIds = rawIds ? rawIds.split(',').filter(Boolean) : [];
 
   const canWrite = useCanWrite();
+  const { realRole } = useAuthContext();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const bulkSetLimits = useBulkSetWorkspaceMemberBudgets();
@@ -229,6 +232,15 @@ export default function ClusterDetail() {
     },
   });
   const workspaceMembersData = workspaceMembersQuery.data;
+  const canReviewUsageLimitHistory = realRole === 'account_admin';
+  const usageLimitAuditsQuery = useListWorkspaceUsageLimitAudits(workspaceId as string, {
+    query: {
+      enabled: Boolean(workspaceId && canReviewUsageLimitHistory),
+      queryKey: workspaceId
+        ? getListWorkspaceUsageLimitAuditsQueryKey(workspaceId)
+        : ['workspaceUsageLimitAudits', ''],
+    },
+  });
 
   const workspaceMembersMap = useMemo(() => {
     return indexMemberBudgets<WorkspaceMemberBudget>(
@@ -299,6 +311,9 @@ export default function ClusterDetail() {
     if (succeeded > 0) {
       await queryClient.invalidateQueries({
         queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: getListWorkspaceUsageLimitAuditsQueryKey(workspaceId),
       });
     }
     setBulkApplying(false);
@@ -625,6 +640,71 @@ export default function ClusterDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {canReviewUsageLimitHistory && workspaceId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Usage Limit History</CardTitle>
+            <CardDescription>
+              Account administrator audit trail for changes in this workspace.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {usageLimitAuditsQuery.isLoading ? (
+              <div className="h-16 bg-muted animate-pulse-glow rounded" />
+            ) : usageLimitAuditsQuery.isError ? (
+              <p className="text-sm text-destructive">Usage limit history could not be loaded.</p>
+            ) : usageLimitAuditsQuery.data?.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">When</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Operator</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Change</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Outcome</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usageLimitAuditsQuery.data.map((entry) => (
+                      <tr key={entry.id} className="border-b border-border/50">
+                        <td className="py-3 px-4 text-sm whitespace-nowrap">
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-sm">
+                          <div>{entry.operatorName || entry.operatorEmail || entry.operatorUserId}</div>
+                          {entry.operatorName && entry.operatorEmail && (
+                            <div className="text-xs text-muted-foreground">{entry.operatorEmail}</div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-sm">
+                          <div>{entry.memberName || entry.memberEmail || entry.memberUserId}</div>
+                          {entry.memberName && entry.memberEmail && (
+                            <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-sm">
+                          {entry.action === 'clear'
+                            ? 'Cleared limit'
+                            : `${entry.operation === 'bulk' ? 'Bulk set' : 'Set'} to $${entry.requestedAmountUsd!.toFixed(2)}`}
+                        </td>
+                        <td className="py-3 px-4">
+                          <Badge variant={entry.outcome === 'success' ? 'outline' : 'destructive'}>
+                            {entry.outcome === 'success' ? 'Succeeded' : 'Failed'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No usage limit changes recorded yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

@@ -67,6 +67,7 @@ import type {
   TeamBudgetsResponse,
   TrendsResponse,
   UnauthorizedResponse,
+  UsageLimitAudit,
   UsageRangeRebuildInput,
   UserActivityResponse,
   VisibleWorkspace,
@@ -2864,6 +2865,84 @@ export function useListVisibleWorkspaceMembers<TData = Awaited<ReturnType<typeof
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListVisibleWorkspaceMembersQueryOptions(workspaceId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListWorkspaceUsageLimitAuditsUrl = (workspaceId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${workspaceId}/usage-limit-audits`
+}
+
+/**
+ * Available only to true Enterprise account administrators.
+ * @summary Review member usage-limit changes for a workspace
+ */
+export const listWorkspaceUsageLimitAudits = async (workspaceId: string, options?: RequestInit): Promise<UsageLimitAudit[]> => {
+
+  return customFetch<UsageLimitAudit[]>(getListWorkspaceUsageLimitAuditsUrl(workspaceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWorkspaceUsageLimitAuditsQueryKey = (workspaceId: string,) => {
+    return [
+    `/api/directory/workspaces/${workspaceId}/usage-limit-audits`
+    ] as const;
+    }
+
+
+export const getListWorkspaceUsageLimitAuditsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkspaceUsageLimitAudits>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceUsageLimitAudits>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWorkspaceUsageLimitAuditsQueryKey(workspaceId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkspaceUsageLimitAudits>>> = ({ signal }) => listWorkspaceUsageLimitAudits(workspaceId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workspaceId !== null && workspaceId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceUsageLimitAudits>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListWorkspaceUsageLimitAuditsQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkspaceUsageLimitAudits>>>
+export type ListWorkspaceUsageLimitAuditsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Review member usage-limit changes for a workspace
+ */
+
+export function useListWorkspaceUsageLimitAudits<TData = Awaited<ReturnType<typeof listWorkspaceUsageLimitAudits>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceUsageLimitAudits>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListWorkspaceUsageLimitAuditsQueryOptions(workspaceId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

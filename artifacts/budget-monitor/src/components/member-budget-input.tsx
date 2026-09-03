@@ -7,6 +7,7 @@ import {
   useSetWorkspaceMemberBudget,
   useClearWorkspaceMemberBudget,
   getListVisibleWorkspaceMembersQueryKey,
+  getListWorkspaceUsageLimitAuditsQueryKey,
 } from '@workspace/api-client-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -90,6 +91,7 @@ export function MemberBudgetInput({
         onSuccess: () => {
           if (workspaceId) {
             queryClient.invalidateQueries({ queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId) });
+            queryClient.invalidateQueries({ queryKey: getListWorkspaceUsageLimitAuditsQueryKey(workspaceId) });
           }
           setEditing(false);
           toast({
@@ -117,6 +119,7 @@ export function MemberBudgetInput({
         onSuccess: () => {
           if (workspaceId) {
             queryClient.invalidateQueries({ queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId) });
+            queryClient.invalidateQueries({ queryKey: getListWorkspaceUsageLimitAuditsQueryKey(workspaceId) });
           }
           setEditing(false);
           setValue('');
