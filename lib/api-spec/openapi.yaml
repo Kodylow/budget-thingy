@@ -644,7 +644,7 @@ paths:
       operationId: getTeamBudgetHistory
       tags: [teams]
       summary: Get the auditable annual team budget history
-      description: Account-admin-only. Returns original allocations, accepted credit requests, effective totals, and matching issues.
+      description: Account-admin-only. Returns original allocations, accepted credit requests (including preserved legacy imports), effective totals, and matching issues.
       responses:
         "200":
           description: Team budget history
@@ -660,8 +660,8 @@ paths:
     get:
       operationId: getTeamBudgetSyncStatus
       tags: [teams]
-      summary: Get Airtable budget synchronization status
-      description: Account-admin-only. Connector details and source status are not exposed to scoped viewers.
+      summary: Get Finance Approval budget synchronization status
+      description: Account-admin-only. Reports the read-only Replit Finance Approval import, which consumes only records whose Approval Status is Approved. Connector details and source status are not exposed to scoped viewers.
       responses:
         "200":
           description: Synchronization status
@@ -694,8 +694,8 @@ paths:
     post:
       operationId: refreshTeamBudgets
       tags: [teams]
-      summary: Refresh the read-only Airtable team budget snapshot
-      description: Account-admin-only. Never writes to Airtable; failures preserve the last successful snapshot.
+      summary: Refresh approved Finance Approval team budgets
+      description: Account-admin-only. Reads only records from Replit Finance Approval whose Approval Status is Approved. Never writes to Airtable; failures preserve the last successful snapshot and legacy imports.
       responses:
         "200":
           description: Snapshot refreshed
@@ -2176,8 +2176,14 @@ components:
             $ref: "#/components/schemas/TeamBudgetMatchIssue"
     TeamBudgetSyncStatus:
       type: object
-      required: [lastAttemptAt, lastSuccessfulAt, lastError, recordCount, acceptedCount, issueCount, teams]
+      required: [sourceTable, requiredApprovalStatus, lastAttemptAt, lastSuccessfulAt, lastError, recordCount, acceptedCount, issueCount, teams]
       properties:
+        sourceTable:
+          type: string
+          enum: [Replit Finance Approval]
+        requiredApprovalStatus:
+          type: string
+          enum: [Approved]
         lastAttemptAt:
           type: [string, "null"]
         lastSuccessfulAt:
@@ -2219,8 +2225,14 @@ components:
           type: [string, "null"]
     TeamBudgetRefreshResult:
       type: object
-      required: [ok, recordCount, acceptedCount, issueCount, error]
+      required: [sourceTable, requiredApprovalStatus, ok, recordCount, acceptedCount, issueCount, error]
       properties:
+        sourceTable:
+          type: string
+          enum: [Replit Finance Approval]
+        requiredApprovalStatus:
+          type: string
+          enum: [Approved]
         ok:
           type: boolean
         recordCount:

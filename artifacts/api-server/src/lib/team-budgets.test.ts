@@ -16,6 +16,7 @@ import { __setDirectoryCacheForTests } from "./enterprise";
 import { setReplitBudgetTransportForTests } from "./replit-budgets";
 
 import {
+  buildSnapshotRows,
   getEffectiveTeamBudgets,
   getVisibleEffectiveTeamBudgetMap,
   parseAirtableBudgetRecord,
@@ -27,6 +28,7 @@ import {
   setTeamBudgetDirectoryFetcherForTests,
   startTeamBudgetSyncJob,
   TEAM_BUDGET_SYNC_INTERVAL_MS,
+  TEAM_BUDGET_SOURCE,
 } from "./team-budgets";
 
 const PREFIX = "__task158_test__";
@@ -182,6 +184,7 @@ describe("team budget Airtable parsing", () => {
     const parsed = parseAirtableBudgetRecord({
       id: "valid-existing",
       fields: {
+        "Approval Status": "Approved",
         "Team Status": "Existing",
         "Existing Team Name": "Growth Strategy & Operations",
         "Total Credit Amount": " $1,234.50 ",
@@ -238,6 +241,7 @@ describe("team budget Airtable parsing", () => {
     const parsed = parseAirtableBudgetRecord({
       id: "valid-new",
       fields: {
+        "Approval Status": "Approved",
         "Team Status": "New",
         "New Team Name": NEW_TEAM,
         "Total Credit Amount": 75,
@@ -332,6 +336,40 @@ describe("team budget Airtable parsing", () => {
     }, existingTeams);
     expect(collision.matchState).toBe("invalid");
     expect(collision.errorMessage).toContain("already exists");
+  });
+
+  it("includes only approved Finance Approval records while retaining approved issues", () => {
+    const makeRecord = (id: string, approvalStatus: unknown, amount: unknown = 20) => ({
+      id,
+      fields: {
+        "Approval Status": approvalStatus,
+        "Team Status": "Existing",
+        "Existing Team Name": EXISTING,
+        "Total Credit Amount": amount,
+        "Submission Month/Year": "March 2026",
+      },
+    });
+    const rows = buildSnapshotRows([
+      makeRecord("approved", "Approved"),
+      makeRecord("approved-normalized", " approved "),
+      makeRecord("approved-malformed", "Approved", "not money"),
+      makeRecord("pending", "Pending"),
+      makeRecord("rejected", "Rejected"),
+      makeRecord("blank", ""),
+      makeRecord("other", "Finance approved"),
+    ], existingTeams);
+
+    expect(rows.map((row) => row.sourceRecordId)).toEqual([
+      "approved",
+      "approved-normalized",
+      "approved-malformed",
+    ]);
+    expect(rows.filter((row) => row.matchState === "accepted")).toHaveLength(2);
+    expect(rows.find((row) => row.sourceRecordId === "approved-malformed")).toMatchObject({
+      source: TEAM_BUDGET_SOURCE,
+      teamName: null,
+      matchState: "unmatched",
+    });
   });
 });
 
@@ -455,10 +493,12 @@ describe.sequential("effective team budget persistence", () => {
     priorAdjustments = await db
       .select()
       .from(teamBudgetAdjustmentsTable)
-      .where(eq(teamBudgetAdjustmentsTable.source, "airtable"));
+      .where(inArray(teamBudgetAdjustmentsTable.source, ["airtable", TEAM_BUDGET_SOURCE]));
     priorSyncState = await db.select().from(teamBudgetSyncStateTable);
 
-    await db.delete(teamBudgetAdjustmentsTable).where(eq(teamBudgetAdjustmentsTable.source, "airtable"));
+    await db.delete(teamBudgetAdjustmentsTable).where(
+      inArray(teamBudgetAdjustmentsTable.source, ["airtable", TEAM_BUDGET_SOURCE]),
+    );
     await db.delete(teamBudgetSyncStateTable);
     await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, [
       EXISTING,
@@ -478,7 +518,9 @@ describe.sequential("effective team budget persistence", () => {
     setReplitBudgetTransportForTests(null);
     setTeamBudgetDirectoryFetcherForTests(null);
     __setDirectoryCacheForTests(null);
-    await db.delete(teamBudgetAdjustmentsTable).where(eq(teamBudgetAdjustmentsTable.source, "airtable"));
+    await db.delete(teamBudgetAdjustmentsTable).where(
+      inArray(teamBudgetAdjustmentsTable.source, ["airtable", TEAM_BUDGET_SOURCE]),
+    );
     await db.delete(teamBudgetSyncStateTable);
     await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, [
       EXISTING,
@@ -536,13 +578,32 @@ describe.sequential("effective team budget persistence", () => {
     const visible = await getVisibleEffectiveTeamBudgetMap();
     expect(visible.get(EXISTING)).toBe(155);
     expect(visible.has(HIDDEN)).toBe(false);
+
+    await db.delete(teamBudgetAdjustmentsTable).where(inArray(
+      teamBudgetAdjustmentsTable.sourceRecordId,
+      [
+        `${PREFIX}-accepted-jan`,
+        `${PREFIX}-accepted-feb`,
+        `${PREFIX}-issue`,
+      ],
+    ));
   });
 
-  it("refresh is idempotent and a failed refresh preserves the last good snapshot", async () => {
+  it("refresh is idempotent, preserves legacy history, and a failure preserves the last good snapshot", async () => {
+    await db.insert(teamBudgetAdjustmentsTable).values({
+      source: "airtable",
+      sourceRecordId: `${PREFIX}-legacy`,
+      sourceTeamName: EXISTING,
+      teamName: EXISTING,
+      amountUsd: 10,
+      submissionPeriod: "2026-03",
+      matchState: "accepted",
+    });
     const records = [
       {
         id: `${PREFIX}-sync-existing`,
         fields: {
+          "Approval Status": "Approved",
           "Team Status": "Existing",
           "Existing Team Name": EXISTING,
           "Total Credit Amount": 40,
@@ -552,9 +613,30 @@ describe.sequential("effective team budget persistence", () => {
       {
         id: `${PREFIX}-sync-new`,
         fields: {
+          "Approval Status": " Approved ",
           "Team Status": "New",
           "New Team Name": NEW_TEAM,
           "Total Credit Amount": 60,
+          "Submission Month/Year": "May 2026",
+        },
+      },
+      {
+        id: `${PREFIX}-sync-pending`,
+        fields: {
+          "Approval Status": "Pending",
+          "Team Status": "New",
+          "New Team Name": `${PREFIX} Pending`,
+          "Total Credit Amount": 500,
+          "Submission Month/Year": "May 2026",
+        },
+      },
+      {
+        id: `${PREFIX}-sync-malformed-approved`,
+        fields: {
+          "Approval Status": "Approved",
+          "Team Status": "Existing",
+          "Existing Team Name": `${PREFIX} Typo`,
+          "Total Credit Amount": 500,
           "Submission Month/Year": "May 2026",
         },
       },
@@ -563,36 +645,49 @@ describe.sequential("effective team budget persistence", () => {
 
     expect(await refreshTeamBudgetSnapshot()).toMatchObject({
       ok: true,
-      recordCount: 2,
+      recordCount: 3,
       acceptedCount: 2,
-      issueCount: 0,
+      issueCount: 1,
     });
     expect(await refreshTeamBudgetSnapshot()).toMatchObject({
       ok: true,
-      recordCount: 2,
+      recordCount: 3,
       acceptedCount: 2,
-      issueCount: 0,
+      issueCount: 1,
     });
 
     let snapshot = await getEffectiveTeamBudgets();
-    expect(snapshot.adjustments.filter((row) => row.sourceRecordId.startsWith(PREFIX))).toHaveLength(2);
-    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(140);
+    expect(snapshot.adjustments.filter((row) => row.sourceRecordId.startsWith(PREFIX))).toHaveLength(4);
+    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(150);
     expect(snapshot.teams.find((team) => team.teamName === NEW_TEAM)?.effectiveAmountUsd).toBe(60);
+    expect(snapshot.adjustments.find(
+      (row) => row.sourceRecordId === `${PREFIX}-legacy`,
+    )?.source).toBe("airtable");
+    expect(snapshot.adjustments.filter(
+      (row) => row.source === TEAM_BUDGET_SOURCE,
+    )).toHaveLength(3);
+    expect(snapshot.adjustments.find(
+      (row) => row.sourceRecordId === `${PREFIX}-sync-malformed-approved`,
+    )).toMatchObject({ teamName: null, matchState: "unmatched" });
+    expect(snapshot.adjustments.some(
+      (row) => row.sourceRecordId === `${PREFIX}-sync-pending`,
+    )).toBe(false);
+    expect(snapshot.teams.some((team) => team.teamName === `${PREFIX} Pending`)).toBe(false);
 
     setAirtableBudgetFetcherForTests(async () => {
       throw new Error("simulated Airtable outage");
     });
     expect(await refreshTeamBudgetSnapshot()).toMatchObject({
       ok: false,
-      recordCount: 2,
+      recordCount: 3,
       acceptedCount: 2,
-      issueCount: 0,
+      issueCount: 1,
       error: "simulated Airtable outage",
     });
 
     snapshot = await getEffectiveTeamBudgets();
-    expect(snapshot.adjustments.filter((row) => row.sourceRecordId.startsWith(PREFIX))).toHaveLength(2);
-    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(140);
+    expect(snapshot.adjustments.filter((row) => row.sourceRecordId.startsWith(PREFIX))).toHaveLength(4);
+    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(150);
     expect(snapshot.sync?.lastSuccessfulAt).not.toBeNull();
     expect(snapshot.sync?.lastError).toBe("simulated Airtable outage");
   });
@@ -605,6 +700,7 @@ describe.sequential("effective team budget persistence", () => {
     setAirtableBudgetFetcherForTests(async () => [{
       id: sourceRecordId,
       fields: {
+        "Approval Status": "Approved",
         "Team Status": "New",
         "New Team Name": NEW_TEAM,
         "Total Credit Amount": 60,
@@ -617,6 +713,7 @@ describe.sequential("effective team budget persistence", () => {
     setAirtableBudgetFetcherForTests(async () => [{
       id: sourceRecordId,
       fields: {
+        "Approval Status": "Approved",
         "Team Status": "New",
         "New Team Name": RENAMED_TEAM,
         "Total Credit Amount": 60,

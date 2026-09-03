@@ -221,6 +221,13 @@ test("budget audit and sync status reject workspace-scoped users", async () => {
   }
 });
 
+test("sync status identifies the approval-only Finance Approval feed", async () => {
+  const { status, json } = await request("/admin/team-budgets/sync", "task158-account");
+  assert.equal(status, 200);
+  assert.equal(json.sourceTable, "Replit Finance Approval");
+  assert.equal(json.requiredApprovalStatus, "Approved");
+});
+
 test("upstream status and retry reject delegates and editors", async () => {
   assert.equal(
     (await request("/admin/team-budgets/history", "task158-delegate")).status,

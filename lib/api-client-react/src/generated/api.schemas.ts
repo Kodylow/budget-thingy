@@ -667,6 +667,20 @@ export interface TeamBudgetHistoryResponse {
   issues: TeamBudgetMatchIssue[];
 }
 
+export type TeamBudgetSyncStatusSourceTable = typeof TeamBudgetSyncStatusSourceTable[keyof typeof TeamBudgetSyncStatusSourceTable];
+
+
+export const TeamBudgetSyncStatusSourceTable = {
+  Replit_Finance_Approval: 'Replit Finance Approval',
+} as const;
+
+export type TeamBudgetSyncStatusRequiredApprovalStatus = typeof TeamBudgetSyncStatusRequiredApprovalStatus[keyof typeof TeamBudgetSyncStatusRequiredApprovalStatus];
+
+
+export const TeamBudgetSyncStatusRequiredApprovalStatus = {
+  Approved: 'Approved',
+} as const;
+
 export type TeamBudgetUpstreamSyncStatus = typeof TeamBudgetUpstreamSyncStatus[keyof typeof TeamBudgetUpstreamSyncStatus];
 
 
@@ -696,6 +710,8 @@ export interface TeamBudgetUpstreamSync {
 }
 
 export interface TeamBudgetSyncStatus {
+  sourceTable: TeamBudgetSyncStatusSourceTable;
+  requiredApprovalStatus: TeamBudgetSyncStatusRequiredApprovalStatus;
   /** @nullable */
   lastAttemptAt: string | null;
   /** @nullable */
@@ -708,7 +724,23 @@ export interface TeamBudgetSyncStatus {
   teams: TeamBudgetUpstreamSync[];
 }
 
+export type TeamBudgetRefreshResultSourceTable = typeof TeamBudgetRefreshResultSourceTable[keyof typeof TeamBudgetRefreshResultSourceTable];
+
+
+export const TeamBudgetRefreshResultSourceTable = {
+  Replit_Finance_Approval: 'Replit Finance Approval',
+} as const;
+
+export type TeamBudgetRefreshResultRequiredApprovalStatus = typeof TeamBudgetRefreshResultRequiredApprovalStatus[keyof typeof TeamBudgetRefreshResultRequiredApprovalStatus];
+
+
+export const TeamBudgetRefreshResultRequiredApprovalStatus = {
+  Approved: 'Approved',
+} as const;
+
 export interface TeamBudgetRefreshResult {
+  sourceTable: TeamBudgetRefreshResultSourceTable;
+  requiredApprovalStatus: TeamBudgetRefreshResultRequiredApprovalStatus;
   ok: boolean;
   recordCount: number;
   acceptedCount: number;

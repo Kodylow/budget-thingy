@@ -1903,7 +1903,7 @@ export const getGetTeamBudgetHistoryUrl = () => {
 }
 
 /**
- * Account-admin-only. Returns original allocations, accepted credit requests, effective totals, and matching issues.
+ * Account-admin-only. Returns original allocations, accepted credit requests (including preserved legacy imports), effective totals, and matching issues.
  * @summary Get the auditable annual team budget history
  */
 export const getTeamBudgetHistory = async ( options?: RequestInit): Promise<TeamBudgetHistoryResponse> => {
@@ -1981,8 +1981,8 @@ export const getGetTeamBudgetSyncStatusUrl = () => {
 }
 
 /**
- * Account-admin-only. Connector details and source status are not exposed to scoped viewers.
- * @summary Get Airtable budget synchronization status
+ * Account-admin-only. Reports the read-only Replit Finance Approval import, which consumes only records whose Approval Status is Approved. Connector details and source status are not exposed to scoped viewers.
+ * @summary Get Finance Approval budget synchronization status
  */
 export const getTeamBudgetSyncStatus = async ( options?: RequestInit): Promise<TeamBudgetSyncStatus> => {
 
@@ -2029,7 +2029,7 @@ export type GetTeamBudgetSyncStatusQueryError = ErrorType<UnauthorizedResponse |
 
 
 /**
- * @summary Get Airtable budget synchronization status
+ * @summary Get Finance Approval budget synchronization status
  */
 
 export function useGetTeamBudgetSyncStatus<TData = Awaited<ReturnType<typeof getTeamBudgetSyncStatus>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
@@ -2131,8 +2131,8 @@ export const getRefreshTeamBudgetsUrl = () => {
 }
 
 /**
- * Account-admin-only. Never writes to Airtable; failures preserve the last successful snapshot.
- * @summary Refresh the read-only Airtable team budget snapshot
+ * Account-admin-only. Reads only records from Replit Finance Approval whose Approval Status is Approved. Never writes to Airtable; failures preserve the last successful snapshot and legacy imports.
+ * @summary Refresh approved Finance Approval team budgets
  */
 export const refreshTeamBudgets = async ( options?: RequestInit): Promise<TeamBudgetRefreshResult> => {
 
@@ -2181,7 +2181,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RefreshTeamBudgetsMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | TeamBudgetRefreshResult>
 
     /**
- * @summary Refresh the read-only Airtable team budget snapshot
+ * @summary Refresh approved Finance Approval team budgets
  */
 export const useRefreshTeamBudgets = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | TeamBudgetRefreshResult>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshTeamBudgets>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}

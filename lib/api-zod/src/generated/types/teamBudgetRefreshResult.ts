@@ -5,8 +5,12 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { TeamBudgetRefreshResultRequiredApprovalStatus } from './teamBudgetRefreshResultRequiredApprovalStatus';
+import type { TeamBudgetRefreshResultSourceTable } from './teamBudgetRefreshResultSourceTable';
 
 export interface TeamBudgetRefreshResult {
+  sourceTable: TeamBudgetRefreshResultSourceTable;
+  requiredApprovalStatus: TeamBudgetRefreshResultRequiredApprovalStatus;
   ok: boolean;
   recordCount: number;
   acceptedCount: number;

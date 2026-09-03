@@ -25,7 +25,9 @@ const BASE_NAMES = [
   "Project Management",
   "LIFT Labs Master Project Management",
 ] as const;
-const TABLE_NAME = "Replit Order Forms";
+export const TEAM_BUDGET_SOURCE = "airtable-finance-approval";
+export const TEAM_BUDGET_SOURCE_TABLE = "Replit Finance Approval";
+export const TEAM_BUDGET_REQUIRED_APPROVAL_STATUS = "Approved";
 const SYNC_STATE_ID = 1;
 export const TEAM_BUDGET_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const LEGACY_EXACT_MATCHES = new Map([
@@ -229,8 +231,14 @@ async function fetchAirtableBudgetRecords(): Promise<AirtableBudgetRecord[]> {
     throw new Error(`Airtable base was not found (expected one of: ${BASE_NAMES.join(", ")})`);
   }
   const schema = await getJson(connectors, `/v0/meta/bases/${encodeURIComponent(base.id)}/tables`);
-  const table = (schema.tables ?? []).find((candidate: any) => candidate.name === TABLE_NAME);
-  if (!table?.id) throw new Error(`Airtable table "${TABLE_NAME}" was not found in "${base.name}"`);
+  const table = (schema.tables ?? []).find(
+    (candidate: any) => candidate.name === TEAM_BUDGET_SOURCE_TABLE,
+  );
+  if (!table?.id) {
+    throw new Error(
+      `Airtable table "${TEAM_BUDGET_SOURCE_TABLE}" was not found in "${base.name}"`,
+    );
+  }
 
   const records: AirtableBudgetRecord[] = [];
   let offset: string | undefined;
@@ -295,7 +303,7 @@ export function parseAirtableBudgetRecord(
   }
 
   return {
-    source: "airtable",
+    source: TEAM_BUDGET_SOURCE,
     sourceRecordId: record.id || "(missing)",
     sourceTeamStatus: status,
     sourceTeamName: existingName ?? newName,
@@ -319,7 +327,13 @@ export function buildSnapshotRows(
   acceptedNewTeamsByRecordId: ReadonlyMap<string, string> = new Map(),
 ): ParsedAdjustment[] {
   const byIdentity = new Map<string, AirtableBudgetRecord>();
-  for (const record of records) byIdentity.set(record.id, record);
+  for (const record of records) {
+    const approvalStatus = valueAsString(record.fields?.["Approval Status"]);
+    if (approvalStatus?.toLowerCase() !== TEAM_BUDGET_REQUIRED_APPROVAL_STATUS.toLowerCase()) {
+      continue;
+    }
+    byIdentity.set(record.id, record);
+  }
   return [...byIdentity.values()].map((record) =>
     parseAirtableBudgetRecord(record, existingTeams, acceptedNewTeamsByRecordId),
   );
@@ -344,7 +358,7 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
     const acceptedNewTeamsByRecordId = new Map(
       priorAdjustments
         .filter((row) =>
-          row.source === "airtable" &&
+          row.source === TEAM_BUDGET_SOURCE &&
           row.matchState === "accepted" &&
           row.teamName &&
           row.sourceTeamStatus?.toLowerCase() === "new",
@@ -370,7 +384,11 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
         .filter((row) => row.matchState === "accepted" && row.teamName)
         .map((row) => row.teamName!),
       ...priorAdjustments
-        .filter((row) => row.source !== "airtable" && row.matchState === "accepted" && row.teamName)
+        .filter((row) =>
+          row.source !== TEAM_BUDGET_SOURCE &&
+          row.matchState === "accepted" &&
+          row.teamName,
+        )
         .map((row) => row.teamName!),
     ]);
     const assignedTeams = new Set(groupAssignments.map((row) => row.teamName));
@@ -390,7 +408,9 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
           })),
         ).onConflictDoNothing();
       }
-      await tx.delete(teamBudgetAdjustmentsTable).where(eq(teamBudgetAdjustmentsTable.source, "airtable"));
+      await tx.delete(teamBudgetAdjustmentsTable).where(
+        eq(teamBudgetAdjustmentsTable.source, TEAM_BUDGET_SOURCE),
+      );
       if (parsed.length) await tx.insert(teamBudgetAdjustmentsTable).values(parsed);
       if (staleSourceCreatedTeams.length) {
         await tx.delete(teamBudgetsTable).where(and(
@@ -466,13 +486,19 @@ export function startTeamBudgetSyncJob(): void {
               recordCount: result.recordCount,
               acceptedCount: result.acceptedCount,
               issueCount: result.issueCount,
-            }, "Hourly team budget synchronization completed");
+            }, "Hourly approved Replit Finance Approval team budget synchronization completed");
           } else {
-            logger.warn({ error: result.error }, "Hourly team budget synchronization failed");
+            logger.warn(
+              { error: result.error },
+              "Hourly approved Replit Finance Approval team budget synchronization failed",
+            );
           }
         })
         .catch((err) => {
-          logger.error({ err }, "Hourly team budget synchronization crashed");
+          logger.error(
+            { err },
+            "Hourly approved Replit Finance Approval team budget synchronization crashed",
+          );
         })
         .finally(schedule);
     }, TEAM_BUDGET_SYNC_INTERVAL_MS);

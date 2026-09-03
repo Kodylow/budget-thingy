@@ -5,9 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { TeamBudgetSyncStatusRequiredApprovalStatus } from './teamBudgetSyncStatusRequiredApprovalStatus';
+import type { TeamBudgetSyncStatusSourceTable } from './teamBudgetSyncStatusSourceTable';
 import type { TeamBudgetUpstreamSync } from './teamBudgetUpstreamSync';
 
 export interface TeamBudgetSyncStatus {
+  sourceTable: TeamBudgetSyncStatusSourceTable;
+  requiredApprovalStatus: TeamBudgetSyncStatusRequiredApprovalStatus;
   /** @nullable */
   lastAttemptAt: string | null;
   /** @nullable */

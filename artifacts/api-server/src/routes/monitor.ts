@@ -134,6 +134,8 @@ import {
   getVisibleEffectiveTeamBudgetMap,
   reconcileTeamBudgetsUpstream,
   refreshTeamBudgetSnapshot,
+  TEAM_BUDGET_REQUIRED_APPROVAL_STATUS,
+  TEAM_BUDGET_SOURCE_TABLE,
 } from "../lib/team-budgets";
 import {
   clearReplitMemberBudget,
@@ -1675,6 +1677,8 @@ async function buildTeamBudgetSyncStatus() {
     getTeamBudgetUpstreamSyncRows(),
   ]);
   return {
+    sourceTable: TEAM_BUDGET_SOURCE_TABLE,
+    requiredApprovalStatus: TEAM_BUDGET_REQUIRED_APPROVAL_STATUS,
     lastAttemptAt: sync?.lastAttemptAt?.toISOString() ?? null,
     lastSuccessfulAt: sync?.lastSuccessfulAt?.toISOString() ?? null,
     lastError: sync?.lastError ?? null,
@@ -1712,7 +1716,11 @@ router.post(
 
 router.post("/admin/team-budgets/refresh", requireAccountAdmin, async (_req, res): Promise<void> => {
   const result = await refreshTeamBudgetSnapshot();
-  res.status(result.ok ? 200 : 502).json(RefreshTeamBudgetsResponse.parse(result));
+  res.status(result.ok ? 200 : 502).json(RefreshTeamBudgetsResponse.parse({
+    sourceTable: TEAM_BUDGET_SOURCE_TABLE,
+    requiredApprovalStatus: TEAM_BUDGET_REQUIRED_APPROVAL_STATUS,
+    ...result,
+  }));
 });
 
 router.get("/budgets", async (req, res): Promise<void> => {
