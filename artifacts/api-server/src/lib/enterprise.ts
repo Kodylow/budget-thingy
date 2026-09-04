@@ -1299,6 +1299,145 @@ interface DailyFactScope {
   params: Record<string, string | undefined>;
 }
 
+interface HistoricalDailyFactBatch {
+  key: string;
+  monthStart: string;
+  scope: DailyFactScope;
+  usageDates: string[];
+  priority: number;
+  attempts: number;
+  failed: boolean;
+  nextAttemptAt: number;
+  run?: () => Promise<void>;
+}
+
+export const HISTORICAL_DAILY_FACT_QUEUE_LIMIT = 8;
+const HISTORICAL_DAILY_FACT_MAX_ATTEMPTS = 3;
+const HISTORICAL_DAILY_FACT_RETRY_DELAYS_MS = [1_000, 5_000, 30_000] as const;
+const historicalDailyFactBatches = new Map<string, HistoricalDailyFactBatch>();
+let historicalDailyFactBatchTotal = 0;
+let historicalDailyFactBatchCompleted = 0;
+let historicalDailyFactRetryTimer: NodeJS.Timeout | null = null;
+let historicalDailyFactRetryAt = 0;
+
+function historicalDailyFactQueueDepth(): number {
+  return [...queuedKeys].filter((key) => key.startsWith("daily-facts-batch:")).length;
+}
+
+function historicalDailyFactFailedCount(): number {
+  return [...historicalDailyFactBatches.values()]
+    .filter((batch) => batch.failed)
+    .length;
+}
+
+function historicalDailyFactRemainingDays(): number {
+  return [...historicalDailyFactBatches.values()]
+    .reduce((sum, batch) => sum + batch.usageDates.length, 0);
+}
+
+function logHistoricalDailyFactProgress(event: string): void {
+  logger.info({
+    event,
+    totalBatches: historicalDailyFactBatchTotal,
+    completedBatches: historicalDailyFactBatchCompleted,
+    failedBatches: historicalDailyFactFailedCount(),
+    remainingBatches: historicalDailyFactBatches.size,
+    remainingDays: historicalDailyFactRemainingDays(),
+    queuedBatches: historicalDailyFactQueueDepth(),
+    queueDepth: totalQueuedCount(),
+  }, "Historical daily usage fact progress");
+}
+
+function scheduleHistoricalDailyFactRefill(at: number): void {
+  if (historicalDailyFactRetryTimer && historicalDailyFactRetryAt <= at) return;
+  if (historicalDailyFactRetryTimer) clearTimeout(historicalDailyFactRetryTimer);
+  historicalDailyFactRetryAt = at;
+  historicalDailyFactRetryTimer = setTimeout(() => {
+    historicalDailyFactRetryTimer = null;
+    historicalDailyFactRetryAt = 0;
+    refillHistoricalDailyFactQueue();
+  }, Math.max(0, at - Date.now()));
+  historicalDailyFactRetryTimer.unref();
+}
+
+function refillHistoricalDailyFactQueue(): void {
+  const now = Date.now();
+  const batches = [...historicalDailyFactBatches.values()];
+  const nextRetryAt = batches.reduce<number | null>((earliest, batch) => {
+    if (
+      !batch.failed ||
+      batch.attempts >= HISTORICAL_DAILY_FACT_MAX_ATTEMPTS ||
+      batch.nextAttemptAt <= now
+    ) {
+      return earliest;
+    }
+    return earliest === null
+      ? batch.nextAttemptAt
+      : Math.min(earliest, batch.nextAttemptAt);
+  }, null);
+  if (nextRetryAt !== null) scheduleHistoricalDailyFactRefill(nextRetryAt);
+
+  let available = HISTORICAL_DAILY_FACT_QUEUE_LIMIT - historicalDailyFactQueueDepth();
+  if (available <= 0) return;
+  const retryRank = (batch: HistoricalDailyFactBatch): number => {
+    if (
+      batch.failed &&
+      batch.attempts < HISTORICAL_DAILY_FACT_MAX_ATTEMPTS &&
+      batch.nextAttemptAt <= now
+    ) {
+      return 0;
+    }
+    if (!batch.failed) return 1;
+    return 2;
+  };
+  batches.sort((a, b) => retryRank(a) - retryRank(b));
+  for (const batch of batches) {
+    if (available <= 0) break;
+    if (queuedKeys.has(batch.key)) continue;
+    if (batch.failed && batch.attempts >= HISTORICAL_DAILY_FACT_MAX_ATTEMPTS) continue;
+    if (batch.nextAttemptAt > now) {
+      continue;
+    }
+    const queued = enqueueUsage(batch.key, batch.priority, async () => {
+      let completed = false;
+      try {
+        batch.failed = false;
+        batch.attempts++;
+        if (batch.run) {
+          await batch.run();
+        } else {
+          for (const usageDate of batch.usageDates) {
+            await syncDailyFactDay(usageDate, batch.scope);
+          }
+          await finalizeDailyFactMonth(batch.monthStart, batch.scope, new Date());
+        }
+        completed = true;
+      } finally {
+        if (completed) {
+          historicalDailyFactBatches.delete(batch.key);
+          historicalDailyFactBatchCompleted++;
+        } else {
+          batch.failed = true;
+          const delayIndex = Math.min(
+            batch.attempts - 1,
+            HISTORICAL_DAILY_FACT_RETRY_DELAYS_MS.length - 1,
+          );
+          batch.nextAttemptAt = Date.now() +
+            HISTORICAL_DAILY_FACT_RETRY_DELAYS_MS[delayIndex]!;
+        }
+        logHistoricalDailyFactProgress(
+          completed ? "daily_fact_history_batch_completed" : "daily_fact_history_batch_failed",
+        );
+        // enqueueUsage keeps the active key registered until this task returns.
+        // Refill on the next turn so the completed slot is visible as free.
+        const refill = setTimeout(refillHistoricalDailyFactQueue, 0);
+        refill.unref();
+      }
+    }, "backfill");
+    if (queued) available--;
+  }
+}
+
 function monthBounds(monthStart: string): { start: Date; end: Date } {
   const start = new Date(`${monthStart}T00:00:00.000Z`);
   const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
@@ -1528,8 +1667,19 @@ async function queueDailyFactRefreshes(): Promise<void> {
   );
   dailyFactParityReady = false;
   verifiedDailyFactScopes.clear();
+  if (historicalDailyFactBatches.size === 0 && historicalDailyFactQueueDepth() === 0) {
+    historicalDailyFactBatchTotal = 0;
+    historicalDailyFactBatchCompleted = 0;
+  } else {
+    for (const batch of historicalDailyFactBatches.values()) {
+      if (!batch.failed || queuedKeys.has(batch.key)) continue;
+      batch.attempts = 0;
+      batch.failed = false;
+      batch.nextAttemptAt = 0;
+    }
+  }
   let scheduledQueued = 0;
-  let backfillQueued = 0;
+  let historicalBatchCount = 0;
   const cutoff = new Date(SPEND_DATA_CUTOFF_MS);
   const months: string[] = [];
   for (
@@ -1551,35 +1701,61 @@ async function queueDailyFactRefreshes(): Promise<void> {
     for (const scope of scopes) {
       if (closedMonths.has(`${monthStart}|${scope.mode}|${scope.scopeKey}`)) continue;
       const priority = isCurrent ? (scope.mode === "account_total" ? -5 : 1) : 2;
+      const neededDates: string[] = [];
       for (const usageDate of dateRangeDays(rangeStart, rangeEnd)) {
         const factId = dailyFactId(scope.mode, scope.scopeKey, usageDate);
         const dayMs = new Date(`${usageDate}T00:00:00.000Z`).getTime();
         const needsRefresh = !existingFacts.has(factId) ||
           (isCurrent && dayMs >= mutableTailStart);
         if (!needsRefresh) continue;
+        if (!isCurrent) {
+          neededDates.push(usageDate);
+          continue;
+        }
         const queued = enqueueUsage(
           `daily-fact:${usageDate}:${scope.mode}:${scope.scopeKey}`,
           priority,
           () => syncDailyFactDay(usageDate, scope),
-          isCurrent ? "scheduled" : "backfill",
+          "scheduled",
         );
-        if (queued) {
-          if (isCurrent) scheduledQueued++;
-          else backfillQueued++;
-        }
+        if (queued) scheduledQueued++;
       }
-      const finalizerQueued = enqueueUsage(
-        `daily-facts-finalize:${monthStart}:${scope.mode}:${scope.scopeKey}`,
-        priority,
-        () => finalizeDailyFactMonth(monthStart, scope, new Date()),
-        isCurrent ? "scheduled" : "backfill",
-      );
-      if (finalizerQueued) {
-        if (isCurrent) scheduledQueued++;
-        else backfillQueued++;
+      if (isCurrent) {
+        const finalizerQueued = enqueueUsage(
+          `daily-facts-finalize:${monthStart}:${scope.mode}:${scope.scopeKey}`,
+          priority,
+          () => finalizeDailyFactMonth(monthStart, scope, new Date()),
+          "scheduled",
+        );
+        if (finalizerQueued) scheduledQueued++;
+        continue;
+      }
+      const batchKey = `daily-facts-batch:${monthStart}:${scope.mode}:${scope.scopeKey}`;
+      const existingBatch = historicalDailyFactBatches.get(batchKey);
+      if (existingBatch && !queuedKeys.has(batchKey)) {
+        existingBatch.scope = scope;
+        existingBatch.usageDates = neededDates;
+        existingBatch.priority = priority;
+      } else if (!existingBatch && !queuedKeys.has(batchKey)) {
+        historicalDailyFactBatches.set(batchKey, {
+          key: batchKey,
+          monthStart,
+          scope,
+          usageDates: neededDates,
+          priority,
+          attempts: 0,
+          failed: false,
+          nextAttemptAt: 0,
+        });
+        historicalBatchCount++;
       }
     }
   }
+  historicalDailyFactBatchTotal = Math.max(
+    historicalDailyFactBatchTotal,
+    historicalDailyFactBatchCompleted + historicalDailyFactBatches.size,
+  );
+  refillHistoricalDailyFactQueue();
   // Current-month finalizers are inserted before this gate at the same
   // priorities, while historical work remains lower priority.
   enqueueUsage(`daily-facts-parity:${currentMonth}`, 1, async () => {
@@ -1598,7 +1774,11 @@ async function queueDailyFactRefreshes(): Promise<void> {
     scopes: scopes.length,
     months: months.length,
     scheduledQueued,
-    backfillQueued,
+    historicalBatchCount,
+    historicalRemainingBatches: historicalDailyFactBatches.size,
+    historicalRemainingDays: historicalDailyFactRemainingDays(),
+    historicalFailedBatches: historicalDailyFactFailedCount(),
+    historicalQueuedBatches: historicalDailyFactQueueDepth(),
     queueDepth: totalQueuedCount(),
   }, "Daily usage fact refresh planned");
 }
@@ -5354,10 +5534,75 @@ export function __resetDurableUsageCachesForTests(): void {
   dailyFactRangeCache.clear();
   verifiedDailyFactScopes.clear();
   dailyFactParityReady = false;
+  historicalDailyFactBatches.clear();
+  historicalDailyFactBatchTotal = 0;
+  historicalDailyFactBatchCompleted = 0;
+  if (historicalDailyFactRetryTimer) clearTimeout(historicalDailyFactRetryTimer);
+  historicalDailyFactRetryTimer = null;
+  historicalDailyFactRetryAt = 0;
 }
 
 export function __getDailyFactRangeCacheSizeForTests(): number {
   return dailyFactRangeCache.size;
+}
+
+export function __getHistoricalDailyFactPlannerForTests(): {
+  remainingBatches: number;
+  queuedBatches: number;
+  completedBatches: number;
+  failedBatches: number;
+  remainingDays: number;
+  totalBatches: number;
+} {
+  return {
+    remainingBatches: historicalDailyFactBatches.size,
+    queuedBatches: historicalDailyFactQueueDepth(),
+    completedBatches: historicalDailyFactBatchCompleted,
+    failedBatches: historicalDailyFactFailedCount(),
+    remainingDays: historicalDailyFactRemainingDays(),
+    totalBatches: historicalDailyFactBatchTotal,
+  };
+}
+
+export function __seedHistoricalDailyFactBatchesForTests(
+  count: number,
+  options: {
+    delayMs?: number;
+    daysPerBatch?: number;
+    failFirstBatchOnce?: boolean;
+  } = {},
+): void {
+  historicalDailyFactBatches.clear();
+  historicalDailyFactBatchCompleted = 0;
+  historicalDailyFactBatchTotal = count;
+  for (let index = 0; index < count; index++) {
+    const scopeKey = `planner-test-${index}`;
+    const key = `daily-facts-batch:test-${index}`;
+    let failuresRemaining = index === 0 && options.failFirstBatchOnce ? 1 : 0;
+    historicalDailyFactBatches.set(key, {
+      key,
+      monthStart: "2026-06-01",
+      scope: { mode: "account_total", scopeKey, params: {} },
+      usageDates: Array.from(
+        { length: options.daysPerBatch ?? 0 },
+        (_, day) => `2026-06-${String(day + 1).padStart(2, "0")}`,
+      ),
+      priority: 2,
+      attempts: 0,
+      failed: false,
+      nextAttemptAt: 0,
+      run: async () => {
+        if (options.delayMs && options.delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+        }
+        if (failuresRemaining > 0) {
+          failuresRemaining--;
+          throw new Error("simulated historical batch failure");
+        }
+      },
+    });
+  }
+  refillHistoricalDailyFactQueue();
 }
 
 export function __canonicalInputFingerprintForTests(monthStart: string): string {

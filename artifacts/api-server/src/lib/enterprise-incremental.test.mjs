@@ -948,6 +948,78 @@ test("queue diagnostics expose active work, backlog age, and recent progress", a
   assert.equal(complete.active, null);
 });
 
+test("large historical fact plans keep only a bounded number of month batches queued", async () => {
+  const batchCount = 500;
+  enterprise.__seedHistoricalDailyFactBatchesForTests(batchCount, {
+    delayMs: 4,
+    daysPerBatch: 31,
+    failFirstBatchOnce: true,
+  });
+  const initial = enterprise.__getHistoricalDailyFactPlannerForTests();
+  assert.equal(initial.totalBatches, batchCount);
+  assert.equal(
+    initial.remainingDays,
+    15_500,
+    "daily history is represented inside scope/month batches, not as 15,500 queue tasks",
+  );
+  assert.ok(
+    initial.queuedBatches <= enterprise.HISTORICAL_DAILY_FACT_QUEUE_LIMIT,
+    "history planning must not expand the full account into the live queue",
+  );
+  assert.equal(initial.remainingBatches, batchCount);
+
+  const interactiveRange = {
+    key: `custom:bounded-history-interactive-${crypto.randomUUID()}`,
+    label: "Bounded history interactive",
+    params: {
+      startTime: "2026-09-01T00:00:00.000Z",
+      endTime: "2026-09-01T02:00:00.000Z",
+    },
+  };
+  assert.equal(enterprise.queueAccountUsageFetch(interactiveRange, -10, true), true);
+  while (!enterprise.getAccountUsage(interactiveRange.key)) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const afterInteractive = enterprise.__getHistoricalDailyFactPlannerForTests();
+  assert.ok(
+    afterInteractive.remainingBatches > 0,
+    "interactive work must finish without waiting for historical maintenance",
+  );
+  assert.ok(
+    afterInteractive.queuedBatches <= enterprise.HISTORICAL_DAILY_FACT_QUEUE_LIMIT,
+  );
+
+  while (
+    enterprise.__getHistoricalDailyFactPlannerForTests().failedBatches === 0
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  while (
+    enterprise.__getHistoricalDailyFactPlannerForTests().failedBatches > 0
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.ok(
+    enterprise.__getHistoricalDailyFactPlannerForTests().remainingBatches > 50,
+    "a due retry must run before the ordinary historical backlog drains",
+  );
+
+  const deadline = Date.now() + 10_000;
+  while (
+    enterprise.__getHistoricalDailyFactPlannerForTests().remainingBatches > 0 &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  await waitForQueue();
+  const complete = enterprise.__getHistoricalDailyFactPlannerForTests();
+  assert.equal(complete.remainingBatches, 0);
+  assert.equal(complete.completedBatches, batchCount);
+  assert.equal(complete.failedBatches, 0);
+  assert.equal(complete.remainingDays, 0);
+  assert.equal(complete.queuedBatches, 0);
+});
+
 test("project metadata persists without startup hydration", async () => {
   const metadataWorkspace = `metadata-${crypto.randomUUID()}`;
   assert.equal(enterprise.queueProjectTitlesFetch(metadataWorkspace, 0), true);
