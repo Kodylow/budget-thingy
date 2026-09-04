@@ -10,6 +10,7 @@ import {
   teamBudgetAdjustmentsTable,
   teamBudgetAllocationAuditsTable,
   teamBudgetsTable,
+  usageAccountDayTable,
   usageMemberDayTable,
   usageProjectDayTable,
   usageWorkspaceDayTable,
@@ -28,8 +29,18 @@ const HIDDEN = `${PREFIX} Hidden`;
 const GROUP_NAME = `${PREFIX} Group`;
 const GROUP_ID = `${PREFIX}-group`;
 const SECOND_GROUP_ID = `${PREFIX}-group-2`;
+const HIDDEN_ZERO_GROUP_ID = `${PREFIX}-hidden-zero`;
+const HIDDEN_ZERO_ALIAS_ID = `${PREFIX}-hidden-zero-alias`;
+const VISIBLE_ZERO_GROUP_ID = `${PREFIX}-visible-zero`;
+const HIDDEN_ZERO_NAME = `${PREFIX} Hidden Zero - Member`;
+const VISIBLE_ZERO_NAME = `${PREFIX} Visible Zero - Member`;
 const SHARED_PROJECT_ID = `${PREFIX}-shared-project`;
 const USAGE_DATE = new Date().toISOString().slice(0, 10);
+const PREVIOUS_USAGE_DATE = new Date(Date.parse(`${USAGE_DATE}T00:00:00.000Z`) - 86_400_000)
+  .toISOString().slice(0, 10);
+const COMPLETE_RANGE = `rangeType=custom&startDate=${USAGE_DATE}&endDate=${USAGE_DATE}`;
+const PARTIAL_RANGE =
+  `rangeType=custom&startDate=${PREVIOUS_USAGE_DATE}&endDate=${USAGE_DATE}`;
 
 function member(userId, isAccountAdmin, workspaces = {}) {
   return {
@@ -73,6 +84,24 @@ beforeAll(async () => {
         id: SECOND_GROUP_ID,
         workspaceId: "task158-ws-2",
         name: `${GROUP_NAME} Two`,
+        type: "custom",
+      },
+      {
+        id: HIDDEN_ZERO_GROUP_ID,
+        workspaceId: "task158-ws",
+        name: HIDDEN_ZERO_NAME,
+        type: "custom",
+      },
+      {
+        id: HIDDEN_ZERO_ALIAS_ID,
+        workspaceId: "task158-ws-2",
+        name: HIDDEN_ZERO_NAME,
+        type: "custom",
+      },
+      {
+        id: VISIBLE_ZERO_GROUP_ID,
+        workspaceId: "task158-ws",
+        name: VISIBLE_ZERO_NAME,
         type: "custom",
       },
     ],
@@ -140,12 +169,20 @@ beforeAll(async () => {
     ORIGINAL_ONLY,
     HIDDEN,
   ]));
-  await db.delete(teamLimitTargetsTable).where(eq(teamLimitTargetsTable.groupId, GROUP_ID));
+  await db.delete(teamLimitTargetsTable).where(inArray(teamLimitTargetsTable.groupId, [
+    GROUP_ID,
+    SECOND_GROUP_ID,
+    HIDDEN_ZERO_GROUP_ID,
+    HIDDEN_ZERO_ALIAS_ID,
+    VISIBLE_ZERO_GROUP_ID,
+  ]));
   const usageWorkspaceIds = ["task158-ws", "task158-ws-2"];
   await db.delete(apiProjectMetadataStateTable)
     .where(inArray(apiProjectMetadataStateTable.workspaceId, usageWorkspaceIds));
   await db.delete(apiProjectMetadataTable)
     .where(inArray(apiProjectMetadataTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageAccountDayTable)
+    .where(eq(usageAccountDayTable.usageDate, USAGE_DATE));
   await db.delete(usageMemberDayTable)
     .where(inArray(usageMemberDayTable.workspaceId, usageWorkspaceIds));
   await db.delete(usageProjectDayTable)
@@ -158,12 +195,32 @@ beforeAll(async () => {
     { teamName: ORIGINAL_ONLY, amountUsd: 75, originalAmountUsd: 75 },
     { teamName: HIDDEN, amountUsd: 1000, originalAmountUsd: 1000, isHidden: true },
   ]);
-  await db.insert(teamLimitTargetsTable).values({
-    workspaceId: "task158-ws",
-    groupId: GROUP_ID,
-    groupName: GROUP_NAME,
-    teamName: ASSIGNED,
-  });
+  await db.insert(teamLimitTargetsTable).values([
+    {
+      workspaceId: "task158-ws",
+      groupId: GROUP_ID,
+      groupName: GROUP_NAME,
+      teamName: ASSIGNED,
+    },
+    {
+      workspaceId: "task158-ws",
+      groupId: HIDDEN_ZERO_GROUP_ID,
+      groupName: HIDDEN_ZERO_NAME,
+      teamName: HIDDEN,
+    },
+    {
+      workspaceId: "task158-ws-2",
+      groupId: HIDDEN_ZERO_ALIAS_ID,
+      groupName: HIDDEN_ZERO_NAME,
+      teamName: HIDDEN,
+    },
+    {
+      workspaceId: "task158-ws",
+      groupId: VISIBLE_ZERO_GROUP_ID,
+      groupName: VISIBLE_ZERO_NAME,
+      teamName: ASSIGNED,
+    },
+  ]);
   await db.insert(usageMemberDayTable).values([
     {
       workspaceId: "task158-ws",
@@ -206,6 +263,11 @@ beforeAll(async () => {
       status: "complete",
     },
   ]);
+  await db.insert(usageAccountDayTable).values({
+    usageDate: USAGE_DATE,
+    totalCostUsd: 33,
+    fetchedAt: new Date(),
+  });
   await db.insert(usageProjectDayTable).values([
     {
       workspaceId: "task158-ws",
@@ -302,6 +364,8 @@ afterAll(async () => {
     .where(inArray(apiProjectMetadataStateTable.workspaceId, usageWorkspaceIds));
   await db.delete(apiProjectMetadataTable)
     .where(inArray(apiProjectMetadataTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageAccountDayTable)
+    .where(eq(usageAccountDayTable.usageDate, USAGE_DATE));
   await db.delete(usageMemberDayTable)
     .where(inArray(usageMemberDayTable.workspaceId, usageWorkspaceIds));
   await db.delete(usageProjectDayTable)
@@ -317,7 +381,13 @@ afterAll(async () => {
     teamBudgetAllocationAuditsTable.teamName,
     [ASSIGNED, BUDGET_ONLY, ORIGINAL_ONLY, HIDDEN],
   ));
-  await db.delete(teamLimitTargetsTable).where(eq(teamLimitTargetsTable.groupId, GROUP_ID));
+  await db.delete(teamLimitTargetsTable).where(inArray(teamLimitTargetsTable.groupId, [
+    GROUP_ID,
+    SECOND_GROUP_ID,
+    HIDDEN_ZERO_GROUP_ID,
+    HIDDEN_ZERO_ALIAS_ID,
+    VISIBLE_ZERO_GROUP_ID,
+  ]));
   await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, [
     ASSIGNED,
     BUDGET_ONLY,
@@ -514,6 +584,84 @@ test("effective totals agree across pool, group, and summary surfaces", async ()
   );
   expect(summary.json.totalBudgetUsd, "summary must count every visible team pool exactly once, including budget-only rows").toBe(positiveVisiblePoolTotal);
   expect(summary.json.totalRemainingUsd).toBe(positiveVisiblePoolTotal - 20);
+});
+
+test("complete zero-spend hidden teams stay out of rows without changing accounting", async () => {
+  invalidateUsageSnapshotMemo();
+  const [groups, summary] = await Promise.all([
+    request(`/groups?${COMPLETE_RANGE}`, "task158-account"),
+    request(`/summary?${COMPLETE_RANGE}`, "task158-account"),
+  ]);
+  expect(groups.status).toBe(200);
+  expect(groups.json.isComplete).toBe(true);
+  expect(summary.status).toBe(200);
+
+  const returnedIds = groups.json.groups.map((group) => group.groupId);
+  const hierarchyIds = groups.json.hierarchy.flatMap((workspace) =>
+    workspace.teams.flatMap((team) =>
+      team.families.flatMap((family) => family.groups.map((group) => group.groupId))
+    )
+  );
+  expect(returnedIds).not.toContain(HIDDEN_ZERO_GROUP_ID);
+  expect(returnedIds).not.toContain(HIDDEN_ZERO_ALIAS_ID);
+  expect(hierarchyIds).not.toContain(HIDDEN_ZERO_GROUP_ID);
+  expect(hierarchyIds).not.toContain(HIDDEN_ZERO_ALIAS_ID);
+  expect(returnedIds).toContain(VISIBLE_ZERO_GROUP_ID);
+  expect(groups.json.workspaceTeamRawSpend.some((row) => row.teamName === HIDDEN))
+    .toBe(false);
+  expect(groups.json.eligibleSpendUsd).toBe(33);
+  expect(summary.json.totalSpendUsd).toBe(33);
+  expect(summary.json.grossSpendUsd).toBe(groups.json.grossSpendUsd);
+});
+
+test("hidden-team zero rows remain visible when the selected range is partial", async () => {
+  invalidateUsageSnapshotMemo();
+  const groups = await request(`/groups?${PARTIAL_RANGE}`, "task158-account");
+  expect(groups.status).toBe(200);
+  expect(groups.json.isComplete).toBe(false);
+  const hiddenCanonicalRows = groups.json.groups.filter(
+    (group) => group.name === HIDDEN_ZERO_NAME,
+  );
+  expect(hiddenCanonicalRows).toHaveLength(1);
+  expect(hiddenCanonicalRows[0]).toMatchObject({
+    teamName: null,
+    rollupSpendUsd: 0,
+    rollupSpendLoaded: false,
+  });
+});
+
+test("positive hidden-team spend remains visible as unassigned", async () => {
+  await db.insert(teamLimitTargetsTable).values({
+    workspaceId: "task158-ws-2",
+    groupId: SECOND_GROUP_ID,
+    groupName: `${GROUP_NAME} Two`,
+    teamName: HIDDEN,
+  });
+  try {
+    invalidateUsageSnapshotMemo();
+    const groups = await request(`/groups?${COMPLETE_RANGE}`, "task158-account");
+    expect(groups.status).toBe(200);
+    expect(groups.json.groups.find((group) => group.groupId === SECOND_GROUP_ID))
+      .toMatchObject({
+        teamName: null,
+        rollupSpendUsd: 13,
+        rollupSpendLoaded: true,
+      });
+  } finally {
+    await db.delete(teamLimitTargetsTable)
+      .where(eq(teamLimitTargetsTable.groupId, SECOND_GROUP_ID));
+    invalidateUsageSnapshotMemo();
+  }
+});
+
+test("scoped roles apply hidden-zero visibility without gaining out-of-scope rows", async () => {
+  invalidateUsageSnapshotMemo();
+  const groups = await request(`/groups?${COMPLETE_RANGE}`, "task158-workspace");
+  expect(groups.status).toBe(200);
+  expect(groups.json.groups.map((group) => group.groupId))
+    .toEqual(expect.arrayContaining([GROUP_ID, VISIBLE_ZERO_GROUP_ID]));
+  expect(groups.json.groups.some((group) => group.name === HIDDEN_ZERO_NAME)).toBe(false);
+  expect(groups.json.groups.some((group) => group.workspaceId === "task158-ws-2")).toBe(false);
 });
 
 test("workspace-qualified team spend keeps the same team separate by workspace", async () => {

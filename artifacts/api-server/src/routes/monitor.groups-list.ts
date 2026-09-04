@@ -3,6 +3,18 @@ import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsT
 
 const router = Router();
 
+export function shouldHideCanonicalDashboardGroup(input: {
+  usageComplete: boolean;
+  spendUsd: number;
+  effectiveTeamNames: ReadonlySet<string>;
+  hiddenTeamNames: ReadonlySet<string>;
+}): boolean {
+  if (!input.usageComplete || input.spendUsd !== 0 || input.effectiveTeamNames.size !== 1) {
+    return false;
+  }
+  return input.hiddenTeamNames.has([...input.effectiveTeamNames][0]!);
+}
+
 router.get("/groups", async (req, res): Promise<void> => {
   try {
     const dir = await getDirectory();
@@ -18,11 +30,17 @@ router.get("/groups", async (req, res): Promise<void> => {
       db.select().from(teamBudgetsTable),
     ]);
     const hiddenTeams = new Set(teamRows.filter((row) => row.isHidden).map((row) => row.teamName));
+    const effectiveTeamByGroup = buildGroupTeamMap(
+      usage.groups,
+      dir.account,
+      new Set(),
+      assignments,
+    );
     const teamByGroup = buildGroupTeamMap(usage.groups, dir.account, hiddenTeams, assignments);
     const mergePlan = buildCanonicalGroupMergePlan(
       usage.groups,
       dir.workspaces,
-      teamByGroup,
+      effectiveTeamByGroup,
     );
     const displayGroups = usage.groups.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
     const budgetMap = new Map(budgets.map((row) => [row.groupId, row.amountUsd]));
@@ -32,11 +50,31 @@ router.get("/groups", async (req, res): Promise<void> => {
     const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
     const memberCounts = computeDedupedMemberCounts(usage.groups, scopedMembers);
     const billing = getBillingPeriod();
-    const fired = billing.start
-      ? await getFiredThresholdsBatch(displayGroups.map((group) => group.id), billing.start)
-      : new Map<string, number[]>();
     const complete = usage.rollup.isComplete;
-    const groups = displayGroups.map((group) => {
+    const groupsById = new Map(usage.groups.map((group) => [group.id, group]));
+    const visibleDisplayGroups = displayGroups.filter((group) => {
+      if (!complete) return true;
+      const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+      const spendUsd = sourceIds.reduce(
+        (sum, id) => sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0);
+      if (spendUsd !== 0) return true;
+      const effectiveTeams = new Set(sourceIds.flatMap((id) => {
+        const source = groupsById.get(id);
+        if (!source) return [];
+        const teamName = effectiveTeamByGroup.get(groupTeamKey(source));
+        return teamName ? [teamName] : [];
+      }));
+      return !shouldHideCanonicalDashboardGroup({
+        usageComplete: complete,
+        spendUsd,
+        effectiveTeamNames: effectiveTeams,
+        hiddenTeamNames: hiddenTeams,
+      });
+    });
+    const fired = billing.start
+      ? await getFiredThresholdsBatch(visibleDisplayGroups.map((group) => group.id), billing.start)
+      : new Map<string, number[]>();
+    const groups = visibleDisplayGroups.map((group) => {
       const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
       const spendUsd = sourceIds.reduce(
         (sum, id) => sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0);
