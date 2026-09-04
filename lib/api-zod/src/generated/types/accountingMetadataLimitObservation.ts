@@ -11,6 +11,20 @@ export type AccountingMetadataLimitObservation = {
   status: AccountingMetadataLimitObservationStatus;
   /** @nullable */
   observedAt: number | null;
+  /**
+     * Time of the last authoritative complete observation, retained through later failures.
+     * @nullable
+     */
+  lastSuccessfulAt: number | null;
+  /** @nullable */
+  lastAttemptAt: number | null;
+  /** @nullable */
+  refreshStartedAt: number | null;
+  /**
+     * Durable identity of the last successful set of limit values.
+     * @nullable
+     */
+  generation: string | null;
   /** @nullable */
   error: string | null;
 };

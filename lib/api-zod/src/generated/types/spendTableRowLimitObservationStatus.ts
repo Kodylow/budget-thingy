@@ -7,7 +7,7 @@
  */
 
 /**
- * Durable observation result; failed and never-observed snapshots remain distinct.
+ * Current durable observation state; last successful values may remain visible during refresh or after failure.
  */
 export type SpendTableRowLimitObservationStatus = typeof SpendTableRowLimitObservationStatus[keyof typeof SpendTableRowLimitObservationStatus];
 
@@ -17,4 +17,5 @@ export const SpendTableRowLimitObservationStatus = {
   complete: 'complete',
   failed: 'failed',
   unavailable: 'unavailable',
+  refreshing: 'refreshing',
 } as const;

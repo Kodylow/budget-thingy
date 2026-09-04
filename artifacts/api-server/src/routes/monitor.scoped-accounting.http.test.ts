@@ -176,9 +176,20 @@ beforeAll(async () => {
 
   const budgets: PlatformBudgets = {
     groupLimits: new Map(),
-    userLimits: new Map(),
-    workspaceDefaults: new Map(),
-    observation: { status: "complete", observedAt: Date.now(), error: null },
+    userLimits: new Map([[W5, new Map([
+      [DETAIL_MEMBER, 20],
+      [DETAIL_FAMILY_ADMIN, 30],
+    ])]]),
+    workspaceDefaults: new Map([[W5, 40]]),
+    observation: {
+      status: "complete",
+      observedAt: Date.now(),
+      lastSuccessfulAt: Date.now(),
+      lastAttemptAt: Date.now(),
+      refreshStartedAt: null,
+      generation: "scoped-accounting-fixture",
+      error: null,
+    },
   };
   __setDirectoryCacheForTests({
     workspaces: new Map(workspaceIds.map((id) => [
@@ -467,7 +478,15 @@ describe("authenticated group detail qualification", () => {
         percentUsed: number | null;
         history: Array<{ spendUsd: number }>;
       };
-      members: Array<{ userId: string; spendUsd: number; aiSpendUsd: number }>;
+      members: Array<{
+        userId: string;
+        spendUsd: number;
+        aiSpendUsd: number;
+        allocatedBudgetUsd: number | null;
+        budgetSource: string | null;
+        limitState: string;
+        limitObservationStatus: string;
+      }>;
       membersSpendUsd: number;
       unattributedSpendUsd: number;
       usageHealth: { accountWorkspaceUnreconciledUsd: number };
@@ -511,6 +530,10 @@ describe("authenticated group detail qualification", () => {
         userId: DETAIL_MEMBER,
         spendUsd: 10,
         aiSpendUsd: 5,
+        allocatedBudgetUsd: 20,
+        budgetSource: "workspace_user_limit",
+        limitState: "explicit",
+        limitObservationStatus: "complete",
       }),
     ]);
     const projectValue = await projects(DETAIL_MEMBER);

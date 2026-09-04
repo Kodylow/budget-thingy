@@ -113,8 +113,20 @@ router.get("/dashboard", async (req, res): Promise<void> => {
       const oneWorkspace = result.personalLimits.length === 1;
       const limit = oneWorkspace && limits.length > 0 ? limits[0]! : null;
       const observation = result.dir.budgets.observation.status;
+      const hasStoredSuccess =
+        result.dir.budgets.observation.lastSuccessfulAt !== null;
       const limitQualification = observation === "failed"
-        ? "The stored limit observation failed."
+        ? hasStoredSuccess
+          ? limit === null
+            ? "The latest limit refresh failed; the last successful observation had no limit."
+            : "The latest limit refresh failed; the last successful value is shown."
+          : "The stored limit observation failed."
+        : observation === "refreshing"
+          ? hasStoredSuccess
+            ? limit === null
+              ? "Limits are refreshing; the last successful observation had no limit."
+              : "Limits are refreshing; the last successful value is shown."
+            : "The first stored limit observation is refreshing."
         : observation === "unavailable"
           ? "No completed stored limit observation is available."
           : !oneWorkspace

@@ -368,8 +368,10 @@ export const GetGroupDetailResponse = zod.object({
   "role": zod.string().nullish().describe('Workspace role (admin, member, viewer, guest)'),
   "isDisabled": zod.boolean().nullish().describe('Whether the member\'s workspace access is disabled'),
   "isInternal": zod.boolean().describe('Whether this is an internal Replit user whose spend is excluded'),
-  "allocatedBudgetUsd": zod.number().nullish().describe('Not used; always null (budgets are tracked at team level from the spreadsheet)'),
-  "budgetSource": zod.string().nullish().describe('Not used; always null'),
+  "allocatedBudgetUsd": zod.number().nullish().describe('Effective persisted Agent limit for this member in the displayed workspace.'),
+  "budgetSource": zod.union([zod.literal('workspace_user_limit'),zod.literal('workspace_default_user_limit'),zod.literal(null)]).nullish(),
+  "limitState": zod.enum(['explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
   "spendUsd": zod.number().describe('Eligible spend after internal Replit user exclusions'),
   "aiSpendUsd": zod.number().describe('Deduplicated member-grouped AI spend for this user in the group'),
   "nonAiSpendUsd": zod.number().describe('Non-AI project spend attributed to projects this current member created'),
@@ -767,8 +769,12 @@ export const GetDashboardResponse = zod.object({
 }),
   "qualifications": zod.array(zod.string()),
   "limitObservation": zod.object({
-  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
   "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable().describe('Time of the last authoritative complete observation, retained through later failures.'),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable().describe('Durable identity of the last successful set of limit values.'),
   "error": zod.string().nullable()
 })
 })
@@ -848,7 +854,7 @@ export const ListSpendPoolsResponse = zod.object({
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
-  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
   "sharedPool": zod.boolean()
 })),
   "page": zod.number().min(1),
@@ -888,8 +894,12 @@ export const ListSpendPoolsResponse = zod.object({
 }),
   "qualifications": zod.array(zod.string()),
   "limitObservation": zod.object({
-  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
   "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable().describe('Time of the last authoritative complete observation, retained through later failures.'),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable().describe('Durable identity of the last successful set of limit values.'),
   "error": zod.string().nullable()
 })
 })
@@ -969,7 +979,7 @@ export const ListSpendGroupsResponse = zod.object({
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
-  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
   "sharedPool": zod.boolean()
 })),
   "page": zod.number().min(1),
@@ -1009,8 +1019,12 @@ export const ListSpendGroupsResponse = zod.object({
 }),
   "qualifications": zod.array(zod.string()),
   "limitObservation": zod.object({
-  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
   "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable().describe('Time of the last authoritative complete observation, retained through later failures.'),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable().describe('Durable identity of the last successful set of limit values.'),
   "error": zod.string().nullable()
 })
 })
@@ -1090,7 +1104,7 @@ export const ListSpendPeopleResponse = zod.object({
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
-  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
   "sharedPool": zod.boolean()
 })),
   "page": zod.number().min(1),
@@ -1130,8 +1144,12 @@ export const ListSpendPeopleResponse = zod.object({
 }),
   "qualifications": zod.array(zod.string()),
   "limitObservation": zod.object({
-  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
   "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable().describe('Time of the last authoritative complete observation, retained through later failures.'),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable().describe('Durable identity of the last successful set of limit values.'),
   "error": zod.string().nullable()
 })
 })
@@ -1211,7 +1229,7 @@ export const ListSpendProjectsResponse = zod.object({
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
-  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
   "sharedPool": zod.boolean()
 })),
   "page": zod.number().min(1),
@@ -1251,8 +1269,12 @@ export const ListSpendProjectsResponse = zod.object({
 }),
   "qualifications": zod.array(zod.string()),
   "limitObservation": zod.object({
-  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
   "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable().describe('Time of the last authoritative complete observation, retained through later failures.'),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable().describe('Durable identity of the last successful set of limit values.'),
   "error": zod.string().nullable()
 })
 })

@@ -2244,12 +2244,20 @@ components:
           items: { type: string }
         limitObservation:
           type: object
-          required: [status, observedAt, error]
+          required: [status, observedAt, lastSuccessfulAt, lastAttemptAt, refreshStartedAt, generation, error]
           properties:
             status:
               type: string
-              enum: [complete, failed, unavailable]
+              enum: [complete, failed, unavailable, refreshing]
             observedAt: { type: [integer, "null"] }
+            lastSuccessfulAt:
+              type: [integer, "null"]
+              description: Time of the last authoritative complete observation, retained through later failures.
+            lastAttemptAt: { type: [integer, "null"] }
+            refreshStartedAt: { type: [integer, "null"] }
+            generation:
+              type: [string, "null"]
+              description: Durable identity of the last successful set of limit values.
             error: { type: [string, "null"] }
     DashboardScope:
       type: object
@@ -2378,8 +2386,8 @@ components:
           enum: [not_applicable, explicit, inherited, no_limit, unavailable]
         limitObservationStatus:
           type: string
-          enum: [not_applicable, complete, failed, unavailable]
-          description: Durable observation result; failed and never-observed snapshots remain distinct.
+          enum: [not_applicable, complete, failed, unavailable, refreshing]
+          description: Current durable observation state; last successful values may remain visible during refresh or after failure.
         sharedPool: { type: boolean }
     SpendTableResponse:
       type: object
@@ -2911,7 +2919,7 @@ components:
           $ref: "#/components/schemas/UsageHealth"
     GroupMember:
       type: object
-      required: [userId, isInternal, spendUsd, aiSpendUsd, nonAiSpendUsd]
+      required: [userId, isInternal, spendUsd, aiSpendUsd, nonAiSpendUsd, limitState, limitObservationStatus]
       properties:
         userId:
           type: string
@@ -2933,10 +2941,16 @@ components:
           description: Whether this is an internal Replit user whose spend is excluded
         allocatedBudgetUsd:
           type: ["number", "null"]
-          description: Not used; always null (budgets are tracked at team level from the spreadsheet)
+          description: Effective persisted Agent limit for this member in the displayed workspace.
         budgetSource:
           type: ["string", "null"]
-          description: Not used; always null
+          enum: [workspace_user_limit, workspace_default_user_limit, null]
+        limitState:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
+        limitObservationStatus:
+          type: string
+          enum: [complete, failed, unavailable, refreshing]
         spendUsd:
           type: number
           description: Eligible spend after internal Replit user exclusions

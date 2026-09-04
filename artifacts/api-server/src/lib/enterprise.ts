@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { db } from "@workspace/db";
 import {
   apiBillingPeriodCacheTable,
@@ -438,13 +439,29 @@ export interface PlatformBudgets {
   groupLimits: Map<string, Map<string, number>>;
   userLimits: Map<string, Map<string, number>>;
   workspaceDefaults: Map<string, number>;
-  observation: {
-    status: "complete" | "failed" | "unavailable";
-    observedAt: number | null;
-    error: string | null;
-  };
+  observation: LimitObservation;
 }
-interface RawBudget {
+export type LimitObservationStatus =
+  | "complete"
+  | "failed"
+  | "unavailable"
+  | "refreshing";
+export interface LimitObservation {
+  status: LimitObservationStatus;
+  /** Time of the most recent attempt, retained for backwards compatibility. */
+  observedAt: number | null;
+  /** Time of the last authoritative complete result, including an empty result. */
+  lastSuccessfulAt: number | null;
+  lastAttemptAt: number | null;
+  refreshStartedAt: number | null;
+  generation: string | null;
+  error: string | null;
+}
+export type PersistedLimitWrite =
+  | { type: "workspace_user_limit"; workspaceId: string; userId: string; amountUsd: number | null }
+  | { type: "workspace_group_limit"; workspaceId: string; groupId: string; amountUsd: number | null }
+  | { type: "workspace_default_user_limit"; workspaceId: string; amountUsd: number | null };
+export interface RawBudget {
   type: string;
   workspaceId?: string;
   groupId?: string;
@@ -486,8 +503,8 @@ export interface SerializedDirectory {
     groupLimits: Record<string, Record<string, number>>;
     userLimits: Record<string, Record<string, number>>;
     workspaceDefaults: Record<string, number>;
-    observation?: {
-      status: "complete" | "failed" | "unavailable";
+    observation?: Partial<LimitObservation> & {
+      status: LimitObservationStatus;
       observedAt: number | null;
       error: string | null;
     };
@@ -501,6 +518,210 @@ let directoryHydrationState: DirectoryHydrationState = {
   status: "pending",
   reason: "not_started",
 };
+let limitCommitQueue: Promise<void> = Promise.resolve();
+let activeLimitRefresh: { acknowledgedWrites: PersistedLimitWrite[] } | null = null;
+
+function unavailableLimitObservation(): LimitObservation {
+  return {
+    status: "unavailable",
+    observedAt: null,
+    lastSuccessfulAt: null,
+    lastAttemptAt: null,
+    refreshStartedAt: null,
+    generation: null,
+    error: null,
+  };
+}
+
+function normalizeLimitObservation(
+  value: SerializedDirectory["budgets"]["observation"],
+): LimitObservation {
+  if (!value) return unavailableLimitObservation();
+  const legacySuccess = value.status === "complete" ? value.observedAt : null;
+  const lastSuccessfulAt = value.lastSuccessfulAt ?? legacySuccess;
+  const interrupted = value.status === "refreshing";
+  return {
+    status: interrupted ? "failed" : value.status,
+    observedAt: value.observedAt,
+    lastSuccessfulAt,
+    lastAttemptAt: value.lastAttemptAt ?? value.observedAt,
+    refreshStartedAt: interrupted
+      ? null
+      : (value.refreshStartedAt ?? null),
+    generation: value.generation ??
+      (lastSuccessfulAt === null ? null : `legacy-${lastSuccessfulAt}`),
+    error: interrupted
+      ? "Limit observation refresh was interrupted before completion"
+      : value.error,
+  };
+}
+
+export function hasSuccessfulLimitObservation(
+  budgets: Pick<PlatformBudgets, "observation">,
+): boolean {
+  return budgets.observation.lastSuccessfulAt !== null &&
+    budgets.observation.generation !== null;
+}
+
+function cloneLimitMaps(
+  budgets: PlatformBudgets | null | undefined = undefined,
+): PlatformBudgets {
+  return {
+    groupLimits: new Map([...(budgets?.groupLimits ?? [])].map(([workspaceId, limits]) =>
+      [workspaceId, new Map(limits)])),
+    userLimits: new Map([...(budgets?.userLimits ?? [])].map(([workspaceId, limits]) =>
+      [workspaceId, new Map(limits)])),
+    workspaceDefaults: new Map(budgets?.workspaceDefaults ?? []),
+    observation: budgets
+      ? { ...budgets.observation }
+      : unavailableLimitObservation(),
+  };
+}
+
+function limitGeneration(budgets: PlatformBudgets, observedAt: number): string {
+  const canonical = {
+    groupLimits: [...budgets.groupLimits].sort(([a], [b]) => a.localeCompare(b))
+      .map(([workspaceId, limits]) => [
+        workspaceId,
+        [...limits].sort(([a], [b]) => a.localeCompare(b)),
+      ]),
+    userLimits: [...budgets.userLimits].sort(([a], [b]) => a.localeCompare(b))
+      .map(([workspaceId, limits]) => [
+        workspaceId,
+        [...limits].sort(([a], [b]) => a.localeCompare(b)),
+      ]),
+    workspaceDefaults: [...budgets.workspaceDefaults]
+      .sort(([a], [b]) => a.localeCompare(b)),
+    observedAt,
+  };
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex").slice(0, 24);
+}
+
+function applyLimitWrite(
+  budgets: PlatformBudgets,
+  write: PersistedLimitWrite,
+): void {
+  if (write.type === "workspace_default_user_limit") {
+    if (write.amountUsd === null) budgets.workspaceDefaults.delete(write.workspaceId);
+    else budgets.workspaceDefaults.set(write.workspaceId, write.amountUsd);
+    return;
+  }
+  const source = write.type === "workspace_user_limit"
+    ? budgets.userLimits
+    : budgets.groupLimits;
+  const id = write.type === "workspace_user_limit" ? write.userId : write.groupId;
+  const limits = new Map(source.get(write.workspaceId) ?? []);
+  if (write.amountUsd === null) limits.delete(id);
+  else limits.set(id, write.amountUsd);
+  if (limits.size === 0) source.delete(write.workspaceId);
+  else source.set(write.workspaceId, limits);
+}
+
+export function mergeCompletedBudgetsWithAcknowledgedWrites(
+  completed: PlatformBudgets,
+  writes: readonly PersistedLimitWrite[],
+): PlatformBudgets {
+  const merged = cloneLimitMaps(completed);
+  for (const write of writes) applyLimitWrite(merged, write);
+  if (merged.observation.lastSuccessfulAt !== null) {
+    merged.observation.generation = limitGeneration(
+      merged,
+      merged.observation.lastSuccessfulAt,
+    );
+  }
+  return merged;
+}
+
+export function buildCompletePlatformBudgets(
+  observedBudgets: readonly RawBudget[],
+  observedAt = Date.now(),
+): PlatformBudgets {
+  const budgets = cloneLimitMaps();
+  for (const budget of observedBudgets) {
+    if (!budget.workspaceId || budget.amountUsd == null) continue;
+    if (budget.type === "workspace_group_limit" && budget.groupId) {
+      const limits = budgets.groupLimits.get(budget.workspaceId) ?? new Map();
+      limits.set(budget.groupId, budget.amountUsd);
+      budgets.groupLimits.set(budget.workspaceId, limits);
+    } else if (budget.type === "workspace_user_limit" && budget.userId) {
+      const limits = budgets.userLimits.get(budget.workspaceId) ?? new Map();
+      limits.set(budget.userId, budget.amountUsd);
+      budgets.userLimits.set(budget.workspaceId, limits);
+    } else if (budget.type === "workspace_default_user_limit") {
+      budgets.workspaceDefaults.set(budget.workspaceId, budget.amountUsd);
+    }
+  }
+  budgets.observation = {
+    status: "complete",
+    observedAt,
+    lastSuccessfulAt: observedAt,
+    lastAttemptAt: observedAt,
+    refreshStartedAt: null,
+    generation: limitGeneration(budgets, observedAt),
+    error: null,
+  };
+  return budgets;
+}
+
+export function buildFailedPlatformBudgets(
+  previous: PlatformBudgets | null | undefined,
+  error: unknown,
+  attemptedAt = Date.now(),
+): PlatformBudgets {
+  const budgets = cloneLimitMaps(previous);
+  const message = error instanceof Error ? error.message : String(error);
+  budgets.observation = {
+    status: "failed",
+    observedAt: attemptedAt,
+    lastSuccessfulAt: budgets.observation.lastSuccessfulAt,
+    lastAttemptAt: attemptedAt,
+    refreshStartedAt: null,
+    generation: budgets.observation.generation,
+    error: message.slice(0, 1000),
+  };
+  return budgets;
+}
+
+async function persistDirectoryUnlocked(directory: DirectoryCache): Promise<void> {
+  await db.insert(apiDirectoryCacheTable).values({
+    id: "singleton",
+    directoryJson: serializeDirectory(directory),
+    fetchedAt: new Date(directory.fetchedAt),
+  }).onConflictDoUpdate({
+    target: apiDirectoryCacheTable.id,
+    set: {
+      directoryJson: serializeDirectory(directory),
+      fetchedAt: new Date(directory.fetchedAt),
+    },
+  });
+}
+
+function withLimitCommit<T>(work: () => Promise<T>): Promise<T> {
+  const result = limitCommitQueue.then(work, work);
+  limitCommitQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function persistDirectory(directory: DirectoryCache): Promise<void> {
+  await withLimitCommit(() => persistDirectoryUnlocked(directory));
+}
+
+async function commitRefreshedDirectory(
+  directory: DirectoryCache,
+): Promise<void> {
+  await withLimitCommit(async () => {
+    // Overlay every verified write acknowledged while this upstream snapshot
+    // was in flight. The completed refresh remains terminal and authoritative
+    // for every other value, including an authoritative empty result.
+    directory.budgets = mergeCompletedBudgetsWithAcknowledgedWrites(
+      directory.budgets,
+      activeLimitRefresh?.acknowledgedWrites ?? [],
+    );
+    await persistDirectoryUnlocked(directory);
+    directoryCache = directory;
+    activeLimitRefresh = null;
+  });
+}
 
 export function serializeDirectory(directory: DirectoryCache): SerializedDirectory {
   return {
@@ -554,11 +775,7 @@ export function deserializeDirectory(serialized: SerializedDirectory): Directory
     userLimits: new Map(Object.entries(serialized.budgets.userLimits)
       .map(([id, limits]) => [id, new Map(Object.entries(limits))])),
     workspaceDefaults: new Map(Object.entries(serialized.budgets.workspaceDefaults)),
-    observation: serialized.budgets.observation ?? {
-      status: "unavailable",
-      observedAt: null,
-      error: null,
-    },
+    observation: normalizeLimitObservation(serialized.budgets.observation),
   };
   const groups = allGroups.filter(isCustomGroup);
   return {
@@ -587,6 +804,22 @@ export function deserializeDirectory(serialized: SerializedDirectory): Directory
 async function refreshDirectory(): Promise<DirectoryCache> {
   if (directoryPromise) return directoryPromise;
   directoryPromise = (async () => {
+    const refreshStartedAt = Date.now();
+    activeLimitRefresh = { acknowledgedWrites: [] };
+    if (directoryCache) {
+      await withLimitCommit(async () => {
+        if (!directoryCache) return;
+        directoryCache.budgets.observation = {
+          ...directoryCache.budgets.observation,
+          status: "refreshing",
+          observedAt: refreshStartedAt,
+          lastAttemptAt: refreshStartedAt,
+          refreshStartedAt,
+          error: null,
+        };
+        await persistDirectoryUnlocked(directoryCache);
+      });
+    }
     try {
       const workspaces = await paginate<EnterpriseWorkspace>("/workspaces", {});
       const workspaceMap = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
@@ -618,47 +851,15 @@ async function refreshDirectory(): Promise<DirectoryCache> {
           ])),
         },
       ]));
-      const budgets: PlatformBudgets = {
-        groupLimits: new Map(),
-        userLimits: new Map(),
-        workspaceDefaults: new Map(),
-        observation: {
-          status: "unavailable",
-          observedAt: null,
-          error: null,
-        },
-      };
-      let observedBudgets: RawBudget[] = [];
+      let budgets: PlatformBudgets;
       try {
-        observedBudgets = await paginate<RawBudget>("/budgets", {});
-        budgets.observation = {
-          status: "complete",
-          observedAt: Date.now(),
-          error: null,
-        };
+        const observedBudgets = await paginate<RawBudget>("/budgets", {});
+        // A successful empty response is authoritative, so prior maps are replaced.
+        budgets = buildCompletePlatformBudgets(observedBudgets);
       } catch (error) {
         if (limitValidationContext.getStore()) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        budgets.observation = {
-          status: "failed",
-          observedAt: Date.now(),
-          error: message.slice(0, 1000),
-        };
+        budgets = buildFailedPlatformBudgets(directoryCache?.budgets, error);
         logger.warn({ err: error }, "Failed to observe Enterprise budget limits");
-      }
-      for (const budget of observedBudgets) {
-        if (!budget.workspaceId || budget.amountUsd == null) continue;
-        if (budget.type === "workspace_group_limit" && budget.groupId) {
-          const limits = budgets.groupLimits.get(budget.workspaceId) ?? new Map();
-          limits.set(budget.groupId, budget.amountUsd);
-          budgets.groupLimits.set(budget.workspaceId, limits);
-        } else if (budget.type === "workspace_user_limit" && budget.userId) {
-          const limits = budgets.userLimits.get(budget.workspaceId) ?? new Map();
-          limits.set(budget.userId, budget.amountUsd);
-          budgets.userLimits.set(budget.workspaceId, limits);
-        } else if (budget.type === "workspace_default_user_limit") {
-          budgets.workspaceDefaults.set(budget.workspaceId, budget.amountUsd);
-        }
       }
       const discovered = new Map<string, DiscoveredFamilyMapping>();
       for (const group of groups) {
@@ -695,21 +896,26 @@ async function refreshDirectory(): Promise<DirectoryCache> {
         budgets,
         account,
       };
-      directoryCache = directory;
-      await db.insert(apiDirectoryCacheTable).values({
-        id: "singleton",
-        directoryJson: serializeDirectory(directory),
-        fetchedAt: new Date(directory.fetchedAt),
-      }).onConflictDoUpdate({
-        target: apiDirectoryCacheTable.id,
-        set: {
-          directoryJson: serializeDirectory(directory),
-          fetchedAt: new Date(directory.fetchedAt),
-        },
-      });
+      await commitRefreshedDirectory(directory);
       await persistCanonicalFamilyFinancialRows(account);
       return directory;
+    } catch (error) {
+      if (directoryCache) {
+        const message = error instanceof Error ? error.message : String(error);
+        directoryCache.budgets.observation = {
+          ...directoryCache.budgets.observation,
+          status: "failed",
+          observedAt: Date.now(),
+          lastAttemptAt: Date.now(),
+          refreshStartedAt: null,
+          error: message.slice(0, 1000),
+        };
+        await persistDirectory(directoryCache).catch((persistError) =>
+          logger.warn({ err: persistError }, "Failed to persist failed limit observation"));
+      }
+      throw error;
     } finally {
+      activeLimitRefresh = null;
       directoryPromise = null;
     }
   })();
@@ -746,6 +952,33 @@ export function refreshDirectoryForIngest(): Promise<DirectoryCache> {
 
 export function getFreshDirectoryForLimitValidation(): Promise<DirectoryCache> {
   return limitValidationContext.run(true, refreshDirectory);
+}
+
+export async function reconcilePersistedLimitWrite(
+  write: PersistedLimitWrite,
+): Promise<void> {
+  await withLimitCommit(async () => {
+    if (!directoryCache) {
+      throw new Error("Cannot persist acknowledged limit write before directory hydration");
+    }
+    const targetDirectory = directoryCache;
+    const previousBudgets = targetDirectory.budgets;
+    const budgets = cloneLimitMaps(previousBudgets);
+    applyLimitWrite(budgets, write);
+    if (hasSuccessfulLimitObservation(budgets)) {
+      budgets.observation.generation = limitGeneration(budgets, Date.now());
+    }
+    targetDirectory.budgets = budgets;
+    try {
+      await persistDirectoryUnlocked(targetDirectory);
+      activeLimitRefresh?.acknowledgedWrites.push(write);
+    } catch (error) {
+      if (directoryCache === targetDirectory) {
+        targetDirectory.budgets = previousBudgets;
+      }
+      throw error;
+    }
+  });
 }
 
 export function assertCompleteRosterDirectory(directory: DirectoryCache): DirectoryCache {
@@ -803,7 +1036,7 @@ export function __setDirectoryCacheForTests(
       groupLimits: new Map(),
       userLimits: new Map(),
       workspaceDefaults: new Map(),
-      observation: { status: "unavailable", observedAt: null, error: null },
+      observation: unavailableLimitObservation(),
     },
     account: buildCanonicalAccountDirectory({
       workspaces,
@@ -928,6 +1161,12 @@ export async function initCache(
     });
     if (directory) {
       directoryCache = deserializeDirectory(directory.directoryJson as SerializedDirectory);
+      if (
+        (directory.directoryJson as SerializedDirectory).budgets.observation?.status ===
+          "refreshing"
+      ) {
+        await persistDirectory(directoryCache);
+      }
       directoryHydrationState = { status: "ready", reason: "hydrated" };
     } else {
       directoryCache = null;

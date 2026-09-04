@@ -5,6 +5,9 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { GroupMemberBudgetSource } from './groupMemberBudgetSource';
+import type { GroupMemberLimitObservationStatus } from './groupMemberLimitObservationStatus';
+import type { GroupMemberLimitState } from './groupMemberLimitState';
 
 export interface GroupMember {
   userId: string;
@@ -30,15 +33,14 @@ export interface GroupMember {
   /** Whether this is an internal Replit user whose spend is excluded */
   isInternal: boolean;
   /**
-     * Not used; always null (budgets are tracked at team level from the spreadsheet)
+     * Effective persisted Agent limit for this member in the displayed workspace.
      * @nullable
      */
   allocatedBudgetUsd?: number | null;
-  /**
-     * Not used; always null
-     * @nullable
-     */
-  budgetSource?: string | null;
+  /** @nullable */
+  budgetSource?: GroupMemberBudgetSource;
+  limitState: GroupMemberLimitState;
+  limitObservationStatus: GroupMemberLimitObservationStatus;
   /** Eligible spend after internal Replit user exclusions */
   spendUsd: number;
   /** Deduplicated member-grouped AI spend for this user in the group */

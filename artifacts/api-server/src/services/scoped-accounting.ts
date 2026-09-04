@@ -10,6 +10,7 @@ import {
   buildCanonicalGroupMergePlan,
   getCachedDirectory,
   getDirectoryFreshness,
+  hasSuccessfulLimitObservation,
   resolveCanonicalMergedGroupBudget,
 } from "../lib/enterprise";
 import { getEffectiveTeamBudgets } from "../lib/team-budgets";
@@ -54,7 +55,12 @@ export interface SpendRow {
   memberCount: number | null;
   ownerName: string | null;
   limitState: "not_applicable" | "explicit" | "inherited" | "no_limit" | "unavailable";
-  limitObservationStatus: "not_applicable" | "complete" | "failed" | "unavailable";
+  limitObservationStatus:
+    | "not_applicable"
+    | "complete"
+    | "failed"
+    | "unavailable"
+    | "refreshing";
   sharedPool: boolean;
 }
 
@@ -289,7 +295,7 @@ export function resolveStoredMemberLimit(
   workspaceId: string,
   userId: string,
 ): { amount: number | null; state: SpendRow["limitState"] } {
-  if (dir.budgets.observation.status !== "complete") {
+  if (!hasSuccessfulLimitObservation(dir.budgets)) {
     return { amount: null, state: "unavailable" };
   }
   const explicit = dir.budgets.userLimits.get(workspaceId)?.get(userId);
@@ -620,8 +626,14 @@ export async function buildScopedAccounting(
       : []),
     ...(dir.budgets.observation.status === "complete" ? [] : [
       dir.budgets.observation.status === "failed"
-        ? "The persisted member-limit observation failed; limits are unavailable."
-        : "No completed persisted member-limit observation is available.",
+        ? hasSuccessfulLimitObservation(dir.budgets)
+          ? "The latest member-limit refresh failed; last successful limits are shown."
+          : "The persisted member-limit observation failed; limits are unavailable."
+        : dir.budgets.observation.status === "refreshing"
+          ? hasSuccessfulLimitObservation(dir.budgets)
+            ? "Member limits are refreshing; last successful limits are shown."
+            : "The first member-limit observation is still refreshing."
+          : "No completed persisted member-limit observation is available.",
     ]),
   ];
   const generationId = committedGenerationId({

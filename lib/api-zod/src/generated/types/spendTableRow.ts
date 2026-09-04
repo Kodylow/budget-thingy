@@ -32,7 +32,7 @@ export interface SpendTableRow {
   /** @nullable */
   ownerName: string | null;
   limitState: SpendTableRowLimitState;
-  /** Durable observation result; failed and never-observed snapshots remain distinct. */
+  /** Current durable observation state; last successful values may remain visible during refresh or after failure. */
   limitObservationStatus: SpendTableRowLimitObservationStatus;
   sharedPool: boolean;
 }

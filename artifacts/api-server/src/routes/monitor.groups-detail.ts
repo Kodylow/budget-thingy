@@ -4,7 +4,9 @@ import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsT
 import {
   canExposeCanonicalAllocation,
   qualifiedGroupSpendComponents,
+  resolveStoredMemberLimit,
 } from "../services/scoped-accounting";
+import { hasSuccessfulLimitObservation } from "../lib/enterprise";
 
 const router = Router();
 
@@ -148,6 +150,13 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       const nonAiSpendUsd = sourceIds.reduce((sum, id) =>
         sum + (canonical.nonAiSpendByGroup.get(id)?.get(userId) ?? 0), 0);
       const totalSpendUsd = aiSpendUsd + nonAiSpendUsd;
+      const limitWorkspaceId = m?.workspaces.has(group.workspaceId)
+        ? group.workspaceId
+        : sourceGroups.find((source) => m?.workspaces.has(source.workspaceId))
+          ?.workspaceId ?? group.workspaceId;
+      const limit = resolveStoredMemberLimit(dir, limitWorkspaceId, userId);
+      const cycleAgentSpendUsd = sourceIds.reduce((sum, id) =>
+        sum + (cycleUsage.rollup.aiSpendByGroup.get(id)?.get(userId) ?? 0), 0);
       return {
         userId,
         username: m?.username ?? null,
@@ -156,14 +165,24 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
         role: ws?.role ?? null,
         isDisabled: ws?.isDisabled ?? null,
         isInternal: m?.isInternalReplitUser ?? false,
-        allocatedBudgetUsd: null,
-        budgetSource: null,
+        allocatedBudgetUsd: limit.amount,
+        budgetSource: limit.state === "explicit"
+          ? "workspace_user_limit"
+          : limit.state === "inherited"
+            ? "workspace_default_user_limit"
+            : null,
+        limitState: limit.state,
+        limitObservationStatus: dir.budgets.observation.status,
         spendLoaded,
         spendUsd: totalSpendUsd,
         aiSpendUsd,
         nonAiSpendUsd,
-        remainingUsd: null,
-        percentUsed: null,
+        remainingUsd: limit.amount === null
+          ? null
+          : limit.amount - cycleAgentSpendUsd,
+        percentUsed: limit.amount !== null && limit.amount > 0
+          ? (cycleAgentSpendUsd / limit.amount) * 100
+          : null,
       };
     });
 
@@ -199,7 +218,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       0,
     );
     const monthlyAgentLimitUsd = allocationAuthorized &&
-      dir.budgets.observation.status === "complete"
+      hasSuccessfulLimitObservation(dir.budgets)
       ? dir.budgets.groupLimits.get(group.workspaceId)?.get(group.id) ?? null
       : null;
     const cycleAgentSpendUsd = qualifiedGroupSpendComponents(

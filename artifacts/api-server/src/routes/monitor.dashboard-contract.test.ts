@@ -116,6 +116,10 @@ describe("dashboard and spend endpoint contracts", () => {
         limitObservation: {
           status: "unavailable",
           observedAt: null,
+          lastSuccessfulAt: null,
+          lastAttemptAt: null,
+          refreshStartedAt: null,
+          generation: null,
           error: null,
         },
       },
@@ -204,6 +208,10 @@ describe("dashboard and spend endpoint contracts", () => {
         limitObservation: {
           status: "complete",
           observedAt: 1,
+          lastSuccessfulAt: 1,
+          lastAttemptAt: 1,
+          refreshStartedAt: null,
+          generation: "fixture-limits",
           error: null,
         },
       },

@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type AccountingMetadataLimitObservationStatus = typeof AccountingMetadataLimitObservationStatus[keyof typeof AccountingMetadataLimitObservationStatus];
+export type GroupMemberLimitObservationStatus = typeof GroupMemberLimitObservationStatus[keyof typeof GroupMemberLimitObservationStatus];
 
 
-export const AccountingMetadataLimitObservationStatus = {
+export const GroupMemberLimitObservationStatus = {
   complete: 'complete',
   failed: 'failed',
   unavailable: 'unavailable',

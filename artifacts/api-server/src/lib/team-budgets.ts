@@ -18,6 +18,7 @@ import {
 } from "./replit-budgets";
 import {
   getFreshDirectoryForLimitValidation,
+  reconcilePersistedLimitWrite,
   buildCanonicalAccountDirectory,
   buildCanonicalEffectiveTeams,
   type CanonicalRoleGroup,
@@ -1004,6 +1005,13 @@ export async function applyTeamBudgetLimits(
             target.workspaceId!,
             Math.round(target.desiredAmountUsd * 100) === 0 ? null : target.desiredAmountUsd,
           );
+          await reconcilePersistedLimitWrite({
+            type: "workspace_default_user_limit",
+            workspaceId: target.workspaceId!,
+            amountUsd: Math.round(target.desiredAmountUsd * 100) === 0
+              ? null
+              : target.desiredAmountUsd,
+          });
         } else {
           const validation = validateConfiguredTarget(
             {
@@ -1030,6 +1038,14 @@ export async function applyTeamBudgetLimits(
             target.targetGroupId!,
             Math.round(target.desiredAmountUsd * 100) === 0 ? null : target.desiredAmountUsd,
           );
+          await reconcilePersistedLimitWrite({
+            type: "workspace_group_limit",
+            workspaceId: target.workspaceId!,
+            groupId: target.targetGroupId!,
+            amountUsd: Math.round(target.desiredAmountUsd * 100) === 0
+              ? null
+              : target.desiredAmountUsd,
+          });
         }
         outcomes.push({
           workspaceId: target.workspaceId!,

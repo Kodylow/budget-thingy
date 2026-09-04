@@ -48,12 +48,27 @@ export const AccountingMetadataLimitObservationStatus = {
   complete: 'complete',
   failed: 'failed',
   unavailable: 'unavailable',
+  refreshing: 'refreshing',
 } as const;
 
 export type AccountingMetadataLimitObservation = {
   status: AccountingMetadataLimitObservationStatus;
   /** @nullable */
   observedAt: number | null;
+  /**
+     * Time of the last authoritative complete observation, retained through later failures.
+     * @nullable
+     */
+  lastSuccessfulAt: number | null;
+  /** @nullable */
+  lastAttemptAt: number | null;
+  /** @nullable */
+  refreshStartedAt: number | null;
+  /**
+     * Durable identity of the last successful set of limit values.
+     * @nullable
+     */
+  generation: string | null;
   /** @nullable */
   error: string | null;
 };
@@ -240,7 +255,7 @@ export const SpendTableRowLimitState = {
 } as const;
 
 /**
- * Durable observation result; failed and never-observed snapshots remain distinct.
+ * Current durable observation state; last successful values may remain visible during refresh or after failure.
  */
 export type SpendTableRowLimitObservationStatus = typeof SpendTableRowLimitObservationStatus[keyof typeof SpendTableRowLimitObservationStatus];
 
@@ -250,6 +265,7 @@ export const SpendTableRowLimitObservationStatus = {
   complete: 'complete',
   failed: 'failed',
   unavailable: 'unavailable',
+  refreshing: 'refreshing',
 } as const;
 
 export interface SpendTableRow {
@@ -275,7 +291,7 @@ export interface SpendTableRow {
   /** @nullable */
   ownerName: string | null;
   limitState: SpendTableRowLimitState;
-  /** Durable observation result; failed and never-observed snapshots remain distinct. */
+  /** Current durable observation state; last successful values may remain visible during refresh or after failure. */
   limitObservationStatus: SpendTableRowLimitObservationStatus;
   sharedPool: boolean;
 }
@@ -761,6 +777,37 @@ export interface ClusterHeadline {
   usageHealth: UsageHealth;
 }
 
+/**
+ * @nullable
+ */
+export type GroupMemberBudgetSource = typeof GroupMemberBudgetSource[keyof typeof GroupMemberBudgetSource] | null;
+
+
+export const GroupMemberBudgetSource = {
+  workspace_user_limit: 'workspace_user_limit',
+  workspace_default_user_limit: 'workspace_default_user_limit',
+} as const;
+
+export type GroupMemberLimitState = typeof GroupMemberLimitState[keyof typeof GroupMemberLimitState];
+
+
+export const GroupMemberLimitState = {
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+export type GroupMemberLimitObservationStatus = typeof GroupMemberLimitObservationStatus[keyof typeof GroupMemberLimitObservationStatus];
+
+
+export const GroupMemberLimitObservationStatus = {
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+  refreshing: 'refreshing',
+} as const;
+
 export interface GroupMember {
   userId: string;
   /** @nullable */
@@ -785,15 +832,14 @@ export interface GroupMember {
   /** Whether this is an internal Replit user whose spend is excluded */
   isInternal: boolean;
   /**
-     * Not used; always null (budgets are tracked at team level from the spreadsheet)
+     * Effective persisted Agent limit for this member in the displayed workspace.
      * @nullable
      */
   allocatedBudgetUsd?: number | null;
-  /**
-     * Not used; always null
-     * @nullable
-     */
-  budgetSource?: string | null;
+  /** @nullable */
+  budgetSource?: GroupMemberBudgetSource;
+  limitState: GroupMemberLimitState;
+  limitObservationStatus: GroupMemberLimitObservationStatus;
   /** Eligible spend after internal Replit user exclusions */
   spendUsd: number;
   /** Deduplicated member-grouped AI spend for this user in the group */
