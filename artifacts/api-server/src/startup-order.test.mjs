@@ -6,7 +6,7 @@ test("the listening socket precedes cache hydration and Enterprise schedulers", 
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
   const listenAt = source.indexOf("app.listen(");
   const initAt = source.indexOf("initCache(", listenAt);
-  const coordinatorAt = source.indexOf("startUsageCoordinator()", listenAt);
+  const coordinatorAt = source.indexOf("startUsageIngestScheduler()", listenAt);
 
   assert.ok(listenAt >= 0);
   assert.ok(initAt > listenAt);

@@ -1,7 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startChecker } from "./lib/checker";
-import { initCache, startDailyFactJob, startUsageCoordinator } from "./lib/enterprise";
+import { initCache } from "./lib/enterprise";
+import { startUsageIngestScheduler } from "./lib/ingest";
 import { startSnapshotJob } from "./lib/history";
 import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
 import { startTeamBudgetSyncJob } from "./lib/team-budgets";
@@ -36,8 +37,7 @@ const server = app.listen(port, (err) => {
     initCache({ revalidateOnStartup: false }),
     applyAnnualTeamBudgetBackfill(),
   ]).then(() => {
-    startDailyFactJob();
-    startUsageCoordinator();
+    startUsageIngestScheduler();
   }).catch((err) => {
     logger.error({ err }, "Post-listen startup initialization failed");
   });

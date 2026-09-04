@@ -134,6 +134,13 @@
       "when": 1788551000000,
       "tag": "0018_billing_period_observation",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788560000000,
+      "tag": "0019_usage_ingestion",
+      "breakpoints": true
     }
   ]
 }

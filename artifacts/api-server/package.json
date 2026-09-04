@@ -7,7 +7,8 @@
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
-    "test": "LOG_LEVEL=silent node --import tsx --test --test-concurrency=1 \"src/**/*.test.mjs\" && vitest run",
+    "ingest:once": "tsx ./src/ingest-once.ts",
+    "test": "NODE_ENV=test LOG_LEVEL=silent node --import tsx --test --test-concurrency=1 \"src/**/*.test.mjs\" && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

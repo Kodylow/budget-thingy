@@ -37,6 +37,11 @@ export function isConfigured(): boolean {
 
 let lastApiError: string | null = null;
 let lastApiOk = false;
+const enterpriseIngestContext = new AsyncLocalStorage<boolean>();
+
+export function withEnterpriseIngestAccess<T>(work: () => Promise<T>): Promise<T> {
+  return enterpriseIngestContext.run(true, work);
+}
 
 export function getApiHealth(): { ok: boolean; error: string | null } {
   return { ok: lastApiOk, error: lastApiError };
@@ -55,6 +60,12 @@ async function rawFetch(
   path: string,
   params: Record<string, string | undefined>,
 ): Promise<{ body: unknown; headers: Headers }> {
+  if (process.env.NODE_ENV !== "test" && !enterpriseIngestContext.getStore()) {
+    throw new EnterpriseApiError(
+      0,
+      "Enterprise API access is restricted to the usage ingestion scheduler",
+    );
+  }
   const key = process.env["REPLIT_ENTERPRISE_API_KEY"];
   if (!key) throw new EnterpriseApiError(0, "REPLIT_ENTERPRISE_API_KEY is not set");
 
@@ -64,7 +75,7 @@ async function rawFetch(
   }
 
   const workload = workloadContext.getStore() ?? "scheduled";
-  await enterpriseBudget.admit(workload);
+  await enterpriseBudget.admit(workload, path === "/usage");
   const res = await enterpriseFetch(url, {
     headers: { Authorization: `Bearer ${key}` },
     signal: AbortSignal.timeout(ENTERPRISE_REQUEST_TIMEOUT_MS),
@@ -88,6 +99,18 @@ async function rawFetch(
 
   const body = (await res.json()) as unknown;
   return { body, headers: res.headers };
+}
+
+/**
+ * Scheduler-only transport entry point. Keeping URL construction, timeout,
+ * authentication, header-driven admission, and 429 handling here ensures every
+ * Enterprise request shares one budget.
+ */
+export async function fetchEnterpriseForIngest(
+  path: string,
+  params: Record<string, string | undefined>,
+): Promise<{ body: unknown; headers: Headers }> {
+  return rawFetch(path, params);
 }
 
 // ---------- Date ranges ----------
@@ -3077,6 +3100,11 @@ export async function getDirectory(force = false): Promise<DirectoryCache> {
   throw new EnterpriseApiError(503, "Directory is syncing; no stored snapshot is available");
 }
 
+/** Refresh directory metadata without scheduling any legacy usage materialization. */
+export function refreshDirectoryForIngest(): Promise<DirectoryCache> {
+  return refreshDirectory(false);
+}
+
 /**
  * A roster snapshot is immutable, so it must never be based on the durable
  * directory cache or on a refresh where one group's membership fetch failed.
@@ -4276,6 +4304,7 @@ export function queueProjectTitlesFetch(
   workspaceId: string,
   priority = 0,
   force = false,
+  scheduleCanonical = true,
 ): boolean {
   const fetchedAt = projectInfoFetchedAt.get(workspaceId);
   const hasStoredSnapshot = projectInfoCache.has(workspaceId);
@@ -4338,8 +4367,10 @@ export function queueProjectTitlesFetch(
       });
       projectInfoCache.set(workspaceId, infoMap);
       projectInfoFetchedAt.set(workspaceId, completedAt.getTime());
-      for (const monthStart of canonicalCandidateMonths) {
-        queueCanonicalMonthRebuild(monthStart);
+      if (scheduleCanonical) {
+        for (const monthStart of canonicalCandidateMonths) {
+          queueCanonicalMonthRebuild(monthStart);
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -5797,6 +5828,10 @@ const activeQueueTasks = new Map<EnterpriseWorkload, QueueTask & { startedAt: nu
 
 const DEFAULT_WINDOW_MS = 60_000;
 
+function nextFixedMinute(now = Date.now()): number {
+  return (Math.floor(now / DEFAULT_WINDOW_MS) + 1) * DEFAULT_WINDOW_MS;
+}
+
 function rateHeader(headers: Headers, names: string[]): number | null {
   for (const name of names) {
     const raw = headers.get(name);
@@ -5846,43 +5881,59 @@ class EnterpriseRateBudget {
     scheduled: 0,
     backfill: 0,
   };
+  private localWindowResetAt = nextFixedMinute();
+  private localTotalUsed = 0;
+  private localUsageUsed = 0;
+  private embargoUntil = 0;
 
   private waiters = new Set<() => void>();
 
   private rollWindow(now: number): void {
-    if (now < this.state.resetAt) return;
-    this.state = {
-      ...this.state,
-      remaining: this.state.limit,
-      resetAt: now + DEFAULT_WINDOW_MS,
-    };
-    this.used = { interactive: 0, scheduled: 0, backfill: 0 };
+    if (now >= this.localWindowResetAt) {
+      this.localWindowResetAt = nextFixedMinute(now);
+      this.localTotalUsed = 0;
+      this.localUsageUsed = 0;
+      this.used = { interactive: 0, scheduled: 0, backfill: 0 };
+    }
+    if (now >= this.state.resetAt && this.state.remaining <= 0) {
+      this.state.remaining = this.state.limit;
+      this.state.resetAt = now + DEFAULT_WINDOW_MS;
+    }
   }
 
-  private canAdmit(workload: EnterpriseWorkload): boolean {
-    const { limit, remaining } = this.state;
-    if (remaining <= 0) return false;
-    if (workload === "interactive") return true;
-    const interactiveReserve = Math.max(1, Math.ceil(limit * INTERACTIVE_RESERVATION_RATIO));
-    if (remaining <= interactiveReserve) return false;
-    const cap = workload === "scheduled"
-      ? Math.max(1, Math.floor(limit * SCHEDULED_CAP_RATIO))
-      : Math.max(1, Math.floor(limit * BACKFILL_CAP_RATIO));
-    return this.used[workload] < cap;
+  private canAdmit(isUsage: boolean): boolean {
+    if (Date.now() < this.embargoUntil) return false;
+    if (this.state.remaining <= 0) return false;
+    if (this.localTotalUsed >= 600) return false;
+    // Keep deliberate headroom below the documented 200/min /usage ceiling.
+    return !isUsage || this.localUsageUsed < 190;
   }
 
-  async admit(workload: EnterpriseWorkload): Promise<void> {
+  async admit(workload: EnterpriseWorkload, isUsage = false): Promise<void> {
     for (;;) {
       const now = Date.now();
       this.rollWindow(now);
-      if (this.canAdmit(workload)) {
+      if (this.canAdmit(isUsage)) {
         // Reserve before issuing the request. A later response may lower this
         // estimate further, but concurrent workers can never spend one token twice.
         this.state.remaining -= 1;
         this.used[workload] += 1;
+        this.localTotalUsed += 1;
+        if (isUsage) this.localUsageUsed += 1;
         return;
       }
-      const delay = Math.max(1, this.state.resetAt - now);
+      const embargoed = now < this.embargoUntil;
+      const upstreamBlocked = this.state.remaining <= 0;
+      const delay = Math.max(
+        1,
+        (
+          embargoed
+            ? this.embargoUntil
+            : upstreamBlocked
+              ? this.state.resetAt
+              : this.localWindowResetAt
+        ) - now,
+      );
       await new Promise<void>((resolve) => {
         const wake = () => {
           clearTimeout(timer);
@@ -5897,10 +5948,7 @@ class EnterpriseRateBudget {
 
   observe(headers: Headers, status: number): void {
     const now = Date.now();
-    const previousResetAt = this.state.resetAt;
-    const startedNewWindow = now >= previousResetAt;
     this.rollWindow(now);
-    const hadObservedBudget = this.state.observed;
     const limit = rateHeader(headers, [
       "X-RateLimit-Limit",
       "RateLimit-Limit",
@@ -5916,23 +5964,19 @@ class EnterpriseRateBudget {
     const retryAfter = rateHeader(headers, ["Retry-After"]);
     if (limit !== null) this.state.limit = Math.max(1, Math.floor(limit));
     if (remaining !== null) {
-      this.state.remaining = Math.min(this.state.remaining, Math.floor(remaining));
+      this.state.remaining = Math.floor(remaining);
     }
     if (reset !== null) {
       const reportedResetAt = Math.max(now + 1, resetTimestamp(reset, now));
-      // Responses can complete out of order. Within one active window, retain
-      // the strictest boundary even while tokens remain. Once the prior window
-      // has elapsed, the first observation establishes the next boundary.
-      this.state.resetAt = hadObservedBudget && !startedNewWindow
-        ? Math.max(this.state.resetAt, reportedResetAt)
-        : reportedResetAt;
+      this.state.resetAt = Math.max(reportedResetAt, this.embargoUntil);
     }
     if (status === 429) {
       this.state.remaining = 0;
-      this.state.resetAt = Math.max(
-        this.state.resetAt,
+      this.embargoUntil = Math.max(
+        this.embargoUntil,
         now + Math.max(1000, (retryAfter ?? 5) * 1000),
       );
+      this.state.resetAt = Math.max(this.state.resetAt, this.embargoUntil);
     }
     this.state.observed ||=
       limit !== null || remaining !== null || reset !== null || retryAfter !== null || status === 429;
@@ -5952,6 +5996,10 @@ class EnterpriseRateBudget {
       observed: snapshot?.observed ?? false,
     };
     this.used = { interactive: 0, scheduled: 0, backfill: 0 };
+    this.localWindowResetAt = nextFixedMinute();
+    this.localTotalUsed = 0;
+    this.localUsageUsed = 0;
+    this.embargoUntil = 0;
     for (const wake of [...this.waiters]) wake();
   }
 }
@@ -5998,7 +6046,7 @@ function isFullDirectoryCanonicalScope(
   return [...dir.workspaces.keys()].every((id) => workspaceIds.has(id));
 }
 
-function refreshDirectory(): Promise<DirectoryCache> {
+function refreshDirectory(scheduleCanonical = true): Promise<DirectoryCache> {
   if (directoryPromise) return directoryPromise;
   const workload = workloadContext.getStore() ?? "interactive";
   directoryPromise = workloadContext.run(workload, async () => {
@@ -6067,8 +6115,10 @@ function refreshDirectory(): Promise<DirectoryCache> {
         budgets,
       };
       persistDirectoryToDb(directoryCache);
-      for (const monthStart of canonicalCandidateMonths) {
-        queueCanonicalMonthRebuild(monthStart);
+      if (scheduleCanonical) {
+        for (const monthStart of canonicalCandidateMonths) {
+          queueCanonicalMonthRebuild(monthStart);
+        }
       }
       return directoryCache;
     } finally {

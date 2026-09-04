@@ -74,6 +74,11 @@ export const LogoutBrowserSessionResponse = zod.void()
  */
 
 
+
+
+
+
+
 export const ExchangeMobileAuthorizationCodeBody = zod.object({
   "code": zod.string().min(1),
   "code_verifier": zod.string().min(1),
@@ -490,6 +495,7 @@ export const GetUserActivityResponse = zod.object({
  */
 
 
+
 export const ExportUsersCsvQueryParams = zod.object({
   "groupIds": zod.coerce.string().min(1).describe('Comma-separated group IDs from a group or cluster detail page'),
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
@@ -519,6 +525,7 @@ export const SetGroupBudgetParams = zod.object({
 })
 
 export const setGroupBudgetBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const SetGroupBudgetBody = zod.object({
@@ -669,6 +676,7 @@ export const ListAdminsResponse = zod.array(ListAdminsResponseItem)
 export const addAdminBodyEmailMin = 3;
 
 
+
 export const AddAdminBody = zod.object({
   "email": zod.string().min(addAdminBodyEmailMin)
 })
@@ -709,6 +717,7 @@ export const ListEditorsResponse = zod.array(ListEditorsResponseItem)
  * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
  * @summary Add an account-wide app editor
  */
+
 
 
 export const AddEditorBody = zod.object({
@@ -771,6 +780,7 @@ export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersRespon
 export const listVisibleWorkspacesResponseMemberCountMin = 0;
 
 
+
 export const ListVisibleWorkspacesResponseItem = zod.object({
   "workspaceId": zod.string(),
   "workspaceName": zod.string(),
@@ -783,6 +793,7 @@ export const ListVisibleWorkspacesResponse = zod.array(ListVisibleWorkspacesResp
  * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget connector failures are returned explicitly and never fall back to the Enterprise API key.
  * @summary List members and Agent budgets for a visible workspace
  */
+
 
 
 export const ListVisibleWorkspaceMembersParams = zod.object({
@@ -818,6 +829,7 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
  */
 
 
+
 export const ListWorkspaceUsageLimitAuditsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -847,6 +859,7 @@ export const ListWorkspaceUsageLimitAuditsResponse = zod.array(ListWorkspaceUsag
  */
 
 
+
 export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -855,6 +868,7 @@ export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
 export const bulkSetWorkspaceMemberBudgetsBodyUserIdsMax = 100;
 
 export const bulkSetWorkspaceMemberBudgetsBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const BulkSetWorkspaceMemberBudgetsBody = zod.object({
@@ -880,12 +894,15 @@ export const BulkSetWorkspaceMemberBudgetsResponse = zod.object({
  */
 
 
+
+
 export const SetWorkspaceMemberBudgetParams = zod.object({
   "workspaceId": zod.coerce.string().min(1),
   "userId": zod.coerce.string().min(1)
 })
 
 export const setWorkspaceMemberBudgetBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const SetWorkspaceMemberBudgetBody = zod.object({
@@ -903,6 +920,8 @@ export const SetWorkspaceMemberBudgetResponse = zod.object({
  * Account-wide operators only. Clearing an already-unset budget is idempotent.
  * @summary Clear a member's desired Agent budget
  */
+
+
 
 
 export const ClearWorkspaceMemberBudgetParams = zod.object({
@@ -955,6 +974,7 @@ export const ListWorkspaceAdminsResponse = zod.array(ListWorkspaceAdminsResponse
  * @summary Alert history
  */
 export const listAlertsQueryLimitMax = 200;
+
 
 
 export const ListAlertsQueryParams = zod.object({
@@ -1050,6 +1070,7 @@ export const SendTestAlertResponse = zod.object({
 export const getStatusResponseUsageSyncScopesMax = 200;
 
 
+
 export const GetStatusResponse = zod.object({
   "enterpriseApiConfigured": zod.boolean().describe('Whether REPLIT_ENTERPRISE_API_KEY is set'),
   "enterpriseApiOk": zod.boolean().describe('Whether the last Enterprise API call succeeded'),
@@ -1125,3 +1146,5 @@ export const RebuildUsageRangeBody = zod.object({
 export const RebuildUsageRangeResponse = zod.object({
   "ok": zod.boolean()
 })
+
+
