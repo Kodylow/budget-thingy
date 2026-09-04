@@ -230,6 +230,23 @@ export async function ingestWorkspaceDay(
         mergeMetrics(row.metrics, entry.metrics);
         projectRows.set(projectId, row);
       }
+      const memberInsertRows = [...memberRows].map(([userId, row]) => [
+        workspaceId,
+        usageDate,
+        userId,
+        row.total,
+        sumAgentUsageMetrics(row.metrics),
+        JSON.stringify(row.metrics),
+        fetchedAt,
+      ]);
+      const projectInsertRows = [...projectRows].map(([projectId, row]) => [
+        workspaceId,
+        usageDate,
+        projectId,
+        row.total,
+        JSON.stringify(row.metrics),
+        fetchedAt,
+      ]);
       const client = await pool.connect();
       try {
         await client.query("begin");
@@ -245,18 +262,13 @@ export async function ingestWorkspaceDay(
           client,
           "usage_member_day",
           ["workspace_id", "usage_date", "user_id", "total_cost_usd", "ai_cost_usd", "metrics_json", "fetched_at"],
-          [...memberRows].map(([userId, row]) => [
-            workspaceId, usageDate, userId, row.total,
-            sumAgentUsageMetrics(row.metrics), JSON.stringify(row.metrics), fetchedAt,
-          ]),
+          memberInsertRows,
         );
         await batchedInsert(
           client,
           "usage_project_day",
           ["workspace_id", "usage_date", "project_id", "total_cost_usd", "metrics_json", "fetched_at"],
-          [...projectRows].map(([projectId, row]) => [
-            workspaceId, usageDate, projectId, row.total, JSON.stringify(row.metrics), fetchedAt,
-          ]),
+          projectInsertRows,
         );
         await client.query(
           `insert into usage_workspace_day
@@ -295,7 +307,7 @@ export async function ingestWorkspaceDay(
           member_unattributable_usd, metrics_json, fetched_at, status, error)
        values ($1,$2::date,0,0,0,'[]'::jsonb,now(),'failed',$3)
        on conflict (workspace_id, usage_date) do update set
-         fetched_at=excluded.fetched_at, status='failed', error=excluded.error`,
+          status='failed', error=excluded.error`,
       [workspaceId, usageDate, message.slice(0, 2000)],
     );
     const result = { ok: false, ...stats, durationMs: Date.now() - started, error: message };

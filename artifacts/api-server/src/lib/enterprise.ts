@@ -5860,6 +5860,7 @@ const workloadContext = new AsyncLocalStorage<EnterpriseWorkload>();
 const SCHEDULED_CAP_RATIO = 0.55;
 const DEFAULT_RATE_LIMIT = 100;
 const BACKFILL_CAP_RATIO = 0.25;
+const LOCAL_USAGE_REQUESTS_PER_MINUTE = 170;
 
 type RateBudgetSnapshot = {
   limit: number;
@@ -5906,7 +5907,7 @@ class EnterpriseRateBudget {
     if (this.state.remaining <= 0) return false;
     if (this.localTotalUsed >= 600) return false;
     // Keep deliberate headroom below the documented 200/min /usage ceiling.
-    return !isUsage || this.localUsageUsed < 190;
+    return !isUsage || this.localUsageUsed < LOCAL_USAGE_REQUESTS_PER_MINUTE;
   }
 
   async admit(workload: EnterpriseWorkload, isUsage = false): Promise<void> {
@@ -6015,8 +6016,9 @@ export function __observeEnterpriseRateLimitForTests(
 
 export async function __admitEnterpriseRequestForTests(
   workload: EnterpriseWorkload,
+  isUsage = false,
 ): Promise<void> {
-  await enterpriseBudget.admit(workload);
+  await enterpriseBudget.admit(workload, isUsage);
 }
 
 export function __resetEnterpriseSchedulerForTests(

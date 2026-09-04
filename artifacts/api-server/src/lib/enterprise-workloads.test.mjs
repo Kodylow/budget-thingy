@@ -69,6 +69,31 @@ test("the single token bucket admits every workload class without reservations",
   await scheduled;
 });
 
+test("/usage admission stops at 170 requests in one fixed minute", async () => {
+  enterprise.__resetEnterpriseSchedulerForTests({
+    limit: 1_000,
+    remaining: 1_000,
+    resetAt: Date.now() + 60_000,
+  });
+  await Promise.all(Array.from(
+    { length: 170 },
+    () => enterprise.__admitEnterpriseRequestForTests("scheduled", true),
+  ));
+
+  let overflowAdmitted = false;
+  const overflow = enterprise
+    .__admitEnterpriseRequestForTests("scheduled", true)
+    .then(() => {
+      overflowAdmitted = true;
+    });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(overflowAdmitted, false);
+
+  enterprise.__resetEnterpriseSchedulerForTests();
+  await overflow;
+  assert.equal(overflowAdmitted, true);
+});
+
 test("429 Retry-After blocks all classes until the stricter reset", async () => {
   enterprise.__resetEnterpriseSchedulerForTests({
     limit: 10,

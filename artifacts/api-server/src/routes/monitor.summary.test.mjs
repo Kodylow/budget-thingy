@@ -1191,10 +1191,9 @@ test("unmatched project spend is included in the project-based summary total", a
     "attributed projects plus unmatched project spend must reconcile to the summary total");
 });
 
-test("detail: direct cold-cache request queues all scoped groups so rollup eventually completes", async () => {
-  // Simulate a direct drill-down with empty caches. The handler must queue member
-  // usage for all scoped groups (not just the selected one) so rollup.isComplete
-  // can become true without the admin first visiting /groups or /summary.
+test("detail: direct cold-cache request stays incomplete until stored usage is refreshed", async () => {
+  // Simulate a direct drill-down with empty caches. Read handlers are cache-only:
+  // they expose incompleteness without initiating Enterprise usage work.
   __setMemberUsageForTests("sg-alpha", RANGE, null);
   __setMemberUsageForTests("sg-beta",  RANGE, null);
   __setWsSpendForTests("ws-main", RANGE, new Map([["alice", 50], ["carol", 10], ["bob", 15]]));
@@ -1216,7 +1215,7 @@ test("detail: direct cold-cache request queues all scoped groups so rollup event
     "workspace-derived member totals remain visible on a cold breakdown cache",
   );
 
-  // Warm all caches as the background queue would do after the first request.
+  // Simulate the ingestion scheduler making complete stored data available.
   __setMemberUsageForTests("sg-alpha", RANGE, new Map([["alice", 30], ["carol", 10]]));
   __setMemberUsageForTests("sg-beta",  RANGE, new Map([["alice", 20], ["bob", 15]]));
   // Second request: member inputs are now warm — spendLoaded is final.

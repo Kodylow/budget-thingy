@@ -13,6 +13,24 @@ test("the listening socket precedes cache hydration and Enterprise schedulers", 
   assert.ok(coordinatorAt > initAt);
 });
 
+test("startup leaves both legacy Enterprise usage producers disabled", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /startDailyFactJob/);
+  assert.doesNotMatch(source, /startUsageCoordinator/);
+});
+
+test("the scheduled checker has no Enterprise usage queue entry point", async () => {
+  const source = await readFile(
+    new URL("./lib/checker.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /queue(?:AccountUsage|GroupSpend|MemberUsage|ProjectUsage|WsSpend)Fetch/,
+  );
+  assert.match(source, /getStoredBudgetEvaluationSnapshot/);
+});
+
 test("application start does not push the database schema", async () => {
   const pkg = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
