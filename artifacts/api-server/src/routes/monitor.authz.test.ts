@@ -1317,6 +1317,43 @@ test("account admin group export remains scoped to the requested page", async ()
   expect(rows.map((row) => row.Username)).toEqual(["ws2user"]);
 });
 
+test("user export neutralizes formula-leading directory values", async () => {
+  const dangerousMembers = new Map(members);
+  dangerousMembers.set("plain", {
+    ...members.get("plain"),
+    email: "=HYPERLINK(\"https://attacker.invalid\")",
+    name: "\t+CMD",
+    username: " \r\n@SUM(A1:A2)",
+  });
+  const dangerousGroups = [
+    { ...groups[0], name: "-Injected Group" },
+    groups[1],
+  ];
+  const dangerousWorkspaces = new Map(workspaces);
+  dangerousWorkspaces.set("ws-1", { id: "ws-1", name: "\n=Injected Workspace" });
+
+  __setDirectoryCacheForTests({
+    workspaces: dangerousWorkspaces,
+    groups: dangerousGroups,
+    members: dangerousMembers,
+    groupMembers,
+  });
+  try {
+    const { res, text } = await csvReq(
+      "/export/users.csv?groupIds=g-ws1-a&rangeType=custom&startDate=2026-05-20&endDate=2026-08-11",
+      "ws1admin",
+    );
+    expect(res.status).toBe(200);
+    expect(text).toContain("\"'=HYPERLINK(\"\"https://attacker.invalid\"\")\"");
+    expect(text).toContain("\"'\t+CMD\"");
+    expect(text).toContain("\"' \r\n@SUM(A1:A2)\"");
+    expect(text).toContain("\"'\n=Injected Workspace\"");
+    expect(text).toContain("\"'-Injected Group\"");
+  } finally {
+    __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+  }
+});
+
 test("cluster export emits one row for overlapping members", async () => {
   __setDirectoryCacheForTests({
     groups,

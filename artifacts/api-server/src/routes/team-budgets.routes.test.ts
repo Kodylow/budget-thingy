@@ -540,6 +540,27 @@ test("project detail survives restart and isolates duplicate IDs by workspace", 
   }));
 });
 
+test("project export neutralizes formula-leading metadata", async () => {
+  const formula = "=HYPERLINK(\"https://attacker.invalid\",\"Open\")";
+  await db.update(apiProjectMetadataTable)
+    .set({ title: formula })
+    .where(eq(apiProjectMetadataTable.workspaceId, "task158-ws"));
+  try {
+    const projectExport = await request("/projects/export", "task158-account");
+    expect(projectExport.status).toBe(200);
+    expect(projectExport.json.raw).toContain(
+      "\"'=HYPERLINK(\"\"https://attacker.invalid\"\",\"\"Open\"\")\"",
+    );
+    expect(projectExport.json.raw).not.toContain(
+      "\"=HYPERLINK(\"\"https://attacker.invalid\"\",\"\"Open\"\")\"",
+    );
+  } finally {
+    await db.update(apiProjectMetadataTable)
+      .set({ title: "Persisted Project One" })
+      .where(eq(apiProjectMetadataTable.workspaceId, "task158-ws"));
+  }
+});
+
 test("workspace admins see assigned effective pools but not account budget-only rows", async () => {
   const { status, json } = await request("/teams/budgets", "task158-workspace");
   expect(status).toBe(200);

@@ -411,14 +411,21 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
     () => data?.series.filter((series) => series.type === viewBy) ?? [],
     [data, viewBy],
   );
+  const keyedVisibleSeries = useMemo(
+    () => visibleSeries.map((series, index) => ({
+      ...series,
+      dataKey: `series-${index}`,
+    })),
+    [visibleSeries],
+  );
   const chartConfig = useMemo<ChartConfig>(() => {
     return Object.fromEntries(
-      visibleSeries.map((series, index) => [
-        series.name,
+      keyedVisibleSeries.map((series, index) => [
+        series.dataKey,
         { label: series.name, color: SERIES_COLORS[index % SERIES_COLORS.length] },
       ]),
     );
-  }, [visibleSeries]);
+  }, [keyedVisibleSeries]);
   const chartData = useMemo(() => {
     return (data?.buckets ?? []).map((bucket, bucketIndex) => {
       const point: Record<string, string | number | null> = {
@@ -427,10 +434,12 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
         rangeEnd: data?.bucketRanges[bucketIndex]?.end ?? bucket,
         isPartial: data?.bucketRanges[bucketIndex]?.isPartial ? 'yes' : 'no',
       };
-      for (const series of visibleSeries) point[series.name] = series.data[bucketIndex] ?? null;
+      for (const series of keyedVisibleSeries) {
+        point[series.dataKey] = series.data[bucketIndex] ?? null;
+      }
       return point;
     });
-  }, [data, visibleSeries]);
+  }, [data, keyedVisibleSeries]);
 
   const progress = data
     ? Math.round(data.usageHealth.coverage.ratio * 100)
@@ -605,10 +614,10 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
             <ChartContainer config={chartConfig} className="h-[420px] w-full">
               <AreaChart data={chartData} margin={{ top: 12, right: 20, left: 12, bottom: 8 }}>
                 <defs>
-                  {visibleSeries.map((series, index) => {
+                  {keyedVisibleSeries.map((series, index) => {
                     const color = SERIES_COLORS[index % SERIES_COLORS.length];
                     return (
-                      <linearGradient key={series.name} id={`trend-fill-${index}`} x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient key={series.dataKey} id={`trend-fill-${index}`} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={color} stopOpacity={0.28} />
                         <stop offset="95%" stopColor={color} stopOpacity={0.02} />
                       </linearGradient>
@@ -656,13 +665,14 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
                     );
                   }}
                 />
-                {visibleSeries.map((series, index) => {
+                {keyedVisibleSeries.map((series, index) => {
                   const color = SERIES_COLORS[index % SERIES_COLORS.length];
                   return (
                     <Area
-                      key={series.name}
+                      key={series.dataKey}
                       type="monotone"
-                      dataKey={series.name}
+                      dataKey={series.dataKey}
+                      name={series.name}
                       stroke={color}
                       fill={`url(#trend-fill-${index})`}
                       strokeWidth={2}
@@ -677,8 +687,8 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
               className="flex max-h-24 flex-wrap justify-center gap-x-4 gap-y-2 overflow-y-auto border-t pt-3"
               aria-label={`${viewBy} chart legend`}
             >
-              {visibleSeries.map((series, index) => (
-                <span key={series.name} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {keyedVisibleSeries.map((series, index) => (
+                <span key={series.dataKey} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span
                     className="h-2 w-2 shrink-0 rounded-sm"
                     style={{ backgroundColor: SERIES_COLORS[index % SERIES_COLORS.length] }}

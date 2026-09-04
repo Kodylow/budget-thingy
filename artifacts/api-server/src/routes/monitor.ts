@@ -82,6 +82,14 @@ import {
   GetAccountUsageObservationExportQueryParams,
   GetAccountUsageObservationExportResponse,
 } from "@workspace/api-zod";
+
+function escapeCsvCell(value: unknown): string {
+  const text = String(value);
+  const literalText = /^[\s\u0000-\u001f\u007f]*[=+\-@]/u.test(text)
+    ? `'${text}`
+    : text;
+  return `"${literalText.replace(/"/g, '""')}"`;
+}
 import {
   isConfigured,
   getApiHealth,
@@ -2012,7 +2020,6 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
     rows.sort((a, b) => b.totalUsd - a.totalUsd);
 
     // Emit CSV
-    const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
     const fmt = (n: number) => n.toFixed(4);
 
     const header = [
@@ -2034,19 +2041,19 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
       "Total ($)",
     ];
 
-    const lines: string[] = [header.map(esc).join(",")];
+    const lines: string[] = [header.map(escapeCsvCell).join(",")];
     for (const r of rows) {
       lines.push(
         [
-          esc(r.title),
-          esc(r.projectId),
-          esc(r.workspaceName),
-          esc(r.ownerName),
-          esc(r.ownerUsername),
-          esc(r.creatorIsCurrentMember ? "Yes" : "No"),
-          esc(r.attributedGroup),
-          esc(r.teams),
-          esc(r.groups),
+          escapeCsvCell(r.title),
+          escapeCsvCell(r.projectId),
+          escapeCsvCell(r.workspaceName),
+          escapeCsvCell(r.ownerName),
+          escapeCsvCell(r.ownerUsername),
+          escapeCsvCell(r.creatorIsCurrentMember ? "Yes" : "No"),
+          escapeCsvCell(r.attributedGroup),
+          escapeCsvCell(r.teams),
+          escapeCsvCell(r.groups),
           fmt(r.aiUsd),
           fmt(r.hostingUsd),
           fmt(r.storageUsd),
@@ -2882,10 +2889,9 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
   rows.sort((a, b) => b.spendUsd - a.spendUsd);
 
   // Build CSV
-  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-  const header = ["Email", "Name", "Username", "Workspace(s)", "Group", "Team", "AI Spend (USD)", "Hosting / Non-AI Spend (USD)", "Spend (USD)"].map(escape).join(",");
+  const header = ["Email", "Name", "Username", "Workspace(s)", "Group", "Team", "AI Spend (USD)", "Hosting / Non-AI Spend (USD)", "Spend (USD)"].map(escapeCsvCell).join(",");
   const lines = rows.map((r) =>
-    [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.aiSpendUsd.toFixed(2), r.nonAiSpendUsd.toFixed(2), r.spendUsd.toFixed(2)].map(escape).join(","),
+    [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.aiSpendUsd.toFixed(2), r.nonAiSpendUsd.toFixed(2), r.spendUsd.toFixed(2)].map(escapeCsvCell).join(","),
   );
 
   const isComplete = canonical.isComplete;

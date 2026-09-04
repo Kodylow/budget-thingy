@@ -21,6 +21,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChevronDown, Download, Search, ShieldCheck } from 'lucide-react';
 import { useRange } from '@/components/range-context';
+import { buildCsv } from '@/lib/csv';
 import { groupDirectoryByWorkspace } from '@/lib/workspace-directory-groups';
 
 // ---------- helpers ----------
@@ -45,8 +46,6 @@ function exportDirectoryUsers(
   members: DirectoryMember[],
   spendByUser: ReadonlyMap<string, SpendInfo>,
 ) {
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`;
   const header = [
     'Email',
     'Name',
@@ -83,9 +82,7 @@ function exportDirectoryUsers(
         (spend?.spendUsd ?? 0).toFixed(2),
       ];
     });
-  const csv = [header, ...rows]
-    .map((row) => row.map(escape).join(','))
-    .join('\r\n');
+  const csv = buildCsv([header, ...rows]);
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const anchor = document.createElement('a');
   anchor.href = url;
