@@ -47,3 +47,9 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+attached_assets/
+screenshots/
+.config/
+.tsbuildinfo
+*.xlsx
+db.sql
