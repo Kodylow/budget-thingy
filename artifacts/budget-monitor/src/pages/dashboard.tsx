@@ -1,4 +1,10 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Card,
   CardContent,
@@ -7,7 +13,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { UnassignedSummaryRow } from "@/components/unassigned-summary-row";
 import {
   RefreshCw,
   AlertTriangle,
@@ -17,10 +22,16 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
-  TrendingDown,
 } from "lucide-react";
 
-import { useAuthContext, useCanWrite } from "@/components/auth-context";
+import { useAuthContext } from "@/components/auth-context";
+import {
+  dashboardPresentation,
+  familyDisclosureId,
+  initialExpandedWorkspaceIds,
+  toggleDisclosure,
+  workspaceDisclosureId,
+} from "@/lib/dashboard-hierarchy";
 
 type PaceStatus = "on-track" | "at-risk" | "over-pace";
 interface PaceResult {
@@ -165,12 +176,18 @@ interface TeamSection {
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
-  const canWrite = useCanWrite();
   const { auth, isAccountWide, role, user, capabilities } = useAuthContext();
   const { rangeSelection, rangeType, startDate, endDate } = useRange();
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(
     () => new Set(),
   );
+  const initialExpansionSignature = useRef("");
   const [showLegacyGroups, setShowLegacyGroups] = useState(false);
   const dashboardReadyMeasured = useRef(false);
 
@@ -201,8 +218,7 @@ export default function Dashboard() {
       },
     },
   );
-  const { data: teamBudgetsData, isLoading: teamBudgetsLoading } =
-    useGetTeamsBudgets({
+  const { data: teamBudgetsData } = useGetTeamsBudgets({
       query: {
         queryKey: getGetTeamsBudgetsQueryKey(),
       },
@@ -433,13 +449,9 @@ export default function Dashboard() {
     showLegacyGroups,
   ]);
 
+  const presentation = dashboardPresentation(role);
   const toggleTeam = (teamKey: string) => {
-    setExpandedTeams((prev) => {
-      const next = new Set(prev);
-      if (next.has(teamKey)) next.delete(teamKey);
-      else next.add(teamKey);
-      return next;
-    });
+    setExpandedTeams((previous) => toggleDisclosure(previous, teamKey));
   };
 
   const statCards = [
@@ -514,7 +526,7 @@ export default function Dashboard() {
           setLocation(`/groups/${group.groupId}`);
         }}
       >
-        <td className="py-3 px-4 pl-10">
+        <td className="py-3 px-4 pl-14">
           <div className="flex flex-col">
             <span
               className="text-sm font-medium"
@@ -536,14 +548,6 @@ export default function Dashboard() {
               )}
             </span>
           </div>
-        </td>
-        <td className="py-3 px-4">
-          <span
-            className="text-sm"
-            data-testid={`text-workspace-${group.groupId}`}
-          >
-            {group.workspaceName || "—"}
-          </span>
         </td>
         <td className="py-3 px-4 text-right">
           <span
@@ -1053,7 +1057,247 @@ export default function Dashboard() {
     );
   };
 
-  const hasTeams = workspaceSections.length > 0;
+  const hierarchySections = useMemo(() => {
+    const sections = (groupsData?.hierarchy ?? [])
+      .map((workspace) => ({
+        workspaceId: workspace.workspaceId,
+        workspaceName: workspace.workspaceName ?? workspace.workspaceId,
+        families: workspace.teams.flatMap((team) =>
+          team.families
+            .filter((family) => showLegacyGroups || !family.isLegacy)
+            .map((family) => ({
+              family,
+              teamName: team.teamName,
+            })),
+        ),
+        budgetOnlyTeams: [] as TeamSection[],
+      }))
+      .filter((workspace) => workspace.families.length > 0);
+
+    const budgetOnlyTeams = teamSections.filter(
+      (team) => team.workspaceId === "__budget_only__",
+    );
+    if (budgetOnlyTeams.length > 0) {
+      sections.push({
+        workspaceId: "__budget_only__",
+        workspaceName: "Unallocated Budgets",
+        families: [],
+        budgetOnlyTeams,
+      });
+    }
+    return sections;
+  }, [groupsData?.hierarchy, showLegacyGroups, teamSections]);
+
+  const expansionSignature = `${role ?? "unknown"}:${hierarchySections
+    .map((workspace) => workspace.workspaceId)
+    .join("|")}`;
+  useEffect(() => {
+    if (initialExpansionSignature.current === expansionSignature) return;
+    initialExpansionSignature.current = expansionSignature;
+    setExpandedWorkspaces(
+      initialExpandedWorkspaceIds(role, hierarchySections),
+    );
+    setExpandedFamilies(new Set());
+  }, [expansionSignature, hierarchySections, role]);
+
+  const renderBudgetOnlyTeam = (team: TeamSection) => (
+    <tr
+      key={`budget-only-${team.teamName}`}
+      className="border-b border-border bg-muted/10"
+      data-testid={`row-budget-only-${team.teamName}`}
+    >
+      <td className="py-3 px-4 pl-10 text-sm font-medium text-muted-foreground">
+        {team.teamName}
+      </td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+      <td className="py-3 px-4 text-right font-mono text-sm">$0.00</td>
+      <td className="py-3 px-4 text-right font-mono text-sm">
+        {team.budgetUsd == null ? "—" : `$${team.budgetUsd.toFixed(2)}`}
+      </td>
+      <td className="py-3 px-4 text-right font-mono text-sm">
+        {team.budgetUsd == null ? "—" : `$${team.budgetUsd.toFixed(2)}`}
+      </td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+    </tr>
+  );
+
+  const renderFamilyDisclosure = (
+    workspace: (typeof hierarchySections)[number],
+    entry: (typeof hierarchySections)[number]["families"][number],
+  ) => {
+    const { family, teamName } = entry;
+    const familyId = familyDisclosureId(
+      workspace.workspaceId,
+      family.familyKey,
+      family.isLegacy,
+    );
+    const expanded = expandedFamilies.has(familyId);
+    return (
+      <React.Fragment key={familyId}>
+        <tr
+          className="border-b border-border bg-muted/20"
+          data-testid={`row-family-${familyId}`}
+        >
+          <th className="py-3 px-4 text-left text-sm font-semibold" scope="row">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-expanded={expanded}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${family.familyName} family`}
+              data-testid={`button-family-${familyId}`}
+              onClick={() =>
+                setExpandedFamilies((previous) =>
+                  toggleDisclosure(previous, familyId),
+                )
+              }
+            >
+              {expanded ? (
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              )}
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{family.familyName}</span>
+                <span className="font-normal text-xs text-muted-foreground">
+                  {workspace.workspaceName}
+                  {teamName ? ` · ${teamName}` : " · Unassigned"}
+                </span>
+              </span>
+              {family.isLegacy && (
+                <Badge variant="outline" className="text-[9px]">
+                  Legacy
+                </Badge>
+              )}
+              <Badge variant="outline" className="ml-auto text-[9px]">
+                {family.groups.length} group
+                {family.groups.length === 1 ? "" : "s"}
+              </Badge>
+            </button>
+          </th>
+          <td className="py-3 px-4 text-right font-mono text-sm">
+            {family.memberCount}
+          </td>
+          <td className="py-3 px-4 text-right font-mono text-sm">
+            ${family.spendUsd.toFixed(2)}
+          </td>
+          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
+            —
+          </td>
+          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
+            —
+          </td>
+          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
+            —
+          </td>
+          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
+            —
+          </td>
+        </tr>
+        {expanded && family.groups.map((group) => renderGroupRow(group))}
+      </React.Fragment>
+    );
+  };
+
+  const renderWorkspaceDisclosure = (
+    workspace: (typeof hierarchySections)[number],
+  ) => {
+    const disclosureId = workspaceDisclosureId(workspace.workspaceId);
+    const expanded = expandedWorkspaces.has(disclosureId);
+    const workspaceTeams = teamSections.filter(
+      (team) => team.workspaceId === workspace.workspaceId,
+    );
+    const unassignedFamilies = workspace.families.filter(
+      (entry) => entry.teamName == null,
+    );
+    const memberCount =
+      workspaceTeams.reduce((sum, team) => sum + team.memberCount, 0) +
+      unassignedFamilies.reduce(
+        (sum, entry) => sum + entry.family.memberCount,
+        0,
+      );
+    const spendUsd =
+      workspaceTeams.reduce((sum, team) => sum + team.spendUsd, 0) +
+      unassignedFamilies.reduce(
+        (sum, entry) => sum + entry.family.spendUsd,
+        0,
+      );
+    const budgetUsd = workspaceTeams.reduce(
+      (sum, team) => sum + (team.budgetUsd ?? 0),
+      0,
+    ) + unassignedFamilies.reduce(
+      (sum, entry) =>
+        sum +
+        entry.family.groups.reduce(
+          (familyTotal, group) => familyTotal + (group.budgetUsd ?? 0),
+          0,
+        ),
+      0,
+    );
+
+    return (
+      <React.Fragment key={disclosureId}>
+        <tr
+          className="border-b border-border bg-muted/60"
+          data-testid={`row-workspace-${workspace.workspaceId}`}
+        >
+          <th className="py-3 px-4 text-left text-sm font-bold" scope="row">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-expanded={expanded}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.workspaceName} workspace`}
+              data-testid={`button-workspace-${workspace.workspaceId}`}
+              onClick={() =>
+                setExpandedWorkspaces((previous) =>
+                  toggleDisclosure(previous, disclosureId),
+                )
+              }
+            >
+              {expanded ? (
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              )}
+              <span>{workspace.workspaceName}</span>
+              <Badge variant="outline" className="text-[9px]">
+                Workspace
+              </Badge>
+            </button>
+          </th>
+          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
+            {workspace.workspaceId === "__budget_only__" ? "—" : memberCount}
+          </td>
+          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
+            {workspace.workspaceId === "__budget_only__"
+              ? "—"
+              : `$${spendUsd.toFixed(2)}`}
+          </td>
+          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
+            {budgetUsd > 0 ? `$${budgetUsd.toFixed(2)}` : "—"}
+          </td>
+          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
+            {budgetUsd > 0 ? `$${(budgetUsd - spendUsd).toFixed(2)}` : "—"}
+          </td>
+          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
+            {budgetUsd > 0 && workspace.workspaceId !== "__budget_only__"
+              ? `${((spendUsd / budgetUsd) * 100).toFixed(1)}%`
+              : "—"}
+          </td>
+          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
+            —
+          </td>
+        </tr>
+        {expanded &&
+          workspace.families.map((entry) =>
+            renderFamilyDisclosure(workspace, entry),
+          )}
+        {expanded && workspace.budgetOnlyTeams.map(renderBudgetOnlyTeam)}
+      </React.Fragment>
+    );
+  };
+
+  const hasHierarchy = hierarchySections.length > 0;
   const scopedWorkspaceNames = [
     ...new Set(
       groups
@@ -1129,7 +1373,13 @@ export default function Dashboard() {
       }));
 
     return (
-      <div className="p-4 md:p-8">
+      <div className="space-y-4 p-4 md:space-y-6 md:p-8">
+        <p
+          className="mx-auto max-w-3xl text-sm font-medium text-muted-foreground"
+          data-testid="text-summary-scope"
+        >
+          Yours · {presentation.scopeLabel}
+        </p>
         <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -1191,25 +1441,95 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
-            <div className="border-t pt-4">
-              <h2 className="text-sm font-semibold">My groups</h2>
-              <div
-                className="mt-2 flex flex-wrap gap-2"
-                data-testid="list-member-groups"
+          </CardContent>
+        </Card>
+        <Card data-testid="card-member-hierarchy">
+          <CardHeader>
+            <CardTitle>My families and groups</CardTitle>
+            <CardDescription>
+              Expand a family, then select a group to view its members.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-pressed={showLegacyGroups}
+                data-testid="button-toggle-member-legacy-groups"
+                onClick={() => setShowLegacyGroups((visible) => !visible)}
               >
-                {groups.length ? (
-                  groups.map((group) => (
-                    <Badge key={group.groupId} variant="secondary">
-                      {group.name}
-                      {group.workspaceName ? ` · ${group.workspaceName}` : ""}
-                    </Badge>
-                  ))
-                ) : (
-                  <span className="text-sm text-muted-foreground">
-                    No groups found.
-                  </span>
-                )}
-              </div>
+                {showLegacyGroups ? "Hide legacy groups" : "Show legacy groups"}
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full table-fixed" data-testid="table-member-groups">
+                <caption className="sr-only">
+                  Your authorized families and Replit role groups
+                </caption>
+                <colgroup>
+                  <col className="w-[38%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[10%]" />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
+                      Hierarchy
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                      Members
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                      Spend
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                      Budget
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                      Remaining
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                      Usage
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                      Pace
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupsFetching && !groupsData ? (
+                    <tr>
+                      <td
+                        className="py-12 text-center text-sm text-muted-foreground"
+                        colSpan={7}
+                        role="status"
+                      >
+                        Loading your authorized hierarchy…
+                      </td>
+                    </tr>
+                  ) : hasHierarchy ? (
+                    hierarchySections.flatMap((workspace) =>
+                      workspace.families.map((entry) =>
+                        renderFamilyDisclosure(workspace, entry),
+                      ),
+                    )
+                  ) : (
+                    <tr>
+                      <td
+                        className="py-12 text-center text-sm text-muted-foreground"
+                        colSpan={7}
+                      >
+                        No authorized groups found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>
@@ -1258,6 +1578,13 @@ export default function Dashboard() {
           </div>
         )}
 
+      <div>
+        <p
+          className="mb-2 text-sm font-medium text-muted-foreground"
+          data-testid="text-summary-scope"
+        >
+          Yours · {presentation.scopeLabel}
+        </p>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
         {statCards.map((stat) => {
           const Icon = stat.icon;
@@ -1287,27 +1614,42 @@ export default function Dashboard() {
           );
         })}
       </div>
+      </div>
 
       <Tabs defaultValue="groups" className="space-y-4">
         <TabsContent value="groups">
           <Card>
             <CardContent>
+              <div className="flex justify-end pt-4">
+                <button
+                  type="button"
+                  className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-pressed={showLegacyGroups}
+                  data-testid="button-toggle-legacy-groups"
+                  onClick={() => setShowLegacyGroups((visible) => !visible)}
+                >
+                  {showLegacyGroups ? "Hide legacy groups" : "Show legacy groups"}
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full table-fixed" data-testid="table-groups">
+                  <caption className="sr-only">
+                    Authorized workspace, family, and Replit role group hierarchy
+                  </caption>
                   <colgroup>
-                    <col className="w-[26%]" />
-                    <col className="w-[12%]" />
-                    <col className="w-[8%]" />
-                    <col className="w-[10%]" />
+                    <col className="w-[38%]" />
                     <col className="w-[10%]" />
                     <col className="w-[11%]" />
                     <col className="w-[10%]" />
-                    <col className="w-[13%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[10%]" />
                   </colgroup>
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4"></th>
-                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4"></th>
+                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">
+                        Hierarchy
+                      </th>
                       <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
                         Members
                       </th>
@@ -1332,33 +1674,26 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {hasTeams ? (
-                      <>
-                        {workspaceSections.map((workspace) => (
-                          <React.Fragment
-                            key={`workspace-section-${workspace.workspaceId}`}
-                          >
-                            {renderWorkspaceHeader(workspace)}
-                            {workspace.teams.map((team) => {
-                              const teamKey = `${team.workspaceId}::${team.teamName}`;
-                              return (
-                                <React.Fragment key={`team-section-${teamKey}`}>
-                                  {renderTeamHeader(team)}
-                                  {expandedTeams.has(teamKey) &&
-                                    renderTeamGroups(team)}
-                                </React.Fragment>
-                              );
-                            })}
-                            {workspace.unassigned.length > 0 && (
-                              <UnassignedSummaryRow
-                                key={`team-section-unassigned-${workspace.workspaceId}`}
-                                workspaceId={workspace.workspaceId}
-                                groups={workspace.unassigned}
-                              />
-                            )}
-                          </React.Fragment>
-                        ))}
-                      </>
+                    {groupsFetching && !groupsData ? (
+                      <tr>
+                        <td
+                          className="py-12 text-center text-sm text-muted-foreground"
+                          colSpan={7}
+                          role="status"
+                        >
+                          Loading authorized hierarchy…
+                        </td>
+                      </tr>
+                    ) : hasHierarchy ? (
+                      presentation.startingLevel === "workspace" ? (
+                        hierarchySections.map(renderWorkspaceDisclosure)
+                      ) : (
+                        hierarchySections.flatMap((workspace) =>
+                          workspace.families.map((entry) =>
+                            renderFamilyDisclosure(workspace, entry),
+                          ),
+                        )
+                      )
                     ) : (
                       [...groups]
                         .sort((a, b) =>
@@ -1394,9 +1729,6 @@ export default function Dashboard() {
                               </span>
                             </div>
                           </td>
-                          <td className="py-3 px-4 text-sm text-muted-foreground">
-                            —
-                          </td>
                           <td className="py-3 px-4 text-right text-sm text-muted-foreground">
                             —
                           </td>
@@ -1427,7 +1759,6 @@ export default function Dashboard() {
                     <tfoot>
                       <tr className="border-t-2 border-border bg-muted/40 font-semibold">
                         <td className="py-3 px-4 text-sm">Total</td>
-                        <td className="py-3 px-4" />
                         <td className="py-3 px-4 text-right">
                           <span className="text-sm font-mono tabular-nums">
                             {groups.reduce(

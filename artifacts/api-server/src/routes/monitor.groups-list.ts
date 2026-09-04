@@ -156,7 +156,11 @@ router.get("/groups", async (req, res): Promise<void> => {
         team = { teamName: group.teamName, families: [] };
         workspace.teams.push(team);
       }
-      let family = team.families.find((item) => item.familyKey === group.familyKey);
+      let family = team.families.find(
+        (item) =>
+          item.familyKey === group.familyKey &&
+          item.isLegacy === group.isLegacy,
+      );
       if (!family) {
         family = {
           familyKey: group.familyKey,
@@ -192,7 +196,8 @@ router.get("/groups", async (req, res): Promise<void> => {
               .sort(
                 (a, b) =>
                   a.familyName.localeCompare(b.familyName, undefined, { sensitivity: "base" }) ||
-                  a.familyKey.localeCompare(b.familyKey),
+                  a.familyKey.localeCompare(b.familyKey) ||
+                  Number(a.isLegacy) - Number(b.isLegacy),
               ),
           }))
           .sort((a, b) =>

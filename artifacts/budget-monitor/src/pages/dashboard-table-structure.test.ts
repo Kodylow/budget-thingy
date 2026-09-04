@@ -21,10 +21,10 @@ test("dashboard table keeps one hierarchy column followed by six metrics", () =>
   expect(tableHeader).toContain("Pace");
 });
 
-test("dashboard rows and virtual spacers use the seven-column contract", () => {
-  expect(dashboardSource).toContain(
-    "<VirtualizedTableRows columnCount={7}>",
-  );
+test("dashboard disclosures use native accessible controls and seven columns", () => {
+  expect(dashboardSource).toContain('aria-expanded={expanded}');
+  expect(dashboardSource).toContain('data-testid={`button-workspace-${workspace.workspaceId}`}');
+  expect(dashboardSource).toContain('data-testid={`button-family-${familyId}`}');
   expect(dashboardSource).toContain("colSpan={7}");
   expect(dashboardSource).not.toContain("text-workspace-");
   expect(dashboardSource).not.toContain("columnCount={8}");
