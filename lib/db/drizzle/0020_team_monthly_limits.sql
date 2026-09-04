@@ -65,6 +65,11 @@ UPDATE "team_budget_upstream_sync"
   WHERE "status" = 'unresolved';
 ALTER TABLE "team_budget_upstream_sync"
   ALTER COLUMN "status" SET DEFAULT 'failed';
+-- Legacy reconciliation rows were keyed only by team name and can have no
+-- upstream target identity. They are derived status rows and will be rebuilt
+-- from the configured targets after migration.
+DELETE FROM "team_budget_upstream_sync"
+  WHERE "workspace_id" IS NULL;
 CREATE UNIQUE INDEX "team_budget_upstream_sync_target_idx"
   ON "team_budget_upstream_sync" ("workspace_id", "target_type", "target_group_id")
   NULLS NOT DISTINCT;
