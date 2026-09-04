@@ -18,6 +18,7 @@ import {
   setWorkspaceDefaultMemberLimitPolicy,
   type MemberLimitPolicyOutcome,
 } from "../lib/member-limit-policies";
+import { isInternalReplitMember } from "../lib/enterprise";
 import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsTable, teamLimitTargetsTable, teamBudgetsTable, adminEmailsTable, alertsTable, appAdminsTable, usersTable, apiProjectMetadataTable, apiProjectMetadataStateTable, usageLimitAuditsTable, ListGroupsResponse, GetSummaryResponse, ListBudgetsResponse, SetGroupBudgetBody, SetGroupBudgetResponse, DeleteGroupBudgetResponse, GetTeamsBudgetsResponse, ListAdminsResponse, AddAdminBody, AddAdminResponse, DeleteAdminResponse, ListWorkspaceAdminsResponse, ListAlertsQueryParams, ListAlertsResponse, RunAlertCheckResponse, SendTestAlertResponse, SendEmailTestExampleBody, SendEmailTestExampleResponse, GetStatusResponse, GetGroupDetailResponse, GetGroupProjectsResponse, GetCanonicalClusterHeadlineResponse, GetTrendsQueryParams, GetTrendsResponse, ListAppAdminsResponse, AddAppAdminBody, AddAppAdminResponse, DeleteAppAdminResponse, ListDirectoryGroupsResponse, GetTeamBudgetHistoryResponse, GetTeamAllocationAuditResponse, UpdateTeamAnnualAllocationParams, UpdateTeamAnnualAllocationBody, UpdateTeamAnnualAllocationResponse, UpdateTeamVisibilityParams, UpdateTeamVisibilityBody, UpdateTeamVisibilityResponse, GetTeamBudgetSyncStatusResponse, RetryTeamBudgetUpstreamSyncResponse, RefreshTeamBudgetsResponse, UpdateTeamBudgetLimitParams, UpdateTeamBudgetLimitBody, UpdateTeamBudgetLimitResponse, ApplyTeamBudgetLimitsBody, ApplyTeamBudgetLimitsResponse, GetTeamBudgetTargetsResponse, AssignTeamBudgetTargetBody, AssignTeamBudgetTargetResponse, UpdateTeamBudgetTargetParams, UpdateTeamBudgetTargetBody, UpdateTeamBudgetTargetResponse, ListVisibleWorkspacesResponse, ListVisibleWorkspaceMembersResponse, SetWorkspaceMemberBudgetBody, SetWorkspaceMemberBudgetResponse, ClearWorkspaceMemberBudgetResponse, BulkSetWorkspaceMemberBudgetsBody, BulkSetWorkspaceMemberBudgetsResponse, ListWorkspaceUsageLimitAuditsResponse, GetUserActivityResponse, GetAccountUsageObservationExportQueryParams, GetAccountUsageObservationExportResponse, GetEmailSettingsResponse, UpdateEmailSettingsBody, UpdateEmailSettingsResponse, isConfigured, getApiHealth, getDirectory, getDirectoryFreshness, getBillingPeriod, getBillingPeriodMetadata, buildCanonicalGroupMergePlan, buildCanonicalEffectiveTeams, type CanonicalAccountDirectory, resolveCanonicalMergedGroupBudget, type EnterpriseGroup, buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, getEmailTestRecipient, resolveAlertRecipients, runCheck, getFiredThresholds, getFiredThresholdsBatch, getLastCheckAt, getCheckerState, requireAuth, requireRole, requireCapability, requireTrueAccountAdmin, requireUserLimitWorkspace, canSeeGroup, isAccountWide, isAdminRole, scopeGroups, type Authorization, scopeFor, getRosterHistory, projectEndOfPeriod, generateTrendBuckets, getEffectiveTeamBudgets, applyTeamBudgetLimits, assignTeamLimitTarget, getFreshEligibleTeamLimitGroup, getTeamLimitTargetConfiguration, getTeamBudgetUpstreamSyncRows, getVisibleEffectiveTeamBudgetMap, queueTeamBudgetUpstreamReconciliation, reconcileTeamBudgetsUpstream, refreshTeamBudgetSnapshot, updateTeamMonthlyLimit, updateTeamAnnualAllocation, updateTeamVisibility, getTeamAllocationAudits, updateTeamLimitTargetOverride, TEAM_BUDGET_REQUIRED_APPROVAL_STATUS, TEAM_BUDGET_SOURCE_TABLE, listReplitMemberBudgets, ReplitBudgetConnectorError, setReplitMemberBudget, resolveUsageWindow, USAGE_DATA_CUTOFF_ISO, type UsageWindowSelection, readUsageSnapshot, type UsageSnapshot, computeDedupedMemberCounts, computeHistoricalSnapshotUsageRollups, computeSnapshotUsageRollup, projectAttributionKey, type SnapshotUsageRollup, BACKGROUND_CYCLE_INTERVAL_MINUTES, runCycle, getNotificationSettings, updateNotificationSettings, visibleGroups, visibleGroupMembers, visibleRosterMembers, buildTeamAlertCanonicalScope, canSeeAlertEntity, targetTeamForGroup, groupTeamKey, buildGroupTeamMap, windowFromQuery, workspaceScope, readProjectMetadata, usageForRequest, usageHealth, dailyUsageRollups, effectiveGroupBudget, mergedGroupMemberIds, canonicalUserAttribution, alertToJson } from "./monitor.shared";
 
 const router = Router();
@@ -25,21 +26,43 @@ const router = Router();
 router.get("/directory/workspaces", async (req, res): Promise<void> => {
   try {
     const dir = await getDirectory();
+
+    const workspaceIds = [...dir.workspaces.keys()];
     const allowed = isAccountWide(req.authz)
       ? null
       : new Set(req.authz!.workspaceIds);
-    const workspaces = [...dir.workspaces.values()]
-      .filter((workspace) => !allowed || allowed.has(workspace.id))
+    const workspaces = [...workspaceNodes.values()]
       .map((workspace) => ({
-        workspaceId: workspace.id,
-        workspaceName: workspace.name,
-        memberCount: [...dir.members.values()].filter((member) =>
-          member.workspaces.has(workspace.id),
-        ).length,
+        ...workspace,
+        teams: workspace.teams
+          .map((team) => ({
+            ...team,
+            families: team.families
+              .map((family) => ({
+                ...family,
+                groups: family.groups.sort(
+                  (a, b) =>
+                    roleOrder[a.role] - roleOrder[b.role] ||
+                    a.groupName.localeCompare(b.groupName, undefined, { sensitivity: "base" }),
+                ),
+              }))
+              .sort(
+                (a, b) =>
+                  a.familyName.localeCompare(b.familyName, undefined, { sensitivity: "base" }) ||
+                  a.familyKey.localeCompare(b.familyKey),
+              ),
+          }))
+          .sort((a, b) =>
+            (a.teamName ?? "Unassigned").localeCompare(
+              b.teamName ?? "Unassigned",
+              undefined,
+              { sensitivity: "base" },
+            )),
       }))
-      .sort((a, b) =>
-        a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: "base" }) ||
-        a.workspaceId.localeCompare(b.workspaceId),
+      .sort(
+        (a, b) =>
+          a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: "base" }) ||
+          a.workspaceId.localeCompare(b.workspaceId),
       );
     res.json(ListVisibleWorkspacesResponse.parse(workspaces));
   } catch (err) {
@@ -52,9 +75,15 @@ router.get(
   "/directory/workspaces/:workspaceId/members",
   async (req, res): Promise<void> => {
     try {
-      const workspaceId = String(req.params["workspaceId"]);
-      const dir = await getDirectory();
-      const workspace = dir.workspaces.get(workspaceId);
+    const workspaceId = String(req.params["workspaceId"]);
+    const dir = await getDirectory();
+
+    const workspaceIds = [...dir.workspaces.keys()];
+      const workspace = workspaceNodes.get(group.workspaceId) ?? {
+        workspaceId: group.workspaceId,
+        workspaceName: group.workspaceName,
+        teams: [],
+      };
       const authzScope = scopeFor(req.authz!);
       const hasScopedGroupInWorkspace =
         !("kind" in authzScope) &&
@@ -89,54 +118,37 @@ router.get(
       const workspaceUsage = usage.members.get(workspaceId);
       const workspaceUsageComplete = usage.status === "complete" || usage.status === "stale";
       const seen = new Set<string>();
-      const members = [...dir.members.values()]
-        .flatMap((member) => {
-          const membership = member.workspaces.get(workspaceId);
-          // Defensive identity deduplication protects against replayed/duplicate
-          // memberships in upstream directory snapshots.
-          if (
-            !membership ||
-            seen.has(member.userId) ||
-            (!("kind" in authzScope) &&
-              !authzScope.userIds.has(member.userId))
-          ) return [];
-          seen.add(member.userId);
-          const budget = snapshot.budgets.get(member.userId);
-          const budgetUsd = budget?.budgetUsd ?? null;
-          // One workspace_member observation avoids role-subgroup duplicates.
-          // Only its Agent metric is used, always for the current billing range.
-          const usageUsd = !workspaceUsage || !workspaceUsageComplete
-            ? null
-            : !workspaceUsage.has(member.userId)
+    const members = [...dir.members.values()].map((m) => {
+      return {
+        userId: m.userId,
+        username: m.username,
+        name: m.name,
+        email: m.email,
+        isAccountAdmin: m.isAccountAdmin,
+        isInternal: m.isInternalReplitUser,
+        workspaces: [...m.workspaces.entries()].map(([workspaceId, ws]) => {
+          return {
+            workspaceId,
+            workspaceName: dir.workspaces.get(workspaceId)?.name ?? workspaceId,
+            role: ws.role,
+            isDisabled: ws.isDisabled,
+            spendLoaded,
+            spendUsd: m.isInternalReplitUser
               ? 0
-              : (workspaceUsage.get(member.userId)?.aiCostUsd ?? null);
-          const policyView = policyViews.get(member.userId);
-          const percentUsed =
-            budgetUsd == null || usageUsd == null ? null : (usageUsd / budgetUsd) * 100;
-          return [{
-            userId: member.userId,
-            username: member.username,
-            name: member.name,
-            email: member.email,
-            role: membership.role,
-            isDisabled: membership.isDisabled,
-            budgetUsd,
-            usageUsd,
-            // Do not clamp: a negative value is meaningful overspend.
-            remainingUsd:
-              budgetUsd == null || usageUsd == null ? null : budgetUsd - usageUsd,
-            percentUsed,
-            blocked: percentUsed != null && percentUsed >= 100,
-            effectiveBaselineUsd: policyView?.effectiveBaseline?.amountUsd ?? null,
-            baselineSourceType: policyView?.effectiveBaseline?.sourceType ?? null,
-            baselineSourceId: policyView?.effectiveBaseline?.sourceId ?? null,
-            isHandSetOverride: policyView?.isHandSetOverride ?? false,
-          }];
-        })
-        .sort((a, b) =>
-          a.username.localeCompare(b.username, undefined, { sensitivity: "base" }) ||
-          a.userId.localeCompare(b.userId),
-        );
+              : dir.groups
+                  .filter((group) => group.workspaceId === workspaceId)
+                  .reduce(
+                    (sum, group) =>
+                      sum +
+                      (canonical.aiSpendByGroup.get(group.id)?.get(m.userId) ?? 0) +
+                      (canonical.nonAiSpendByGroup.get(group.id)?.get(m.userId) ?? 0),
+                    canonical.ungroupedByWorkspace
+                      .get(workspaceId)?.byUser.get(m.userId) ?? 0,
+                  ),
+          };
+        }),
+      };
+    });
       res.json(ListVisibleWorkspaceMembersResponse.parse({
         workspaceId,
         workspaceName: workspace.name,
@@ -158,14 +170,37 @@ router.get(
 async function validateWorkspaceMembers(
   workspaceId: string,
   userIds: readonly string[],
-): Promise<boolean> {
+): Promise<"valid" | "not_found" | "internal"> {
   const dir = await getDirectory();
-  return dir.workspaces.has(workspaceId) &&
-    userIds.every((userId) =>
+  if (
+    !dir.workspaces.has(workspaceId) ||
+    !userIds.every((userId) =>
       dir.members.get(userId)?.workspaces.has(workspaceId) === true
-    );
+    )
+  ) return "not_found";
+  return userIds.some((userId) => isInternalReplitMember(dir.members.get(userId)))
+    ? "internal"
+    : "valid";
 }
 
+async function rejectInvalidLimitTargets(
+  workspaceId: string,
+  userIds: readonly string[],
+  res: Response,
+): Promise<boolean> {
+  const validation = await validateWorkspaceMembers(workspaceId, userIds);
+  if (validation === "not_found") {
+    res.status(404).json({ error: "Workspace member not found" });
+    return true;
+  }
+  if (validation === "internal") {
+    res.status(403).json({
+      error: "Internal Replit members cannot be targeted by usage limits",
+    });
+    return true;
+  }
+  return false;
+}
 async function recordUsageLimitAudit(
   req: Parameters<typeof requireAuth>[0],
   workspaceId: string,
@@ -216,7 +251,7 @@ router.put(
   "/directory/workspaces/:workspaceId/members/budget",
   requireUserLimitWorkspace,
   async (req, res): Promise<void> => {
-    const parsed = BulkSetWorkspaceMemberBudgetsBody.safeParse(req.body);
+    const parsed = SetGroupMemberLimitPolicyBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.message });
       return;
@@ -224,11 +259,12 @@ router.put(
     const workspaceId = String(req.params["workspaceId"]);
     const userIds = [...new Set(parsed.data.userIds)];
     try {
-      if (!(await validateWorkspaceMembers(workspaceId, userIds))) {
-        res.status(404).json({ error: "Workspace member not found" });
-        return;
-      }
-      const outcomes = [];
+      if (await rejectInvalidLimitTargets(workspaceId, userIds, res)) return;
+      const outcomes = await setGroupMemberLimitPolicy({
+        workspaceId,
+        groupId,
+        amountUsd: parsed.data.amountUsd,
+      });
       for (const userId of userIds) {
         let outcome;
         try {
@@ -294,7 +330,7 @@ router.put(
   "/directory/workspaces/:workspaceId/members/:userId/budget",
   requireUserLimitWorkspace,
   async (req, res): Promise<void> => {
-    const parsed = SetWorkspaceMemberBudgetBody.safeParse(req.body);
+    const parsed = SetGroupMemberLimitPolicyBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.message });
       return;
@@ -302,10 +338,7 @@ router.put(
     const workspaceId = String(req.params["workspaceId"]);
     const userId = String(req.params["userId"]);
     try {
-      if (!(await validateWorkspaceMembers(workspaceId, [userId]))) {
-        res.status(404).json({ error: "Workspace member not found" });
-        return;
-      }
+      if (await rejectInvalidLimitTargets(workspaceId, [userId], res)) return;
       try {
         await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
         await markMemberLimitAsHandSet(workspaceId, userId);
@@ -350,10 +383,7 @@ router.delete(
     const workspaceId = String(req.params["workspaceId"]);
     const userId = String(req.params["userId"]);
     try {
-      if (!(await validateWorkspaceMembers(workspaceId, [userId]))) {
-        res.status(404).json({ error: "Workspace member not found" });
-        return;
-      }
+      if (await rejectInvalidLimitTargets(workspaceId, [userId], res)) return;
       try {
         await setReplitMemberBudget(workspaceId, userId, null);
         await markMemberLimitAsHandSet(workspaceId, userId);
@@ -411,7 +441,13 @@ router.get(
   async (req, res): Promise<void> => {
     const workspaceId = String(req.params["workspaceId"]);
     const dir = await getDirectory();
-    const workspace = dir.workspaces.get(workspaceId);
+
+    const workspaceIds = [...dir.workspaces.keys()];
+      const workspace = workspaceNodes.get(group.workspaceId) ?? {
+        workspaceId: group.workspaceId,
+        workspaceName: group.workspaceName,
+        teams: [],
+      };
     if (!workspace) {
       res.status(404).json({ error: "Workspace not found" });
       return;
@@ -461,22 +497,28 @@ router.put(
   "/directory/workspaces/:workspaceId/default-limit-policy",
   requireUserLimitWorkspace,
   async (req, res): Promise<void> => {
-    const parsed = SetWorkspaceDefaultLimitPolicyBody.safeParse(req.body);
+    const parsed = SetGroupMemberLimitPolicyBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.message });
       return;
     }
     const workspaceId = String(req.params["workspaceId"]);
     const dir = await getDirectory();
-    const workspace = dir.workspaces.get(workspaceId);
+
+    const workspaceIds = [...dir.workspaces.keys()];
+      const workspace = workspaceNodes.get(group.workspaceId) ?? {
+        workspaceId: group.workspaceId,
+        workspaceName: group.workspaceName,
+        teams: [],
+      };
     if (!workspace) {
       res.status(404).json({ error: "Workspace not found" });
       return;
     }
     try {
-      const outcomes = await setWorkspaceDefaultMemberLimitPolicy({
+      const outcomes = await setGroupMemberLimitPolicy({
         workspaceId,
-        displayName: workspace.name,
+        groupId,
         amountUsd: parsed.data.amountUsd,
       });
       res.json(SetWorkspaceDefaultLimitPolicyResponse.parse({
@@ -532,6 +574,8 @@ router.get(
   async (req, res): Promise<void> => {
     const workspaceId = String(req.params["workspaceId"]);
     const dir = await getDirectory();
+
+    const workspaceIds = [...dir.workspaces.keys()];
     if (!dir.workspaces.has(workspaceId)) {
       res.status(404).json({ error: "Workspace not found" });
       return;
@@ -553,6 +597,8 @@ router.get("/directory/groups", requireRole("account"), async (req, res): Promis
   }
   try {
     const dir = await getDirectory();
+
+    const workspaceIds = [...dir.workspaces.keys()];
     if (!dir) {
       res.status(503).json({ error: "Directory not yet available" });
       return;
@@ -657,15 +703,12 @@ router.get("/directory/groups", requireRole("account"), async (req, res): Promis
 router.get("/directory/members", requireRole("account"), async (req, res): Promise<void> => {
   try {
     const dir = await getDirectory();
-    if (!dir) {
-      res.status(503).json({ error: "Directory not yet available" });
-      return;
-    }
 
-    const usage = await readUsageSnapshot({
-      window: windowFromQuery(req.query as Record<string, unknown>).window,
-      workspaceIds: dir.workspaces.keys(),
-    });
+    const workspaceIds = [...dir.workspaces.keys()];
+      const usage = await readUsageSnapshot({
+        window: selection.window,
+        workspaceIds: [workspaceId],
+      });
     const members = [...dir.members.values()].map((m) => {
       return {
         userId: m.userId,
@@ -673,13 +716,26 @@ router.get("/directory/members", requireRole("account"), async (req, res): Promi
         name: m.name,
         email: m.email,
         isAccountAdmin: m.isAccountAdmin,
+        isInternal: m.isInternalReplitUser,
         workspaces: [...m.workspaces.entries()].map(([workspaceId, ws]) => {
           return {
             workspaceId,
             workspaceName: dir.workspaces.get(workspaceId)?.name ?? workspaceId,
             role: ws.role,
             isDisabled: ws.isDisabled,
-            spendUsd: usage.members.get(workspaceId)?.get(m.userId)?.totalCostUsd ?? 0,
+            spendLoaded,
+            spendUsd: m.isInternalReplitUser
+              ? 0
+              : dir.groups
+                  .filter((group) => group.workspaceId === workspaceId)
+                  .reduce(
+                    (sum, group) =>
+                      sum +
+                      (canonical.aiSpendByGroup.get(group.id)?.get(m.userId) ?? 0) +
+                      (canonical.nonAiSpendByGroup.get(group.id)?.get(m.userId) ?? 0),
+                    canonical.ungroupedByWorkspace
+                      .get(workspaceId)?.byUser.get(m.userId) ?? 0,
+                  ),
           };
         }),
       };
@@ -695,3 +751,21 @@ router.get("/directory/members", requireRole("account"), async (req, res): Promi
 });
 
 export default router;
+
+    const spendLoaded = canonical.isComplete;
+
+    const [usage, projectMetadata] = await Promise.all([
+      readUsageSnapshot({
+        window: windowFromQuery(req.query as Record<string, unknown>).window,
+        workspaceIds,
+      }),
+      readProjectMetadata(workspaceIds),
+    ]);
+
+    const canonical = computeSnapshotUsageRollup({
+      snapshot: usage,
+      groups: dir.groups,
+      membersByGroup: dir.groupMembers,
+      internalUserIds: dir.internalUserIds,
+      projectInfoByWorkspace: projectMetadata.byWorkspace,
+    });

@@ -32,8 +32,10 @@ import {
 import { GroupUserExport } from '@/components/group-user-export';
 import { useAuthContext } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
+import { InternalUserBadge } from '@/components/internal-user-badge';
 import {
   chunkMemberIds,
+  eligibleLimitMemberIds,
   failedBulkSelection,
   indexMemberBudgets,
   toggleDisplayedSelection,
@@ -56,6 +58,7 @@ interface MergedMember {
   allRoles: DirectoryRole[];
   spendUsd: number;
   spendLoaded: boolean;
+  isInternal: boolean;
 }
 
 interface ClusterProjectMetric {
@@ -169,6 +172,7 @@ export default function ClusterDetail() {
               name: m.name ?? null,
               role: subRole,
               allRoles: [subRole],
+              isInternal: m.isInternal,
               spendUsd: spend,
               spendLoaded,
             });
@@ -183,6 +187,7 @@ export default function ClusterDetail() {
                 : existing.role;
             if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
             existing.role = bestRole;
+            existing.isInternal ||= m.isInternal;
             existing.spendLoaded = existing.spendLoaded || spendLoaded;
             existing.spendUsd += spend;
           }
@@ -258,7 +263,7 @@ export default function ClusterDetail() {
       ? 'Checking Replit integration permissions…'
       : undefined;
   const displayedMemberIds = useMemo(
-    () => mergedMembers.map((member) => member.userId),
+    () => eligibleLimitMemberIds(mergedMembers),
     [mergedMembers],
   );
   const allDisplayedSelected =
@@ -550,7 +555,7 @@ export default function ClusterDetail() {
                               })
                             }
                             aria-label={`Select ${member.name || member.username || member.userId}`}
-                            disabled={!canEditLimits || bulkApplying}
+                            disabled={!canEditLimits || bulkApplying || member.isInternal}
                           />
                         </td>
                       )}
@@ -559,6 +564,7 @@ export default function ClusterDetail() {
                           <span className="text-sm font-medium">
                             {member.name || member.username || member.userId}
                           </span>
+                          {member.isInternal && <InternalUserBadge />}
                           <span className="text-xs text-muted-foreground">{member.email || '—'}</span>
                         </div>
                       </td>
@@ -597,8 +603,16 @@ export default function ClusterDetail() {
                             workspaceId={workspaceId}
                             userId={member.userId}
                             currentBudget={wsm?.budgetUsd ?? null}
-                             canWrite={canEditLimits && workspaceMembersData.connector.canWrite}
-                            disabledReason={editingDisabledReason}
+                             canWrite={
+                               !member.isInternal &&
+                               canEditLimits &&
+                               workspaceMembersData.connector.canWrite
+                             }
+                             disabledReason={
+                               member.isInternal
+                                 ? 'Internal Replit usage is excluded from locally managed limits'
+                                 : editingDisabledReason
+                             }
                           />
                         ) : (
                           <span className="text-muted-foreground text-sm">—</span>

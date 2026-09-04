@@ -13,6 +13,8 @@ export interface WorkspaceMemberBudget {
   /** @nullable */
   name: string | null;
   email: string;
+  /** Whether this is an internal Replit user */
+  isInternal: boolean;
   role: string;
   isDisabled: boolean;
   /**

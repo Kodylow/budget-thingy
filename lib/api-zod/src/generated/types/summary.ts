@@ -10,8 +10,14 @@ import type { UsageHealth } from './usageHealth';
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Workspace-aware member-deduped canonical rollup total for the caller's scope */
+  /** Eligible workspace-aware member-deduped canonical rollup total for the caller's scope */
   totalSpendUsd: number;
+  /** Gross spend before internal Replit user exclusions */
+  grossSpendUsd: number;
+  /** Internal Replit user spend excluded from accounting */
+  excludedInternalSpendUsd: number;
+  /** Eligible spend after internal exclusions; identical to totalSpendUsd */
+  eligibleSpendUsd: number;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
   /** Sum of remaining budget across budgeted groups with loaded spend */

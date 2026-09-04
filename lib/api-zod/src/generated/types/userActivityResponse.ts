@@ -10,5 +10,8 @@ import type { UserActivityEntry } from './userActivityEntry';
 
 export interface UserActivityResponse {
   usageHealth: UsageHealth;
+  grossSpendUsd: number;
+  excludedInternalSpendUsd: number;
+  eligibleSpendUsd: number;
   users: UserActivityEntry[];
 }

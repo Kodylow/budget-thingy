@@ -47,6 +47,7 @@ const GROUP: TestGroup = {
 let groups: TestGroup[] = [GROUP];
 let groupMembers = new Map<string, string[]>([[GROUP.id, ["u-1"]]]);
 let userLimits = new Map<string, Map<string, number>>();
+let members = new Map();
 
 vi.mock("./enterprise", async () => {
   const actual = await vi.importActual<typeof import("./enterprise")>("./enterprise");
@@ -67,13 +68,18 @@ vi.mock("./enterprise", async () => {
           });
         }
       }
-      const members = new Map();
       return {
         fetchedAt: Date.now(),
         groups,
         allGroups: groups,
         groupMembers,
         members,
+        internalUserIds: new Set(
+          [...members.values()]
+            .filter((member: any) =>
+              member.email?.trim().toLowerCase().endsWith("@repl.it"))
+            .map((member: any) => member.userId),
+        ),
         workspaces,
         account: actual.buildCanonicalAccountDirectory({
           workspaces,
@@ -243,6 +249,7 @@ beforeEach(async () => {
   groups = [GROUP];
   groupMembers = new Map([[GROUP.id, ["u-1"]]]);
   userLimits = new Map();
+  members = new Map();
   sendEmailMock.mockReset().mockResolvedValue({ ok: true });
   invalidateUsageSnapshotMemo();
 });
@@ -590,6 +597,37 @@ describe("checker Postgres snapshot cutover", () => {
 
     expect((await runCheck()).alerts).toEqual([]);
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("excludes internal Replit members from blocked-member alerts", async () => {
+    groupMembers = new Map([[GROUP.id, ["u-1", "internal"]]]);
+    members = new Map([
+      ["u-1", {
+        userId: "u-1", username: "customer", email: "customer@example.com",
+        name: null, isAccountAdmin: false, workspaces: new Map(),
+      }],
+      ["internal", {
+        userId: "internal", username: "employee", email: "  STAFF@REPL.IT ",
+        name: null, isAccountAdmin: false, workspaces: new Map(),
+      }],
+    ]);
+    userLimits = new Map([["ws-1", new Map([["u-1", 100], ["internal", 50]])]]);
+    await pglite.exec(`UPDATE group_budgets SET amount_usd = 10000`);
+    await insertCompleteUsage({
+      "ws-1": [
+        { userId: "u-1", spendUsd: 120 },
+        { userId: "internal", spendUsd: 500 },
+      ],
+    });
+
+    const result = await runCheck();
+    expect(result.alerts).toHaveLength(1);
+    expect(result.alerts[0]).toMatchObject({
+      alertType: "member_limit_reached",
+      blockedMemberCount: 1,
+      spendUsd: 120,
+      budgetUsd: 100,
+    });
   });
 
   it("dedupes member-limit alerts independently and retries failed delivery", async () => {

@@ -21,9 +21,22 @@ export interface EnterpriseMember {
   userId: string;
   username: string;
   email: string;
+  isInternalReplitUser: boolean;
   name: string | null;
   isAccountAdmin: boolean;
   workspaces: Map<string, { role: string; isDisabled: boolean }>;
+}
+
+/** Replit employees are never eligible for customer-managed usage limits. */
+export function isInternalReplitEmail(email: string | null | undefined): boolean {
+  return typeof email === "string" &&
+    email.trim().toLowerCase().endsWith("@repl.it");
+}
+
+export function isInternalReplitMember(
+  member: Pick<EnterpriseMember, "email"> | null | undefined,
+): boolean {
+  return isInternalReplitEmail(member?.email);
 }
 export type DirectoryRole = "admin" | "member" | "viewer" | "guest" | "unsuffixed";
 export interface CanonicalRoleGroup {

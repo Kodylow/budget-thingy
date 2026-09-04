@@ -14,5 +14,7 @@ export interface DirectoryMember {
   name: string | null;
   email: string;
   isAccountAdmin: boolean;
+  /** Whether this is an internal Replit user whose spend is excluded from eligible accounting */
+  isInternal: boolean;
   workspaces: DirectoryMemberWorkspace[];
 }

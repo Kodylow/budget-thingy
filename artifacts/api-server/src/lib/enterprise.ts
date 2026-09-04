@@ -16,6 +16,7 @@ import { logger } from "./logger";
 import {
   buildCanonicalAccountDirectory,
   isCustomGroup,
+  isInternalReplitEmail,
   LEGACY_WORKSPACE_ID,
   parseDirectoryGroupName,
   persistCanonicalFamilyFinancialRows,
@@ -28,6 +29,8 @@ import {
 export {
   buildCanonicalAccountDirectory,
   buildCanonicalEffectiveTeams,
+  isInternalReplitEmail,
+  isInternalReplitMember,
   isCustomGroup,
   LEGACY_WORKSPACE_ID,
   normalizeFamilyKey,
@@ -450,6 +453,7 @@ export interface DirectoryCache {
   allGroups: EnterpriseGroup[];
   groupMembers: Map<string, string[]>;
   members: Map<string, EnterpriseMember>;
+  internalUserIds: Set<string>;
   budgets: PlatformBudgets;
   account: CanonicalAccountDirectory;
 }
@@ -517,7 +521,12 @@ function deserializeDirectory(serialized: SerializedDirectory): DirectoryCache {
   const groupMembers = new Map(Object.entries(serialized.groupMembers));
   const members = new Map(Object.entries(serialized.members).map(([id, member]) => [
     id,
-    { ...member, isAccountAdmin: member.isAccountAdmin ?? false, workspaces: new Map(Object.entries(member.workspaces)) },
+    {
+      ...member,
+      isInternalReplitUser: isInternalReplitEmail(member.email),
+      isAccountAdmin: member.isAccountAdmin ?? false,
+      workspaces: new Map(Object.entries(member.workspaces)),
+    },
   ]));
   const budgets: PlatformBudgets = {
     groupLimits: new Map(Object.entries(serialized.budgets.groupLimits)
@@ -534,6 +543,11 @@ function deserializeDirectory(serialized: SerializedDirectory): DirectoryCache {
     allGroups,
     groupMembers,
     members,
+    internalUserIds: new Set(
+      [...members.values()]
+        .filter((member) => member.isInternalReplitUser)
+        .map((member) => member.userId),
+    ),
     budgets,
     account: buildCanonicalAccountDirectory({
       workspaces,
@@ -570,6 +584,7 @@ async function refreshDirectory(): Promise<DirectoryCache> {
           userId: raw.user.id,
           username: raw.user.username,
           email: raw.user.email,
+          isInternalReplitUser: isInternalReplitEmail(raw.user.email),
           name: [raw.user.firstName, raw.user.lastName].filter(Boolean).join(" ") || null,
           isAccountAdmin: parseIsAccountAdmin(raw),
           workspaces: new Map(raw.workspaces.map((workspace) => [
@@ -624,6 +639,11 @@ async function refreshDirectory(): Promise<DirectoryCache> {
         allGroups,
         groupMembers,
         members,
+        internalUserIds: new Set(
+          [...members.values()]
+            .filter((member) => member.isInternalReplitUser)
+            .map((member) => member.userId),
+        ),
         budgets,
         account,
       };
@@ -704,19 +724,33 @@ export function __setDirectoryCacheForTests(
   }
   const workspaces = fixture.workspaces ?? new Map();
   const groupMembers = fixture.groupMembers ?? new Map();
+  const members = new Map(
+    [...fixture.members].map(([userId, member]) => [
+      userId,
+      {
+        ...member,
+        isInternalReplitUser: isInternalReplitEmail(member.email),
+      },
+    ]),
+  );
   directoryCache = {
     fetchedAt: fixture.fetchedAt ?? Date.now(),
     workspaces,
     groups: fixture.groups,
     allGroups: fixture.groups,
     groupMembers,
-    members: fixture.members,
+    members,
+    internalUserIds: new Set(
+      [...members.values()]
+        .filter((member) => member.isInternalReplitUser)
+        .map((member) => member.userId),
+    ),
     budgets: { groupLimits: new Map(), userLimits: new Map(), workspaceDefaults: new Map() },
     account: buildCanonicalAccountDirectory({
       workspaces,
       groups: fixture.groups,
       groupMembers,
-      members: fixture.members,
+      members,
       mappings: fixture.mappings,
     }),
   };

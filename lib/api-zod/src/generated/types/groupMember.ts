@@ -27,6 +27,8 @@ export interface GroupMember {
      * @nullable
      */
   isDisabled?: boolean | null;
+  /** Whether this is an internal Replit user whose spend is excluded */
+  isInternal: boolean;
   /**
      * Not used; always null (budgets are tracked at team level from the spreadsheet)
      * @nullable
@@ -37,7 +39,7 @@ export interface GroupMember {
      * @nullable
      */
   budgetSource?: string | null;
-  /** Canonical total of member-grouped AI plus creator-attributed project non-AI for this group */
+  /** Eligible spend after internal Replit user exclusions */
   spendUsd: number;
   /** Deduplicated member-grouped AI spend for this user in the group */
   aiSpendUsd: number;

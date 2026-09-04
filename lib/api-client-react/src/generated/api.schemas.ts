@@ -186,7 +186,7 @@ export interface Group {
   memberCount?: number | null;
   /** Unique members attributed to this group for team and org rollups */
   rollupMemberCount: number;
-  /** Raw per-group spend represented by the stored usage snapshot */
+  /** Eligible per-group spend after internal Replit user exclusions */
   spendUsd: number;
   spendLoaded: boolean;
   /** Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend */
@@ -275,6 +275,20 @@ export interface GroupFamilyHierarchy {
   /** Canonical role groups in server-defined role order. */
   groups: Group[];
 }
+
+export interface GroupTeamHierarchy {
+  /** @nullable */
+  teamName: string | null;
+  families: GroupFamilyHierarchy[];
+}
+
+export interface GroupWorkspaceHierarchy {
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  teams: GroupTeamHierarchy[];
+}
+
 export type UsageHealthStatus = typeof UsageHealthStatus[keyof typeof UsageHealthStatus];
 
 
@@ -325,6 +339,12 @@ export interface GroupsResponse {
   groups: Group[];
   /** Server-owned ordered workspace, team, and canonical family hierarchy. */
   hierarchy: GroupWorkspaceHierarchy[];
+  /** Gross scoped spend before internal Replit user exclusions */
+  grossSpendUsd: number;
+  /** Internal Replit user spend excluded from scoped accounting */
+  excludedInternalSpendUsd: number;
+  /** Eligible scoped spend after internal exclusions */
+  eligibleSpendUsd: number;
   usageHealth: UsageHealth;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
@@ -366,6 +386,12 @@ export interface TrendsResponse {
   bucketRanges: TrendBucketRange[];
   /** Canonical scoped spend for each bucket */
   totals: number[];
+  /** Gross spend before internal Replit user exclusions for each bucket */
+  grossSpendUsd: number[];
+  /** Internal Replit user spend excluded from accounting for each bucket */
+  excludedInternalSpendUsd: number[];
+  /** Eligible spend after internal exclusions for each bucket; identical to totals */
+  eligibleSpendUsd: number[];
   series: TrendSeries[];
   usageHealth: UsageHealth;
 }
@@ -401,6 +427,8 @@ export interface GroupMember {
      * @nullable
      */
   isDisabled?: boolean | null;
+  /** Whether this is an internal Replit user whose spend is excluded */
+  isInternal: boolean;
   /**
      * Not used; always null (budgets are tracked at team level from the spreadsheet)
      * @nullable
@@ -411,7 +439,7 @@ export interface GroupMember {
      * @nullable
      */
   budgetSource?: string | null;
-  /** Canonical total of member-grouped AI plus creator-attributed project non-AI for this group */
+  /** Eligible spend after internal Replit user exclusions */
   spendUsd: number;
   /** Deduplicated member-grouped AI spend for this user in the group */
   aiSpendUsd: number;
@@ -486,9 +514,11 @@ export interface UserActivityEntry {
   userId: string;
   username: string;
   email: string;
+  /** Whether this is an internal Replit user whose spend is excluded */
+  isInternal: boolean;
   teamName: string;
   groupName: string;
-  /** Canonical member AI plus creator-attributed project non-AI for the selected range */
+  /** Eligible spend after internal Replit user exclusions */
   spendUsd: number;
   /** Deduplicated member-grouped AI spend */
   aiSpendUsd: number;
@@ -499,14 +529,23 @@ export interface UserActivityEntry {
 
 export interface UserActivityResponse {
   usageHealth: UsageHealth;
+  grossSpendUsd: number;
+  excludedInternalSpendUsd: number;
+  eligibleSpendUsd: number;
   users: UserActivityEntry[];
 }
 
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
-  /** Workspace-aware member-deduped canonical rollup total for the caller's scope */
+  /** Eligible workspace-aware member-deduped canonical rollup total for the caller's scope */
   totalSpendUsd: number;
+  /** Gross spend before internal Replit user exclusions */
+  grossSpendUsd: number;
+  /** Internal Replit user spend excluded from accounting */
+  excludedInternalSpendUsd: number;
+  /** Eligible spend after internal exclusions; identical to totalSpendUsd */
+  eligibleSpendUsd: number;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
   /** Sum of remaining budget across budgeted groups with loaded spend */
@@ -585,6 +624,8 @@ export interface WorkspaceMemberBudget {
   /** @nullable */
   name: string | null;
   email: string;
+  /** Whether this is an internal Replit user */
+  isInternal: boolean;
   role: string;
   isDisabled: boolean;
   /**
@@ -1145,7 +1186,9 @@ export interface DirectoryMemberWorkspace {
   workspaceName: string;
   role: string;
   isDisabled: boolean;
-  /** Member's spend in this workspace for the selected range; 0 when no data is loaded yet */
+  /** Whether usage for the selected range is complete enough to present */
+  spendLoaded: boolean;
+  /** Eligible member spend in this workspace for the selected range; internal Replit usage is zero */
   spendUsd: number;
   /** Comcast spend folded into this workspace for the selected member and range */
   reAttributedSpendUsd?: number;
@@ -1158,6 +1201,8 @@ export interface DirectoryMember {
   name: string | null;
   email: string;
   isAccountAdmin: boolean;
+  /** Whether this is an internal Replit user whose spend is excluded from eligible accounting */
+  isInternal: boolean;
   workspaces: DirectoryMemberWorkspace[];
 }
 
@@ -1181,6 +1226,24 @@ export interface DirectoryFamilyHierarchy {
   /** Canonical role groups in server-defined role order. */
   groups: DirectoryGroup[];
 }
+
+export interface DirectoryTeamHierarchy {
+  /** @nullable */
+  teamName: string | null;
+  families: DirectoryFamilyHierarchy[];
+}
+
+export interface DirectoryWorkspaceHierarchy {
+  workspaceId: string;
+  workspaceName: string;
+  teams: DirectoryTeamHierarchy[];
+}
+
+export interface DirectoryGroupsResponse {
+  /** Server-owned ordered workspace, team, and canonical family hierarchy. */
+  workspaces: DirectoryWorkspaceHierarchy[];
+}
+
 export interface GroupAdminsItem {
   groupId: string;
   groupName: string;
@@ -1713,33 +1776,3 @@ export type ListRecentUsageIngestRunsParams = {
 limit?: number;
 };
 
-
-export interface DirectoryGroupsResponse {
-  /** Server-owned ordered workspace, team, and canonical family hierarchy. */
-  workspaces: DirectoryWorkspaceHierarchy[];
-}
-
-export interface GroupTeamHierarchy {
-  /** @nullable */
-  teamName: string | null;
-  families: GroupFamilyHierarchy[];
-}
-
-export interface DirectoryTeamHierarchy {
-  /** @nullable */
-  teamName: string | null;
-  families: DirectoryFamilyHierarchy[];
-}
-
-export interface DirectoryWorkspaceHierarchy {
-  workspaceId: string;
-  workspaceName: string;
-  teams: DirectoryTeamHierarchy[];
-}
-
-export interface GroupWorkspaceHierarchy {
-  workspaceId: string;
-  /** @nullable */
-  workspaceName: string | null;
-  teams: GroupTeamHierarchy[];
-}

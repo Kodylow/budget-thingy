@@ -11,7 +11,9 @@ export interface DirectoryMemberWorkspace {
   workspaceName: string;
   role: string;
   isDisabled: boolean;
-  /** Member's spend in this workspace for the selected range; 0 when no data is loaded yet */
+  /** Whether usage for the selected range is complete enough to present */
+  spendLoaded: boolean;
+  /** Eligible member spend in this workspace for the selected range; internal Replit usage is zero */
   spendUsd: number;
   /** Comcast spend folded into this workspace for the selected member and range */
   reAttributedSpendUsd?: number;

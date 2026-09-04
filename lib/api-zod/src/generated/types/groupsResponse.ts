@@ -16,6 +16,12 @@ export interface GroupsResponse {
   groups: Group[];
   /** Server-owned ordered workspace, team, and canonical family hierarchy. */
   hierarchy: GroupWorkspaceHierarchy[];
+  /** Gross scoped spend before internal Replit user exclusions */
+  grossSpendUsd: number;
+  /** Internal Replit user spend excluded from scoped accounting */
+  excludedInternalSpendUsd: number;
+  /** Eligible scoped spend after internal exclusions */
+  eligibleSpendUsd: number;
   usageHealth: UsageHealth;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;

@@ -3,6 +3,7 @@ import { test, expect } from "vitest";
 
 import {
   chunkMemberIds,
+  eligibleLimitMemberIds,
   failedBulkSelection,
   indexMemberBudgets,
   toggleDisplayedSelection,
@@ -69,4 +70,12 @@ test('large select-all updates are split into bounded API batches', () => {
   const chunks = chunkMemberIds(ids);
   expect(chunks.map((chunk) => chunk.length)).toEqual([100, 100, 5]);
   expect(chunks.flat()).toEqual(ids);
+});
+
+test('internal Replit members are never eligible for bulk limit targeting', () => {
+  expect(eligibleLimitMemberIds([
+    { userId: 'customer', isInternal: false },
+    { userId: 'employee', isInternal: true },
+    { userId: 'missing-marker' },
+  ])).toEqual(['customer', 'missing-marker']);
 });

@@ -33,6 +33,7 @@ router.get("/projects/export", async (req, res): Promise<void> => {
       snapshot,
       groups,
       membersByGroup: scopedMembers,
+      internalUserIds: dir.internalUserIds,
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     });
 
@@ -101,6 +102,7 @@ router.get("/projects/export", async (req, res): Promise<void> => {
       storageUsd: number;
       otherUsd: number;
       creatorIsCurrentMember: boolean;
+      creatorIsInternal: boolean;
       attributedGroup: string;
       attributedNonAiUsd: number;
       unattributedNonAiUsd: number;
@@ -162,6 +164,7 @@ router.get("/projects/export", async (req, res): Promise<void> => {
         storageUsd,
         otherUsd,
         creatorIsCurrentMember,
+        creatorIsInternal: member?.isInternalReplitUser ?? false,
         attributedGroup,
         attributedNonAiUsd,
         unattributedNonAiUsd,
@@ -181,16 +184,17 @@ router.get("/projects/export", async (req, res): Promise<void> => {
       "Owner Name",
       "Owner Username",
       "Creator Is Current Member",
+      "Internal Replit Creator",
       "Attributed Group",
       "Team(s)",
       "Group(s)",
-      "AI ($)",
-      "Hosting ($)",
-      "Storage ($)",
-      "Other ($)",
+      "Gross AI ($)",
+      "Gross Hosting ($)",
+      "Gross Storage ($)",
+      "Gross Other ($)",
       "Attributed Non-AI ($)",
       "Unattributed Non-AI Residual ($)",
-      "Total ($)",
+      "Gross Total ($)",
     ];
 
     const lines: string[] = [header.map(escapeCsvCell).join(",")];
@@ -203,6 +207,7 @@ router.get("/projects/export", async (req, res): Promise<void> => {
           escapeCsvCell(r.ownerName),
           escapeCsvCell(r.ownerUsername),
           escapeCsvCell(r.creatorIsCurrentMember ? "Yes" : "No"),
+          escapeCsvCell(r.creatorIsInternal ? "Yes" : "No"),
           escapeCsvCell(r.attributedGroup),
           escapeCsvCell(r.teams),
           escapeCsvCell(r.groups),

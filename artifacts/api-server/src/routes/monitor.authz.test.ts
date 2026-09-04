@@ -1,6 +1,6 @@
 // @ts-nocheck
 import express from "express";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray, like } from "drizzle-orm";
 import {
   alertsTable,
@@ -31,6 +31,7 @@ const GL = `${PREFIX}legacygrowthmembers`;
 const PM = `${PREFIX}platformmembers`;
 const TEAM = `${PREFIX} Growth MDU`;
 const WRITE_USER = "217123";
+const INTERNAL_USER = "internal-user";
 const TODAY = new Date().toISOString().slice(0, 10);
 const upstreamMemberBudgets = new Map<string, number>();
 
@@ -67,6 +68,10 @@ function installDefaultDirectory() {
       ["other", member("other", { [GROWTH]: active })],
       ["platform", member("platform", { [PLATFORM]: active })],
       [WRITE_USER, member(WRITE_USER, { [GROWTH]: active })],
+      [INTERNAL_USER, {
+        ...member(INTERNAL_USER, { [GROWTH]: active }),
+        email: "  Employee@REPL.IT ",
+      }],
     ]),
     groupMembers: new Map([
       [GM, ["workspace", "team", "both", "member", "other", WRITE_USER]],
@@ -172,6 +177,28 @@ const fixtureResolver = async (id: string) =>
 
 let server;
 let baseUrl: string;
+const budgetTransportMock = vi.fn(async (_path, init) => {
+  if (init.method === "GET") {
+    return Response.json({
+      data: [...upstreamMemberBudgets].map(([userId, amountUsd]) => ({
+        type: "workspace_user_limit",
+        workspaceId: GROWTH,
+        userId,
+        currency: "USD",
+        period: "billing_cycle",
+        amountUsd,
+      })),
+      pagination: { hasMore: false },
+    });
+  }
+  const body = JSON.parse(init.body ?? "{}");
+  if (body.amountUsd == null) {
+    upstreamMemberBudgets.delete(body.userId);
+  } else {
+    upstreamMemberBudgets.set(body.userId, body.amountUsd);
+  }
+  return Response.json({ data: body.amountUsd == null ? null : body });
+});
 
 async function request(path: string, fixture, init: RequestInit = {}) {
   return fetch(`${baseUrl}/api${path}`, {
@@ -188,28 +215,7 @@ beforeAll(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test";
   installDefaultDirectory();
   setAuthorizationResolver(fixtureResolver);
-  setReplitBudgetTransportForTests(async (_path, init) => {
-    if (init.method === "GET") {
-      return Response.json({
-        data: [...upstreamMemberBudgets].map(([userId, amountUsd]) => ({
-          type: "workspace_user_limit",
-          workspaceId: GROWTH,
-          userId,
-          currency: "USD",
-          period: "billing_cycle",
-          amountUsd,
-        })),
-        pagination: { hasMore: false },
-      });
-    }
-    const body = JSON.parse(init.body ?? "{}");
-    if (body.amountUsd == null) {
-      upstreamMemberBudgets.delete(body.userId);
-    } else {
-      upstreamMemberBudgets.set(body.userId, body.amountUsd);
-    }
-    return Response.json({ data: body.amountUsd == null ? null : body });
-  }, true);
+  setReplitBudgetTransportForTests(budgetTransportMock, true);
 
   await db.delete(alertsTable).where(like(alertsTable.groupId, `${PREFIX}%`));
   await db.delete(teamLimitTargetsTable).where(like(teamLimitTargetsTable.groupId, `${PREFIX}%`));
@@ -315,12 +321,23 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
       .map((team) => team.teamName)
       .filter((name) => name.startsWith(PREFIX))).toEqual(fixture.teams);
     const activity = await (await request("/users/activity", fixture)).json();
-    expect(activity.users.map((user) => user.userId).sort()).toEqual([...fixture.users].sort());
+    const hasGrowthWorkspaceScope = ["workspace", "both"].includes(fixture.id);
+    const expectedActivityUsers = fixture.id === "account"
+      ? [...fixture.users, INTERNAL_USER]
+      : fixture.users;
+    expect(activity.users.map((user) => user.userId).sort())
+      .toEqual([...expectedActivityUsers].sort());
     const expectedSpend = fixture.users.reduce((sum, id) => sum + spendByUser.get(id), 0);
+    const expectedCanonicalSpend = fixture.id === "account"
+      ? 40
+      : hasGrowthWorkspaceScope
+        ? 20
+        : expectedSpend;
     const summary = await (await request("/summary", fixture)).json();
-    expect(summary.totalSpendUsd).toBe(fixture.id === "account" ? 40 : expectedSpend);
+    expect(summary.totalSpendUsd).toBe(expectedCanonicalSpend);
     const trends = await (await request("/trends?granularity=week", fixture)).json();
-    expect(trends.totals.reduce((sum, amount) => sum + amount, 0)).toBe(expectedSpend);
+    expect(trends.totals.reduce((sum, amount) => sum + amount, 0))
+      .toBe(expectedSpend);
     const alerts = await (await request("/alerts", fixture)).json();
     const entities = alerts
       .filter((alert) => alert.entityId.startsWith(PREFIX))
@@ -366,6 +383,39 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
       .filter((group) => !group.isSynthetic)
       .map((group) => group.groupId).sort()).toEqual([...fixture.groups].sort());
   });
+});
+
+it("rejects individual and bulk usage-limit targeting of internal members", async () => {
+  const fixture = fixtures[0]!;
+  budgetTransportMock.mockClear();
+
+  const individual = await request(
+    `/directory/workspaces/${GROWTH}/members/${INTERNAL_USER}/budget`,
+    fixture,
+    { method: "PUT", body: JSON.stringify({ amountUsd: 12 }) },
+  );
+  expect(individual.status).toBe(403);
+  expect(await individual.json()).toEqual({
+    error: "Internal Replit members cannot be targeted by usage limits",
+  });
+
+  const bulk = await request(
+    `/directory/workspaces/${GROWTH}/members/budget`,
+    fixture,
+    {
+      method: "PUT",
+      body: JSON.stringify({ userIds: ["member", INTERNAL_USER], amountUsd: 12 }),
+    },
+  );
+  expect(bulk.status).toBe(403);
+
+  const clear = await request(
+    `/directory/workspaces/${GROWTH}/members/${INTERNAL_USER}/budget`,
+    fixture,
+    { method: "DELETE" },
+  );
+  expect(clear.status).toBe(403);
+  expect(budgetTransportMock).not.toHaveBeenCalled();
 });
 
 function percentile(samples: number[], quantile: number): number {
@@ -715,5 +765,5 @@ it("hides independent and spanning same-team alerts on the mounted history route
 function dirMemberIdsForWorkspace(workspaceId: string): string[] {
   return workspaceId === PLATFORM
     ? ["platform"]
-    : ["workspace", "team", "both", "member", "other", WRITE_USER];
+    : ["workspace", "team", "both", "member", "other", WRITE_USER, INTERNAL_USER];
 }

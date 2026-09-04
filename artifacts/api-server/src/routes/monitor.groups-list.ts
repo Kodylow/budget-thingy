@@ -101,6 +101,10 @@ router.get("/groups", async (req, res): Promise<void> => {
       };
     });
     for (const [workspaceId, ungrouped] of usage.rollup.ungroupedByWorkspace) {
+      if (
+        !isAccountWide(req.authz!) &&
+        !req.authz!.workspaceIds.includes(workspaceId)
+      ) continue;
       groups.push({
         groupId: `synthetic:no-group:${workspaceId}`, workspaceId,
         workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
@@ -238,6 +242,45 @@ router.get("/groups", async (req, res): Promise<void> => {
     const workspaceTeamRawSpend = [...workspaceTeamSpend.values()].sort((a, b) =>
       a.workspaceId.localeCompare(b.workspaceId) || a.teamName.localeCompare(b.teamName)
     );
+    const fullyVisibleWorkspaceIds = new Set(req.authz!.workspaceIds);
+    const accountedGroupIds = new Set(displayGroups
+      .flatMap((group) => mergePlan.mergeMap.get(group.id) ?? [group.id])
+      .filter((groupId) => {
+        const group = usage.groups.find((candidate) => candidate.id === groupId);
+        return group && !fullyVisibleWorkspaceIds.has(group.workspaceId);
+      }));
+    const scopedEligibleSpendUsd =
+      [...fullyVisibleWorkspaceIds].reduce(
+        (sum, workspaceId) =>
+          sum + (usage.rollup.byWorkspace.get(workspaceId) ?? 0),
+        0,
+      ) +
+      [...accountedGroupIds].reduce(
+        (sum, groupId) =>
+          sum + (usage.rollup.byGroup.get(groupId)?.spendUsd ?? 0),
+        0,
+      );
+    const scopedExcludedInternalSpendUsd =
+      [...fullyVisibleWorkspaceIds].reduce(
+        (sum, workspaceId) =>
+          sum +
+          (usage.rollup.excludedInternalSpendByWorkspace.get(workspaceId) ?? 0),
+        0,
+      ) +
+      [...accountedGroupIds].reduce(
+        (sum, groupId) =>
+          sum + (usage.rollup.excludedInternalSpendByGroup.get(groupId) ?? 0),
+        0,
+      );
+    const eligibleSpendUsd = isAccountWide(req.authz!)
+      ? usage.rollup.eligibleSpendUsd
+      : scopedEligibleSpendUsd;
+    const excludedInternalSpendUsd = isAccountWide(req.authz!)
+      ? usage.rollup.excludedInternalSpendUsd
+      : scopedExcludedInternalSpendUsd;
+    const grossSpendUsd = isAccountWide(req.authz!)
+      ? usage.rollup.grossSpendUsd
+      : eligibleSpendUsd + excludedInternalSpendUsd;
     res.json(ListGroupsResponse.parse({
       groups, hierarchy, isComplete: complete, syncStatus: usage.snapshot.status,
       syncError: null, pendingCount: usage.rollup.pendingCount,
@@ -247,6 +290,9 @@ router.get("/groups", async (req, res): Promise<void> => {
       projectSyncError: null, projectPendingCount: usage.rollup.projectAttribution.pendingCount,
       projectFailedCount: 0, projectPartialCount: usage.rollup.projectAttribution.pendingCount,
       billingPeriodLabel: usage.selection.label,
+      grossSpendUsd,
+      excludedInternalSpendUsd,
+      eligibleSpendUsd,
       projectSpendLoaded: usage.rollup.projectAttribution.isComplete,
       unattributedProjectSpendUsd: usage.rollup.projectAttribution.unattributedSpendUsd,
       teamRawSpend, workspaceTeamRawSpend,

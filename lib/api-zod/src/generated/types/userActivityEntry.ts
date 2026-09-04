@@ -10,9 +10,11 @@ export interface UserActivityEntry {
   userId: string;
   username: string;
   email: string;
+  /** Whether this is an internal Replit user whose spend is excluded */
+  isInternal: boolean;
   teamName: string;
   groupName: string;
-  /** Canonical member AI plus creator-attributed project non-AI for the selected range */
+  /** Eligible spend after internal Replit user exclusions */
   spendUsd: number;
   /** Deduplicated member-grouped AI spend */
   aiSpendUsd: number;

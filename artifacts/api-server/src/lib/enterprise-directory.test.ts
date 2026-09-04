@@ -12,6 +12,7 @@ import {
   __setDirectoryCacheForTests,
   buildCanonicalAccountDirectory,
   buildCanonicalEffectiveTeams,
+  isInternalReplitEmail,
   persistCanonicalFamilyFinancialRows,
   parseDirectoryGroupName,
   type EnterpriseMember,
@@ -23,6 +24,12 @@ import {
 } from "./authz";
 
 describe("canonical enterprise directory", () => {
+  it("normalizes internal Replit email classification", () => {
+    expect(isInternalReplitEmail("  Person@REPL.IT ")).toBe(true);
+    expect(isInternalReplitEmail("person@replit.com")).toBe(false);
+    expect(isInternalReplitEmail("person@repl.it.example")).toBe(false);
+  });
+
   it("parses every supported role and unsuffixed families", () => {
     expect(parseDirectoryGroupName("AZ-Replit - Finance - Admin")).toMatchObject({
       familyKey: "finance", familyName: "Finance", role: "admin",
@@ -431,6 +438,7 @@ describe("canonical team-admin scope", () => {
       userId: "admin",
       username: "admin",
       email: "admin@example.com",
+      isInternalReplitUser: false,
       name: null,
       isAccountAdmin: true,
       workspaces: new Map([["current", { role: "admin", isDisabled: false }]]),
@@ -472,6 +480,7 @@ describe("canonical team-admin scope", () => {
       userId: "family-admin",
       username: "family-admin",
       email: "family-admin@example.com",
+      isInternalReplitUser: false,
       name: null,
       isAccountAdmin: false,
       workspaces: new Map([["one", { role: "member", isDisabled: false }]]),

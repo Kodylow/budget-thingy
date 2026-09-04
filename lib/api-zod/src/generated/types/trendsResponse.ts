@@ -15,6 +15,12 @@ export interface TrendsResponse {
   bucketRanges: TrendBucketRange[];
   /** Canonical scoped spend for each bucket */
   totals: number[];
+  /** Gross spend before internal Replit user exclusions for each bucket */
+  grossSpendUsd: number[];
+  /** Internal Replit user spend excluded from accounting for each bucket */
+  excludedInternalSpendUsd: number[];
+  /** Eligible spend after internal exclusions for each bucket; identical to totals */
+  eligibleSpendUsd: number[];
   series: TrendSeries[];
   usageHealth: UsageHealth;
 }

@@ -484,7 +484,9 @@ paths:
       summary: Export canonical per-user activity as CSV
       description: >
         Exports the unique members of the explicitly requested visible groups,
-        with separate AI, hosting/non-AI, and total spend columns.
+        with an internal-user marker and separate eligible AI,
+        hosting/non-AI, and total spend columns. Eligible spend excludes
+        internal Replit users.
       parameters:
         - name: groupIds
           in: query
@@ -2119,7 +2121,7 @@ components:
           description: Unique members attributed to this group for team and org rollups
         spendUsd:
           type: number
-          description: Raw per-group spend represented by the stored usage snapshot
+          description: Eligible per-group spend after internal Replit user exclusions
         spendLoaded:
           type: boolean
         paceSpendUsd:
@@ -2178,7 +2180,7 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, hierarchy, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, workspaceTeamRawSpend, teamBudgets]
+      required: [groups, hierarchy, grossSpendUsd, excludedInternalSpendUsd, eligibleSpendUsd, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, workspaceTeamRawSpend, teamBudgets]
       properties:
         groups:
           type: array
@@ -2189,6 +2191,15 @@ components:
           description: Server-owned ordered workspace, team, and canonical family hierarchy.
           items:
             $ref: "#/components/schemas/GroupWorkspaceHierarchy"
+        grossSpendUsd:
+          type: number
+          description: Gross scoped spend before internal Replit user exclusions
+        excludedInternalSpendUsd:
+          type: number
+          description: Internal Replit user spend excluded from scoped accounting
+        eligibleSpendUsd:
+          type: number
+          description: Eligible scoped spend after internal exclusions
         usageHealth:
           $ref: "#/components/schemas/UsageHealth"
         billingPeriodLabel:
@@ -2298,7 +2309,7 @@ components:
           description: True only for an open bucket containing the current UTC day
     TrendsResponse:
       type: object
-      required: [buckets, bucketRanges, totals, series, usageHealth]
+      required: [buckets, bucketRanges, totals, grossSpendUsd, excludedInternalSpendUsd, eligibleSpendUsd, series, usageHealth]
       properties:
         buckets:
           type: array
@@ -2314,6 +2325,21 @@ components:
           items:
             type: number
           description: Canonical scoped spend for each bucket
+        grossSpendUsd:
+          type: array
+          items:
+            type: number
+          description: Gross spend before internal Replit user exclusions for each bucket
+        excludedInternalSpendUsd:
+          type: array
+          items:
+            type: number
+          description: Internal Replit user spend excluded from accounting for each bucket
+        eligibleSpendUsd:
+          type: array
+          items:
+            type: number
+          description: Eligible spend after internal exclusions for each bucket; identical to totals
         series:
           type: array
           items:
@@ -2339,7 +2365,7 @@ components:
           $ref: "#/components/schemas/UsageHealth"
     GroupMember:
       type: object
-      required: [userId, spendUsd, aiSpendUsd, nonAiSpendUsd]
+      required: [userId, isInternal, spendUsd, aiSpendUsd, nonAiSpendUsd]
       properties:
         userId:
           type: string
@@ -2356,6 +2382,9 @@ components:
         isDisabled:
           type: ["boolean", "null"]
           description: Whether the member's workspace access is disabled
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user whose spend is excluded
         allocatedBudgetUsd:
           type: ["number", "null"]
           description: Not used; always null (budgets are tracked at team level from the spreadsheet)
@@ -2364,7 +2393,7 @@ components:
           description: Not used; always null
         spendUsd:
           type: number
-          description: Canonical total of member-grouped AI plus creator-attributed project non-AI for this group
+          description: Eligible spend after internal Replit user exclusions
         aiSpendUsd:
           type: number
           description: Deduplicated member-grouped AI spend for this user in the group
@@ -2460,7 +2489,7 @@ components:
           type: string
     UserActivityEntry:
       type: object
-      required: [userId, username, email, teamName, groupName, spendUsd, aiSpendUsd, nonAiSpendUsd, workspaceRole]
+      required: [userId, username, email, isInternal, teamName, groupName, spendUsd, aiSpendUsd, nonAiSpendUsd, workspaceRole]
       properties:
         userId:
           type: string
@@ -2468,13 +2497,16 @@ components:
           type: string
         email:
           type: string
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user whose spend is excluded
         teamName:
           type: string
         groupName:
           type: string
         spendUsd:
           type: number
-          description: Canonical member AI plus creator-attributed project non-AI for the selected range
+          description: Eligible spend after internal Replit user exclusions
         aiSpendUsd:
           type: number
           description: Deduplicated member-grouped AI spend
@@ -2485,10 +2517,16 @@ components:
           type: string
     UserActivityResponse:
       type: object
-      required: [usageHealth, users]
+      required: [usageHealth, grossSpendUsd, excludedInternalSpendUsd, eligibleSpendUsd, users]
       properties:
         usageHealth:
           $ref: "#/components/schemas/UsageHealth"
+        grossSpendUsd:
+          type: number
+        excludedInternalSpendUsd:
+          type: number
+        eligibleSpendUsd:
+          type: number
         users:
           type: array
           items:
@@ -2500,6 +2538,9 @@ components:
           totalGroups,
           budgetedGroups,
           totalSpendUsd,
+          grossSpendUsd,
+          excludedInternalSpendUsd,
+          eligibleSpendUsd,
           totalBudgetUsd,
           groupsOver50,
           groupsOver75,
@@ -2523,7 +2564,16 @@ components:
           type: integer
         totalSpendUsd:
           type: number
-          description: Workspace-aware member-deduped canonical rollup total for the caller's scope
+          description: Eligible workspace-aware member-deduped canonical rollup total for the caller's scope
+        grossSpendUsd:
+          type: number
+          description: Gross spend before internal Replit user exclusions
+        excludedInternalSpendUsd:
+          type: number
+          description: Internal Replit user spend excluded from accounting
+        eligibleSpendUsd:
+          type: number
+          description: Eligible spend after internal exclusions; identical to totalSpendUsd
         totalBudgetUsd:
           type: number
           description: Sum of all effective group budgets (app or platform)
@@ -2669,7 +2719,7 @@ components:
           type: [string, "null"]
     WorkspaceMemberBudget:
       type: object
-      required: [userId, username, name, email, role, isDisabled, budgetUsd, usageUsd, remainingUsd, percentUsed, blocked, effectiveBaselineUsd, baselineSourceType, baselineSourceId, isHandSetOverride]
+      required: [userId, username, name, email, isInternal, role, isDisabled, budgetUsd, usageUsd, remainingUsd, percentUsed, blocked, effectiveBaselineUsd, baselineSourceType, baselineSourceId, isHandSetOverride]
       properties:
         userId:
           type: string
@@ -2679,6 +2729,9 @@ components:
           type: [string, "null"]
         email:
           type: string
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user
         role:
           type: string
         isDisabled:
@@ -3280,7 +3333,7 @@ components:
           type: ["string", "null"]
     DirectoryMemberWorkspace:
       type: object
-      required: [workspaceId, workspaceName, role, isDisabled, spendUsd]
+      required: [workspaceId, workspaceName, role, isDisabled, spendLoaded, spendUsd]
       properties:
         workspaceId:
           type: string
@@ -3290,15 +3343,18 @@ components:
           type: string
         isDisabled:
           type: boolean
+        spendLoaded:
+          type: boolean
+          description: Whether usage for the selected range is complete enough to present
         spendUsd:
           type: number
-          description: Member's spend in this workspace for the selected range; 0 when no data is loaded yet
+          description: Eligible member spend in this workspace for the selected range; internal Replit usage is zero
         reAttributedSpendUsd:
           type: number
           description: Comcast spend folded into this workspace for the selected member and range
     DirectoryMember:
       type: object
-      required: [userId, username, name, email, isAccountAdmin, workspaces]
+      required: [userId, username, name, email, isAccountAdmin, isInternal, workspaces]
       properties:
         userId:
           type: string
@@ -3310,6 +3366,9 @@ components:
           type: string
         isAccountAdmin:
           type: boolean
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user whose spend is excluded from eligible accounting
         workspaces:
           type: array
           items:

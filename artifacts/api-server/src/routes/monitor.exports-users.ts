@@ -71,6 +71,7 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
   const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
   const canonical = computeSnapshotUsageRollup({
     snapshot, groups: visible, membersByGroup: scopedMembers,
+    internalUserIds: dir.internalUserIds,
     projectInfoByWorkspace: projectMetadata.byWorkspace,
   });
 
@@ -89,7 +90,7 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
     scopedMembers,
     teamNameMap,
   );
-  const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; aiSpendUsd: number; nonAiSpendUsd: number; spendUsd: number }[] = [];
+  const rows: { email: string; name: string; username: string; isInternal: boolean; group: string; team: string; workspaces: string; aiSpendUsd: number; nonAiSpendUsd: number; spendUsd: number }[] = [];
   for (const userId of requestedMemberIds) {
     const member = dir.members.get(userId);
     if (!member) continue;
@@ -106,6 +107,7 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
       email: member.email,
       name: member.name ?? "",
       username: member.username,
+      isInternal: member.isInternalReplitUser,
       group: attr?.groupName ?? "",
       team: attr?.teamName ?? "",
       workspaces: workspaceNames.join("; "),
@@ -120,9 +122,9 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
   rows.sort((a, b) => b.spendUsd - a.spendUsd);
 
   // Build CSV
-  const header = ["Email", "Name", "Username", "Workspace(s)", "Group", "Team", "AI Spend (USD)", "Hosting / Non-AI Spend (USD)", "Spend (USD)"].map(escapeCsvCell).join(",");
+  const header = ["Email", "Name", "Username", "Internal Replit User", "Workspace(s)", "Group", "Team", "Eligible AI Spend (USD)", "Eligible Hosting / Non-AI Spend (USD)", "Eligible Spend (USD)"].map(escapeCsvCell).join(",");
   const lines = rows.map((r) =>
-    [r.email, r.name, r.username, r.workspaces, r.group, r.team, r.aiSpendUsd.toFixed(2), r.nonAiSpendUsd.toFixed(2), r.spendUsd.toFixed(2)].map(escapeCsvCell).join(","),
+    [r.email, r.name, r.username, r.isInternal ? "Yes" : "No", r.workspaces, r.group, r.team, r.aiSpendUsd.toFixed(2), r.nonAiSpendUsd.toFixed(2), r.spendUsd.toFixed(2)].map(escapeCsvCell).join(","),
   );
 
   const isComplete = canonical.isComplete;
@@ -203,6 +205,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     snapshot,
     groups: orderedGroups,
     membersByGroup: scopedMembers,
+    internalUserIds: dir.internalUserIds,
     projectInfoByWorkspace: projectMetadata.byWorkspace,
   });
   const userGroupAttr = canonicalUserAttribution(
@@ -224,6 +227,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     aiSpendUsd: number;
     nonAiSpendUsd: number;
     workspaceRole: string;
+    isInternal: boolean;
   }[] = [];
 
   for (const [userId, m] of dir.members) {
@@ -245,6 +249,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
       userId,
       username: m.username,
       email: m.email,
+      isInternal: m.isInternalReplitUser,
       teamName: attr?.teamName ?? "",
       groupName: attr?.groupName ?? "",
       spendUsd: canonical.byUser.get(userId) ?? 0,
@@ -258,8 +263,39 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   users.sort((a, b) => b.spendUsd - a.spendUsd);
 
   const totalCount = scopedWorkspaceIds.size;
+  const fullyVisibleWorkspaceIds = new Set(req.authz!.workspaceIds);
+  const additionallyVisibleGroups = orderedGroups.filter(
+    (group) => !fullyVisibleWorkspaceIds.has(group.workspaceId),
+  );
+  const eligibleSpendUsd = callerIsAccountAdmin
+    ? canonical.eligibleSpendUsd
+    : [...fullyVisibleWorkspaceIds].reduce(
+        (sum, workspaceId) =>
+          sum + (canonical.byWorkspace.get(workspaceId) ?? 0),
+        0,
+      ) +
+      additionallyVisibleGroups.reduce(
+        (sum, group) => sum + (canonical.byGroup.get(group.id)?.spendUsd ?? 0),
+        0,
+      );
+  const excludedInternalSpendUsd = callerIsAccountAdmin
+    ? canonical.excludedInternalSpendUsd
+    : [...fullyVisibleWorkspaceIds].reduce(
+        (sum, workspaceId) =>
+          sum +
+          (canonical.excludedInternalSpendByWorkspace.get(workspaceId) ?? 0),
+        0,
+      ) +
+      additionallyVisibleGroups.reduce(
+        (sum, group) =>
+          sum + (canonical.excludedInternalSpendByGroup.get(group.id) ?? 0),
+        0,
+      );
   res.json(GetUserActivityResponse.parse({
     usageHealth: usageHealth(snapshot, canonical, req.authz!),
+    grossSpendUsd: eligibleSpendUsd + excludedInternalSpendUsd,
+    excludedInternalSpendUsd,
+    eligibleSpendUsd,
     isComplete: canonical.isComplete,
     loadedCount: Math.max(0, totalCount - canonical.pendingCount),
     totalCount,

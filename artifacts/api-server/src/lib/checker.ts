@@ -15,6 +15,7 @@ import { logger } from "./logger";
 import {
   getDirectory,
   getBillingPeriod,
+  isInternalReplitMember,
   buildCanonicalGroupMergePlan,
   buildCanonicalEffectiveTeams,
   resolveCanonicalMergedGroupBudget,
@@ -94,6 +95,7 @@ async function readCheckerUsage(dir: CheckerDirectory): Promise<CheckerUsage | n
     snapshot,
     groups: dir.groups,
     membersByGroup: dir.groupMembers,
+    internalUserIds: dir.internalUserIds,
     projectInfoByWorkspace,
   });
   if (!rollup.isComplete) return null;
@@ -177,7 +179,12 @@ function blockedMembersForGroup(
     for (const [userId, spendUsd] of usage.rollup.aiSpendByGroup.get(groupId) ?? []) {
       const identity = `${group.workspaceId}\0${userId}`;
       const budgetUsd = limits.get(userId);
-      if (seen.has(identity) || budgetUsd == null || spendUsd < budgetUsd) continue;
+      if (
+        seen.has(identity) ||
+        isInternalReplitMember(dir.members.get(userId)) ||
+        budgetUsd == null ||
+        spendUsd < budgetUsd
+      ) continue;
       seen.add(identity);
       blockedMemberCount += 1;
       blockedSpendUsd += spendUsd;

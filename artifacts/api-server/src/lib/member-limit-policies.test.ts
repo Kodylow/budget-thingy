@@ -7,6 +7,7 @@ import {
   type MemberLimitPolicyAssignment,
   type MemberLimitPolicyWriter,
 } from "./member-limit-policies";
+import { isInternalReplitEmail } from "./enterprise";
 
 const workspaceId = "workspace1";
 const defaultPolicy: MemberLimitPolicy = {
@@ -29,6 +30,12 @@ function writer(
 }
 
 describe("member limit policy resolution", () => {
+  it("classifies trimmed case-insensitive Replit employee addresses", () => {
+    expect(isInternalReplitEmail("  Employee@REPL.IT ")).toBe(true);
+    expect(isInternalReplitEmail("employee@replit.com")).toBe(false);
+    expect(isInternalReplitEmail("employee@notrepl.it")).toBe(false);
+  });
+
   it("chooses the lowest positive policy across overlapping groups", () => {
     const policies: MemberLimitPolicy[] = [
       defaultPolicy,
@@ -106,6 +113,38 @@ describe("member limit policy resolution", () => {
 });
 
 describe("member limit policy application", () => {
+  it("does not apply or clear policy-managed state for internal members", async () => {
+    const policyWriter = writer();
+    const internalAssignment: MemberLimitPolicyAssignment = {
+      workspaceId,
+      userId: "employee",
+      lastAmountUsd: 20,
+      sourceType: "group",
+      sourceId: "old-group",
+    };
+    const outcomes = await applyMemberLimitPlan(
+      {
+        workspaceId,
+        userIds: ["employee"],
+        policies: [defaultPolicy],
+        groupMembers: new Map(),
+        currentLimits: new Map([["employee", 20]]),
+        assignments: new Map([["employee", internalAssignment]]),
+        members: new Map([["employee", { email: " EMPLOYEE@REPL.IT " }]]),
+      },
+      policyWriter,
+    );
+
+    expect(outcomes[0]).toMatchObject({
+      userId: "employee",
+      status: "internal_excluded",
+      previousAmountUsd: 20,
+    });
+    expect(policyWriter.setMemberLimit).not.toHaveBeenCalled();
+    expect(policyWriter.deleteAssignment).not.toHaveBeenCalled();
+    expect(policyWriter.saveAssignment).not.toHaveBeenCalled();
+  });
+
   it("preserves a hand-set override and applies a baseline to an unset member", async () => {
     const policyWriter = writer();
     const outcomes = await applyMemberLimitPlan(

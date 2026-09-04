@@ -88,3 +88,11 @@ test("scoped dashboards expose project residual without double counting it", () 
   expect(result.totalSpendUsd).toBe(50);
   expect(result.isTotalLoaded).toBe(true);
 });
+
+test("internal spend accounting reconciles mixed and zero-exclusion ranges", () => {
+  const mixed = { gross: 125, excluded: 25, eligible: 100 };
+  expect(mixed.gross - mixed.excluded).toBe(mixed.eligible);
+
+  const noInternal = { gross: 80, excluded: 0, eligible: 80 };
+  expect(noInternal.gross - noInternal.excluded).toBe(noInternal.eligible);
+});

@@ -22,6 +22,7 @@ import { ChevronDown, Download, Search, ShieldCheck } from 'lucide-react';
 import { useRange } from '@/components/range-context';
 import { buildCsv } from '@/lib/csv';
 import { roleBadgeClass, roleLabel } from '@/lib/hierarchy-presentation';
+import { InternalSpendExplanation, InternalUserBadge } from '@/components/internal-user-badge';
 
 // ---------- helpers ----------
 
@@ -50,12 +51,13 @@ function exportDirectoryUsers(
     'Name',
     'Username',
     'Account Admin',
+    'Internal Replit User',
     'Workspace(s)',
     'Workspace Role(s)',
     'Workspace Status(es)',
-    'AI Spend (USD)',
-    'Hosting / Non-AI Spend (USD)',
-    'Spend (USD)',
+    'Eligible AI Spend (USD)',
+    'Eligible Hosting / Non-AI Spend (USD)',
+    'Eligible Spend (USD)',
   ];
   const rows = [...members]
     .sort((a, b) => {
@@ -71,6 +73,7 @@ function exportDirectoryUsers(
         member.name ?? '',
         member.username,
         member.isAccountAdmin ? 'Yes' : 'No',
+        member.isInternal ? 'Yes' : 'No',
         member.workspaces.map((workspace) => workspace.workspaceName).join('; '),
         member.workspaces.map((workspace) => workspace.role).join('; '),
         member.workspaces
@@ -160,7 +163,7 @@ function WorkspaceChip({ ws }: { ws: DirectoryMemberWorkspace }) {
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {ws.spendUsd > 0 && (
+        {ws.spendLoaded && ws.spendUsd > 0 && (
           <span className="text-xs tabular-nums font-mono font-medium">
             {fmtUsd(ws.spendUsd)}
           </span>
@@ -190,7 +193,10 @@ function DetailPanel({ member, spend, onClose }: DetailPanelProps) {
   }, [member]);
 
   const totalWorkspaceSpend = useMemo(
-    () => sortedWorkspaces.reduce((sum, ws) => sum + ws.spendUsd, 0),
+    () => sortedWorkspaces.reduce(
+      (sum, ws) => sum + (ws.spendLoaded ? ws.spendUsd : 0),
+      0,
+    ),
     [sortedWorkspaces],
   );
 
@@ -208,6 +214,7 @@ function DetailPanel({ member, spend, onClose }: DetailPanelProps) {
                 </div>
                 <div className="min-w-0">
                   <SheetTitle className="text-left">{member.username}</SheetTitle>
+                  {member.isInternal && <InternalUserBadge />}
                   <SheetDescription className="text-left">
                     {member.name && <span className="block">{member.name}</span>}
                     <span className="block text-xs">{member.email}</span>
@@ -227,6 +234,7 @@ function DetailPanel({ member, spend, onClose }: DetailPanelProps) {
                   <Badge variant="default" className="text-xs">Account Admin</Badge>
                 </div>
               )}
+              {member.isInternal && <InternalSpendExplanation />}
               {member.workspaces.length === 0 ? (
                 <p className="text-sm text-muted-foreground italic">No workspace memberships</p>
               ) : (
@@ -260,8 +268,12 @@ function DetailPanel({ member, spend, onClose }: DetailPanelProps) {
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Spend by Workspace
                 </h3>
-                {!hasAnyWorkspaceSpend ? (
-                  <p className="text-sm text-muted-foreground italic">No workspace spend recorded</p>
+                {sortedWorkspaces.some((ws) => !ws.spendLoaded) ? (
+                  <p className="text-sm text-muted-foreground italic">
+                    Workspace spend is unavailable until usage for this range is complete.
+                  </p>
+                ) : !hasAnyWorkspaceSpend ? (
+                  <p className="text-sm text-muted-foreground italic">No eligible workspace spend recorded</p>
                 ) : (
                   <div className="rounded-md border border-border overflow-hidden">
                     <table className="w-full text-sm">
@@ -280,7 +292,7 @@ function DetailPanel({ member, spend, onClose }: DetailPanelProps) {
                       </thead>
                       <tbody className="divide-y divide-border">
                         {sortedWorkspaces
-                          .filter((ws) => ws.spendUsd > 0)
+                          .filter((ws) => ws.spendLoaded && ws.spendUsd > 0)
                           .map((ws) => (
                             <tr key={ws.workspaceId} className="hover:bg-muted/20 transition-colors">
                               <td className="px-3 py-2.5">
@@ -732,6 +744,7 @@ export default function WorkspaceDirectory() {
                           <div className="min-w-0">
                             <div className="font-medium truncate flex items-center gap-1.5">
                               {member.username}
+                              {member.isInternal && <InternalUserBadge compact />}
                               {member.isAccountAdmin && (
                                 <ShieldCheck className="h-3.5 w-3.5 text-primary shrink-0" aria-label="Account admin" />
                               )}

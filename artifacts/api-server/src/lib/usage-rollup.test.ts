@@ -209,6 +209,7 @@ test("derives snapshot totals with overlap, creator ownership, and residual spen
       ["z-group", ["shared"]],
       ["workspace-2-group", ["shared"]],
     ]),
+    internalUserIds: new Set(),
     projectInfoByWorkspace: new Map([
       ["workspace-1", new Map([
         ["project-1", { creatorId: "shared" }],
@@ -325,6 +326,7 @@ test("keeps identical project IDs isolated by workspace", () => {
       ["group-1", ["creator-1"]],
       ["group-2", ["creator-2"]],
     ]),
+    internalUserIds: new Set(),
     projectInfoByWorkspace: new Map([
       ["workspace-1", new Map([
         ["shared-project", { creatorId: "creator-1" }],
@@ -362,6 +364,7 @@ test("marks missing creator metadata incomplete only when non-Agent ownership is
     }),
     groups,
     membersByGroup: new Map([["a-group", ["creator"]]]),
+    internalUserIds: new Set(),
     projectInfoByWorkspace: new Map(),
   });
   expect(result.isComplete).toBe(false);
@@ -388,6 +391,7 @@ test("caps observed attribution at workspace authority and reports reconciliatio
     }),
     groups: [groups[1]],
     membersByGroup: new Map([["a-group", ["member"]]]),
+    internalUserIds: new Set(),
     projectInfoByWorkspace: new Map([["workspace-1", new Map([
       ["project", { creatorId: "member" }],
     ])]]),
@@ -416,6 +420,7 @@ test("counts missing account coverage in pending diagnostics", () => {
     }),
     groups: [],
     membersByGroup: new Map(),
+    internalUserIds: new Set(),
     projectInfoByWorkspace: new Map(),
   });
   expect(result.pendingCount).toBe(1);
@@ -508,6 +513,7 @@ test("rolls completed historical days with their roster and uncovered days with 
     rosterMembersByDate: new Map([
       ["2026-08-01", new Map([["a-group", ["old-member"]]])],
     ]),
+    internalUserIds: new Set(),
     projectInfoByWorkspace: new Map([["workspace-1", new Map()]]),
   });
 
@@ -575,6 +581,7 @@ test("over-allocation capping is deterministic across snapshot map order", () =>
       ["a-group", ["a-user"]],
       ["z-group", ["z-user"]],
     ]),
+    internalUserIds: new Set(),
     projectInfoByWorkspace: new Map(),
   });
   const entries = [
@@ -586,4 +593,139 @@ test("over-allocation capping is deterministic across snapshot map order", () =>
   expect(forward.byGroup).toEqual(reversed.byGroup);
   expect(forward.byGroup.get("a-group")?.spendUsd).toBe(5);
   expect(forward.byGroup.get("z-group")?.spendUsd).toBe(1);
+});
+
+test("excludes overlapping internal Agent and creator non-Agent spend exactly once", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["workspace-1"],
+      members: new Map([["workspace-1", new Map([
+        ["internal", { totalCostUsd: 12, aiCostUsd: 10 }],
+        ["external", { totalCostUsd: 5, aiCostUsd: 5 }],
+      ])]]),
+      projects: new Map([["workspace-1", new Map([
+        ["internal-project", { totalCostUsd: 8, aiCostUsd: 2 }],
+        ["external-project", { totalCostUsd: 4, aiCostUsd: 0 }],
+      ])]]),
+      workspaces: new Map([["workspace-1", {
+        totalCostUsd: 25,
+        memberAttributableUsd: 25,
+        memberUnattributableUsd: 0,
+      }]]),
+      accountTotalUsd: 28,
+    }),
+    groups,
+    membersByGroup: new Map([
+      ["a-group", ["internal", "external"]],
+      ["z-group", ["internal"]],
+    ]),
+    internalUserIds: new Set(["internal"]),
+    projectInfoByWorkspace: new Map([["workspace-1", new Map([
+      ["internal-project", { creatorId: "internal" }],
+      ["external-project", { creatorId: "external" }],
+    ])]]),
+  });
+
+  expect(result.grossSpendUsd).toBe(25);
+  expect(result.excludedInternalSpendUsd).toBe(16);
+  expect(result.eligibleSpendUsd).toBe(9);
+  expect(result.totalSpendUsd).toBe(9);
+  expect(result.byWorkspace.get("workspace-1")).toBe(9);
+  expect(result.byGroup.get("a-group")?.spendUsd).toBe(9);
+  expect(result.byGroup.get("z-group")?.spendUsd).toBe(0);
+  expect(result.excludedInternalSpendByGroup.get("a-group")).toBe(16);
+  expect(result.excludedInternalSpendByGroup.get("z-group")).toBe(0);
+  expect(result.excludedInternalSpendByWorkspace.get("workspace-1")).toBe(16);
+  expect(result.byUser.has("internal")).toBe(false);
+  expect(result.accountReconciliationSpendUsd).toBe(3);
+  expect(result.grossSpendUsd).toBe(
+    result.excludedInternalSpendUsd + result.eligibleSpendUsd,
+  );
+  expect(result.isComplete).toBe(true);
+});
+
+test("reconciles snapshots with all internal or no internal usage", () => {
+  const make = (internalUserIds) => computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["workspace-1"],
+      members: new Map([["workspace-1", new Map([
+        ["member", { totalCostUsd: 7, aiCostUsd: 7 }],
+      ])]]),
+      workspaces: new Map([["workspace-1", {
+        totalCostUsd: 7,
+        memberAttributableUsd: 7,
+        memberUnattributableUsd: 0,
+      }]]),
+      accountTotalUsd: 7,
+    }),
+    groups: [groups[1]],
+    membersByGroup: new Map([["a-group", ["member"]]]),
+    internalUserIds,
+    projectInfoByWorkspace: new Map(),
+  });
+
+  const allInternal = make(new Set(["member"]));
+  expect(allInternal).toMatchObject({
+    grossSpendUsd: 7,
+    excludedInternalSpendUsd: 7,
+    eligibleSpendUsd: 0,
+    totalSpendUsd: 0,
+    isComplete: true,
+  });
+  expect(allInternal.ungroupedByWorkspace.size).toBe(0);
+  expect(allInternal.excludedInternalSpendByGroup.get("a-group")).toBe(7);
+
+  const noInternal = make(new Set());
+  expect(noInternal).toMatchObject({
+    grossSpendUsd: 7,
+    excludedInternalSpendUsd: 0,
+    eligibleSpendUsd: 7,
+    totalSpendUsd: 7,
+    isComplete: true,
+  });
+});
+
+test("applies internal exclusions to historical roster rollups", () => {
+  const full = snapshot({
+    workspaceIds: ["workspace-1"],
+    includesDailyMembers: true,
+    daily: new Map([["2026-08-01", {
+      accountTotalUsd: 6,
+      workspaceTotalUsd: 6,
+    }]]),
+    accountDays: new Set(["2026-08-01"]),
+    dailyMembers: new Map([["2026-08-01", new Map([
+      ["workspace-1", new Map([["internal", {
+        totalCostUsd: 6,
+        aiCostUsd: 6,
+      }]])],
+    ])]]),
+    dailyProjects: new Map([["2026-08-01", new Map()]]),
+    dailyWorkspaces: new Map([["2026-08-01", new Map([
+      ["workspace-1", {
+        totalCostUsd: 6,
+        memberAttributableUsd: 6,
+        memberUnattributableUsd: 0,
+      }],
+    ])]]),
+  });
+  const result = computeHistoricalSnapshotUsageRollups({
+    snapshot: full,
+    groups: [groups[1]],
+    currentUtcDay: "2026-08-02",
+    currentMembersByGroup: new Map(),
+    completedRosterDays: new Set(["2026-08-01"]),
+    rosterMembersByDate: new Map([
+      ["2026-08-01", new Map([["a-group", ["internal"]]])],
+    ]),
+    internalUserIds: new Set(["internal"]),
+    projectInfoByWorkspace: new Map([["workspace-1", new Map()]]),
+  });
+
+  expect(result.get("2026-08-01")).toMatchObject({
+    grossSpendUsd: 6,
+    excludedInternalSpendUsd: 6,
+    eligibleSpendUsd: 0,
+    isComplete: true,
+  });
 });

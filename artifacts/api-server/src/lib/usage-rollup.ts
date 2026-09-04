@@ -33,6 +33,16 @@ export function projectAttributionKey(
 }
 
 export interface SnapshotUsageRollup extends DedupedUsageRollup {
+  /** Authoritative workspace spend before internal Replit usage is removed. */
+  grossSpendUsd: number;
+  /** Internal member Agent plus internal creator-attributed non-Agent spend. */
+  excludedInternalSpendUsd: number;
+  /** Excluded internal spend attributed to each visible group in stable ownership order. */
+  excludedInternalSpendByGroup: Map<string, number>;
+  /** Excluded internal spend by authoritative workspace. */
+  excludedInternalSpendByWorkspace: Map<string, number>;
+  /** Canonical spend after internal Replit usage is removed. */
+  eligibleSpendUsd: number;
   byWorkspace: Map<string, number>;
   accountTotalUsd: number;
   accountReconciliationSpendUsd: number;
@@ -49,6 +59,7 @@ export interface SnapshotRollupInput {
   snapshot: UsageSnapshot;
   groups: readonly RollupGroup[];
   membersByGroup: ReadonlyMap<string, readonly string[]>;
+  internalUserIds?: ReadonlySet<string>;
   projectInfoByWorkspace: ReadonlyMap<
     string,
     ReadonlyMap<string, RollupProjectInfo>
@@ -146,6 +157,7 @@ export function computeSnapshotUsageRollup(
   input: SnapshotRollupInput,
 ): SnapshotUsageRollup {
   const { snapshot, membersByGroup, projectInfoByWorkspace } = input;
+  const internalUserIds = input.internalUserIds ?? new Set<string>();
   const ordered = orderGroups([...input.groups]);
   const groupsByWorkspace = new Map<string, RollupGroup[]>();
   const ownerByWorkspaceUser = new Map<string, Map<string, RollupGroup>>();
@@ -176,6 +188,8 @@ export function computeSnapshotUsageRollup(
   const ungroupedByWorkspace = new Map<string, DedupedGroupRollup>();
   const byWorkspace = new Map<string, number>();
   const residualSpendByGroup = new Map(ordered.map((group) => [group.id, 0]));
+  const excludedInternalSpendByGroup = new Map(ordered.map((group) => [group.id, 0]));
+  const excludedInternalSpendByWorkspace = new Map<string, number>();
   const projectToGroup = new Map<string, string>();
   const projectSpendByGroup = new Map<string, number>();
   const creatorByProject = new Map<string, string | null>();
@@ -186,8 +200,11 @@ export function computeSnapshotUsageRollup(
   let reconciliationPendingCount = 0;
   let totalMemberCount = 0;
   let residualSpendUsd = 0;
+  let grossSpendUsd = 0;
+  let excludedInternalSpendUsd = 0;
 
   for (const workspaceId of scopedWorkspaceIds(snapshot)) {
+    const excludedBeforeWorkspaceUsd = excludedInternalSpendUsd;
     const owners = ownerByWorkspaceUser.get(workspaceId) ?? new Map();
     const ungrouped: DedupedGroupRollup = {
       spendUsd: 0,
@@ -221,6 +238,12 @@ export function computeSnapshotUsageRollup(
         Math.min(usage.totalCostUsd, usage.aiCostUsd),
       );
       const aiSpendUsd = allocatable(observedAiSpendUsd);
+      if (internalUserIds.has(userId)) {
+        excludedInternalSpendUsd += aiSpendUsd;
+        const owner = owners.get(userId);
+        if (owner) add(excludedInternalSpendByGroup, owner.id, aiSpendUsd);
+        continue;
+      }
       const owner = owners.get(userId);
       if (owner) {
         addUserSpend(byGroup.get(owner.id)!, userId, aiSpendUsd);
@@ -248,7 +271,10 @@ export function computeSnapshotUsageRollup(
       creatorByProject.set(projectKey, creatorId);
       const owner = creatorId === null ? undefined : owners.get(creatorId);
       const attributedNonAiSpendUsd = allocatable(nonAiSpendUsd);
-      if (owner) {
+      if (creatorId !== null && internalUserIds.has(creatorId)) {
+        excludedInternalSpendUsd += attributedNonAiSpendUsd;
+        if (owner) add(excludedInternalSpendByGroup, owner.id, attributedNonAiSpendUsd);
+      } else if (owner) {
         projectToGroup.set(projectKey, owner.id);
         add(projectSpendByGroup, owner.id, usage.totalCostUsd);
         addUserSpend(byGroup.get(owner.id)!, creatorId!, attributedNonAiSpendUsd);
@@ -262,10 +288,10 @@ export function computeSnapshotUsageRollup(
       if (!info && nonAiSpendUsd > 1e-9) projectPendingCount += 1;
     }
 
-    const workspaceSpendUsd =
+    const workspaceGrossSpendUsd =
       authoritativeWorkspaceSpendUsd ?? allocatedWorkspaceSpendUsd;
-    byWorkspace.set(workspaceId, workspaceSpendUsd);
-    const reconciliationResidual = workspaceSpendUsd -
+    grossSpendUsd += workspaceGrossSpendUsd;
+    const reconciliationResidual = workspaceGrossSpendUsd -
       allocatedWorkspaceSpendUsd;
     if (reconciliationResidual > 1e-9) {
       (ungrouped as { spendUsd: number }).spendUsd += reconciliationResidual;
@@ -277,12 +303,22 @@ export function computeSnapshotUsageRollup(
       reconciliationPendingCount += 1;
     }
     residualSpendUsd += ungrouped.spendUsd;
+    byWorkspace.set(
+      workspaceId,
+      workspaceGrossSpendUsd -
+        (excludedInternalSpendUsd - excludedBeforeWorkspaceUsd),
+    );
+    excludedInternalSpendByWorkspace.set(
+      workspaceId,
+      excludedInternalSpendUsd - excludedBeforeWorkspaceUsd,
+    );
     if (ungrouped.memberCount > 0 || ungrouped.spendUsd !== 0) {
       ungroupedByWorkspace.set(workspaceId, ungrouped);
     }
   }
 
-  const totalSpendUsd = [...byWorkspace.values()].reduce((sum, value) => sum + value, 0);
+  const eligibleSpendUsd = grossSpendUsd - excludedInternalSpendUsd;
+  const totalSpendUsd = eligibleSpendUsd;
   const snapshotComplete =
     snapshot.status !== "partial" &&
     snapshot.status !== "empty" &&
@@ -304,6 +340,11 @@ export function computeSnapshotUsageRollup(
     byUser,
     ungroupedByWorkspace,
     totalSpendUsd,
+    grossSpendUsd,
+    excludedInternalSpendUsd,
+    excludedInternalSpendByGroup,
+    excludedInternalSpendByWorkspace,
+    eligibleSpendUsd,
     totalMemberCount,
     pendingCount,
     isComplete:
@@ -312,7 +353,7 @@ export function computeSnapshotUsageRollup(
       reconciliationPendingCount === 0,
     byWorkspace,
     accountTotalUsd: snapshot.accountTotalUsd,
-    accountReconciliationSpendUsd: snapshot.accountTotalUsd - totalSpendUsd,
+    accountReconciliationSpendUsd: snapshot.accountTotalUsd - grossSpendUsd,
     aiSpendByUser,
     nonAiSpendByUser,
     aiSpendByGroup,
@@ -418,6 +459,7 @@ export function computeHistoricalSnapshotUsageRollups(
       snapshot: usageSnapshotForDay(input.snapshot, usageDate),
       groups: input.groups,
       membersByGroup,
+      internalUserIds: input.internalUserIds,
       projectInfoByWorkspace: input.projectInfoByWorkspace,
     }));
   }

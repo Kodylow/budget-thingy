@@ -39,7 +39,7 @@ export interface Group {
   memberCount?: number | null;
   /** Unique members attributed to this group for team and org rollups */
   rollupMemberCount: number;
-  /** Raw per-group spend represented by the stored usage snapshot */
+  /** Eligible per-group spend after internal Replit user exclusions */
   spendUsd: number;
   spendLoaded: boolean;
   /** Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend */

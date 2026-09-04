@@ -45,6 +45,8 @@ router.get("/summary", async (req, res): Promise<void> => {
         let accountUsageAttributableSpendUsd: number | null = null;
         let accountUsageUnattributableSpendUsd: number | null = null;
         let reconciliationSpendUsd: number | null = null;
+        let grossSpendUsd = 0;
+        let excludedInternalSpendUsd = 0;
         let totalRemainingUsd = 0;
         let totalBudgetUsd = 0;
         let budgetedGroups = 0;
@@ -95,11 +97,38 @@ router.get("/summary", async (req, res): Promise<void> => {
               (mergePlan.mergeMap.get(group.id) ?? [group.id]).reduce(
                 (sum, id) => sum + (canonical.byGroup.get(id)?.spendUsd ?? 0), 0),
             ]));
-            const scopedMemberSpendUsd = [...canonical.byUser.values()]
-              .reduce((sum, amount) => sum + amount, 0);
+            const fullyVisibleWorkspaceIds = new Set(authz.workspaceIds);
+            const additionallyVisibleGroups = scoped.filter(
+              (group) => !fullyVisibleWorkspaceIds.has(group.workspaceId),
+            );
+            const scopedEligibleSpendUsd =
+              [...fullyVisibleWorkspaceIds].reduce(
+                (sum, workspaceId) =>
+                  sum + (canonical.byWorkspace.get(workspaceId) ?? 0),
+                0,
+              ) +
+              additionallyVisibleGroups.reduce(
+                (sum, group) =>
+                  sum + (canonical.byGroup.get(group.id)?.spendUsd ?? 0),
+                0,
+              );
             memberBasedTotalSpendUsd = isAccount
               ? canonical.totalSpendUsd
-              : scopedMemberSpendUsd;
+              : scopedEligibleSpendUsd;
+            excludedInternalSpendUsd = isAccount
+              ? canonical.excludedInternalSpendUsd
+              : [...fullyVisibleWorkspaceIds].reduce(
+                  (sum, workspaceId) =>
+                    sum +
+                    (canonical.excludedInternalSpendByWorkspace.get(workspaceId) ?? 0),
+                  0,
+                ) +
+                additionallyVisibleGroups.reduce(
+                  (sum, group) =>
+                    sum +
+                    (canonical.excludedInternalSpendByGroup.get(group.id) ?? 0),
+                  0,
+                );
             totalGroups = displayGroups.length;
             budgetedGroups = displayGroups.filter(
               (group) =>
@@ -114,6 +143,9 @@ router.get("/summary", async (req, res): Promise<void> => {
             // account /usage anchor is the headline total and the difference is an
             // explicit reconciliation row so the visible table sums to gross usage.
             totalSpendUsd = memberBasedTotalSpendUsd;
+            // Preserve the established scoped headline while making its
+            // accounting identity explicit for every authorization scope.
+            grossSpendUsd = totalSpendUsd + excludedInternalSpendUsd;
             if (isAccount) {
               if (snapshot) {
                 accountUsageTotalSpendUsd = snapshot.accountTotalUsd;
@@ -208,7 +240,7 @@ router.get("/summary", async (req, res): Promise<void> => {
             }
             totalRemainingUsd = totalBudgetUsd - budgetedPoolSpend;
         } catch (err) {
-          req.log.error({ err }, "summary directory fetch failed");
+          req.log?.error({ err }, "summary directory fetch failed");
         }
 
         const billing = getBillingPeriod();
@@ -232,6 +264,9 @@ router.get("/summary", async (req, res): Promise<void> => {
             totalGroups,
             budgetedGroups,
             totalSpendUsd,
+            grossSpendUsd,
+            excludedInternalSpendUsd,
+            eligibleSpendUsd: totalSpendUsd,
             memberBasedTotalSpendUsd,
             accountUsageTotalSpendUsd,
             accountUsageAttributableSpendUsd,
@@ -279,7 +314,7 @@ router.get("/summary", async (req, res): Promise<void> => {
       timeoutPromise,
     ]);
   } catch (err) {
-    req.log.error({ err }, "summary handler failed or timed out");
+    req.log?.error({ err }, "summary handler failed or timed out");
     if (!res.headersSent) {
       res.status(503).json({ error: "Summary unavailable — please retry" });
     }
@@ -352,36 +387,52 @@ router.get("/trends", async (req, res): Promise<void> => {
     const dailyRollups = computeHistoricalSnapshotUsageRollups({
       snapshot, groups: visible, currentUtcDay,
       currentMembersByGroup: scopedMembers,
+      internalUserIds: dir.internalUserIds,
       completedRosterDays: rosterHistory.completedDays,
       rosterMembersByDate: visibleRosterMembers(req.authz!, rosterHistory.membersByDate),
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     });
     const fullRollup = computeSnapshotUsageRollup({
       snapshot, groups: visible, membersByGroup: scopedMembers,
+      internalUserIds: dir.internalUserIds,
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     });
 
     interface TrendUsageResult {
       spendByPrimaryGroup: Map<string, number>;
-      totalSpendUsd: number;
+      excludedInternalSpendByPrimaryGroup: Map<string, number>;
       isComplete: boolean;
     }
 
     const bucketResults = buckets.map((bucket): TrendUsageResult => {
       const spendByPrimaryGroup = new Map<string, number>();
-      let totalSpendUsd = 0;
+      const excludedInternalSpendByPrimaryGroup = new Map<string, number>();
       let isComplete = true;
       for (const [usageDate, result] of dailyRollups) {
         if (usageDate < bucket.startDate || usageDate > bucket.endDate) continue;
         isComplete &&= result.isComplete;
-        totalSpendUsd += result.totalSpendUsd;
         for (const group of displayGroups) {
-          const spend = (mergePlan.mergeMap.get(group.id) ?? [group.id]).reduce(
+          const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+          const spend = sourceIds.reduce(
             (sum, id) => sum + (result.byGroup.get(id)?.spendUsd ?? 0), 0);
+          const excludedInternalSpendUsd = sourceIds.reduce(
+            (sum, id) =>
+              sum + (result.excludedInternalSpendByGroup.get(id) ?? 0),
+            0,
+          );
           spendByPrimaryGroup.set(group.id, (spendByPrimaryGroup.get(group.id) ?? 0) + spend);
+          excludedInternalSpendByPrimaryGroup.set(
+            group.id,
+            (excludedInternalSpendByPrimaryGroup.get(group.id) ?? 0) +
+              excludedInternalSpendUsd,
+          );
         }
       }
-      return { spendByPrimaryGroup, totalSpendUsd, isComplete };
+      return {
+        spendByPrimaryGroup,
+        excludedInternalSpendByPrimaryGroup,
+        isComplete,
+      };
     });
     const totalCount = bucketResults.length;
     const loadedCount = bucketResults.filter((result) => result.isComplete).length;
@@ -429,6 +480,13 @@ router.get("/trends", async (req, res): Promise<void> => {
         0,
       );
     });
+    const excludedTotals = bucketResults.map((result) =>
+      groups.reduce(
+        (sum, group) =>
+          sum + (result.excludedInternalSpendByPrimaryGroup.get(group.id) ?? 0),
+        0,
+      ),
+    );
 
     res.json(
       GetTrendsResponse.parse({
@@ -439,6 +497,12 @@ router.get("/trends", async (req, res): Promise<void> => {
           isPartial: bucket.isPartial,
         })),
         totals,
+        grossSpendUsd: totals.map(
+          (eligibleSpendUsd, index) =>
+            eligibleSpendUsd + (excludedTotals[index] ?? 0),
+        ),
+        excludedInternalSpendUsd: excludedTotals,
+        eligibleSpendUsd: totals,
         series: [...teamSeries, ...groupSeries],
         isComplete: loadedCount === totalCount,
         loadedCount,

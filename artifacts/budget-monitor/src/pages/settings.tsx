@@ -15,6 +15,8 @@ import {
   useDeleteAppAdmin,
   getListAppAdminsQueryKey,
   useSendEmailTestExample,
+  useGetSummary,
+  getGetSummaryQueryKey,
   type EmailTestResult,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -32,6 +34,8 @@ import {
   getEmailConnectorPresentation,
 } from '@/lib/email-policy';
 import { Switch } from '@/components/ui/switch';
+import { useRange } from '@/components/range-context';
+import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 import {
   Dialog,
   DialogContent,
@@ -52,7 +56,8 @@ import {
 export default function Settings() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { capabilities } = useAuthContext();
+  const { capabilities, role } = useAuthContext();
+  const { rangeType, startDate, endDate } = useRange();
   const canAccessSettings = capabilities.canManageAccess;
   const showAdminControls = capabilities.canManageAccess;
 
@@ -64,6 +69,17 @@ export default function Settings() {
   const [testResult, setTestResult] = useState<EmailTestResult | null>(null);
 
   const { data: status, isLoading: statusLoading, isError: statusError } = useGetStatus();
+  const summaryParams = {
+    rangeType,
+    ...(rangeType === 'custom' ? { startDate, endDate } : {}),
+  };
+  const { data: accountingSummary } = useGetSummary(summaryParams, {
+    query: {
+      enabled: role === 'account',
+      queryKey: getGetSummaryQueryKey(summaryParams),
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
+    },
+  });
   const {
     data: emailSettings,
     isLoading: emailSettingsLoading,
@@ -188,6 +204,40 @@ export default function Settings() {
           Manage account access and monitor system status
         </p>
       </div>
+
+      {role === 'account' && (
+        <Card data-testid="internal-spend-accounting">
+          <CardHeader>
+            <CardTitle>Selected range spend accounting</CardTitle>
+            <CardDescription>
+              {accountingSummary?.billingPeriodLabel ?? 'Active reporting range'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {accountingSummary &&
+            (accountingSummary.usageHealth.status === 'complete' ||
+              accountingSummary.usageHealth.status === 'stale') ? (
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono tabular-nums">
+                <span>${accountingSummary.grossSpendUsd.toFixed(2)} gross</span>
+                <span aria-hidden="true">−</span>
+                <span>${accountingSummary.excludedInternalSpendUsd.toFixed(2)} internal</span>
+                <span aria-hidden="true">=</span>
+                <span className="font-semibold">
+                  ${accountingSummary.eligibleSpendUsd.toFixed(2)} eligible
+                </span>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Accounting is unavailable until usage for this reporting range is complete.
+              </p>
+            )}
+            <p className="mt-2 text-xs text-muted-foreground">
+              Internal Replit user usage remains visible in directory context but is excluded
+              from eligible spend, budget consumption, and limit policy calculations.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="px-4 py-4 md:px-6 md:py-6">

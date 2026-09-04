@@ -7,6 +7,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import {
   getCachedDirectory,
+  isInternalReplitMember,
   type DirectoryCache,
   type EnterpriseMember,
 } from "./enterprise";
@@ -49,6 +50,7 @@ export type MemberLimitPolicyOutcomeStatus =
   | "cleared"
   | "unchanged"
   | "no_policy"
+  | "internal_excluded"
   | "override_preserved"
   | "failed";
 
@@ -128,6 +130,7 @@ export interface ApplyMemberLimitPlanInput {
   groupMembers: ReadonlyMap<string, readonly string[]>;
   currentLimits: ReadonlyMap<string, number | null>;
   assignments: ReadonlyMap<string, MemberLimitPolicyAssignment>;
+  members?: ReadonlyMap<string, Pick<EnterpriseMember, "email">>;
 }
 
 export interface MemberLimitPolicyWriter {
@@ -153,6 +156,18 @@ export async function applyMemberLimitPlan(
     const previousAmountUsd = input.currentLimits.get(userId) ?? null;
     const assignment = input.assignments.get(userId) ?? null;
     const state = classifyCurrentMemberLimit(previousAmountUsd, assignment);
+    if (isInternalReplitMember(input.members?.get(userId))) {
+      outcomes.push({
+        workspaceId: input.workspaceId,
+        userId,
+        desired: null,
+        previousAmountUsd,
+        state: state.kind,
+        status: "internal_excluded",
+        error: null,
+      });
+      continue;
+    }
     const desired = resolveMemberBaseline(
       input.workspaceId,
       userId,
@@ -259,7 +274,8 @@ function activeWorkspaceUserIds(
   return [...directory.members.values()]
     .filter(
       (member: EnterpriseMember) =>
-        member.workspaces.get(workspaceId)?.isDisabled === false,
+        member.workspaces.get(workspaceId)?.isDisabled === false &&
+        !isInternalReplitMember(member),
     )
     .map((member) => member.userId)
     .sort();
@@ -335,6 +351,7 @@ async function applyWorkspaceMembers(
           .filter((row) => row.workspaceId === workspaceId)
           .map((row) => [row.userId, row]),
       ),
+      members: directory.members,
     },
     databaseWriter,
   );

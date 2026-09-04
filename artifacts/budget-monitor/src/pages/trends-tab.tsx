@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useRange } from '@/components/range-context';
 import { buildTrendsParams } from '@/lib/trends-ui';
+import { InternalSpendExplanation, InternalUserBadge } from '@/components/internal-user-badge';
 
 const SERIES_COLORS = [
   '#0f3d62',
@@ -171,6 +172,7 @@ function UserActivityCard() {
               Workspace members ranked by member AI plus creator-attributed project
               hosting and other non-AI costs for the selected range.
             </CardDescription>
+            <InternalSpendExplanation />
           </div>
         </div>
 
@@ -267,6 +269,7 @@ function UserActivityCard() {
                           </div>
                           <div className="min-w-0">
                             <div className="font-medium truncate">{user.username}</div>
+                             {user.isInternal && <InternalUserBadge compact />}
                             <div className="text-xs text-muted-foreground truncate">{user.email}</div>
                           </div>
                         </div>

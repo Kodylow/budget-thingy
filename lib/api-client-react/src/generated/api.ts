@@ -1395,7 +1395,7 @@ export const getExportUsersCsvUrl = (params: ExportUsersCsvParams,) => {
 }
 
 /**
- * Exports the unique members of the explicitly requested visible groups, with separate AI, hosting/non-AI, and total spend columns.
+ * Exports the unique members of the explicitly requested visible groups, with an internal-user marker and separate eligible AI, hosting/non-AI, and total spend columns. Eligible spend excludes internal Replit users.
  * @summary Export canonical per-user activity as CSV
  */
 export const exportUsersCsv = async (params: ExportUsersCsvParams, options?: RequestInit): Promise<string> => {

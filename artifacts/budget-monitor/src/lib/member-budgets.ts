@@ -1,5 +1,6 @@
 export interface ClusterMemberIdentity {
   userId: string;
+  isInternal?: boolean;
 }
 
 export interface WorkspaceBudgetValue {
@@ -40,6 +41,14 @@ export function toggleDisplayedSelection(
     else next.delete(userId);
   }
   return next;
+}
+
+export function eligibleLimitMemberIds(
+  members: readonly ClusterMemberIdentity[],
+): string[] {
+  return members
+    .filter((member) => !member.isInternal)
+    .map((member) => member.userId);
 }
 
 /**

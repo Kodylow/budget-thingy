@@ -133,6 +133,10 @@ import {
   workspaceTeamSpendKey,
 } from "@/lib/workspace-team-spend";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
+import {
+  InternalSpendExplanation,
+  InternalUserBadge,
+} from "@/components/internal-user-badge";
 
 type DashboardGroup = Group;
 
@@ -1128,12 +1132,16 @@ export default function Dashboard() {
       <div className="p-4 md:p-8">
         <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
           <CardHeader>
-            <CardTitle data-testid="text-dashboard-title">
-              {dashboardTitle}
-            </CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle data-testid="text-dashboard-title">
+                {dashboardTitle}
+              </CardTitle>
+              {(cycleUser?.isInternal || termUser?.isInternal) && <InternalUserBadge />}
+            </div>
             <CardDescription>
               Your server-scoped usage, limits, and group memberships.
             </CardDescription>
+            {(cycleUser?.isInternal || termUser?.isInternal) && <InternalSpendExplanation />}
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-3">

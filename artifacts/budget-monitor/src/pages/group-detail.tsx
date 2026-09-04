@@ -28,6 +28,7 @@ import { MemberBudgetInput } from '@/components/member-budget-input';
 import { GroupPolicyControl } from '@/components/policy-control';
 import { indexMemberBudgets } from '@/lib/member-budgets';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
+import { InternalSpendExplanation, InternalUserBadge } from '@/components/internal-user-badge';
 
 export default function GroupDetail() {
   const [match, params] = useRoute('/groups/:groupId');
@@ -266,6 +267,7 @@ export default function GroupDetail() {
               Each total combines deduplicated member AI usage with non-AI hosting,
               storage, and other project costs attributed to that project&apos;s creator.
             </CardDescription>
+            <InternalSpendExplanation />
           </CardHeader>
           <CardContent>
           {canWriteUserLimits && workspaceId && (
@@ -303,6 +305,7 @@ export default function GroupDetail() {
                         </div>
                         <div className="flex gap-1 ml-2">
                           {member.role && <Badge variant="outline" className="text-[10px] h-5 capitalize">{member.role}</Badge>}
+                           {member.isInternal && <InternalUserBadge />}
                           {member.isDisabled && <Badge variant="secondary" className="text-[10px] h-5 opacity-50">Disabled</Badge>}
                         </div>
                       </div>
@@ -322,7 +325,14 @@ export default function GroupDetail() {
                           workspaceId={workspaceId}
                           userId={member.userId}
                           currentBudget={budget?.budgetUsd ?? null}
-                           canWrite={canWriteUserLimits && connector.canWrite}
+                           canWrite={
+                             !member.isInternal && canWriteUserLimits && connector.canWrite
+                           }
+                           disabledReason={
+                             member.isInternal
+                               ? 'Internal Replit usage is excluded from locally managed limits'
+                               : undefined
+                           }
                         />
                       ) : <span className="text-sm text-muted-foreground">—</span>}
                     </td>

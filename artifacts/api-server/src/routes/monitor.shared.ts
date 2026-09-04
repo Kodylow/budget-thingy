@@ -407,6 +407,7 @@ export async function usageForRequest(
       snapshot,
       groups,
       membersByGroup: visibleGroupMembers(authz, dir.groupMembers),
+      internalUserIds: dir.internalUserIds,
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     }),
     projectMetadata,
@@ -466,6 +467,7 @@ export async function dailyUsageRollups(
       groups: usage.groups,
       currentUtcDay,
       currentMembersByGroup: visibleGroupMembers(usage.authz, dir.groupMembers),
+      internalUserIds: dir.internalUserIds,
       completedRosterDays: roster.completedDays,
       rosterMembersByDate: visibleRosterMembers(usage.authz, roster.membersByDate),
       projectInfoByWorkspace: usage.projectMetadata.byWorkspace,
@@ -596,4 +598,3 @@ export function alertToJson(
     currentUsageComplete: current?.isComplete ?? false,
   };
 }
-
