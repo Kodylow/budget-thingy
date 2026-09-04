@@ -35,7 +35,7 @@ Monitors spending by group and team across the Comcast Replit Enterprise account
 ## Architecture decisions
 
 - Enterprise `/usage` is rate-limited (~100 req/min): every usage call goes through ONE serial priority queue (`enterprise.ts`) with pacing, Retry-After backoff, and X-RateLimit awareness. Never call `/usage` outside the queue.
-- Group spend loads progressively: `/api/groups` returns immediately with `spendLoaded=false` per group plus `isComplete`/`pendingCount`; the frontend polls every 8s until complete. Null spend is "loading", never $0.
+- Data views refetch on a flat 60-second interval. Numeric values from successful responses stay visible during refreshes; partial, stale, and request failures use deduplicated transient toasts that clear silently on recovery.
 - Spend cache TTL 10 min; directory (workspaces/groups/members) TTL 15 min; both in-memory, warmed on server start.
 - Dashboard group lists include custom/SCIM groups only. Team and org spend rollups deduplicate overlapping members by deterministic first-group attribution (workspace, group name, then group ID); group rows, drill-downs, and alerts keep raw per-group spend.
 - Billing period = the `interval.startTime` the Enterprise API resolves for `billingPeriod=current`; threshold fire state is keyed by (groupId, periodStart, threshold) in `fired_thresholds` so each threshold emails at most once per period and resets automatically on a new period.
@@ -50,7 +50,7 @@ Monitors spending by group and team across the Comcast Replit Enterprise account
 
 ## Product
 
-- Dashboard: all Enterprise groups with spend for a selectable range (billing period / MTD / YTD / custom dates), inline budget set/edit/remove, remaining budget, % used with color-coded threshold badges and progress bars, account-wide summary stats, per-group refresh.
+- Dashboard: canonical workspace → team → family → role-group spend for a selectable range (billing period / MTD / YTD / custom dates), allocations, remaining budget, % used, account-wide summary stats, and a `Data as of` usage timestamp.
 - Group drill-down (`/groups/:groupId`): per-member Monthly Agent limit (workspace user limit or workspace default), usage, remaining, % used, role; reconciliation footer (member spend + unattributed = group total). Monthly Agent limit · resets on billing cycle day · hard block.
 - Group accounting merges two sources: app allocations (set in this tool, used for email alerting) and platform limits read from the Enterprise `/budgets` API (`workspace_group_limit`); `budgetSource` distinguishes them. Platform limits are Monthly Agent limits that reset on the billing cycle day and hard-block paid services.
 - Alerts: group/team history with configured pool and spend, plus an account-operator "run check now" action and Kody-only fixed-recipient activity examples.

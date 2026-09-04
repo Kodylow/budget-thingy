@@ -19,11 +19,12 @@ import {
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, RefreshCw, DollarSign, Users, AlertCircle } from 'lucide-react';
+import { ChevronLeft, DollarSign, Users, AlertCircle } from 'lucide-react';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import {
   higherRole,
+  normalizeRole,
   roleBadgeClass,
   roleLabel,
   ROLE_PRIORITY,
@@ -42,6 +43,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
+import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 
 interface MergedMember {
   userId: string;
@@ -99,8 +101,7 @@ export default function ClusterDetail() {
       getGetGroupDetailQueryOptions(id, queryParams, {
         query: {
           queryKey: getGetGroupDetailQueryKey(id, queryParams),
-          refetchInterval: (q: any) =>
-            q.state.status === 'error' || q.state.data?.usageHealth ? false : 8000,
+          refetchInterval: DATA_REFRESH_INTERVAL_MS,
         },
       }),
     ),
@@ -111,8 +112,7 @@ export default function ClusterDetail() {
     getGetClusterProjectsQueryOptions(clusterKey, queryParams, {
       query: {
         queryKey: getGetClusterProjectsQueryKey(clusterKey, queryParams),
-        refetchInterval: (q: any) =>
-          q.state.status === 'error' || q.state.data?.usageHealth ? false : 8000,
+        refetchInterval: DATA_REFRESH_INTERVAL_MS,
         enabled: groupIds.length > 0,
       },
     }),
@@ -121,18 +121,11 @@ export default function ClusterDetail() {
   const { data: clusterHeadline } = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
     query: {
       queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
-      refetchInterval: (q: any) =>
-        q.state.status === 'error' || q.state.data?.usageHealth ? false : 8000,
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
       enabled: groupIds.length > 0,
     },
   });
   const allLoaded = results.every((r) => !r.isLoading);
-  const allComplete = results.every((r) =>
-    r.data?.usageHealth.status === 'complete' || r.data?.usageHealth.status === 'stale',
-  );
-  const projectsComplete = clusterProjectsData?.usageHealth.status === 'complete' ||
-    clusterProjectsData?.usageHealth.status === 'stale';
-
   // The API owns family and role classification; names are presentation only.
   const groupRoleMap = useMemo(() => {
     const m: Record<string, string> = {};
@@ -187,7 +180,7 @@ export default function ClusterDetail() {
             const bestRole = higherRole(existing.role, subRole);
             if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
             existing.role = bestRole;
-            existing.spendLoaded = existing.spendLoaded && spendLoaded;
+            existing.spendLoaded = existing.spendLoaded || spendLoaded;
             existing.spendUsd += spend;
           }
         }
@@ -207,11 +200,13 @@ export default function ClusterDetail() {
     }, [results, groupRoleMap]);
 
   const clusterAttributedTotal = clusterHeadline?.spendUsd ?? 0;
-  const clusterSpendLoaded = clusterHeadline?.usageHealth.status !== 'empty';
+  const clusterSpendLoaded = typeof clusterHeadline?.spendUsd === 'number';
 
   const sortedRoleLabels = useMemo(() => {
     const roles = new Set(Object.values(groupRoleMap));
-    return [...roles].sort((a, b) => (ROLE_PRIORITY[a.toLowerCase()] ?? 99) - (ROLE_PRIORITY[b.toLowerCase()] ?? 99));
+    return [...roles].sort(
+      (a, b) => ROLE_PRIORITY[normalizeRole(a)] - ROLE_PRIORITY[normalizeRole(b)],
+    );
   }, [groupRoleMap]);
 
   // Project data comes directly from the cluster-projects endpoint (creator-attributed, no scaling).
@@ -225,14 +220,7 @@ export default function ClusterDetail() {
     query: {
       enabled: !!workspaceId,
       queryKey: workspaceId ? getListVisibleWorkspaceMembersQueryKey(workspaceId) : ['workspaceMembers', ''],
-      refetchInterval: (query) => {
-        if (query.state.status === 'error') return false;
-        const response = query.state.data;
-        if (!response || response.connector.status !== 'available') return false;
-        return response.members.some(
-          (member) => member.budgetUsd !== null && member.usageUsd === null,
-        ) ? 8000 : false;
-      },
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
   const workspaceMembersData = workspaceMembersQuery.data;
@@ -331,7 +319,7 @@ export default function ClusterDetail() {
     });
   };
 
-  if (!allLoaded && results.every((r) => !r.data)) {
+  if (results.every((r) => !r.data)) {
     return (
       <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
         <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
@@ -344,17 +332,6 @@ export default function ClusterDetail() {
           {[1, 2].map((i) => <div key={i} className="h-28 bg-muted animate-pulse-glow rounded" />)}
         </div>
         <div className="h-64 bg-muted animate-pulse-glow rounded mt-8" />
-      </div>
-    );
-  }
-
-  if (allLoaded && results.every((r) => !r.data)) {
-    return (
-      <div className="p-4 md:p-8">
-        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="mr-1 inline h-4 w-4" /> Back to Dashboard
-        </Link>
-        <p className="mt-4 text-sm text-muted-foreground">Cluster data is unavailable.</p>
       </div>
     );
   }
@@ -391,12 +368,6 @@ export default function ClusterDetail() {
         <div className="flex flex-wrap items-center gap-3">
           <GroupUserExport groupIds={groupIds} />
           <RangeFilter />
-          {!allComplete && (
-            <Badge variant="outline" className="flex items-center gap-2 shrink-0">
-              <RefreshCw className="h-3 w-3 animate-spin" />
-              Syncing usage…
-            </Badge>
-          )}
         </div>
       </div>
 
@@ -588,21 +559,17 @@ export default function ClusterDetail() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right align-middle">
-                        {!member.spendLoaded ? (
-                          <div className="flex justify-end">
-                            <LoadingCell />
-                          </div>
-                        ) : (
+                        {member.spendLoaded ? (
                           <span className="text-sm font-mono tabular-nums">
                             ${member.spendUsd.toFixed(2)}
                           </span>
-                        )}
+                        ) : <div className="flex justify-end"><LoadingCell /></div>}
                       </td>
                     </tr>
                   );
                 })}
 
-                {allComplete && totalUnattributedSpend > 0.005 && (
+                {totalUnattributedSpend > 0.005 && (
                   <tr className="border-b border-border/50 bg-muted/10">
                     {canEditLimits && <td className="py-3 pl-4" />}
                     <td className="py-3 px-4">
@@ -630,15 +597,9 @@ export default function ClusterDetail() {
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
-                    {!allComplete || !clusterSpendLoaded ? (
-                      <div className="flex justify-end">
-                        <LoadingCell />
-                      </div>
-                    ) : (
-                      <span className="text-sm font-mono tabular-nums">
-                        ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
-                      </span>
-                    )}
+                    <span className="text-sm font-mono tabular-nums">
+                      ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
+                    </span>
                   </td>
                 </tr>
               </tfoot>
@@ -662,10 +623,8 @@ export default function ClusterDetail() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {usageLimitAuditsQuery.isLoading ? (
+            {usageLimitAuditsQuery.isLoading || !usageLimitAuditsQuery.data ? (
               <div className="h-16 bg-muted animate-pulse-glow rounded" />
-            ) : usageLimitAuditsQuery.isError && !usageLimitAuditsQuery.data ? (
-              <p className="text-sm text-muted-foreground">Usage limit history is unavailable.</p>
             ) : usageLimitAuditsQuery.data?.length ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -735,13 +694,7 @@ export default function ClusterDetail() {
                 </tr>
               </thead>
               <tbody>
-                {clusterProjectsQuery.isError && !clusterProjectsData ? (
-                  <tr>
-                    <td colSpan={2} className="py-8 text-center text-sm text-muted-foreground">
-                      Project data is unavailable.
-                    </td>
-                  </tr>
-                ) : !projectsComplete && mergedProjects.length === 0 ? (
+                {!clusterProjectsData ? (
                   [1, 2, 3].map((i) => (
                     <tr key={i} className="border-b border-border/50">
                       <td className="py-3 px-4"><LoadingCell /></td>
@@ -798,7 +751,7 @@ export default function ClusterDetail() {
               </tfoot>
             </table>
 
-            {projectsComplete && mergedProjects.length === 0 && projectsUnattributedSpend === 0 && (
+            {clusterProjectsData && mergedProjects.length === 0 && projectsUnattributedSpend === 0 && (
               <div className="text-center py-12 text-muted-foreground">No project spend found.</div>
             )}
           </div>

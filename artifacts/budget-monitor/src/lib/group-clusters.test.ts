@@ -60,8 +60,16 @@ test('logical scopes keep same-named families in separate workspaces', () => {
 
 test('does not mutate API response order', () => {
   const input = [...roleGroups].reverse();
-  buildGroupClusters(input);
-  expect(input.map((item) => item.groupId)).toEqual(['member', 'admin']);
+
+  const clusters = buildGroupClusters([
+    { ...base, groupId: 'missing', name: 'Missing role', role: null, rollupMemberCount: 1, rollupSpendUsd: 10 },
+    { ...base, groupId: 'unknown', name: 'Unknown role', role: 'new-role', rollupMemberCount: 1, rollupSpendUsd: 20 },
+  ]);
+  expect(clusters[0]?.groupRoles).toEqual({
+    missing: 'unsuffixed',
+    unknown: 'unsuffixed',
+  });
+  expect(clusters[0]?.groups.map((group) => roleLabel(group.role))).toEqual(['Group', 'Group']);
 });
 
 test('missing directory roles use the neutral group presentation', () => {

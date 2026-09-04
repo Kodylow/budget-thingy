@@ -4,8 +4,10 @@ import {
   ExternalLink,
   Info,
   Layers3,
+  RefreshCw,
   ShieldCheck,
   Users,
+  WalletCards,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,10 +16,11 @@ const CREDIT_REQUEST_URL =
   'https://airtable.com/appDXDfAHCXfJWF94/pag0RCmIauEcWroiy/form';
 
 const sections = [
-  { id: 'team-formation', label: 'Team formation' },
-  { id: 'team-members', label: 'Team members' },
-  { id: 'comcast-workspace', label: 'Comcast workspace' },
-  { id: 'multiple-workspaces', label: 'Multiple workspaces' },
+  { id: 'hierarchy', label: 'Hierarchy' },
+  { id: 'budgets', label: 'Allocations and limits' },
+  { id: 'blocking', label: 'Blocking' },
+  { id: 'roles', label: 'Roles' },
+  { id: 'freshness', label: 'Freshness' },
 ] as const;
 
 function GuideSection({
@@ -87,24 +90,24 @@ export default function UserGuide() {
           className="text-2xl font-bold tracking-tight md:text-3xl"
           data-testid="text-user-guide-title"
         >
-          Budget Monitor Business Rules
+          Budget Monitor Guide
         </h1>
         <p className="mt-1 text-sm text-muted-foreground md:text-base">
-          How groups become teams, people are deduplicated, and spend is assigned to workspaces.
+          How the directory is organized, how budgets differ, who can make changes, and when data refreshes.
         </p>
       </header>
 
       <Card className="border-primary/25 bg-primary/[0.03]">
         <CardHeader className="px-4 py-4 md:px-5">
-          <CardTitle className="text-base">Rules at a glance</CardTitle>
-          <CardDescription>Four principles determine what appears in the Budget Monitor.</CardDescription>
+          <CardTitle className="text-base">At a glance</CardTitle>
+          <CardDescription>Keep these distinctions in mind when reviewing spend.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 px-4 pb-4 sm:grid-cols-2 md:px-5">
           {[
-            ['1', 'Matching role groups roll up to one team.'],
-            ['2', 'Admin takes precedence when a person has multiple roles.'],
-            ['3', 'Legacy Comcast spend moves only when an eligible current workspace has spend.'],
-            ['4', 'Spend is counted in the workspace where it occurred.'],
+            ['1', 'Workspace → Team → Family → Role group is the canonical hierarchy.'],
+            ['2', 'Annual allocations plan capacity; monthly Agent limits enforce usage.'],
+            ['3', 'Only an applied Replit limit blocks paid services.'],
+            ['4', 'Data as of identifies the newest usage included in the figures.'],
           ].map(([number, rule]) => (
             <div key={number} className="flex gap-3 rounded-md border bg-background p-3">
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-muted/40 text-xs font-semibold">
@@ -116,7 +119,7 @@ export default function UserGuide() {
         </CardContent>
       </Card>
 
-      <nav aria-label="Business rule sections" className="flex flex-wrap items-center gap-2">
+      <nav aria-label="Guide sections" className="flex flex-wrap items-center gap-2">
         <span className="mr-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Jump to
         </span>
@@ -133,103 +136,96 @@ export default function UserGuide() {
 
       <div className="space-y-4">
         <GuideSection
-          id="team-formation"
+          id="hierarchy"
           icon={Layers3}
-          title="Team formation"
-          description="Groups with the same core name are combined into one team."
+          title="Canonical hierarchy"
+          description="Every role group belongs to one family, team, and workspace."
         >
           <RuleList>
-            <li>
-              Group names follow the pattern <strong className="text-foreground">AZ-Replit - XXX - Role</strong>.
-            </li>
-            <li>
-              When <strong className="text-foreground">XXX</strong> matches, the Admin, Member, and Viewer groups roll up together.
-            </li>
-            <li>The resulting team is named XXX; the role suffix is not part of the team name.</li>
+            <li><strong className="text-foreground">Workspace</strong> is the Replit workspace that owns the directory membership and usage.</li>
+            <li><strong className="text-foreground">Team</strong> is the business planning level used for annual allocations and reporting.</li>
+            <li><strong className="text-foreground">Family</strong> combines matching Admin, Member, and Viewer role groups within a workspace.</li>
+            <li><strong className="text-foreground">Role group</strong> is the actual Replit group whose membership determines access and limit targets.</li>
+            <li>A person shown in several role groups is deduplicated in family and team totals; spend stays with the workspace where it occurred.</li>
           </RuleList>
           <Callout label="Example">
-            <span className="block">
-              <span className="font-mono text-xs text-foreground">AZ-Replit - Comcast Advertising - Admin</span>
-              <br />
-              <span className="font-mono text-xs text-foreground">AZ-Replit - Comcast Advertising - Member</span>
-              <br />
-              <span className="font-mono text-xs text-foreground">AZ-Replit - Comcast Advertising - Viewer</span>
-            </span>
-            <span className="mt-2 flex items-center gap-1 font-medium text-foreground">
-              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-              Comcast Advertising
+            <span className="inline-flex flex-wrap items-center gap-1 text-foreground">
+              Workspace A <ArrowRight className="h-3.5 w-3.5" /> Growth Team
+              <ArrowRight className="h-3.5 w-3.5" /> Growth family
+              <ArrowRight className="h-3.5 w-3.5" /> Growth Member group
             </span>
           </Callout>
         </GuideSection>
 
         <GuideSection
-          id="team-members"
-          icon={Users}
-          title="Team members"
-          description="Each person appears once on a Team page, even when they belong to more than one role group."
+          id="budgets"
+          icon={WalletCards}
+          title="Annual allocations and monthly limits"
+          description="These numbers answer different questions and should not be compared as if they were the same control."
         >
           <RuleList>
-            <li>Duplicate membership does not create duplicate people or duplicate spend.</li>
-            <li>
-              <strong className="text-foreground">Admin takes precedence over Member.</strong>
-            </li>
-            <li>If a person is both an Admin and a Member, the Team page shows only their Admin status.</li>
+            <li>An <strong className="text-foreground">annual allocation</strong> is the team’s planning total: its admin-managed baseline plus approved adjustments.</li>
+            <li>Changing an annual allocation does not write a Replit usage limit.</li>
+            <li>A <strong className="text-foreground">monthly Agent limit</strong> resets on the billing cycle day and is the amount sent to Replit for enforcement.</li>
+            <li>The default team monthly limit is the annual allocation divided by 12; account administrators may set a manual monthly value.</li>
+            <li>Target overrides divide or redirect the team limit across specific workspace member groups. A target total difference is informational and does not prevent an apply.</li>
           </RuleList>
-          <Callout label="Important">
-            Role precedence controls which status is displayed. It does not add the person’s spend more than once.
-          </Callout>
         </GuideSection>
 
         <GuideSection
-          id="comcast-workspace"
+          id="blocking"
           icon={Building2}
-          title="Legacy Comcast workspace"
-          description="Positive Comcast spend is reassigned when the user has an eligible non-Comcast workspace with positive spend."
+          title="What blocks usage"
+          description="Dashboard allocations and alert thresholds inform operators; Replit limits enforce usage."
         >
           <RuleList>
-            <li>
-              Comcast spend is transferred to the eligible non-Comcast workspace where that user has the highest positive spend.
-            </li>
-            <li>Admin still takes precedence over Member when the person has multiple role memberships.</li>
-            <li>The transferred spend is counted once; overlapping roles do not duplicate it.</li>
-            <li>
-              If the user has no positive spend in a non-Comcast workspace, their Comcast spend remains in the Comcast workspace.
-            </li>
+            <li>Reaching an applied monthly Agent group or member limit blocks paid services covered by that Replit limit.</li>
+            <li>Annual allocations, dashboard percentages, and email thresholds do not block usage by themselves.</li>
+            <li>Saving a desired monthly limit in Budget Monitor does not change enforcement until an authorized account administrator applies it upstream.</li>
+            <li>Legacy copies shown for reference are not member-group limit targets.</li>
           </RuleList>
           <Callout label="Important">
-            Comcast-only users are unchanged. The dashboard does not invent a destination when there is no eligible non-Comcast workspace with positive spend.
+            A dashboard value above 100% can trigger guidance or email without blocking. Confirm the upstream limit status to know what Replit is enforcing.
           </Callout>
         </GuideSection>
 
         <GuideSection
-          id="multiple-workspaces"
+          id="roles"
           icon={ShieldCheck}
-          title="Users in multiple workspaces"
-          description="Spend remains attached to the active workspace where it occurred."
+          title="Roles and permissions"
+          description="What you can see and change follows your highest applicable account, workspace, or team role."
         >
           <RuleList>
-            <li>
-              Excluding the Comcast workspace, a user’s spend is assigned only to the workspace where that spend occurred.
-            </li>
-            <li>The same spend is never copied across the user’s other workspaces.</li>
-            <li>
-              The eligible non-Comcast workspace with the <strong className="text-foreground">highest positive spend</strong> is the user’s primary workspace.
-            </li>
-            <li>Legacy Comcast spend is assigned to that primary workspace only when one exists.</li>
-            <li>If eligible workspaces have equal spend, the workspace ID breaks the tie consistently.</li>
+            <li><strong className="text-foreground">Enterprise account administrators</strong> see the full account and manage access, allocations, recipients, visibility, and upstream limits.</li>
+            <li><strong className="text-foreground">Managed account editors</strong> can work with account-wide allocations and reporting, but cannot manage the editor allowlist as true account administrators do.</li>
+            <li><strong className="text-foreground">Workspace administrators</strong> see their authorized workspace scope and can manage supported member limits there.</li>
+            <li><strong className="text-foreground">Team administrators</strong> see the families they administer across the team’s represented workspaces.</li>
+            <li><strong className="text-foreground">Members</strong> see their own usage, limits, and group memberships.</li>
           </RuleList>
-          <Callout label="Example">
-            If a user spends $80 in Workspace A and $20 in Workspace B, those amounts remain in A and B. Workspace A is primary, so any Comcast workspace spend is assigned to Workspace A.
-          </Callout>
+        </GuideSection>
+
+        <GuideSection
+          id="freshness"
+          icon={RefreshCw}
+          title="Data as of and refresh behavior"
+          description="The page refreshes automatically while keeping the latest usable values visible."
+        >
+          <RuleList>
+            <li><strong className="text-foreground">Data as of</strong> is the newest usage timestamp included in the displayed figures, not the time the page was opened.</li>
+            <li>Data views check for updated server results every 60 seconds. This does not change the backend ingestion cadence.</li>
+            <li>Available numeric values remain visible during refreshes; they are not replaced by loading placeholders.</li>
+            <li>Partial, stale, and request failures appear once as transient notifications. Repeated polling failures do not stack notices.</li>
+            <li>When fresh data returns, the active notification clears without a success banner.</li>
+          </RuleList>
         </GuideSection>
       </div>
 
       <Card className="border-primary/30">
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between md:p-5">
           <div>
-            <p className="text-sm font-semibold">Need more capacity?</p>
+            <p className="text-sm font-semibold">Need more annual capacity?</p>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Submit the approved external request form for additional credits.
+              Submit the approved request form for an allocation adjustment.
             </p>
           </div>
           <Button asChild className="w-full shrink-0 sm:w-auto" data-testid="link-request-credits">

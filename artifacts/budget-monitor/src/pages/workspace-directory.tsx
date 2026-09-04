@@ -7,7 +7,7 @@ import {
   useGetUserActivity,
   getGetUserActivityQueryKey,
 } from '@workspace/api-client-react';
-import { progressivePollInterval } from '@/lib/client-performance';
+import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 import type { DirectoryMember, DirectoryMemberWorkspace } from '@workspace/api-client-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -358,16 +358,17 @@ export default function WorkspaceDirectory() {
   const { data: members, isLoading: membersLoading } = useListDirectoryMembers(rangeParams, {
     query: {
       queryKey: getListDirectoryMembersQueryKey(rangeParams),
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 
   const {
     data: directoryGroups,
     isLoading: groupsLoading,
-    isError: groupsUnavailable,
   } = useListDirectoryGroups({
     query: {
       queryKey: getListDirectoryGroupsQueryKey(),
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 
@@ -375,12 +376,7 @@ export default function WorkspaceDirectory() {
   const { data: activity, isLoading: activityLoading } = useGetUserActivity(activityParams, {
     query: {
       queryKey: getGetUserActivityQueryKey(activityParams),
-      refetchInterval: (query) =>
-        progressivePollInterval(
-          query.state.data,
-          query.state.dataUpdateCount,
-          query.state.status,
-        ),
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 
@@ -496,7 +492,7 @@ export default function WorkspaceDirectory() {
                   Enterprise groups organized by their owning workspace
                 </p>
               </div>
-              {!groupsLoading && !groupsUnavailable && (
+              {!groupsLoading && (
                 <p className="text-xs text-muted-foreground" data-testid="directory-group-counts">
                    {visibleGroupCount} group{visibleGroupCount === 1 ? '' : 's'} across{' '}
                   {groupedWorkspaces.length} workspace{groupedWorkspaces.length === 1 ? '' : 's'}
@@ -545,12 +541,6 @@ export default function WorkspaceDirectory() {
                   <tbody>
                     {groupsLoading ? (
                       Array.from({ length: 4 }).map((_, i) => <GroupSkeletonRow key={i} />)
-                    ) : groupsUnavailable ? (
-                      <tr>
-                        <td colSpan={2} className="px-4 py-10 text-center text-sm text-muted-foreground">
-                          Group directory is currently unavailable. Try again later.
-                        </td>
-                      </tr>
                     ) : groupedWorkspaces.length === 0 ? (
                       <tr>
                         <td colSpan={2} className="px-4 py-10 text-center text-sm text-muted-foreground">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   getGetUserActivityQueryKey,
   getGetTrendsQueryKey,
@@ -6,7 +6,7 @@ import {
   useGetTrends,
   type GetTrendsGranularity,
 } from '@workspace/api-client-react';
-import { Check, ChevronDown, RefreshCw, Search } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 import {
   Area,
   AreaChart,
@@ -26,9 +26,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useRange } from '@/components/range-context';
-import { buildTrendsParams, PARTIAL_BUCKET_EXPLANATION } from '@/lib/trends-ui';
-import { progressivePollInterval } from '@/lib/client-performance';
-import { toast } from '@/hooks/use-toast';
+import { buildTrendsParams } from '@/lib/trends-ui';
+import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 
 const SERIES_COLORS = [
   '#0f3d62',
@@ -111,12 +110,7 @@ function useUserActivity() {
   return useGetUserActivity(params, {
     query: {
       queryKey: getGetUserActivityQueryKey(params),
-      refetchInterval: (query) =>
-        progressivePollInterval(
-          query.state.data,
-          query.state.dataUpdateCount,
-          query.state.status,
-        ),
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 }
@@ -138,7 +132,7 @@ function fmtRole(role: string): string {
 // ---------- UserActivityCard ----------
 
 function UserActivityCard() {
-  const { data, isLoading, isFetching, isError } = useUserActivity();
+  const { data, isLoading } = useUserActivity();
   const [view, setView] = useState<'spenders' | 'inactive'>('spenders');
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -169,13 +163,6 @@ function UserActivityCard() {
   const visibleRows = rows.slice(0, visibleCount);
   const hasMore = rows.length > visibleCount;
 
-  const progressPct =
-    data
-      ? Math.round(data.usageHealth.coverage.ratio * 100)
-      : 0;
-  const usageSettled = data?.usageHealth.status === 'complete' ||
-    data?.usageHealth.status === 'stale';
-
   return (
     <Card>
       <CardHeader>
@@ -185,20 +172,8 @@ function UserActivityCard() {
             <CardDescription className="mt-1">
               Workspace members ranked by member AI plus creator-attributed project
               hosting and other non-AI costs for the selected range.
-              {!usageSettled && data && (
-                <span className="text-amber-600 dark:text-amber-400">
-                  {' '}Data is loading — updates as each group completes.
-                </span>
-              )}
             </CardDescription>
           </div>
-          {/* Loading badge */}
-          {!usageSettled && (isFetching || isLoading) && (
-            <Badge variant="outline" className="flex items-center gap-1.5 shrink-0 self-start mt-0.5">
-              <RefreshCw className="h-3 w-3 animate-spin" />
-              {data ? `${progressPct}% loaded` : 'Loading…'}
-            </Badge>
-          )}
         </div>
 
         {/* Toggle + search row */}
@@ -249,13 +224,9 @@ function UserActivityCard() {
       </CardHeader>
 
       <CardContent className="p-0">
-        {isLoading && !data ? (
+        {!data ? (
           <div className="px-6 py-8">
             <div className="h-48 w-full animate-pulse-glow bg-muted rounded" />
-          </div>
-        ) : isError && !data ? (
-          <div className="flex h-32 items-center justify-center px-6 text-sm text-muted-foreground">
-            User activity is unavailable.
           </div>
         ) : rows.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-muted-foreground text-sm px-6">
@@ -370,7 +341,6 @@ function UserActivityCard() {
 // ---------- TrendsTab ----------
 
 export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
-  const partialBucketToast = useRef<ReturnType<typeof toast> | null>(null);
   const { rangeType, startDate, endDate } = useRange();
   const [granularity, setGranularity] = useState<GetTrendsGranularity>('week');
   const [viewBy, setViewBy] = useState<ViewBy>('team');
@@ -397,15 +367,10 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
     }),
     [granularity, rangeType, startDate, endDate, selectedTeams, selectedGroupIds],
   );
-  const { data, isLoading, isFetching, isError } = useGetTrends(params, {
+  const { data } = useGetTrends(params, {
     query: {
       queryKey: getGetTrendsQueryKey(params),
-      refetchInterval: (query) =>
-        progressivePollInterval(
-          query.state.data,
-          query.state.dataUpdateCount,
-          query.state.status,
-        ),
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 
@@ -443,38 +408,12 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
     });
   }, [data, keyedVisibleSeries]);
 
-  const progress = data
-    ? Math.round(data.usageHealth.coverage.ratio * 100)
-    : 0;
-  const usageSettled = data?.usageHealth.status === 'complete' ||
-    data?.usageHealth.status === 'stale';
   const selectedLabel = selectedTeams.size === 0
     ? 'All teams'
     : `${selectedTeams.size} team${selectedTeams.size === 1 ? '' : 's'}`;
   const selectedGroupsLabel = selectedGroupIds.size === 0
     ? 'All groups'
     : `${selectedGroupIds.size} group${selectedGroupIds.size === 1 ? '' : 's'}`;
-  const hasPartialBucket = data?.bucketRanges.some((bucket) => bucket.isPartial) ?? false;
-
-  useEffect(() => {
-    if (hasPartialBucket && !partialBucketToast.current) {
-      partialBucketToast.current = toast({
-        title: 'Trend data is still updating',
-        description: PARTIAL_BUCKET_EXPLANATION,
-      });
-      return;
-    }
-    if (!hasPartialBucket && partialBucketToast.current) {
-      partialBucketToast.current.dismiss();
-      partialBucketToast.current = null;
-    }
-  }, [hasPartialBucket]);
-
-  useEffect(() => () => {
-    partialBucketToast.current?.dismiss();
-    partialBucketToast.current = null;
-  }, []);
-
   return (
     <div className="space-y-4">
       <Card>
@@ -486,12 +425,6 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
                 Spend by date bucket from the May 20, 2026 data cutoff.
               </CardDescription>
             </div>
-            {!usageSettled && (isLoading || isFetching) && (
-              <Badge variant="outline" className="mt-1 flex w-fit items-center gap-1.5">
-                <RefreshCw className="h-3 w-3 animate-spin" />
-                {data ? `${progress}% loaded` : 'Loading buckets…'}
-              </Badge>
-            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -610,12 +543,8 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
             </div>
           </div>
 
-          {isLoading && !data ? (
+          {!data ? (
             <div className="h-80 animate-pulse-glow rounded-lg bg-muted" data-testid="trends-skeleton" />
-          ) : isError && !data ? (
-            <div className="grid h-80 place-content-center rounded-lg border border-dashed text-sm text-muted-foreground">
-              Trends are unavailable.
-            </div>
           ) : visibleSeries.length === 0 ? (
             <div className="grid h-80 place-content-center rounded-lg border border-dashed text-sm text-muted-foreground">
               No {viewBy} trend data matches these filters.

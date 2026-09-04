@@ -1,4 +1,6 @@
-export const ROLE_PRIORITY: Record<string, number> = {
+export type DirectoryRole = 'admin' | 'member' | 'viewer' | 'guest' | 'unsuffixed';
+
+export const ROLE_PRIORITY: Record<DirectoryRole, number> = {
   admin: 0,
   member: 1,
   viewer: 2,
@@ -6,20 +8,23 @@ export const ROLE_PRIORITY: Record<string, number> = {
   unsuffixed: 4,
 };
 
-function normalizedRole(role?: string | null): string {
-  return role?.trim().toLowerCase() || 'unsuffixed';
+export function normalizeRole(role: unknown): DirectoryRole {
+  if (typeof role !== 'string') return 'unsuffixed';
+  const normalized = role.trim().toLowerCase();
+  return normalized in ROLE_PRIORITY ? normalized as DirectoryRole : 'unsuffixed';
 }
 
-export function roleLabel(role?: string | null): string {
-  const normalized = normalizedRole(role);
-  if (normalized === 'unsuffixed') return 'Group';
-  return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+export function roleLabel(role: unknown): string {
+  const normalized = normalizeRole(role);
+  return normalized === 'unsuffixed'
+    ? 'Group'
+    : `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
 }
 
-export function higherRole(a?: string | null, b?: string | null): string {
-  const safeA = normalizedRole(a);
-  const safeB = normalizedRole(b);
-  return (ROLE_PRIORITY[safeA] ?? 99) <= (ROLE_PRIORITY[safeB] ?? 99) ? safeA : safeB;
+export function higherRole(a: unknown, b: unknown): DirectoryRole {
+  const normalizedA = normalizeRole(a);
+  const normalizedB = normalizeRole(b);
+  return ROLE_PRIORITY[normalizedA] <= ROLE_PRIORITY[normalizedB] ? normalizedA : normalizedB;
 }
 
 export interface GroupLike {
@@ -29,7 +34,7 @@ export interface GroupLike {
   name: string;
   familyKey: string;
   familyName: string;
-  role: string;
+  role?: string | null;
   isLegacy: boolean;
   teamName: string | null;
   memberCount: number | null;
@@ -79,7 +84,7 @@ export function buildLogicalGroupScopes<T extends {
   workspaceName?: string | null;
   familyKey: string;
   familyName: string;
-  role: string;
+  role?: string | null;
 }>(groups: T[]): LogicalGroupScope[] {
   const families = new Map<string, T[]>();
   for (const group of groups) {
@@ -91,7 +96,7 @@ export function buildLogicalGroupScopes<T extends {
 
   const scopes = [...families.entries()].map(([scopeId, family]) => {
     family.sort((a, b) =>
-      (ROLE_PRIORITY[a.role] ?? 99) - (ROLE_PRIORITY[b.role] ?? 99) ||
+      ROLE_PRIORITY[normalizeRole(a.role)] - ROLE_PRIORITY[normalizeRole(b.role)] ||
       a.groupId.localeCompare(b.groupId)
     );
     return {
@@ -142,13 +147,13 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
   for (const group of groups) {
     const key = `${group.workspaceId}::${group.familyKey}`;
     const family = families.get(key) ?? [];
-    family.push(group);
+    family.push({ ...group, role: normalizeRole(group.role) });
     families.set(key, family);
   }
   return [...families.entries()]
     .map(([clusterKey, family]) => {
       family.sort((a, b) =>
-        (ROLE_PRIORITY[a.role] ?? 99) - (ROLE_PRIORITY[b.role] ?? 99) ||
+        ROLE_PRIORITY[normalizeRole(a.role)] - ROLE_PRIORITY[normalizeRole(b.role)] ||
         a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
       );
       const first = family[0]!;
@@ -160,7 +165,9 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
         workspaceName: first.workspaceName,
         teamName: first.teamName,
         groupIds: family.map((group) => group.groupId),
-        groupRoles: Object.fromEntries(family.map((group) => [group.groupId, group.role])),
+        groupRoles: Object.fromEntries(
+          family.map((group) => [group.groupId, normalizeRole(group.role)]),
+        ),
         memberCount: totals.memberCount,
         spendUsd: totals.spendUsd,
         spendLoaded: totals.spendLoaded,
@@ -176,8 +183,8 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
     );
 }
 
-export function roleBadgeClass(role?: string | null): string {
-  switch (normalizedRole(role)) {
+export function roleBadgeClass(role: unknown): string {
+  switch (normalizeRole(role)) {
     case 'admin':
       return 'bg-amber-100 text-amber-800 border-amber-300';
     case 'member':

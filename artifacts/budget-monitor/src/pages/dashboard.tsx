@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -54,7 +54,6 @@ function calcPace(
 function PaceCell({
   spendUsd,
   budgetUsd,
-  spendLoaded,
   semibold,
   periodStart,
   periodEnd,
@@ -63,7 +62,6 @@ function PaceCell({
 }: {
   spendUsd: number;
   budgetUsd: number | null;
-  spendLoaded: boolean;
   semibold?: boolean;
   periodStart: string;
   periodEnd: string;
@@ -90,12 +88,8 @@ function PaceCell({
   }[pace.status];
   return (
     <div
-      className={`flex flex-col items-end gap-0.5${!spendLoaded ? " opacity-60" : ""}`}
-      title={
-        !spendLoaded
-          ? `Latest available pace; background sync is still running. Pace period: ${periodLabel}${isFallback ? " (safe fallback)" : ""}`
-          : `Pace period: ${periodLabel}${isFallback ? " (safe fallback)" : ""}`
-      }
+      className="flex flex-col items-end gap-0.5"
+      title={`Pace period: ${periodLabel}${isFallback ? " (safe fallback)" : ""}`}
     >
       <span
         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.cls} ${semibold ? "font-semibold" : ""}`}
@@ -135,17 +129,15 @@ import {
 } from "@/lib/group-clusters";
 import { compareTeamNames, formatTeamName } from "@/lib/team-names";
 import { VirtualizedTableRows } from "@/components/virtualized-table-rows";
-import { dashboardPollInterval } from "@/lib/client-performance";
+import {
+  DATA_REFRESH_INTERVAL_MS,
+  reportDashboardNumbersPainted,
+} from "@/lib/client-performance";
 import {
   allocateWorkspaceTeamBudgets,
   indexWorkspaceTeamSpend,
   workspaceTeamSpendKey,
 } from "@/lib/workspace-team-spend";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 
 interface TeamSection {
@@ -176,7 +168,7 @@ export default function Dashboard() {
     () => new Set(),
   );
   const [showLegacyGroups, setShowLegacyGroups] = useState(false);
-  const [coverageOpen, setCoverageOpen] = useState(false);
+  const dashboardReadyMeasured = useRef(false);
 
   const queryParams = useMemo(
     () => ({
@@ -186,35 +178,24 @@ export default function Dashboard() {
     [rangeType, startDate, endDate],
   );
 
-  const { data: groupsData, isError: groupsRequestFailed } = useListGroups(
+  const { data: groupsData, isFetching: groupsFetching } = useListGroups(
     queryParams,
     {
       query: {
         queryKey: getListGroupsQueryKey(queryParams),
         placeholderData: (previousData) => previousData,
-        refetchInterval: (query) =>
-          dashboardPollInterval(
-            query.state.data,
-            query.state.dataUpdateCount,
-            query.state.status,
-          ),
+        refetchInterval: DATA_REFRESH_INTERVAL_MS,
       },
     },
   );
 
-  const { data: summary, isError: summaryRequestFailed } = useGetSummary(
+  const { data: summary, isFetching: summaryFetching } = useGetSummary(
     queryParams,
     {
       query: {
         queryKey: getGetSummaryQueryKey(queryParams),
         placeholderData: (previousData) => previousData,
-        refetchInterval: (query) => {
-          return dashboardPollInterval(
-            query.state.data,
-            query.state.dataUpdateCount,
-            query.state.status,
-          );
-        },
+        refetchInterval: DATA_REFRESH_INTERVAL_MS,
       },
     },
   );
@@ -228,7 +209,10 @@ export default function Dashboard() {
 
   const { data: teamBudgetsData, isLoading: teamBudgetsLoading } =
     useGetTeamsBudgets({
-      query: { queryKey: getGetTeamsBudgetsQueryKey() },
+      query: {
+        queryKey: getGetTeamsBudgetsQueryKey(),
+        refetchInterval: DATA_REFRESH_INTERVAL_MS,
+      },
     });
   const { data: memberCycleActivity } = useGetUserActivity(
     { rangeType: "billing" },
@@ -236,6 +220,7 @@ export default function Dashboard() {
       query: {
         enabled: role === "member",
         queryKey: getGetUserActivityQueryKey({ rangeType: "billing" }),
+        refetchInterval: DATA_REFRESH_INTERVAL_MS,
       },
     },
   );
@@ -245,6 +230,7 @@ export default function Dashboard() {
       query: {
         enabled: role === "member",
         queryKey: getGetUserActivityQueryKey({ rangeType: "full-term" }),
+        refetchInterval: DATA_REFRESH_INTERVAL_MS,
       },
     },
   );
@@ -273,10 +259,23 @@ export default function Dashboard() {
         query: {
           enabled: role === "member",
           queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId),
+          refetchInterval: DATA_REFRESH_INTERVAL_MS,
         },
       }),
     ),
   });
+
+  useLayoutEffect(() => {
+    if (
+      dashboardReadyMeasured.current ||
+      !groupsData ||
+      !summary ||
+      groupsFetching ||
+      summaryFetching
+    ) return;
+    dashboardReadyMeasured.current = true;
+    return reportDashboardNumbersPainted();
+  }, [groupsData, groupsFetching, summary, summaryFetching]);
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
@@ -557,13 +556,8 @@ export default function Dashboard() {
         </td>
         <td className="py-3 px-4 text-right">
           <span
-            className={`text-sm font-mono tabular-nums${!group.spendLoaded ? " text-muted-foreground" : ""}`}
+            className="text-sm font-mono tabular-nums"
             data-testid={`text-spend-${group.groupId}`}
-            title={
-              !group.spendLoaded
-                ? "Latest available value; background sync is still running"
-                : undefined
-            }
           >
             ${displaySpend.toFixed(2)}
           </span>
@@ -601,7 +595,7 @@ export default function Dashboard() {
             <span className="text-sm text-muted-foreground">—</span>
           ) : (
             <span
-              className={`text-sm font-mono tabular-nums ${displayRemaining < 0 ? "text-destructive font-bold" : ""}${!group.spendLoaded ? " text-muted-foreground" : ""}`}
+              className={`text-sm font-mono tabular-nums ${displayRemaining < 0 ? "text-destructive font-bold" : ""}`}
             >
               ${displayRemaining.toFixed(2)}
             </span>
@@ -631,7 +625,6 @@ export default function Dashboard() {
           <PaceCell
             spendUsd={group.paceSpendUsd ?? 0}
             budgetUsd={group.budgetUsd ?? null}
-            spendLoaded={group.paceSpendLoaded}
             periodStart={summary?.pacePeriodStart ?? ""}
             periodEnd={summary?.pacePeriodEnd ?? ""}
             periodLabel={summary?.pacePeriodLabel ?? ""}
@@ -693,12 +686,7 @@ export default function Dashboard() {
         </td>
         <td className="py-3 px-4 text-right">
           <span
-            className={`text-sm font-mono tabular-nums${!cluster.spendLoaded ? " text-muted-foreground" : ""}`}
-            title={
-              !cluster.spendLoaded
-                ? "Latest available value; background sync is still running"
-                : undefined
-            }
+            className="text-sm font-mono tabular-nums"
           >
             ${cluster.spendUsd.toFixed(2)}
           </span>
@@ -856,12 +844,7 @@ export default function Dashboard() {
         </td>
         <td className="py-3 px-4 text-right">
           <span
-            className={`text-sm font-mono tabular-nums font-semibold${!team.spendLoaded ? " text-muted-foreground" : ""}`}
-            title={
-              !team.spendLoaded
-                ? "Latest available value; background sync is still running"
-                : undefined
-            }
+            className="text-sm font-mono tabular-nums font-semibold"
           >
             ${team.spendUsd.toFixed(2)}
           </span>
@@ -888,12 +871,7 @@ export default function Dashboard() {
             <span className="text-sm text-muted-foreground">—</span>
           ) : (
             <span
-              className={`text-sm font-mono tabular-nums font-semibold ${displayRemaining < 0 ? "text-destructive" : ""}${!team.spendLoaded ? " text-muted-foreground" : ""}`}
-              title={
-                !team.spendLoaded
-                  ? "Latest available value; background sync is still running"
-                  : undefined
-              }
+              className={`text-sm font-mono tabular-nums font-semibold ${displayRemaining < 0 ? "text-destructive" : ""}`}
             >
               ${displayRemaining.toFixed(2)}
             </span>
@@ -906,12 +884,7 @@ export default function Dashboard() {
             ) : (
               <>
                 <span
-                  className={`text-xs font-mono tabular-nums font-semibold ${displayPercentUsed >= 100 ? "text-destructive" : displayPercentUsed >= 75 ? "text-yellow-600" : ""}${!team.spendLoaded ? " text-muted-foreground" : ""}`}
-                  title={
-                    !team.spendLoaded
-                      ? "Latest available value; background sync is still running"
-                      : undefined
-                  }
+                  className={`text-xs font-mono tabular-nums font-semibold ${displayPercentUsed >= 100 ? "text-destructive" : displayPercentUsed >= 75 ? "text-yellow-600" : ""}`}
                 >
                   {displayPercentUsed.toFixed(1)}%
                 </span>
@@ -929,7 +902,6 @@ export default function Dashboard() {
           <PaceCell
             spendUsd={team.paceSpendUsd}
             budgetUsd={team.budgetUsd}
-            spendLoaded={team.paceSpendLoaded}
             semibold
             periodStart={summary?.pacePeriodStart ?? ""}
             periodEnd={summary?.pacePeriodEnd ?? ""}
@@ -1235,92 +1207,8 @@ export default function Dashboard() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <RangeFilter />
-          {(groupsData?.usageHealth.status === "partial" ||
-            groupsData?.usageHealth.status === "stale") && (
-            <div
-              className="flex items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-800 dark:text-yellow-200"
-              role="status"
-              data-testid="notice-usage-health"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>
-                {groupsData.usageHealth.status === "partial"
-                  ? "Some usage data is still updating."
-                  : "Usage data may be out of date."}
-              </span>
-              <Popover open={coverageOpen} onOpenChange={setCoverageOpen}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className="font-medium underline underline-offset-2"
-                    data-testid="button-usage-coverage"
-                  >
-                    Details
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-80">
-                  <p className="font-medium">
-                    Usage coverage{" "}
-                    {Math.round(groupsData.usageHealth.coverage.ratio * 100)}%
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Failed workspace-days
-                  </p>
-                  {groupsData.usageHealth.coverage.failedWorkspaceDays.length >
-                  0 ? (
-                    <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs">
-                      {groupsData.usageHealth.coverage.failedWorkspaceDays.map(
-                        (item) => (
-                          <li
-                            key={`${item.workspaceId}-${item.usageDate}`}
-                            className="font-mono"
-                          >
-                            {item.workspaceId} · {item.usageDate}
-                          </li>
-                        ),
-                      )}
-                    </ul>
-                  ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      None reported.
-                    </p>
-                  )}
-                  {groupsData.usageHealth.coverage.missingWorkspaceDays.length >
-                    0 && (
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Missing workspace-days:{" "}
-                      {
-                        groupsData.usageHealth.coverage.missingWorkspaceDays
-                          .length
-                      }
-                    </p>
-                  )}
-                  {groupsData.usageHealth.coverage.missingAccountDays.length >
-                    0 && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Missing account-days:{" "}
-                      {
-                        groupsData.usageHealth.coverage.missingAccountDays
-                          .length
-                      }
-                    </p>
-                  )}
-                </PopoverContent>
-              </Popover>
-            </div>
-          )}
         </div>
       </div>
-      {(groupsRequestFailed || summaryRequestFailed) &&
-        !groupsData &&
-        !summary && (
-          <p
-            className="text-sm text-muted-foreground"
-            data-testid="empty-dashboard-failed"
-          >
-            Dashboard data is unavailable.
-          </p>
-        )}
       {groupsData?.usageHealth.status === "empty" && (
         <p
           className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
