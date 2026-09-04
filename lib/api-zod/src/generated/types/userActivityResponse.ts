@@ -5,13 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { UsageHealth } from './usageHealth';
 import type { UserActivityEntry } from './userActivityEntry';
 
 export interface UserActivityResponse {
-  isComplete: boolean;
-  /** Authoritative workspace usage scopes currently loaded */
-  loadedCount: number;
-  /** Authoritative workspace usage scopes in the caller's visibility */
-  totalCount: number;
+  usageHealth: UsageHealth;
   users: UserActivityEntry[];
 }

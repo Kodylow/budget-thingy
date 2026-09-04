@@ -10,6 +10,6 @@ import type { TrendSeriesType } from './trendSeriesType';
 export interface TrendSeries {
   name: string;
   type: TrendSeriesType;
-  /** Spend in USD for each corresponding bucket; null while loading */
-  data: (number | null)[];
+  /** Spend in USD for each corresponding bucket */
+  data: number[];
 }

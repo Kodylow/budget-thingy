@@ -102,7 +102,7 @@ export default function ClusterDetail() {
         query: {
           queryKey: getGetGroupDetailQueryKey(id, queryParams),
           refetchInterval: (q: any) =>
-            q.state.status === 'error' || q.state.data?.group?.spendLoaded ? false : 8000,
+            q.state.status === 'error' || q.state.data?.usageHealth ? false : 8000,
         },
       }),
     ),
@@ -114,7 +114,7 @@ export default function ClusterDetail() {
       query: {
         queryKey: getGetClusterProjectsQueryKey(clusterKey, queryParams),
         refetchInterval: (q: any) =>
-          q.state.status === 'error' || q.state.data?.isComplete ? false : 8000,
+          q.state.status === 'error' || q.state.data?.usageHealth ? false : 8000,
         enabled: groupIds.length > 0,
       },
     }),
@@ -124,13 +124,16 @@ export default function ClusterDetail() {
     query: {
       queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
       refetchInterval: (q: any) =>
-        q.state.status === 'error' || q.state.data?.isComplete ? false : 8000,
+        q.state.status === 'error' || q.state.data?.usageHealth ? false : 8000,
       enabled: groupIds.length > 0,
     },
   });
   const allLoaded = results.every((r) => !r.isLoading);
-  const allComplete = results.every((r) => r.data?.group.spendLoaded);
-  const projectsComplete = clusterProjectsData?.isComplete ?? false;
+  const allComplete = results.every((r) =>
+    r.data?.usageHealth.status === 'complete' || r.data?.usageHealth.status === 'stale',
+  );
+  const projectsComplete = clusterProjectsData?.usageHealth.status === 'complete' ||
+    clusterProjectsData?.usageHealth.status === 'stale';
 
   // Build a map of groupId → sub-group role by parsing the fetched group names
   const groupRoleMap = useMemo(() => {
@@ -207,7 +210,7 @@ export default function ClusterDetail() {
     }, [results, groupRoleMap]);
 
   const clusterAttributedTotal = clusterHeadline?.spendUsd ?? 0;
-  const clusterSpendLoaded = clusterHeadline?.isComplete ?? false;
+  const clusterSpendLoaded = clusterHeadline?.usageHealth.status !== 'empty';
 
   const sortedRoleLabels = useMemo(() => {
     const roles = new Set(Object.values(groupRoleMap));

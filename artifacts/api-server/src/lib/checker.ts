@@ -4,6 +4,7 @@ import {
   groupBudgetsTable,
   teamBudgetsTable,
   groupTeamsTable,
+  apiProjectMetadataTable,
   alertsTable,
   firedThresholdsTable,
   alertDeliveryClaimsTable,
@@ -14,14 +15,16 @@ import { logger } from "./logger";
 import {
   getDirectory,
   getBillingPeriod,
-  isConfigured,
-  getCanonicalUsage,
-  getStoredBudgetEvaluationSnapshot,
   buildCanonicalGroupMergePlan,
   resolveCanonicalMergedGroupBudget,
-  resolveRange,
   type EnterpriseGroup,
 } from "./enterprise";
+import { resolveUsageWindow } from "./usage-window";
+import { readUsageSnapshot } from "./usage-store";
+import {
+  computeSnapshotUsageRollup,
+  type SnapshotUsageRollup,
+} from "./usage-rollup";
 import { sendEmail, buildAlertEmail, isEmailConfigured } from "./email";
 import { resolveAlertRecipients } from "./alert-recipients";
 import { getVisibleEffectiveTeamBudgetMap } from "./team-budgets";
@@ -32,22 +35,51 @@ export const CHECK_INTERVAL_MINUTES = 10;
 
 type CheckerDirectory = Awaited<ReturnType<typeof getDirectory>>;
 
-function getStrictCheckerCanonicalUsage(
-  dir: CheckerDirectory,
-  teamByGroupName?: ReadonlyMap<string, string>,
-) {
-  const rangeKey = resolveRange("billing").key;
-  return getCanonicalUsage(
-    dir.groups,
-    rangeKey,
-    new Set(dir.workspaces.keys()),
-    dir.groupMembers,
-    dir.members,
-    teamByGroupName,
-    dir.workspaces,
-    false,
-    true,
-  );
+interface CheckerUsage {
+  rollup: SnapshotUsageRollup;
+  dataAsOf: Date;
+  windowKey: string;
+}
+
+async function readCheckerUsage(dir: CheckerDirectory): Promise<CheckerUsage | null> {
+  const billingPeriod = getBillingPeriod();
+  const selection = resolveUsageWindow({
+    rangeType: "billing",
+    billingPeriod,
+  });
+  const workspaceIds = [...dir.workspaces.keys()].sort();
+  const [snapshot, projectRows] = await Promise.all([
+    readUsageSnapshot({
+      window: selection.window,
+      workspaceIds,
+    }),
+    db.select().from(apiProjectMetadataTable),
+  ]);
+  if (!snapshot.dataAsOf) return null;
+
+  const projectInfoByWorkspace = new Map<
+    string,
+    Map<string, { creatorId: string | null }>
+  >();
+  const workspaceIdSet = new Set(workspaceIds);
+  for (const row of projectRows) {
+    if (!workspaceIdSet.has(row.workspaceId)) continue;
+    const projects = projectInfoByWorkspace.get(row.workspaceId) ?? new Map();
+    projects.set(row.projectId, { creatorId: row.creatorId });
+    projectInfoByWorkspace.set(row.workspaceId, projects);
+  }
+  const rollup = computeSnapshotUsageRollup({
+    snapshot,
+    groups: dir.groups,
+    membersByGroup: dir.groupMembers,
+    projectInfoByWorkspace,
+  });
+  if (!rollup.isComplete) return null;
+  return {
+    rollup,
+    dataAsOf: new Date(snapshot.dataAsOf),
+    windowKey: `${selection.window.start}|${selection.window.end}`,
+  };
 }
 
 export interface CheckerState {
@@ -285,14 +317,13 @@ async function evaluateEntity(spec: EntitySpec): Promise<Alert[]> {
 
 /**
  * Evaluate thresholds for one group and send any due alerts.
- * Group spend comes from the same canonical workspace-aware member rollup used
- * by dashboard group rows and team headers.
+ * Group spend comes from the immutable Postgres snapshot's workspace-aware
+ * member/project rollup.
  */
 async function evaluateGroupOnce(
   group: EnterpriseGroup,
-  stored?: Awaited<ReturnType<typeof getStoredBudgetEvaluationSnapshot>>["snapshot"],
 ): Promise<Alert[]> {
-  const dir = stored?.directory ?? await getDirectory();
+  const dir = await getDirectory();
   const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
   const primaryId = mergePlan.primaryByGroupId.get(group.id) ?? group.id;
   const primary = dir.groups.find((candidate) => candidate.id === primaryId);
@@ -305,13 +336,8 @@ async function evaluateGroupOnce(
   );
   if (!budget || budget.amountUsd <= 0) return [];
 
-  const canonical = stored
-    ? getCanonicalUsage(
-        dir.groups, stored.rangeKey, new Set(dir.workspaces.keys()),
-        dir.groupMembers, dir.members, undefined, dir.workspaces, false, true,
-      )
-    : getStrictCheckerCanonicalUsage(dir);
-  if (!canonical.isComplete) return [];
+  const usage = await readCheckerUsage(dir);
+  if (!usage) return [];
   const workspaceName = dir.workspaces.get(primary.workspaceId)?.name ?? null;
   const periodStart = getBillingPeriod().start;
   if (!periodStart) return [];
@@ -320,7 +346,8 @@ async function evaluateGroupOnce(
     entityType: "group",
     entityId: primary.id,
     entityName: primary.name,
-    spendUsd: canonical.spendByPrimaryGroup.get(primary.id) ?? 0,
+    spendUsd: (mergePlan.mergeMap.get(primary.id) ?? [primary.id])
+      .reduce((sum, id) => sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0),
     budgetUsd: budget.amountUsd,
     periodStart,
     workspaceIds: [
@@ -331,19 +358,18 @@ async function evaluateGroupOnce(
       ),
     ].sort(),
     workspaceName,
-    dataAsOf: stored?.dataAsOf ?? new Date(),
+    dataAsOf: usage.dataAsOf,
   });
 }
 
 export function evaluateGroup(
   group: EnterpriseGroup,
-  stored?: Awaited<ReturnType<typeof getStoredBudgetEvaluationSnapshot>>["snapshot"],
 ): Promise<Alert[]> {
   const key = `group|${group.id}`;
   const existing = evaluationsInFlight.get(key);
   if (existing) return existing;
 
-  const evaluation = evaluateGroupOnce(group, stored).finally(() => {
+  const evaluation = evaluateGroupOnce(group).finally(() => {
     if (evaluationsInFlight.get(key) === evaluation) {
       evaluationsInFlight.delete(key);
     }
@@ -353,23 +379,19 @@ export function evaluateGroup(
 }
 
 /**
- * Build the deduped, cross-workspace team rollup for the cutoff-anchored billing
- * range, aggregating per-group attributed spend by team (groupName -> teamName)
- * exactly like the dashboard team totals. Cross-workspace overlaps are handled by
- * getDedupedUsageRollup (users attributed to their first group in stable order).
+ * Build the cross-workspace team rollup for the cutoff-anchored billing window,
+ * aggregating each canonical displayed group's snapshot spend by team.
  */
 async function buildTeamSpecs(
-  stored?: NonNullable<Awaited<ReturnType<typeof getStoredBudgetEvaluationSnapshot>>["snapshot"]>,
+  dir: CheckerDirectory,
+  usage: CheckerUsage,
   prepared?: {
     allTeamBudgetRows: Array<typeof teamBudgetsTable.$inferSelect>;
     budgetByTeam: ReadonlyMap<string, number>;
     groupTeams: Array<{ groupName: string; teamName: string }>;
-    canonical: ReturnType<typeof getCanonicalUsage>;
     firedByEntity?: ReadonlyMap<string, readonly number[]>;
   },
 ): Promise<EntitySpec[]> {
-  const dir = stored?.directory ?? await getDirectory();
-
   const [allCheckerTeamBudgetRows, budgetByTeam, groupTeams] = prepared
     ? [prepared.allTeamBudgetRows, prepared.budgetByTeam, prepared.groupTeams]
     : await Promise.all([
@@ -387,16 +409,6 @@ async function buildTeamSpecs(
       .map((gt) => [gt.groupName, gt.teamName]),
   );
 
-  // Deduped rollup across ALL directory groups, including extra-workspace spend,
-  // so a team spanning multiple workspaces sees exactly the dashboard total.
-  const rollup = prepared?.canonical ?? (stored
-    ? getCanonicalUsage(
-        dir.groups, stored.rangeKey, new Set(dir.workspaces.keys()),
-        dir.groupMembers, dir.members, teamByGroupName, dir.workspaces, false, true,
-      )
-    : getStrictCheckerCanonicalUsage(dir, teamByGroupName));
-  if (!rollup.isComplete) return [];
-
   // Period start for team thresholds: use the shared cutoff-anchored billing
   // period (same anchor the dashboard/groups use for fired-threshold tracking).
   const period = getBillingPeriod();
@@ -406,17 +418,25 @@ async function buildTeamSpecs(
   // Aggregate attributed group spend and contributing workspaces per team.
   const spendByTeam = new Map<string, number>();
   const workspacesByTeam = new Map<string, Set<string>>();
-  for (const group of dir.groups) {
+  const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
+  for (const group of dir.groups.filter((candidate) =>
+    !mergePlan.hiddenGroupIds.has(candidate.id))) {
     const teamName = teamByGroupName.get(group.name);
     if (!teamName) continue;
     if (!budgetByTeam.has(teamName)) continue;
-    spendByTeam.set(teamName, rollup.byTeam.get(teamName) ?? 0);
+    const groupSpend = (mergePlan.mergeMap.get(group.id) ?? [group.id])
+      .reduce((sum, id) =>
+        sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0);
+    spendByTeam.set(teamName, (spendByTeam.get(teamName) ?? 0) + groupSpend);
     let wsSet = workspacesByTeam.get(teamName);
     if (!wsSet) {
       wsSet = new Set<string>();
       workspacesByTeam.set(teamName, wsSet);
     }
-    wsSet.add(group.workspaceId);
+    for (const id of mergePlan.mergeMap.get(group.id) ?? [group.id]) {
+      const workspaceId = dir.groups.find((candidate) => candidate.id === id)?.workspaceId;
+      if (workspaceId) wsSet.add(workspaceId);
+    }
   }
 
   const specs: EntitySpec[] = [];
@@ -431,7 +451,7 @@ async function buildTeamSpecs(
       periodStart,
       workspaceIds: [...(workspacesByTeam.get(teamName) ?? [])].sort(),
       workspaceName: null,
-      dataAsOf: stored?.dataAsOf ?? new Date(),
+      dataAsOf: usage.dataAsOf,
       firedThresholds: prepared?.firedByEntity?.get(`team|${teamName}`),
     });
   }
@@ -441,10 +461,11 @@ async function buildTeamSpecs(
 const teamChecksInFlight = new Map<string, Promise<{ checkedTeams: number; alerts: Alert[] }>>();
 
 async function evaluateTeamsOnceInternal(
-  stored?: NonNullable<Awaited<ReturnType<typeof getStoredBudgetEvaluationSnapshot>>["snapshot"]>,
-  prepared?: Parameters<typeof buildTeamSpecs>[1],
+  dir: CheckerDirectory,
+  usage: CheckerUsage,
+  prepared?: Parameters<typeof buildTeamSpecs>[2],
 ): Promise<{ checkedTeams: number; alerts: Alert[] }> {
-  const specs = await buildTeamSpecs(stored, prepared);
+  const specs = await buildTeamSpecs(dir, usage, prepared);
   const alerts: Alert[] = [];
   for (const spec of specs) {
     alerts.push(...(await evaluateEntity(spec)));
@@ -453,13 +474,14 @@ async function evaluateTeamsOnceInternal(
 }
 
 async function evaluateTeamsOnce(
-  stored?: NonNullable<Awaited<ReturnType<typeof getStoredBudgetEvaluationSnapshot>>["snapshot"]>,
-  prepared?: Parameters<typeof buildTeamSpecs>[1],
+  dir: CheckerDirectory,
+  usage: CheckerUsage,
+  prepared?: Parameters<typeof buildTeamSpecs>[2],
 ): Promise<{ checkedTeams: number; alerts: Alert[] }> {
-  const key = stored?.rangeKey ?? resolveRange("billing").key;
+  const key = usage.windowKey;
   const existing = teamChecksInFlight.get(key);
   if (existing) return existing;
-  const evaluation = evaluateTeamsOnceInternal(stored, prepared).finally(() => {
+  const evaluation = evaluateTeamsOnceInternal(dir, usage, prepared).finally(() => {
     if (teamChecksInFlight.get(key) === evaluation) teamChecksInFlight.delete(key);
   });
   teamChecksInFlight.set(key, evaluation);
@@ -517,18 +539,20 @@ async function persistSkippedCheckerState(
 
 async function runCheckInternal(): Promise<CheckResult> {
   const lastAttemptAt = new Date();
-  if (!isConfigured()) {
-    const skipReason = "Enterprise API is not configured";
+  let dir: CheckerDirectory;
+  try {
+    dir = await getDirectory();
+  } catch (error) {
+    const skipReason = error instanceof Error ? error.message : String(error);
     await persistSkippedCheckerState(lastAttemptAt, skipReason);
     return { checkedGroups: 0, checkedTeams: 0, alerts: [], evaluatedAt: null, dataAsOf: null, skipped: true, skipReason };
   }
-
-  const stored = await getStoredBudgetEvaluationSnapshot();
-  if (!stored.snapshot) {
-    await persistSkippedCheckerState(lastAttemptAt, stored.skipReason);
-    return { checkedGroups: 0, checkedTeams: 0, alerts: [], evaluatedAt: null, dataAsOf: null, skipped: true, skipReason: stored.skipReason };
+  const usage = await readCheckerUsage(dir);
+  if (!usage) {
+    const skipReason = "Postgres usage snapshot is incomplete";
+    await persistSkippedCheckerState(lastAttemptAt, skipReason);
+    return { checkedGroups: 0, checkedTeams: 0, alerts: [], evaluatedAt: null, dataAsOf: null, skipped: true, skipReason };
   }
-  const dir = stored.snapshot.directory;
   const [budgets, effectiveTeamBudgetMap, allRunTeamBudgetRows, groupTeams] = await Promise.all([
     db.select().from(groupBudgetsTable),
     getVisibleEffectiveTeamBudgetMap(),
@@ -547,22 +571,6 @@ async function runCheckInternal(): Promise<CheckResult> {
       ),
   );
   const teamsConfigured = effectiveTeamBudgetMap.size > 0;
-  const hiddenRunTeamNames = new Set(allRunTeamBudgetRows.filter((row) => row.isHidden).map((row) => row.teamName));
-  const teamByGroupName = new Map(
-    groupTeams
-      .filter((row) => !hiddenRunTeamNames.has(row.teamName))
-      .map((row) => [row.groupName, row.teamName]),
-  );
-  const canonical = getCanonicalUsage(
-    dir.groups, stored.snapshot.rangeKey, new Set(dir.workspaces.keys()),
-    dir.groupMembers, dir.members, teamByGroupName, dir.workspaces, false, true,
-  );
-  if (!canonical.isComplete) {
-    const skipReason = "Stored canonical usage is incomplete";
-    await persistSkippedCheckerState(lastAttemptAt, skipReason);
-    return { checkedGroups: 0, checkedTeams: 0, alerts: [], evaluatedAt: null, dataAsOf: null, skipped: true, skipReason };
-  }
-
   const periodStart = getBillingPeriod().start;
   if (!periodStart) {
     const skipReason = "Billing period is unavailable";
@@ -587,7 +595,9 @@ async function runCheckInternal(): Promise<CheckResult> {
       entityType: "group",
       entityId: group.id,
       entityName: group.name,
-      spendUsd: canonical.spendByPrimaryGroup.get(group.id) ?? 0,
+      spendUsd: (mergePlan.mergeMap.get(group.id) ?? [group.id])
+        .reduce((sum, id) =>
+          sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0),
       budgetUsd: budget.amountUsd,
       periodStart,
       workspaceIds: [
@@ -598,17 +608,16 @@ async function runCheckInternal(): Promise<CheckResult> {
         ),
       ].sort(),
       workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
-      dataAsOf: stored.snapshot.dataAsOf,
+      dataAsOf: usage.dataAsOf,
       firedThresholds: firedByEntity.get(`group|${group.id}`) ?? [],
     })));
   }
   let checkedTeams = 0;
   if (teamsConfigured) {
-    const teamResult = await evaluateTeamsOnce(stored.snapshot, {
+    const teamResult = await evaluateTeamsOnce(dir, usage, {
       allTeamBudgetRows: allRunTeamBudgetRows,
       budgetByTeam: effectiveTeamBudgetMap,
       groupTeams,
-      canonical,
       firedByEntity,
     });
     checkedTeams = teamResult.checkedTeams;
@@ -618,11 +627,11 @@ async function runCheckInternal(): Promise<CheckResult> {
   const evaluatedAt = new Date();
   await persistSuccessfulCheckerState({
     lastSuccessfulEvaluationAt: evaluatedAt,
-    lastEvaluatedDataAsOf: stored.snapshot.dataAsOf,
+    lastEvaluatedDataAsOf: usage.dataAsOf,
     lastAttemptAt,
     lastSkipReason: null,
   });
-  return { checkedGroups: groups.length, checkedTeams, alerts, evaluatedAt, dataAsOf: stored.snapshot.dataAsOf, skipped: false, skipReason: null };
+  return { checkedGroups: groups.length, checkedTeams, alerts, evaluatedAt, dataAsOf: usage.dataAsOf, skipped: false, skipReason: null };
 }
 
 let fullCheckInFlight: Promise<CheckResult> | null = null;
@@ -639,9 +648,6 @@ export function runCheck(
 }
 
 export function startChecker(): void {
-  if (!isConfigured()) {
-    logger.warn("Enterprise API key missing; background checker idle");
-  }
   // Hydrate database-only diagnostics. Usage ingestion is owned exclusively by
   // the fixed coordinator, never by a replica startup or dashboard request.
   void (async () => {

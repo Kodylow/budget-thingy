@@ -37,22 +37,12 @@ export interface GroupMember {
      * @nullable
      */
   budgetSource?: string | null;
-  spendLoaded: boolean;
-  /**
-     * Canonical total of member-grouped AI plus creator-attributed project non-AI for this group
-     * @nullable
-     */
-  spendUsd?: number | null;
-  /**
-     * Deduplicated member-grouped AI spend for this user in the group
-     * @nullable
-     */
-  aiSpendUsd: number | null;
-  /**
-     * Non-AI project spend attributed to projects this current member created
-     * @nullable
-     */
-  nonAiSpendUsd: number | null;
+  /** Canonical total of member-grouped AI plus creator-attributed project non-AI for this group */
+  spendUsd: number;
+  /** Deduplicated member-grouped AI spend for this user in the group */
+  aiSpendUsd: number;
+  /** Non-AI project spend attributed to projects this current member created */
+  nonAiSpendUsd: number;
   /** @nullable */
   remainingUsd?: number | null;
   /** @nullable */

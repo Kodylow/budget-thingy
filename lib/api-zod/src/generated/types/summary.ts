@@ -5,36 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { SummaryProjectSyncStatus } from './summaryProjectSyncStatus';
-import type { SummarySyncStatus } from './summarySyncStatus';
+import type { UsageHealth } from './usageHealth';
 
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
   /** Workspace-aware member-deduped canonical rollup total for the caller's scope */
   totalSpendUsd: number;
-  /** Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility */
-  memberBasedTotalSpendUsd?: number;
-  /**
-     * Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers
-     * @nullable
-     */
-  accountUsageTotalSpendUsd: number | null;
-  /**
-     * Attributable portion of the unfiltered account usage anchor; null outside account-wide scope
-     * @nullable
-     */
-  accountUsageAttributableSpendUsd: number | null;
-  /**
-     * Unattributable portion of the unfiltered account usage anchor; null outside account-wide scope
-     * @nullable
-     */
-  accountUsageUnattributableSpendUsd: number | null;
-  /**
-     * Account anchor minus the exact top-level team and unassigned-group rows displayed by the dashboard; null outside account-wide scope or while loading
-     * @nullable
-     */
-  reconciliationSpendUsd: number | null;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
   /** Sum of remaining budget across budgeted groups with loaded spend */
@@ -58,23 +35,5 @@ export interface Summary {
   pacePeriodLabel: string;
   /** True when pace uses the fixed safe fallback because no discovered interval is available */
   pacePeriodIsFallback: boolean;
-  isComplete: boolean;
-  syncStatus: SummarySyncStatus;
-  /** @nullable */
-  syncError?: string | null;
-  pendingCount: number;
-  failedCount: number;
-  partialCount: number;
-  /** @nullable */
-  directoryDataAsOf: Date | null;
-  directoryStale: boolean;
-  /** @nullable */
-  usageDataAsOf: Date | null;
-  usageStale: boolean;
-  projectSyncStatus: SummaryProjectSyncStatus;
-  /** @nullable */
-  projectSyncError?: string | null;
-  projectPendingCount: number;
-  projectFailedCount: number;
-  projectPartialCount: number;
+  usageHealth: UsageHealth;
 }

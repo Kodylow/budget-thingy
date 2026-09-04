@@ -3,14 +3,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, CheckCircle, RefreshCw, Trash2, Plus, XCircle, Send, ShieldAlert } from 'lucide-react';
+import { AlertCircle, CheckCircle, Trash2, Plus, XCircle, Send, ShieldAlert } from 'lucide-react';
 import {
   useGetStatus,
   useListEditors,
   useAddEditor,
   useDeleteEditor,
   getListEditorsQueryKey,
-  useRebuildUsageRange,
   useSendEmailTestExample,
   type EmailTestResult,
 } from '@workspace/api-client-react';
@@ -18,8 +17,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuthContext } from '@/components/auth-context';
-import { RangeFilter } from '@/components/range-filter';
-import { useRange } from '@/components/range-context';
 import { checkCanAccessSettings } from '@/lib/auth-helpers';
 import {
   formatTestEmailSpend,
@@ -50,7 +47,6 @@ export default function Settings() {
   const canAccessSettings = checkCanAccessSettings(isAccountAdmin, realIsAccountAdmin, canTestEmail);
   const showAdminControls = isAccountAdmin;
 
-  const { rangeType, startDate, endDate } = useRange();
   const [newEditorUserId, setNewEditorUserId] = useState('');
 
   const [testModalOpen, setTestModalOpen] = useState(false);
@@ -62,35 +58,7 @@ export default function Settings() {
   const { data: editors, isLoading: editorsLoading } = useListEditors();
   const addEditor = useAddEditor();
   const deleteEditor = useDeleteEditor();
-  const rebuildRange = useRebuildUsageRange();
   const sendEmailTest = useSendEmailTestExample();
-
-  const handleRebuildRange = () => {
-    rebuildRange.mutate(
-      {
-        data: {
-          rangeType,
-          ...(rangeType === 'custom' ? { startDate, endDate } : {}),
-        },
-      },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries();
-          toast({
-            title: 'Range rebuild queued',
-            description: 'The selected range will be rebuilt without changing other cached ranges.',
-          });
-        },
-        onError: (error: any) => {
-          toast({
-            title: 'Unable to rebuild range',
-            description: error?.data?.error || 'Check the selected dates and try again.',
-            variant: 'destructive',
-          });
-        },
-      },
-    );
-  };
 
   const handleAddEditor = () => {
     const userId = newEditorUserId.trim();
@@ -410,62 +378,6 @@ export default function Settings() {
                 )}
               </div>
 
-              <div
-                className="flex flex-col gap-3 p-3 rounded-lg border border-border"
-                data-testid="status-account-total-verification"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    {!status.accountTotalVerification ||
-                    status.accountTotalVerification.outcome === 'failed' ? (
-                      <AlertCircle className="h-5 w-5 text-chart-2 shrink-0 mt-0.5" />
-                    ) : (
-                      <CheckCircle className="h-5 w-5 text-chart-1 shrink-0 mt-0.5" />
-                    )}
-                    <div>
-                      <p className="text-sm font-medium">Account Total Verification</p>
-                      {!status.accountTotalVerification ? (
-                        <p className="text-xs text-muted-foreground">Not yet verified</p>
-                      ) : (
-                        <>
-                          <p className="text-xs text-muted-foreground">
-                            Checked{' '}
-                            {formatDistanceToNow(
-                              new Date(status.accountTotalVerification.verifiedAt),
-                              { addSuffix: true },
-                            )}
-                            {status.accountTotalVerification.deltaUsd != null
-                              ? ` · Delta $${status.accountTotalVerification.deltaUsd.toFixed(2)}`
-                              : ''}
-                          </p>
-                          {status.accountTotalVerification.error && (
-                            <p className="text-xs text-destructive mt-1">
-                              {status.accountTotalVerification.error}
-                            </p>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <Badge
-                    variant={
-                      !status.accountTotalVerification ||
-                      status.accountTotalVerification.outcome === 'failed'
-                        ? 'secondary'
-                        : 'default'
-                    }
-                  >
-                    {!status.accountTotalVerification
-                      ? 'Pending'
-                      : status.accountTotalVerification.outcome === 'healed'
-                        ? 'Healed'
-                        : status.accountTotalVerification.outcome === 'success'
-                          ? 'Verified'
-                          : 'Failed'}
-                  </Badge>
-                </div>
-              </div>
-
               {(!status.enterpriseApiConfigured || !status.enterpriseApiOk) && (
                 <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-3">
                   <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
@@ -486,29 +398,6 @@ export default function Settings() {
 
       {showAdminControls && (
         <>
-          <Card>
-            <CardHeader>
-              <CardTitle>Rebuild Usage Range</CardTitle>
-              <CardDescription>
-                Re-fetch every usage scope for one range. Existing data remains available if the rebuild fails.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <RangeFilter />
-              <Button
-                onClick={handleRebuildRange}
-                disabled={
-                  rebuildRange.isPending ||
-                  (rangeType === 'custom' && (!startDate || !endDate))
-                }
-                data-testid="button-rebuild-range"
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${rebuildRange.isPending ? 'animate-spin' : ''}`} />
-                {rebuildRange.isPending ? 'Queueing…' : 'Rebuild selected range'}
-              </Button>
-            </CardContent>
-          </Card>
-
       <Card>
         <CardHeader>
           <CardTitle>Account-wide Editors</CardTitle>

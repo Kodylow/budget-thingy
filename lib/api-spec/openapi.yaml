@@ -173,8 +173,8 @@ paths:
       description: >
         Returns custom/SCIM groups across all workspaces of the Enterprise account,
         excluding built-in admin/member/guest role groups,
-        joined with spend for the selected date range (loaded progressively under
-        the Enterprise API rate limit), the configured budget, and threshold state.
+        joined with stored spend for the selected date range, the configured
+        budget, and threshold state.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -205,7 +205,7 @@ paths:
         Returns one group with its spend for the selected range plus every member
         of the group: allocated budget (platform user limit or workspace default),
         actual usage, remaining budget, percent consumed, and workspace role.
-        Member usage loads progressively; poll while isComplete is false.
+        Usage health describes freshness and coverage of the stored facts.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
         - $ref: "#/components/parameters/RangeType"
@@ -242,7 +242,7 @@ paths:
       summary: Group project spend drill-down
       description: >
         Returns project-level spend breakdown for a group in the selected date range.
-        Project usage loads progressively; poll while isComplete is false.
+        Usage health describes freshness and coverage of the stored facts.
       parameters:
         - $ref: "#/components/parameters/GroupIdPath"
         - $ref: "#/components/parameters/RangeType"
@@ -337,49 +337,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-  /groups/{groupId}/refresh:
-    post:
-      operationId: refreshGroupUsage
-      tags: [groups]
-      summary: Force-refresh one group's usage
-      description: Queues a high-priority usage fetch for one group, bypassing cache TTL.
-      parameters:
-        - $ref: "#/components/parameters/GroupIdPath"
-      responses:
-        "202":
-          description: Refresh queued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OkResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          description: Group not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-  /usage/retry:
-    post:
-      operationId: retryUsageSync
-      tags: [groups]
-      summary: Retry failed or partial dashboard usage scopes
-      parameters:
-        - $ref: "#/components/parameters/RangeType"
-        - $ref: "#/components/parameters/StartDate"
-        - $ref: "#/components/parameters/EndDate"
-      responses:
-        "202":
-          description: Retry queued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OkResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /summary:
     get:
       operationId: getSummary
@@ -413,7 +370,7 @@ paths:
       description: >
         Returns weekly or monthly canonical spend buckets for the selected range.
         Buckets use UTC boundaries and the current bucket is marked partial.
-        Usage loads progressively; poll while isComplete is false.
+        Usage health describes freshness and coverage of the stored facts.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -1292,33 +1249,55 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /usage/ranges/rebuild:
+  /admin/usage/ingest/cycle:
     post:
-      operationId: rebuildUsageRange
+      operationId: runUsageIngestCycle
       tags: [status]
-      summary: Rebuild one usage range
+      summary: Run one usage ingest cycle
       description: >
-        Account-admin-only control that queues a complete, transaction-safe
-        rebuild of the selected range without changing any other cached range.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UsageRangeRebuildInput"
+        Available only to true Enterprise account administrators. Runs one
+        lock-protected live/backfill/reconciliation cycle and returns its result.
       responses:
-        "202":
-          description: Full range rebuild queued
+        "200":
+          description: Ingest cycle completed, or another replica held the ingest lock
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OkResponse"
-        "400":
-          description: Invalid range
+                $ref: "#/components/schemas/UsageIngestCycleResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Usage ingestion is not configured
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /admin/usage/ingest/runs/recent:
+    get:
+      operationId: listRecentUsageIngestRuns
+      tags: [status]
+      summary: List recent usage ingest runs
+      description: Available only to true Enterprise account administrators.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Most recent ingest runs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UsageIngestRun"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1544,7 +1523,7 @@ components:
           type: number
     Group:
       type: object
-      required: [groupId, workspaceId, name, type, spendLoaded, paceSpendLoaded, rollupSpendLoaded, rollupSpendUsd, rollupMemberCount, thresholdsFired, history]
+      required: [groupId, workspaceId, name, type, spendUsd, paceSpendUsd, projectSpendUsd, rollupSpendUsd, rollupMemberCount, thresholdsFired, history]
       properties:
         groupId:
           type: string
@@ -1573,27 +1552,15 @@ components:
         rollupMemberCount:
           type: integer
           description: Unique members attributed to this group for team and org rollups
-        spendLoaded:
-          type: boolean
-          description: Whether spend for the current billing period has been fetched yet
         spendUsd:
-          type: ["number", "null"]
-          description: Raw per-group spend reported by the Enterprise API, null while loading
-        paceSpendLoaded:
-          type: boolean
-          description: Whether usage bounded to the discovered pace period is complete
+          type: number
+          description: Raw per-group spend represented by the stored usage snapshot
         paceSpendUsd:
-          type: ["number", "null"]
+          type: number
           description: Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
-        projectSpendLoaded:
-          type: boolean
-          description: Whether project usage for every visible custom group is loaded
         projectSpendUsd:
-          type: ["number", "null"]
-          description: Deduplicated project spend attributed to this group, null while project usage is loading
-        rollupSpendLoaded:
-          type: boolean
-          description: Whether member-level usage for every custom group is loaded
+          type: number
+          description: Deduplicated project spend attributed to this group
         rollupSpendUsd:
           type: number
           description: Member-deduplicated spend attributed to this group for team and org rollups
@@ -1627,59 +1594,17 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, isComplete, syncStatus, pendingCount, failedCount, partialCount, projectSyncStatus, projectPendingCount, projectFailedCount, projectPartialCount, billingPeriodLabel, projectSpendLoaded, unattributedProjectSpendUsd, teamRawSpend, teamBudgets, directoryDataAsOf, directoryStale, usageDataAsOf, usageStale]
+      required: [groups, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, teamBudgets]
       properties:
         groups:
           type: array
           items:
             $ref: "#/components/schemas/Group"
-        isComplete:
-          type: boolean
-          description: False while background usage fetches are still pending; poll every ~8s until true
-        syncStatus:
-          type: string
-          enum: [complete, syncing, partial, failed]
-        syncError:
-          type: ["string", "null"]
-        failedCount:
-          type: integer
-        partialCount:
-          type: integer
-        pendingCount:
-          type: integer
-          description: Number of outstanding headline workspace/member inputs
-        directoryDataAsOf:
-          type: ["string", "null"]
-          format: date-time
-          description: Fetch time of the stored Enterprise directory snapshot
-        directoryStale:
-          type: boolean
-          description: True when the stored directory snapshot is older than its refresh interval
-        usageDataAsOf:
-          type: ["string", "null"]
-          format: date-time
-          description: Oldest fetch time among the stored usage inputs used by this response
-        usageStale:
-          type: boolean
-          description: True when any stored usage input used by this response is older than its refresh interval
-        projectSyncStatus:
-          type: string
-          enum: [complete, syncing, partial, failed]
-        projectSyncError:
-          type: ["string", "null"]
-        projectPendingCount:
-          type: integer
-          description: Number of outstanding project-usage or project-metadata inputs
-        projectFailedCount:
-          type: integer
-        projectPartialCount:
-          type: integer
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
         billingPeriodLabel:
           type: string
           description: Human label of the selected range, e.g. "Jul 2026" or "Year to date"
-        projectSpendLoaded:
-          type: boolean
-          description: True when project usage for every visible custom group is loaded
         unattributedProjectSpendUsd:
           type: number
           description: True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members
@@ -1687,14 +1612,11 @@ components:
           type: object
           additionalProperties:
             type: object
-            required: [spendUsd, spendLoaded]
+            required: [spendUsd]
             properties:
               spendUsd:
                 type: number
                 description: Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)
-              spendLoaded:
-                type: boolean
-                description: True when member-level usage for every visible custom group is loaded
           description: Per-team member-deduped rollup spend, with each member counted once across groups
         teamBudgets:
           type: object
@@ -1713,8 +1635,8 @@ components:
         data:
           type: array
           items:
-            type: ["number", "null"]
-          description: Spend in USD for each corresponding bucket; null while loading
+            type: number
+          description: Spend in USD for each corresponding bucket
     TrendBucketRange:
       type: object
       required: [start, end, isPartial]
@@ -1728,7 +1650,7 @@ components:
           description: True only for an open bucket containing the current UTC day
     TrendsResponse:
       type: object
-      required: [buckets, bucketRanges, totals, series, isComplete, loadedCount, totalCount]
+      required: [buckets, bucketRanges, totals, series, usageHealth]
       properties:
         buckets:
           type: array
@@ -1742,32 +1664,26 @@ components:
         totals:
           type: array
           items:
-            type: ["number", "null"]
-          description: Canonical scoped spend for each bucket; null while loading
+            type: number
+          description: Canonical scoped spend for each bucket
         series:
           type: array
           items:
             $ref: "#/components/schemas/TrendSeries"
-        isComplete:
-          type: boolean
-        loadedCount:
-          type: integer
-        totalCount:
-          type: integer
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
     ClusterHeadline:
       type: object
-      required: [spendUsd, isComplete, pendingCount]
+      required: [spendUsd, usageHealth]
       properties:
         spendUsd:
-          type: ["number", "null"]
-          description: Canonical member-deduped cluster spend; null until the scoped rollup is complete
-        isComplete:
-          type: boolean
-        pendingCount:
-          type: integer
+          type: number
+          description: Canonical member-deduped cluster spend
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
     GroupMember:
       type: object
-      required: [userId, spendLoaded, aiSpendUsd, nonAiSpendUsd]
+      required: [userId, spendUsd, aiSpendUsd, nonAiSpendUsd]
       properties:
         userId:
           type: string
@@ -1790,16 +1706,14 @@ components:
         budgetSource:
           type: ["string", "null"]
           description: Not used; always null
-        spendLoaded:
-          type: boolean
         spendUsd:
-          type: ["number", "null"]
+          type: number
           description: Canonical total of member-grouped AI plus creator-attributed project non-AI for this group
         aiSpendUsd:
-          type: ["number", "null"]
+          type: number
           description: Deduplicated member-grouped AI spend for this user in the group
         nonAiSpendUsd:
-          type: ["number", "null"]
+          type: number
           description: Non-AI project spend attributed to projects this current member created
         remainingUsd:
           type: ["number", "null"]
@@ -1854,7 +1768,7 @@ components:
           description: Human-readable workspace name, null when unknown
     GroupProjectsResponse:
       type: object
-      required: [projects, unattributedSpendUsd, isComplete, titlesComplete]
+      required: [projects, unattributedSpendUsd, usageHealth, titlesComplete]
       properties:
         projects:
           type: array
@@ -1863,15 +1777,14 @@ components:
         unattributedSpendUsd:
           type: number
           description: Group spend not attributable to any returned project row
-        isComplete:
-          type: boolean
-          description: False while project usage or project titles are still loading; poll every ~8s until true
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
         titlesComplete:
           type: boolean
           description: True once project metadata has loaded for every workspace represented by the response
     GroupDetail:
       type: object
-      required: [group, members, isComplete, rangeLabel, membersSpendUsd, unattributedSpendUsd]
+      required: [group, members, usageHealth, rangeLabel, membersSpendUsd, unattributedSpendUsd]
       properties:
         group:
           $ref: "#/components/schemas/Group"
@@ -1885,9 +1798,8 @@ components:
         unattributedSpendUsd:
           type: number
           description: True residual from rows without a project ID, missing creators, and creators who are no longer current group members
-        isComplete:
-          type: boolean
-          description: False while member usage is still loading; poll every ~8s until true
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
         rangeLabel:
           type: string
     UserActivityEntry:
@@ -1917,16 +1829,10 @@ components:
           type: string
     UserActivityResponse:
       type: object
-      required: [isComplete, loadedCount, totalCount, users]
+      required: [usageHealth, users]
       properties:
-        isComplete:
-          type: boolean
-        loadedCount:
-          type: integer
-          description: Authoritative workspace usage scopes currently loaded
-        totalCount:
-          type: integer
-          description: Authoritative workspace usage scopes in the caller's visibility
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
         users:
           type: array
           items:
@@ -1938,10 +1844,6 @@ components:
           totalGroups,
           budgetedGroups,
           totalSpendUsd,
-          accountUsageTotalSpendUsd,
-          accountUsageAttributableSpendUsd,
-          accountUsageUnattributableSpendUsd,
-          reconciliationSpendUsd,
           totalBudgetUsd,
           groupsOver50,
           groupsOver75,
@@ -1956,19 +1858,7 @@ components:
           pacePeriodEnd,
           pacePeriodLabel,
           pacePeriodIsFallback,
-          isComplete,
-          syncStatus,
-          pendingCount,
-          failedCount,
-          partialCount,
-          projectSyncStatus,
-          projectPendingCount,
-          projectFailedCount,
-          projectPartialCount,
-          directoryDataAsOf,
-          directoryStale,
-          usageDataAsOf,
-          usageStale,
+          usageHealth,
         ]
       properties:
         totalGroups:
@@ -1978,21 +1868,6 @@ components:
         totalSpendUsd:
           type: number
           description: Workspace-aware member-deduped canonical rollup total for the caller's scope
-        memberBasedTotalSpendUsd:
-          type: number
-          description: Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility
-        accountUsageTotalSpendUsd:
-          type: [number, "null"]
-          description: Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers
-        accountUsageAttributableSpendUsd:
-          type: [number, "null"]
-          description: Attributable portion of the unfiltered account usage anchor; null outside account-wide scope
-        accountUsageUnattributableSpendUsd:
-          type: [number, "null"]
-          description: Unattributable portion of the unfiltered account usage anchor; null outside account-wide scope
-        reconciliationSpendUsd:
-          type: [number, "null"]
-          description: Account anchor minus the exact top-level team and unassigned-group rows displayed by the dashboard; null outside account-wide scope or while loading
         totalBudgetUsd:
           type: number
           description: Sum of all effective group budgets (app or platform)
@@ -2031,51 +1906,71 @@ components:
         pacePeriodIsFallback:
           type: boolean
           description: True when pace uses the fixed safe fallback because no discovered interval is available
-        isComplete:
-          type: boolean
-        syncStatus:
-          type: string
-          enum: [complete, syncing, partial, failed]
-        syncError:
-          type: ["string", "null"]
-        pendingCount:
-          type: integer
-        failedCount:
-          type: integer
-        partialCount:
-          type: integer
-        directoryDataAsOf:
-          type: ["string", "null"]
-          format: date-time
-        directoryStale:
-          type: boolean
-        usageDataAsOf:
-          type: ["string", "null"]
-          format: date-time
-        usageStale:
-          type: boolean
-        projectSyncStatus:
-          type: string
-          enum: [complete, syncing, partial, failed]
-        projectSyncError:
-          type: ["string", "null"]
-        projectPendingCount:
-          type: integer
-        projectFailedCount:
-          type: integer
-        projectPartialCount:
-          type: integer
-    UsageRangeRebuildInput:
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
+    UsageCoverageWorkspaceDay:
       type: object
-      required: [rangeType]
+      required: [workspaceId, usageDate]
       properties:
-        rangeType:
+        workspaceId:
           type: string
-          enum: [billing, full-term, mtd, ytd, custom]
-        startDate:
+        usageDate:
           type: string
-        endDate:
+          format: date
+    UsageCoverage:
+      type: object
+      required:
+        [
+          requestedDays,
+          requestedWorkspaceDays,
+          presentWorkspaceDays,
+          failedWorkspaceDays,
+          missingWorkspaceDays,
+          presentAccountDays,
+          missingAccountDays,
+          ratio,
+        ]
+      properties:
+        requestedDays:
+          type: integer
+        requestedWorkspaceDays:
+          type: integer
+        presentWorkspaceDays:
+          type: integer
+        failedWorkspaceDays:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageCoverageWorkspaceDay"
+        missingWorkspaceDays:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageCoverageWorkspaceDay"
+        presentAccountDays:
+          type: integer
+        missingAccountDays:
+          type: array
+          items:
+            type: string
+            format: date
+        ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+    UsageHealth:
+      type: object
+      required: [status, dataAsOf, coverage, accountWorkspaceUnreconciledUsd]
+      properties:
+        status:
           type: string
+          enum: [complete, stale, partial, empty]
+        dataAsOf:
+          type: ["string", "null"]
+          format: date-time
+        coverage:
+          $ref: "#/components/schemas/UsageCoverage"
+        accountWorkspaceUnreconciledUsd:
+          type: number
+          description: Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.
     GroupBudget:
       type: object
       required: [groupId, amountUsd, updatedAt]
@@ -2634,12 +2529,15 @@ components:
           billingPeriodFallback,
           billingPeriodDiffersFromReportingCutoff,
           reportingCutoff,
-          reportingRangeKey,
           reportingRangeStart,
           reportingRangeEnd,
           reportingRangeLabel,
-          accountTotalVerification,
-          usageSync,
+          recentRuns,
+          remainingBackfillCount,
+          currentMonthReconciliation,
+          directoryDataAsOf,
+          directoryAgeMs,
+          rateLimitTelemetry,
         ]
       properties:
         enterpriseApiConfigured:
@@ -2684,9 +2582,6 @@ components:
           type: boolean
         reportingCutoff:
           type: string
-        reportingRangeKey:
-          type: string
-          description: Stable cache identity for the effective default reporting window
         reportingRangeStart:
           type: string
           description: Effective inclusive reporting start after applying the spend cutoff
@@ -2696,93 +2591,118 @@ components:
         reportingRangeLabel:
           type: string
           description: Label that describes the effective reporting bounds
-        accountTotalVerification:
-          oneOf:
-            - $ref: "#/components/schemas/AccountTotalVerification"
-            - type: "null"
-        usageSync:
-          $ref: "#/components/schemas/UsageOperationalDiagnostics"
-    UsageOperationalDiagnostics:
-      type: object
-      required: [queueDepth, queuedCount, active, oldestQueuedAgeMs, lastProgressAt, pauseUntil, scopes]
-      properties:
-        queueDepth:
-          type: integer
-        queuedCount:
-          type: integer
-        active:
-          oneOf:
-            - $ref: "#/components/schemas/UsageQueueActiveTask"
-            - type: "null"
-        oldestQueuedAgeMs:
-          type: ["integer", "null"]
-        lastProgressAt:
-          type: ["string", "null"]
-        pauseUntil:
-          type: ["string", "null"]
-        scopes:
+        recentRuns:
           type: array
-          maxItems: 200
           items:
-            $ref: "#/components/schemas/UsageScopeDiagnostic"
-    UsageQueueActiveTask:
-      type: object
-      required: [runId, key, priority, enqueuedAt, startedAt, ageMs, waitMs]
-      properties:
-        runId: { type: string }
-        key: { type: string }
-        priority: { type: integer }
-        enqueuedAt: { type: string }
-        startedAt: { type: string }
-        ageMs: { type: integer }
-        waitMs: { type: integer }
-    UsageScopeDiagnostic:
-      type: object
-      required: [mode, rangeKey, scopeKey, status, syncedThrough, completedAt, error]
-      properties:
-        mode:
-          type: string
-          enum: [account_total, group_total, group_member, workspace_member, group_project]
-        rangeKey: { type: string }
-        scopeKey: { type: string }
-        status:
-          type: string
-          enum: [syncing, success, partial, failed]
-        syncedThrough: { type: string }
-        completedAt: { type: string }
-        error:
+            $ref: "#/components/schemas/UsageIngestRun"
+        remainingBackfillCount:
+          type: integer
+        currentMonthReconciliation:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageReconciliationStatus"
+        directoryDataAsOf:
           type: ["string", "null"]
-    AccountTotalVerification:
+          format: date-time
+        directoryAgeMs:
+          type: ["integer", "null"]
+        rateLimitTelemetry:
+          $ref: "#/components/schemas/UsageRateLimitTelemetry"
+    UsageIngestReconciliation:
+      type: object
+      required: [monthStart, scope, scopeId, upstreamUsd, storedUsd, deltaUsd]
+      properties:
+        monthStart:
+          type: string
+          format: date
+        scope:
+          type: string
+        scopeId:
+          type: string
+        upstreamUsd:
+          type: number
+        storedUsd:
+          type: number
+        deltaUsd:
+          type: number
+    UsageReconciliationStatus:
+      allOf:
+        - $ref: "#/components/schemas/UsageIngestReconciliation"
+        - type: object
+          required: [checkedAt]
+          properties:
+            checkedAt:
+              type: string
+              format: date-time
+    UsageRateLimitTelemetry:
+      type: object
+      required: [peakRequestsPerMinute, lowestRateLimitRemaining]
+      properties:
+        peakRequestsPerMinute:
+          type: integer
+        lowestRateLimitRemaining:
+          type: ["integer", "null"]
+    UsageIngestCycleResult:
       type: object
       required:
         [
-          verifiedAt,
-          outcome,
-          error,
-          rangeKey,
-          rangeStart,
-          rangeEnd,
-          upstreamTotalUsd,
-          storedTotalUsd,
-          deltaUsd,
+          acquired,
+          unitsAttempted,
+          unitsSucceeded,
+          unitsFailed,
+          totalCalls,
+          durationMs,
+          reconciliations,
+          remainingBackfillCount,
+          peakRequestsPerMinute,
+          lowestRateLimitRemaining,
         ]
       properties:
-        verifiedAt:
+        acquired:
+          type: boolean
+        unitsAttempted:
+          type: integer
+        unitsSucceeded:
+          type: integer
+        unitsFailed:
+          type: integer
+        totalCalls:
+          type: integer
+        durationMs:
+          type: integer
+        reconciliations:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageIngestReconciliation"
+        remainingBackfillCount:
+          type: integer
+        peakRequestsPerMinute:
+          type: integer
+        lowestRateLimitRemaining:
+          type: ["integer", "null"]
+    UsageIngestRun:
+      type: object
+      required: [id, kind, startedAt, finishedAt, units, calls, failures, error, status]
+      properties:
+        id:
+          type: integer
+        kind:
           type: string
-        outcome:
+          enum: [live, backfill, reconcile]
+        startedAt:
           type: string
-          enum: [success, healed, failed]
+          format: date-time
+        finishedAt:
+          type: ["string", "null"]
+          format: date-time
+        units:
+          type: integer
+        calls:
+          type: integer
+        failures:
+          type: integer
         error:
           type: ["string", "null"]
-        rangeKey:
+        status:
           type: string
-        rangeStart:
-          type: string
-        rangeEnd:
-          type: string
-        upstreamTotalUsd:
-          type: ["number", "null"]
-        storedTotalUsd:
-          type: ["number", "null"]
-        deltaUsd:
-          type: ["number", "null"]
+          enum: [running, succeeded, partial, failed]

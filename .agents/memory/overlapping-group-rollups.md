@@ -28,3 +28,9 @@ For parent workspaces that contain several Comcast team families, match the full
 **Why:** A shared workspace can contain both operational groups and several business teams; workspace name alone identifies the parent but not the child cost center.
 
 **How to apply:** Prefer exact workspace/team matches. For a parent-only match, require the user's group membership to disambiguate child teams, preserve the cross-workspace ownership through canonical per-user attribution, and leave unmatched users unattributed.
+
+Treat project identity as `(workspace ID, project ID)`, never project ID alone.
+
+**Why:** Enterprise project IDs are workspace-scoped and may collide across workspaces; a global key silently overwrites attribution.
+
+**How to apply:** Qualify every project attribution, creator, and metric lookup before combining workspace snapshots or filtering project responses.

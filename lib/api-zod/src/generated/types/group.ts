@@ -32,29 +32,12 @@ export interface Group {
   memberCount?: number | null;
   /** Unique members attributed to this group for team and org rollups */
   rollupMemberCount: number;
-  /** Whether spend for the current billing period has been fetched yet */
-  spendLoaded: boolean;
-  /**
-     * Raw per-group spend reported by the Enterprise API, null while loading
-     * @nullable
-     */
-  spendUsd?: number | null;
-  /** Whether usage bounded to the discovered pace period is complete */
-  paceSpendLoaded: boolean;
-  /**
-     * Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
-     * @nullable
-     */
-  paceSpendUsd?: number | null;
-  /** Whether project usage for every visible custom group is loaded */
-  projectSpendLoaded?: boolean;
-  /**
-     * Deduplicated project spend attributed to this group, null while project usage is loading
-     * @nullable
-     */
-  projectSpendUsd?: number | null;
-  /** Whether member-level usage for every custom group is loaded */
-  rollupSpendLoaded: boolean;
+  /** Raw per-group spend represented by the stored usage snapshot */
+  spendUsd: number;
+  /** Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend */
+  paceSpendUsd: number;
+  /** Deduplicated project spend attributed to this group */
+  projectSpendUsd: number;
   /** Member-deduplicated spend attributed to this group for team and org rollups */
   rollupSpendUsd: number;
   /**

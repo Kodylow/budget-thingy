@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type SummarySyncStatus = typeof SummarySyncStatus[keyof typeof SummarySyncStatus];
+export type UsageHealthStatus = typeof UsageHealthStatus[keyof typeof UsageHealthStatus];
 
 
-export const SummarySyncStatus = {
+export const UsageHealthStatus = {
   complete: 'complete',
-  syncing: 'syncing',
+  stale: 'stale',
   partial: 'partial',
-  failed: 'failed',
+  empty: 'empty',
 } as const;

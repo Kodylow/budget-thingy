@@ -12,6 +12,4 @@
 export type GroupsResponseTeamRawSpend = {[key: string]: {
   /** Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team) */
   spendUsd: number;
-  /** True when member-level usage for every visible custom group is loaded */
-  spendLoaded: boolean;
 }};

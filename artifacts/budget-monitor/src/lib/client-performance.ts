@@ -10,6 +10,9 @@ export function pollingRetryDelay(): number {
 export type PollableResponse = {
   isComplete?: boolean;
   syncStatus?: string | null;
+  usageHealth?: {
+    status: 'complete' | 'stale' | 'partial' | 'empty';
+  };
 };
 
 export function isPollingQueryError(queryStatus?: string): boolean {
@@ -22,6 +25,7 @@ export function progressivePollInterval(
   queryStatus?: string,
 ): number | false {
   if (isPollingQueryError(queryStatus)) return false;
+  if (data?.usageHealth) return false;
   if (data?.isComplete || data?.syncStatus === 'complete') return false;
   if (data?.syncStatus === 'partial' || data?.syncStatus === 'failed') return false;
   return dataUpdateCount > 1 ? POLL_SLOW_MS : POLL_FAST_MS;

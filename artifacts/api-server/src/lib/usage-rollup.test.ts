@@ -5,6 +5,7 @@ import {
   computeDedupedUsageRollup,
   computeHistoricalSnapshotUsageRollups,
   computeSnapshotUsageRollup,
+  projectAttributionKey,
   usageSnapshotForDay,
 } from "./usage-rollup.ts";
 
@@ -223,8 +224,9 @@ test("derives snapshot totals with overlap, creator ownership, and residual spen
   expect(result.byUser.get("shared")).toBe(23);
   expect(result.aiSpendByUser.get("shared")).toBe(17);
   expect(result.nonAiSpendByUser.get("shared")).toBe(6);
-  expect(result.projectAttribution.projectToGroup.get("project-1")).toBe("a-group");
-  expect(result.projectAttribution.nonAiSpendByProject.get("project-1")).toBe(6);
+  const projectKey = projectAttributionKey("workspace-1", "project-1");
+  expect(result.projectAttribution.projectToGroup.get(projectKey)).toBe("a-group");
+  expect(result.projectAttribution.nonAiSpendByProject.get(projectKey)).toBe(6);
   expect(result.ungroupedByWorkspace.get("workspace-1")?.spendUsd).toBe(14);
   expect(result.totalSpendUsd).toBe(37);
   expect(result.accountReconciliationSpendUsd).toBe(3);
@@ -235,6 +237,62 @@ test("derives snapshot totals with overlap, creator ownership, and residual spen
         0,
       ),
   ).toBe(result.totalSpendUsd);
+});
+
+test("keeps identical project IDs isolated by workspace", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["workspace-1", "workspace-2"],
+      projects: new Map([
+        ["workspace-1", new Map([
+          ["shared-project", { totalCostUsd: 11, aiCostUsd: 0 }],
+        ])],
+        ["workspace-2", new Map([
+          ["shared-project", { totalCostUsd: 13, aiCostUsd: 0 }],
+        ])],
+      ]),
+      workspaces: new Map([
+        ["workspace-1", {
+          totalCostUsd: 11,
+          memberAttributableUsd: 11,
+          memberUnattributableUsd: 0,
+        }],
+        ["workspace-2", {
+          totalCostUsd: 13,
+          memberAttributableUsd: 13,
+          memberUnattributableUsd: 0,
+        }],
+      ]),
+      accountTotalUsd: 24,
+    }),
+    groups: [
+      { id: "group-1", workspaceId: "workspace-1", name: "One" },
+      { id: "group-2", workspaceId: "workspace-2", name: "Two" },
+    ],
+    membersByGroup: new Map([
+      ["group-1", ["creator-1"]],
+      ["group-2", ["creator-2"]],
+    ]),
+    projectInfoByWorkspace: new Map([
+      ["workspace-1", new Map([
+        ["shared-project", { creatorId: "creator-1" }],
+      ])],
+      ["workspace-2", new Map([
+        ["shared-project", { creatorId: "creator-2" }],
+      ])],
+    ]),
+  });
+
+  expect(result.projectAttribution.projectToGroup.get(
+    projectAttributionKey("workspace-1", "shared-project"),
+  )).toBe("group-1");
+  expect(result.projectAttribution.projectToGroup.get(
+    projectAttributionKey("workspace-2", "shared-project"),
+  )).toBe("group-2");
+  expect(result.byGroup.get("group-1")?.spendUsd).toBe(11);
+  expect(result.byGroup.get("group-2")?.spendUsd).toBe(13);
+  expect(result.totalSpendUsd).toBe(24);
+  expect(result.isComplete).toBe(true);
 });
 
 test("marks missing creator metadata incomplete only when non-Agent ownership is needed", () => {

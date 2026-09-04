@@ -4,23 +4,22 @@ import express from "express";
 import { eq, inArray } from "drizzle-orm";
 import {
   db,
+  apiProjectMetadataStateTable,
+  apiProjectMetadataTable,
   groupTeamsTable,
   teamBudgetAdjustmentsTable,
   teamBudgetsTable,
+  usageMemberDayTable,
+  usageProjectDayTable,
+  usageWorkspaceDayTable,
 } from "@workspace/db";
 
 import monitorRouter from "./monitor.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
-import {
-  __setAccountUsageForTests,
-  __setDirectoryCacheForTests,
-  __setMemberUsageForTests,
-  __setProjectUsageForTests,
-  __setWsSpendForTests,
-} from "../lib/enterprise.ts";
+import { __setDirectoryCacheForTests } from "../lib/enterprise.ts";
 import { setTeamBudgetDirectoryFetcherForTests } from "../lib/team-budgets.ts";
+import { invalidateUsageSnapshotMemo } from "../lib/usage-store.ts";
 
-const RANGE = "billing:from-cutoff";
 const PREFIX = "__task158_route__";
 const ASSIGNED = `${PREFIX} Assigned`;
 const BUDGET_ONLY = `${PREFIX} Budget Only`;
@@ -28,6 +27,9 @@ const ORIGINAL_ONLY = `${PREFIX} Original Only`;
 const HIDDEN = `${PREFIX} Hidden`;
 const GROUP_NAME = `${PREFIX} Group`;
 const GROUP_ID = `${PREFIX}-group`;
+const SECOND_GROUP_ID = `${PREFIX}-group-2`;
+const SHARED_PROJECT_ID = `${PREFIX}-shared-project`;
+const USAGE_DATE = new Date().toISOString().slice(0, 10);
 
 function member(userId, isAccountAdmin, workspaces = {}) {
   return {
@@ -46,18 +48,34 @@ let baseUrl;
 beforeAll(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test-key";
   __setDirectoryCacheForTests({
-    workspaces: new Map([["task158-ws", {
-      id: "task158-ws",
-      name: "Task 158",
-      slug: "task-158",
-      memberCount: 2,
-    }]]),
-    groups: [{
-      id: GROUP_ID,
-      workspaceId: "task158-ws",
-      name: GROUP_NAME,
-      type: "custom",
-    }],
+    workspaces: new Map([
+      ["task158-ws", {
+        id: "task158-ws",
+        name: "Task 158",
+        slug: "task-158",
+        memberCount: 2,
+      }],
+      ["task158-ws-2", {
+        id: "task158-ws-2",
+        name: "Task 158 Two",
+        slug: "task-158-two",
+        memberCount: 1,
+      }],
+    ]),
+    groups: [
+      {
+        id: GROUP_ID,
+        workspaceId: "task158-ws",
+        name: GROUP_NAME,
+        type: "custom",
+      },
+      {
+        id: SECOND_GROUP_ID,
+        workspaceId: "task158-ws-2",
+        name: `${GROUP_NAME} Two`,
+        type: "custom",
+      },
+    ],
     members: new Map([
       ["task158-account", member("task158-account", true)],
       ["task158-workspace", member("task158-workspace", false, {
@@ -66,8 +84,14 @@ beforeAll(async () => {
       ["task158-plain", member("task158-plain", false, {
         "task158-ws": { role: "member", isDisabled: false },
       })],
+      ["task158-creator-2", member("task158-creator-2", false, {
+        "task158-ws-2": { role: "member", isDisabled: false },
+      })],
     ]),
-    groupMembers: new Map([[GROUP_ID, ["task158-workspace", "task158-plain"]]]),
+    groupMembers: new Map([
+      [GROUP_ID, ["task158-workspace", "task158-plain"]],
+      [SECOND_GROUP_ID, ["task158-creator-2"]],
+    ]),
   });
   const { resolveAuthorization } = await import("../lib/authz.ts");
   setAuthorizationResolver((userId) => {
@@ -99,6 +123,17 @@ beforeAll(async () => {
     HIDDEN,
   ]));
   await db.delete(groupTeamsTable).where(eq(groupTeamsTable.groupName, GROUP_NAME));
+  const usageWorkspaceIds = ["task158-ws", "task158-ws-2"];
+  await db.delete(apiProjectMetadataStateTable)
+    .where(inArray(apiProjectMetadataStateTable.workspaceId, usageWorkspaceIds));
+  await db.delete(apiProjectMetadataTable)
+    .where(inArray(apiProjectMetadataTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageMemberDayTable)
+    .where(inArray(usageMemberDayTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageProjectDayTable)
+    .where(inArray(usageProjectDayTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageWorkspaceDayTable)
+    .where(inArray(usageWorkspaceDayTable.workspaceId, usageWorkspaceIds));
   await db.insert(teamBudgetsTable).values([
     { teamName: ASSIGNED, amountUsd: 100, originalAmountUsd: 100 },
     { teamName: BUDGET_ONLY, amountUsd: 50, originalAmountUsd: 50 },
@@ -106,6 +141,90 @@ beforeAll(async () => {
     { teamName: HIDDEN, amountUsd: 1000, originalAmountUsd: 1000, isHidden: true },
   ]);
   await db.insert(groupTeamsTable).values({ groupName: GROUP_NAME, teamName: ASSIGNED });
+  await db.insert(usageMemberDayTable).values([
+    {
+      workspaceId: "task158-ws",
+      usageDate: USAGE_DATE,
+      userId: "task158-workspace",
+      totalCostUsd: 15,
+      aiCostUsd: 0,
+      metricsJson: [],
+      fetchedAt: new Date(),
+    },
+    {
+      workspaceId: "task158-ws",
+      usageDate: USAGE_DATE,
+      userId: "task158-plain",
+      totalCostUsd: 5,
+      aiCostUsd: 0,
+      metricsJson: [],
+      fetchedAt: new Date(),
+    },
+  ]);
+  await db.insert(usageWorkspaceDayTable).values([
+    {
+      workspaceId: "task158-ws",
+      usageDate: USAGE_DATE,
+      totalCostUsd: 20,
+      memberAttributableUsd: 20,
+      memberUnattributableUsd: 0,
+      metricsJson: [],
+      fetchedAt: new Date(),
+      status: "complete",
+    },
+    {
+      workspaceId: "task158-ws-2",
+      usageDate: USAGE_DATE,
+      totalCostUsd: 13,
+      memberAttributableUsd: 13,
+      memberUnattributableUsd: 0,
+      metricsJson: [],
+      fetchedAt: new Date(),
+      status: "complete",
+    },
+  ]);
+  await db.insert(usageProjectDayTable).values([
+    {
+      workspaceId: "task158-ws",
+      usageDate: USAGE_DATE,
+      projectId: SHARED_PROJECT_ID,
+      totalCostUsd: 20,
+      metricsJson: [],
+      fetchedAt: new Date(),
+    },
+    {
+      workspaceId: "task158-ws-2",
+      usageDate: USAGE_DATE,
+      projectId: SHARED_PROJECT_ID,
+      totalCostUsd: 13,
+      metricsJson: [],
+      fetchedAt: new Date(),
+    },
+  ]);
+  await db.insert(apiProjectMetadataTable).values([
+    {
+      workspaceId: "task158-ws",
+      projectId: SHARED_PROJECT_ID,
+      title: "Persisted Project One",
+      creatorId: "task158-workspace",
+      fetchedAt: new Date(),
+    },
+    {
+      workspaceId: "task158-ws-2",
+      projectId: SHARED_PROJECT_ID,
+      title: "Persisted Project Two",
+      creatorId: "task158-creator-2",
+      fetchedAt: new Date(),
+    },
+  ]);
+  await db.insert(apiProjectMetadataStateTable).values(
+    usageWorkspaceIds.map((workspaceId) => ({
+      workspaceId,
+      status: "success",
+      completedAt: new Date(),
+    })),
+  );
+  invalidateUsageSnapshotMemo();
   await db.insert(teamBudgetAdjustmentsTable).values([
     {
       source: `${PREFIX}-source`,
@@ -136,30 +255,6 @@ beforeAll(async () => {
     },
   ]);
 
-  __setMemberUsageForTests(GROUP_ID, RANGE, new Map([
-    ["task158-workspace", 15],
-    ["task158-plain", 5],
-  ]));
-  __setWsSpendForTests("task158-ws", RANGE, new Map([
-    ["task158-workspace", 15],
-    ["task158-plain", 5],
-  ]));
-  __setProjectUsageForTests(GROUP_ID, RANGE, {
-    fetchedAt: Date.now(),
-    totalCostUsd: 20,
-    byProject: new Map([["task158-project", {
-      projectId: "task158-project",
-      totalCostUsd: 20,
-      metrics: [{ id: "ai", name: "AI", category: "ai", costUsd: 20 }],
-    }]]),
-  });
-  __setAccountUsageForTests(RANGE, {
-    fetchedAt: Date.now(),
-    totalCostUsd: 20,
-    attributableTotalCostUsd: 20,
-    unattributableTotalCostUsd: 0,
-  });
-
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -179,10 +274,18 @@ afterAll(async () => {
   setAuthorizationResolver(null);
   setTeamBudgetDirectoryFetcherForTests(null);
   __setDirectoryCacheForTests(null);
-  __setMemberUsageForTests(GROUP_ID, RANGE, null);
-  __setWsSpendForTests("task158-ws", RANGE, null);
-  __setProjectUsageForTests(GROUP_ID, RANGE, null);
-  __setAccountUsageForTests(RANGE, null);
+  const usageWorkspaceIds = ["task158-ws", "task158-ws-2"];
+  await db.delete(apiProjectMetadataStateTable)
+    .where(inArray(apiProjectMetadataStateTable.workspaceId, usageWorkspaceIds));
+  await db.delete(apiProjectMetadataTable)
+    .where(inArray(apiProjectMetadataTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageMemberDayTable)
+    .where(inArray(usageMemberDayTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageProjectDayTable)
+    .where(inArray(usageProjectDayTable.workspaceId, usageWorkspaceIds));
+  await db.delete(usageWorkspaceDayTable)
+    .where(inArray(usageWorkspaceDayTable.workspaceId, usageWorkspaceIds));
+  invalidateUsageSnapshotMemo();
   await db.delete(teamBudgetAdjustmentsTable).where(inArray(
     teamBudgetAdjustmentsTable.sourceRecordId,
     [`${PREFIX}-assigned`, `${PREFIX}-budget-only`, `${PREFIX}-hidden`],
@@ -321,6 +424,62 @@ test("effective totals agree across pool, group, and summary surfaces", async ()
   );
   expect(summary.json.totalBudgetUsd, "summary must count every visible team pool exactly once, including budget-only rows").toBe(positiveVisiblePoolTotal);
   expect(summary.json.totalRemainingUsd).toBe(positiveVisiblePoolTotal - 20);
+});
+
+test("project detail survives restart and isolates duplicate IDs by workspace", async () => {
+  invalidateUsageSnapshotMemo();
+  const [first, second, cluster, projectExport, activity] = await Promise.all([
+    request(`/groups/${GROUP_ID}/projects`, "task158-account"),
+    request(`/groups/${SECOND_GROUP_ID}/projects`, "task158-account"),
+    request(
+      `/clusters/${GROUP_ID},${SECOND_GROUP_ID}/projects`,
+      "task158-account",
+    ),
+    request("/projects/export", "task158-account"),
+    request("/users/activity", "task158-account"),
+  ]);
+  expect(first.status).toBe(200);
+  expect(second.status).toBe(200);
+  expect(first.json.titlesComplete).toBe(true);
+  expect(second.json.titlesComplete).toBe(true);
+  expect(first.json.unattributedSpendUsd).toBe(0);
+  expect(second.json.unattributedSpendUsd).toBe(0);
+  expect(first.json.projects).toEqual([
+    expect.objectContaining({
+      projectId: SHARED_PROJECT_ID,
+      title: "Persisted Project One",
+      creatorId: "task158-workspace",
+      creatorIsCurrentMember: true,
+      totalCostUsd: 20,
+    }),
+  ]);
+  expect(second.json.projects).toEqual([
+    expect.objectContaining({
+      projectId: SHARED_PROJECT_ID,
+      title: "Persisted Project Two",
+      creatorId: "task158-creator-2",
+      creatorIsCurrentMember: true,
+      totalCostUsd: 13,
+    }),
+  ]);
+  expect(cluster.status).toBe(200);
+  expect(cluster.json.projects).toHaveLength(2);
+  expect(cluster.json.projects.map((project) => ({
+    projectId: project.projectId,
+    workspaceId: project.workspaceId,
+    totalCostUsd: project.totalCostUsd,
+  })).sort((a, b) => a.workspaceId.localeCompare(b.workspaceId))).toEqual([
+    { projectId: SHARED_PROJECT_ID, workspaceId: "task158-ws", totalCostUsd: 20 },
+    { projectId: SHARED_PROJECT_ID, workspaceId: "task158-ws-2", totalCostUsd: 13 },
+  ]);
+  expect(projectExport.status).toBe(200);
+  expect(projectExport.json.raw).toContain("Persisted Project One");
+  expect(projectExport.json.raw).toContain("Persisted Project Two");
+  expect(activity.status).toBe(200);
+  expect(activity.json.usageHealth).toEqual(expect.objectContaining({
+    status: expect.any(String),
+    coverage: expect.objectContaining({ ratio: expect.any(Number) }),
+  }));
 });
 
 test("workspace admins see assigned effective pools but not account budget-only rows", async () => {

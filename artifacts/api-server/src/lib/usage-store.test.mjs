@@ -7,7 +7,10 @@ const {
   invalidateUsageSnapshotMemo,
   readUsageSnapshot,
 } = await import("./usage-store.ts");
-const { computeSnapshotUsageRollup } = await import("./usage-rollup.ts");
+const {
+  computeSnapshotUsageRollup,
+  projectAttributionKey,
+} = await import("./usage-rollup.ts");
 const {
   resolveUsageWindow,
   UsageWindowError,
@@ -154,8 +157,9 @@ test("mixed AI project metrics send only Agent spend through member attribution"
   assert.equal(result.aiSpendByUser.get("user-1"), 2);
   assert.equal(result.nonAiSpendByUser.get("user-1"), 8);
   assert.equal(result.byGroup.get("group")?.spendUsd, 10);
-  assert.equal(result.projectAttribution.aiSpendByProject.get("project-1"), 2);
-  assert.equal(result.projectAttribution.nonAiSpendByProject.get("project-1"), 8);
+  const projectKey = projectAttributionKey(workspaceA, "project-1");
+  assert.equal(result.projectAttribution.aiSpendByProject.get(projectKey), 2);
+  assert.equal(result.projectAttribution.nonAiSpendByProject.get(projectKey), 8);
   assert.equal(result.ungroupedByWorkspace.size, 0);
 });
 

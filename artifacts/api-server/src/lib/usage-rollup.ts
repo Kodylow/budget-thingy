@@ -13,6 +13,7 @@ export interface RollupProjectInfo {
 }
 
 export interface SnapshotProjectAttribution {
+  /** Workspace-qualified project key -> owning group ID. */
   projectToGroup: Map<string, string>;
   spendByGroup: Map<string, number>;
   creatorByProject: Map<string, string | null>;
@@ -22,6 +23,13 @@ export interface SnapshotProjectAttribution {
   totalSpendUsd: number;
   pendingCount: number;
   isComplete: boolean;
+}
+
+export function projectAttributionKey(
+  workspaceId: string,
+  projectId: string,
+): string {
+  return `${workspaceId}\u0000${projectId}`;
 }
 
 export interface SnapshotUsageRollup extends DedupedUsageRollup {
@@ -235,17 +243,18 @@ export function computeSnapshotUsageRollup(
       ...(snapshot.projects.get(workspaceId)?.entries() ?? []),
     ].sort(([a], [b]) => a.localeCompare(b));
     for (const [projectId, usage] of projectEntries) {
+      const projectKey = projectAttributionKey(workspaceId, projectId);
       const aiSpendUsd = Math.max(0, Math.min(usage.totalCostUsd, usage.aiCostUsd));
       const nonAiSpendUsd = Math.max(0, usage.totalCostUsd - aiSpendUsd);
-      aiSpendByProject.set(projectId, aiSpendUsd);
-      nonAiSpendByProject.set(projectId, nonAiSpendUsd);
+      aiSpendByProject.set(projectKey, aiSpendUsd);
+      nonAiSpendByProject.set(projectKey, nonAiSpendUsd);
       const info = projectInfo?.get(projectId);
       const creatorId = info?.creatorId ?? null;
-      creatorByProject.set(projectId, creatorId);
+      creatorByProject.set(projectKey, creatorId);
       const owner = creatorId === null ? undefined : owners.get(creatorId);
       const attributedNonAiSpendUsd = allocatable(nonAiSpendUsd);
       if (owner) {
-        projectToGroup.set(projectId, owner.id);
+        projectToGroup.set(projectKey, owner.id);
         add(projectSpendByGroup, owner.id, usage.totalCostUsd);
         addUserSpend(byGroup.get(owner.id)!, creatorId!, attributedNonAiSpendUsd);
         add(nonAiSpendByGroup.get(owner.id)!, creatorId!, attributedNonAiSpendUsd);

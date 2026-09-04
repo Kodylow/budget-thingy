@@ -77,6 +77,11 @@ export const LogoutBrowserSessionResponse = zod.void()
  */
 
 
+
+
+
+
+
 export const ExchangeMobileAuthorizationCodeBody = zod.object({
   "code": zod.string().min(1),
   "code_verifier": zod.string().min(1),
@@ -112,7 +117,7 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * Returns custom/SCIM groups across all workspaces of the Enterprise account, excluding built-in admin/member/guest role groups, joined with spend for the selected date range (loaded progressively under the Enterprise API rate limit), the configured budget, and threshold state.
+ * Returns custom/SCIM groups across all workspaces of the Enterprise account, excluding built-in admin/member/guest role groups, joined with stored spend for the selected date range, the configured budget, and threshold state.
  * @summary List all groups with usage and budget state
  */
 export const ListGroupsQueryParams = zod.object({
@@ -120,6 +125,11 @@ export const ListGroupsQueryParams = zod.object({
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
+
+export const listGroupsResponseUsageHealthCoverageRatioMin = 0;
+export const listGroupsResponseUsageHealthCoverageRatioMax = 1;
+
+
 
 export const ListGroupsResponse = zod.object({
   "groups": zod.array(zod.object({
@@ -133,13 +143,9 @@ export const ListGroupsResponse = zod.object({
   "syntheticKind": zod.enum(['no_group']).optional().describe('Kind of generated accounting row; present only when isSynthetic is true'),
   "memberCount": zod.number().nullish().describe('Number of members in the group, null while loading'),
   "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
-  "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
-  "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
-  "paceSpendLoaded": zod.boolean().describe('Whether usage bounded to the discovered pace period is complete'),
-  "paceSpendUsd": zod.number().nullish().describe('Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend'),
-  "projectSpendLoaded": zod.boolean().optional().describe('Whether project usage for every visible custom group is loaded'),
-  "projectSpendUsd": zod.number().nullish().describe('Deduplicated project spend attributed to this group, null while project usage is loading'),
-  "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
+  "spendUsd": zod.number().describe('Raw per-group spend represented by the stored usage snapshot'),
+  "paceSpendUsd": zod.number().describe('Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend'),
+  "projectSpendUsd": zod.number().describe('Deduplicated project spend attributed to this group'),
   "rollupSpendUsd": zod.number().describe('Member-deduplicated spend attributed to this group for team and org rollups'),
   "spendUpdatedAt": zod.string().nullish().describe('ISO timestamp when spend was last fetched'),
   "budgetUsd": zod.number().nullish().describe('Effective budget in USD (from app-level group budget if set), null if not set'),
@@ -153,34 +159,38 @@ export const ListGroupsResponse = zod.object({
 })).describe('Daily spend snapshots for the current billing period, oldest first'),
   "projectedSpendUsd": zod.number().nullish().describe('Linear projection of end-of-period spend, null while loading or too early in the period')
 })),
-  "isComplete": zod.boolean().describe('False while background usage fetches are still pending; poll every ~8s until true'),
-  "syncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
-  "syncError": zod.string().nullish(),
-  "failedCount": zod.number(),
-  "partialCount": zod.number(),
-  "pendingCount": zod.number().describe('Number of outstanding headline workspace\/member inputs'),
-  "directoryDataAsOf": zod.coerce.date().nullable().describe('Fetch time of the stored Enterprise directory snapshot'),
-  "directoryStale": zod.boolean().describe('True when the stored directory snapshot is older than its refresh interval'),
-  "usageDataAsOf": zod.coerce.date().nullable().describe('Oldest fetch time among the stored usage inputs used by this response'),
-  "usageStale": zod.boolean().describe('True when any stored usage input used by this response is older than its refresh interval'),
-  "projectSyncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
-  "projectSyncError": zod.string().nullish(),
-  "projectPendingCount": zod.number().describe('Number of outstanding project-usage or project-metadata inputs'),
-  "projectFailedCount": zod.number(),
-  "projectPartialCount": zod.number(),
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(listGroupsResponseUsageHealthCoverageRatioMin).max(listGroupsResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
+}),
   "billingPeriodLabel": zod.string().describe('Human label of the selected range, e.g. \"Jul 2026\" or \"Year to date\"'),
-  "projectSpendLoaded": zod.boolean().describe('True when project usage for every visible custom group is loaded'),
   "unattributedProjectSpendUsd": zod.number().describe('True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members'),
   "teamRawSpend": zod.record(zod.string(), zod.object({
-  "spendUsd": zod.number().describe('Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)'),
-  "spendLoaded": zod.boolean().describe('True when member-level usage for every visible custom group is loaded')
+  "spendUsd": zod.number().describe('Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)')
 })).describe('Per-team member-deduped rollup spend, with each member counted once across groups'),
   "teamBudgets": zod.record(zod.string(), zod.number()).describe('Effective visible team budgets, including budget-only teams for account-wide callers.')
 })
 
 
 /**
- * Returns one group with its spend for the selected range plus every member of the group: allocated budget (platform user limit or workspace default), actual usage, remaining budget, percent consumed, and workspace role. Member usage loads progressively; poll while isComplete is false.
+ * Returns one group with its spend for the selected range plus every member of the group: allocated budget (platform user limit or workspace default), actual usage, remaining budget, percent consumed, and workspace role. Usage health describes freshness and coverage of the stored facts.
  * @summary Group drill-down with per-user usage
  */
 export const GetGroupDetailParams = zod.object({
@@ -194,6 +204,11 @@ export const GetGroupDetailQueryParams = zod.object({
   "scopeGroupIds": zod.coerce.string().optional().describe('Optional comma-separated group IDs that define a team-cluster deduplication scope.')
 })
 
+export const getGroupDetailResponseUsageHealthCoverageRatioMin = 0;
+export const getGroupDetailResponseUsageHealthCoverageRatioMax = 1;
+
+
+
 export const GetGroupDetailResponse = zod.object({
   "group": zod.object({
   "groupId": zod.string(),
@@ -206,13 +221,9 @@ export const GetGroupDetailResponse = zod.object({
   "syntheticKind": zod.enum(['no_group']).optional().describe('Kind of generated accounting row; present only when isSynthetic is true'),
   "memberCount": zod.number().nullish().describe('Number of members in the group, null while loading'),
   "rollupMemberCount": zod.number().describe('Unique members attributed to this group for team and org rollups'),
-  "spendLoaded": zod.boolean().describe('Whether spend for the current billing period has been fetched yet'),
-  "spendUsd": zod.number().nullish().describe('Raw per-group spend reported by the Enterprise API, null while loading'),
-  "paceSpendLoaded": zod.boolean().describe('Whether usage bounded to the discovered pace period is complete'),
-  "paceSpendUsd": zod.number().nullish().describe('Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend'),
-  "projectSpendLoaded": zod.boolean().optional().describe('Whether project usage for every visible custom group is loaded'),
-  "projectSpendUsd": zod.number().nullish().describe('Deduplicated project spend attributed to this group, null while project usage is loading'),
-  "rollupSpendLoaded": zod.boolean().describe('Whether member-level usage for every custom group is loaded'),
+  "spendUsd": zod.number().describe('Raw per-group spend represented by the stored usage snapshot'),
+  "paceSpendUsd": zod.number().describe('Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend'),
+  "projectSpendUsd": zod.number().describe('Deduplicated project spend attributed to this group'),
   "rollupSpendUsd": zod.number().describe('Member-deduplicated spend attributed to this group for team and org rollups'),
   "spendUpdatedAt": zod.string().nullish().describe('ISO timestamp when spend was last fetched'),
   "budgetUsd": zod.number().nullish().describe('Effective budget in USD (from app-level group budget if set), null if not set'),
@@ -235,22 +246,41 @@ export const GetGroupDetailResponse = zod.object({
   "isDisabled": zod.boolean().nullish().describe('Whether the member\'s workspace access is disabled'),
   "allocatedBudgetUsd": zod.number().nullish().describe('Not used; always null (budgets are tracked at team level from the spreadsheet)'),
   "budgetSource": zod.string().nullish().describe('Not used; always null'),
-  "spendLoaded": zod.boolean(),
-  "spendUsd": zod.number().nullish().describe('Canonical total of member-grouped AI plus creator-attributed project non-AI for this group'),
-  "aiSpendUsd": zod.number().nullable().describe('Deduplicated member-grouped AI spend for this user in the group'),
-  "nonAiSpendUsd": zod.number().nullable().describe('Non-AI project spend attributed to projects this current member created'),
+  "spendUsd": zod.number().describe('Canonical total of member-grouped AI plus creator-attributed project non-AI for this group'),
+  "aiSpendUsd": zod.number().describe('Deduplicated member-grouped AI spend for this user in the group'),
+  "nonAiSpendUsd": zod.number().describe('Non-AI project spend attributed to projects this current member created'),
   "remainingUsd": zod.number().nullish(),
   "percentUsed": zod.number().nullish()
 })),
   "membersSpendUsd": zod.number().describe('Sum of canonical per-user rows currently listed; informational and not a group budget accounting total'),
   "unattributedSpendUsd": zod.number().describe('True residual from rows without a project ID, missing creators, and creators who are no longer current group members'),
-  "isComplete": zod.boolean().describe('False while member usage is still loading; poll every ~8s until true'),
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getGroupDetailResponseUsageHealthCoverageRatioMin).max(getGroupDetailResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
+}),
   "rangeLabel": zod.string()
 })
 
 
 /**
- * Returns project-level spend breakdown for a group in the selected date range. Project usage loads progressively; poll while isComplete is false.
+ * Returns project-level spend breakdown for a group in the selected date range. Usage health describes freshness and coverage of the stored facts.
  * @summary Group project spend drill-down
  */
 export const GetGroupProjectsParams = zod.object({
@@ -262,6 +292,11 @@ export const GetGroupProjectsQueryParams = zod.object({
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
+
+export const getGroupProjectsResponseUsageHealthCoverageRatioMin = 0;
+export const getGroupProjectsResponseUsageHealthCoverageRatioMax = 1;
+
+
 
 export const GetGroupProjectsResponse = zod.object({
   "projects": zod.array(zod.object({
@@ -283,7 +318,27 @@ export const GetGroupProjectsResponse = zod.object({
   "workspaceName": zod.string().nullable().describe('Human-readable workspace name, null when unknown')
 })),
   "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
-  "isComplete": zod.boolean().describe('False while project usage or project titles are still loading; poll every ~8s until true'),
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getGroupProjectsResponseUsageHealthCoverageRatioMin).max(getGroupProjectsResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
+}),
   "titlesComplete": zod.boolean().describe('True once project metadata has loaded for every workspace represented by the response')
 })
 
@@ -301,6 +356,11 @@ export const GetClusterProjectsQueryParams = zod.object({
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
+
+export const getClusterProjectsResponseUsageHealthCoverageRatioMin = 0;
+export const getClusterProjectsResponseUsageHealthCoverageRatioMax = 1;
+
+
 
 export const GetClusterProjectsResponse = zod.object({
   "projects": zod.array(zod.object({
@@ -322,7 +382,27 @@ export const GetClusterProjectsResponse = zod.object({
   "workspaceName": zod.string().nullable().describe('Human-readable workspace name, null when unknown')
 })),
   "unattributedSpendUsd": zod.number().describe('Group spend not attributable to any returned project row'),
-  "isComplete": zod.boolean().describe('False while project usage or project titles are still loading; poll every ~8s until true'),
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getClusterProjectsResponseUsageHealthCoverageRatioMin).max(getClusterProjectsResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
+}),
   "titlesComplete": zod.boolean().describe('True once project metadata has loaded for every workspace represented by the response')
 })
 
@@ -341,37 +421,34 @@ export const GetCanonicalClusterHeadlineQueryParams = zod.object({
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
+export const getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMin = 0;
+export const getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMax = 1;
+
+
+
 export const GetCanonicalClusterHeadlineResponse = zod.object({
-  "spendUsd": zod.number().nullable().describe('Canonical member-deduped cluster spend; null until the scoped rollup is complete'),
-  "isComplete": zod.boolean(),
-  "pendingCount": zod.number()
+  "spendUsd": zod.number().describe('Canonical member-deduped cluster spend'),
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMin).max(getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
 })
-
-
-/**
- * Queues a high-priority usage fetch for one group, bypassing cache TTL.
- * @summary Force-refresh one group's usage
- */
-export const RefreshGroupUsageParams = zod.object({
-  "groupId": zod.coerce.string()
-})
-
-export const RefreshGroupUsageResponse = zod.object({
-  "ok": zod.boolean()
-})
-
-
-/**
- * @summary Retry failed or partial dashboard usage scopes
- */
-export const RetryUsageSyncQueryParams = zod.object({
-  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
-  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
-  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
-})
-
-export const RetryUsageSyncResponse = zod.object({
-  "ok": zod.boolean()
 })
 
 
@@ -385,15 +462,15 @@ export const GetSummaryQueryParams = zod.object({
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
+export const getSummaryResponseUsageHealthCoverageRatioMin = 0;
+export const getSummaryResponseUsageHealthCoverageRatioMax = 1;
+
+
+
 export const GetSummaryResponse = zod.object({
   "totalGroups": zod.number(),
   "budgetedGroups": zod.number(),
   "totalSpendUsd": zod.number().describe('Workspace-aware member-deduped canonical rollup total for the caller\'s scope'),
-  "memberBasedTotalSpendUsd": zod.number().optional().describe('Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility'),
-  "accountUsageTotalSpendUsd": zod.number().nullable().describe('Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers'),
-  "accountUsageAttributableSpendUsd": zod.number().nullable().describe('Attributable portion of the unfiltered account usage anchor; null outside account-wide scope'),
-  "accountUsageUnattributableSpendUsd": zod.number().nullable().describe('Unattributable portion of the unfiltered account usage anchor; null outside account-wide scope'),
-  "reconciliationSpendUsd": zod.number().nullable().describe('Account anchor minus the exact top-level team and unassigned-group rows displayed by the dashboard; null outside account-wide scope or while loading'),
   "totalBudgetUsd": zod.number().describe('Sum of all effective group budgets (app or platform)'),
   "totalRemainingUsd": zod.number().optional().describe('Sum of remaining budget across budgeted groups with loaded spend'),
   "groupsOver50": zod.number(),
@@ -409,26 +486,32 @@ export const GetSummaryResponse = zod.object({
   "pacePeriodEnd": zod.string().describe('Exclusive period end used for dashboard pace projections'),
   "pacePeriodLabel": zod.string(),
   "pacePeriodIsFallback": zod.boolean().describe('True when pace uses the fixed safe fallback because no discovered interval is available'),
-  "isComplete": zod.boolean(),
-  "syncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
-  "syncError": zod.string().nullish(),
-  "pendingCount": zod.number(),
-  "failedCount": zod.number(),
-  "partialCount": zod.number(),
-  "directoryDataAsOf": zod.coerce.date().nullable(),
-  "directoryStale": zod.boolean(),
-  "usageDataAsOf": zod.coerce.date().nullable(),
-  "usageStale": zod.boolean(),
-  "projectSyncStatus": zod.enum(['complete', 'syncing', 'partial', 'failed']),
-  "projectSyncError": zod.string().nullish(),
-  "projectPendingCount": zod.number(),
-  "projectFailedCount": zod.number(),
-  "projectPartialCount": zod.number()
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getSummaryResponseUsageHealthCoverageRatioMin).max(getSummaryResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
+})
 })
 
 
 /**
- * Returns weekly or monthly canonical spend buckets for the selected range. Buckets use UTC boundaries and the current bucket is marked partial. Usage loads progressively; poll while isComplete is false.
+ * Returns weekly or monthly canonical spend buckets for the selected range. Buckets use UTC boundaries and the current bucket is marked partial. Usage health describes freshness and coverage of the stored facts.
  * @summary Group and team spending trends
  */
 export const GetTrendsQueryParams = zod.object({
@@ -440,6 +523,11 @@ export const GetTrendsQueryParams = zod.object({
   "groupIds": zod.array(zod.coerce.string()).optional()
 })
 
+export const getTrendsResponseUsageHealthCoverageRatioMin = 0;
+export const getTrendsResponseUsageHealthCoverageRatioMax = 1;
+
+
+
 export const GetTrendsResponse = zod.object({
   "buckets": zod.array(zod.string()).describe('ISO date for the start of each bucket'),
   "bucketRanges": zod.array(zod.object({
@@ -447,15 +535,33 @@ export const GetTrendsResponse = zod.object({
   "end": zod.string(),
   "isPartial": zod.boolean().describe('True only for an open bucket containing the current UTC day')
 })),
-  "totals": zod.array(zod.number().nullable()).describe('Canonical scoped spend for each bucket; null while loading'),
+  "totals": zod.array(zod.number()).describe('Canonical scoped spend for each bucket'),
   "series": zod.array(zod.object({
   "name": zod.string(),
   "type": zod.enum(['team', 'group']),
-  "data": zod.array(zod.number().nullable()).describe('Spend in USD for each corresponding bucket; null while loading')
+  "data": zod.array(zod.number()).describe('Spend in USD for each corresponding bucket')
 })),
-  "isComplete": zod.boolean(),
-  "loadedCount": zod.number(),
-  "totalCount": zod.number()
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getTrendsResponseUsageHealthCoverageRatioMin).max(getTrendsResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
+})
 })
 
 
@@ -469,10 +575,33 @@ export const GetUserActivityQueryParams = zod.object({
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
+export const getUserActivityResponseUsageHealthCoverageRatioMin = 0;
+export const getUserActivityResponseUsageHealthCoverageRatioMax = 1;
+
+
+
 export const GetUserActivityResponse = zod.object({
-  "isComplete": zod.boolean(),
-  "loadedCount": zod.number().describe('Authoritative workspace usage scopes currently loaded'),
-  "totalCount": zod.number().describe('Authoritative workspace usage scopes in the caller\'s visibility'),
+  "usageHealth": zod.object({
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getUserActivityResponseUsageHealthCoverageRatioMin).max(getUserActivityResponseUsageHealthCoverageRatioMax)
+}),
+  "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
+}),
   "users": zod.array(zod.object({
   "userId": zod.string(),
   "username": zod.string(),
@@ -491,6 +620,7 @@ export const GetUserActivityResponse = zod.object({
  * Exports the unique members of the explicitly requested visible groups, with separate AI, hosting/non-AI, and total spend columns.
  * @summary Export canonical per-user activity as CSV
  */
+
 
 
 export const ExportUsersCsvQueryParams = zod.object({
@@ -522,6 +652,7 @@ export const SetGroupBudgetParams = zod.object({
 })
 
 export const setGroupBudgetBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const SetGroupBudgetBody = zod.object({
@@ -672,6 +803,7 @@ export const ListAdminsResponse = zod.array(ListAdminsResponseItem)
 export const addAdminBodyEmailMin = 3;
 
 
+
 export const AddAdminBody = zod.object({
   "email": zod.string().min(addAdminBodyEmailMin)
 })
@@ -712,6 +844,7 @@ export const ListEditorsResponse = zod.array(ListEditorsResponseItem)
  * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
  * @summary Add an account-wide app editor
  */
+
 
 
 export const AddEditorBody = zod.object({
@@ -774,6 +907,7 @@ export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersRespon
 export const listVisibleWorkspacesResponseMemberCountMin = 0;
 
 
+
 export const ListVisibleWorkspacesResponseItem = zod.object({
   "workspaceId": zod.string(),
   "workspaceName": zod.string(),
@@ -786,6 +920,7 @@ export const ListVisibleWorkspacesResponse = zod.array(ListVisibleWorkspacesResp
  * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget connector failures are returned explicitly and never fall back to the Enterprise API key.
  * @summary List members and Agent budgets for a visible workspace
  */
+
 
 
 export const ListVisibleWorkspaceMembersParams = zod.object({
@@ -821,6 +956,7 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
  */
 
 
+
 export const ListWorkspaceUsageLimitAuditsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -850,6 +986,7 @@ export const ListWorkspaceUsageLimitAuditsResponse = zod.array(ListWorkspaceUsag
  */
 
 
+
 export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -858,6 +995,7 @@ export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
 export const bulkSetWorkspaceMemberBudgetsBodyUserIdsMax = 100;
 
 export const bulkSetWorkspaceMemberBudgetsBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const BulkSetWorkspaceMemberBudgetsBody = zod.object({
@@ -883,12 +1021,15 @@ export const BulkSetWorkspaceMemberBudgetsResponse = zod.object({
  */
 
 
+
+
 export const SetWorkspaceMemberBudgetParams = zod.object({
   "workspaceId": zod.coerce.string().min(1),
   "userId": zod.coerce.string().min(1)
 })
 
 export const setWorkspaceMemberBudgetBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const SetWorkspaceMemberBudgetBody = zod.object({
@@ -906,6 +1047,8 @@ export const SetWorkspaceMemberBudgetResponse = zod.object({
  * Account-wide operators only. Clearing an already-unset budget is idempotent.
  * @summary Clear a member's desired Agent budget
  */
+
+
 
 
 export const ClearWorkspaceMemberBudgetParams = zod.object({
@@ -958,6 +1101,7 @@ export const ListWorkspaceAdminsResponse = zod.array(ListWorkspaceAdminsResponse
  * @summary Alert history
  */
 export const listAlertsQueryLimitMax = 200;
+
 
 
 export const ListAlertsQueryParams = zod.object({
@@ -1035,6 +1179,7 @@ export const SendTestAlertResponse = zod.object({
   "senderEmail": zod.string().nullable()
 })
 
+
 /**
  * @summary Send Kody a predefined threshold-alert example
  */
@@ -1042,13 +1187,21 @@ export const SendEmailTestExampleBody = zod.object({
   "entityType": zod.enum(['group', 'team']),
   "threshold": zod.union([zod.literal(50),zod.literal(75),zod.literal(90),zod.literal(100)])
 })
+
+export const SendEmailTestExampleResponse = zod.object({
+  "ok": zod.boolean(),
+  "recipient": zod.enum(['kody.low@repl.it']),
+  "subject": zod.string(),
+  "error": zod.string().nullable(),
+  "messageId": zod.string().nullable(),
+  "senderEmail": zod.string().nullable()
+})
+
+
 /**
  * Enterprise API connectivity, email configuration, and background checker state.
  * @summary System status
  */
-export const getStatusResponseUsageSyncScopesMax = 200;
-
-
 export const GetStatusResponse = zod.object({
   "enterpriseApiConfigured": zod.boolean().describe('Whether REPLIT_ENTERPRISE_API_KEY is set'),
   "enterpriseApiOk": zod.boolean().describe('Whether the last Enterprise API call succeeded'),
@@ -1068,69 +1221,89 @@ export const GetStatusResponse = zod.object({
   "billingPeriodFallback": zod.boolean(),
   "billingPeriodDiffersFromReportingCutoff": zod.boolean(),
   "reportingCutoff": zod.string(),
-  "reportingRangeKey": zod.string().describe('Stable cache identity for the effective default reporting window'),
   "reportingRangeStart": zod.string().describe('Effective inclusive reporting start after applying the spend cutoff'),
   "reportingRangeEnd": zod.string().describe('Effective exclusive reporting end, capped at now and the billing-period end'),
   "reportingRangeLabel": zod.string().describe('Label that describes the effective reporting bounds'),
-  "accountTotalVerification": zod.union([zod.object({
-  "verifiedAt": zod.string(),
-  "outcome": zod.enum(['success', 'healed', 'failed']),
+  "recentRuns": zod.array(zod.object({
+  "id": zod.number(),
+  "kind": zod.enum(['live', 'backfill', 'reconcile']),
+  "startedAt": zod.coerce.date(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "units": zod.number(),
+  "calls": zod.number(),
+  "failures": zod.number(),
   "error": zod.string().nullable(),
-  "rangeKey": zod.string(),
-  "rangeStart": zod.string(),
-  "rangeEnd": zod.string(),
-  "upstreamTotalUsd": zod.number().nullable(),
-  "storedTotalUsd": zod.number().nullable(),
-  "deltaUsd": zod.number().nullable()
-}),zod.null()]),
-  "usageSync": zod.object({
-  "queueDepth": zod.number(),
-  "queuedCount": zod.number(),
-  "active": zod.union([zod.object({
-  "runId": zod.string(),
-  "key": zod.string(),
-  "priority": zod.number(),
-  "enqueuedAt": zod.string(),
-  "startedAt": zod.string(),
-  "ageMs": zod.number(),
-  "waitMs": zod.number()
-}),zod.null()]),
-  "oldestQueuedAgeMs": zod.number().nullable(),
-  "lastProgressAt": zod.string().nullable(),
-  "pauseUntil": zod.string().nullable(),
-  "scopes": zod.array(zod.object({
-  "mode": zod.enum(['account_total', 'group_total', 'group_member', 'workspace_member', 'group_project']),
-  "rangeKey": zod.string(),
-  "scopeKey": zod.string(),
-  "status": zod.enum(['syncing', 'success', 'partial', 'failed']),
-  "syncedThrough": zod.string(),
-  "completedAt": zod.string(),
-  "error": zod.string().nullable()
-})).max(getStatusResponseUsageSyncScopesMax)
+  "status": zod.enum(['running', 'succeeded', 'partial', 'failed'])
+})),
+  "remainingBackfillCount": zod.number(),
+  "currentMonthReconciliation": zod.array(zod.object({
+  "monthStart": zod.coerce.date(),
+  "scope": zod.string(),
+  "scopeId": zod.string(),
+  "upstreamUsd": zod.number(),
+  "storedUsd": zod.number(),
+  "deltaUsd": zod.number()
+}).and(zod.object({
+  "checkedAt": zod.coerce.date()
+}))),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "directoryAgeMs": zod.number().nullable(),
+  "rateLimitTelemetry": zod.object({
+  "peakRequestsPerMinute": zod.number(),
+  "lowestRateLimitRemaining": zod.number().nullable()
 })
 })
 
 
 /**
- * Account-admin-only control that queues a complete, transaction-safe rebuild of the selected range without changing any other cached range.
- * @summary Rebuild one usage range
+ * Available only to true Enterprise account administrators. Runs one lock-protected live/backfill/reconciliation cycle and returns its result.
+ * @summary Run one usage ingest cycle
  */
-export const RebuildUsageRangeBody = zod.object({
-  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']),
-  "startDate": zod.string().optional(),
-  "endDate": zod.string().optional()
+export const RunUsageIngestCycleResponse = zod.object({
+  "acquired": zod.boolean(),
+  "unitsAttempted": zod.number(),
+  "unitsSucceeded": zod.number(),
+  "unitsFailed": zod.number(),
+  "totalCalls": zod.number(),
+  "durationMs": zod.number(),
+  "reconciliations": zod.array(zod.object({
+  "monthStart": zod.coerce.date(),
+  "scope": zod.string(),
+  "scopeId": zod.string(),
+  "upstreamUsd": zod.number(),
+  "storedUsd": zod.number(),
+  "deltaUsd": zod.number()
+})),
+  "remainingBackfillCount": zod.number(),
+  "peakRequestsPerMinute": zod.number(),
+  "lowestRateLimitRemaining": zod.number().nullable()
 })
 
-export const RebuildUsageRangeResponse = zod.object({
-  "ok": zod.boolean()
+
+/**
+ * Available only to true Enterprise account administrators.
+ * @summary List recent usage ingest runs
+ */
+export const listRecentUsageIngestRunsQueryLimitDefault = 20;
+export const listRecentUsageIngestRunsQueryLimitMax = 100;
+
+
+
+export const ListRecentUsageIngestRunsQueryParams = zod.object({
+  "limit": zod.coerce.number().min(1).max(listRecentUsageIngestRunsQueryLimitMax).default(listRecentUsageIngestRunsQueryLimitDefault)
 })
 
-
-export const SendEmailTestExampleResponse = zod.object({
-  "ok": zod.boolean(),
-  "recipient": zod.enum(['kody.low@repl.it']),
-  "subject": zod.string(),
+export const ListRecentUsageIngestRunsResponseItem = zod.object({
+  "id": zod.number(),
+  "kind": zod.enum(['live', 'backfill', 'reconcile']),
+  "startedAt": zod.coerce.date(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "units": zod.number(),
+  "calls": zod.number(),
+  "failures": zod.number(),
   "error": zod.string().nullable(),
-  "messageId": zod.string().nullable(),
-  "senderEmail": zod.string().nullable()
+  "status": zod.enum(['running', 'succeeded', 'partial', 'failed'])
 })
+export const ListRecentUsageIngestRunsResponse = zod.array(ListRecentUsageIngestRunsResponseItem)
+
+

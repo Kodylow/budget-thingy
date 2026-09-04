@@ -7,15 +7,14 @@
  */
 import type { TrendBucketRange } from './trendBucketRange';
 import type { TrendSeries } from './trendSeries';
+import type { UsageHealth } from './usageHealth';
 
 export interface TrendsResponse {
   /** ISO date for the start of each bucket */
   buckets: string[];
   bucketRanges: TrendBucketRange[];
-  /** Canonical scoped spend for each bucket; null while loading */
-  totals: (number | null)[];
+  /** Canonical scoped spend for each bucket */
+  totals: number[];
   series: TrendSeries[];
-  isComplete: boolean;
-  loadedCount: number;
-  totalCount: number;
+  usageHealth: UsageHealth;
 }

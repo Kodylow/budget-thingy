@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { RefreshCw, AlertTriangle, DollarSign, TrendingUp, Wallet, ChevronDown, ChevronRight, Layers, TrendingDown } from 'lucide-react';
@@ -114,9 +114,7 @@ export default function Dashboard() {
   const { isAccountWide, role, preview, isPreviewing } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
-  const [retryingSync, setRetryingSync] = useState(false);
   const [retrySyncError, setRetrySyncError] = useState<string | null>(null);
-  const autoQueuedRanges = useRef(new Set<string>());
 
   const queryParams = useMemo(
     () => ({
@@ -136,13 +134,8 @@ export default function Dashboard() {
     query: {
       queryKey: getListGroupsQueryKey(queryParams),
       placeholderData: (previousData) => previousData,
-      refetchInterval: (query) => {
-        const data = query.state.data;
-        const paceComplete = rangeType !== 'billing' ||
-          (data?.groups.every((group) => group.paceSpendLoaded) ?? false);
-        if (data?.isComplete && paceComplete) return false;
-        return dashboardPollInterval(data, query.state.dataUpdateCount, query.state.status);
-      },
+      refetchInterval: (query) =>
+        dashboardPollInterval(query.state.data, query.state.dataUpdateCount, query.state.status),
     },
   });
 
@@ -170,77 +163,19 @@ export default function Dashboard() {
     query: { queryKey: getGetTeamsBudgetsQueryKey() },
   });
 
-  // Invalidate summary only on the transition to complete, not on every render.
-  const wasComplete = useRef(false);
-  useEffect(() => {
-    const complete = groupsData?.isComplete ?? false;
-    if (complete && !wasComplete.current) {
-      queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey(queryParams) });
-    }
-    wasComplete.current = complete;
-  }, [groupsData?.isComplete, queryClient, queryParams]);
-
+  const usageAvailable = groupsData?.usageHealth.status !== 'empty';
   const groups = useMemo(
     () =>
       filterGroupsForView(groupsData?.groups ?? [], role, preview).map((group) => {
         return {
           ...group,
           spendUsd: group.rollupSpendUsd,
-          spendLoaded: group.rollupSpendLoaded,
+          spendLoaded: usageAvailable,
+          paceSpendLoaded: usageAvailable,
         };
       }),
-    [groupsData?.groups, role, preview],
+    [groupsData?.groups, role, preview, usageAvailable],
   );
-  const pendingCount = groupsData?.pendingCount ?? 0;
-  const projectSyncStatus = groupsData?.projectSyncStatus ?? 'syncing';
-  const projectPendingCount = groupsData?.projectPendingCount ?? 0;
-  const syncStatus = groupsData?.syncStatus ?? 'syncing';
-  const retrySync = async () => {
-    setRetryingSync(true);
-    setRetrySyncError(null);
-    try {
-      const params = new URLSearchParams();
-      params.set('rangeType', rangeType);
-      if (rangeType === 'custom') {
-        if (startDate) params.set('startDate', startDate);
-        if (endDate) params.set('endDate', endDate);
-      }
-      const response = await fetch(`/api/usage/retry?${params}`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (!response.ok) throw new Error('Retry request failed');
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey(queryParams) }),
-        queryClient.invalidateQueries({ queryKey: getGetSummaryQueryKey(queryParams) }),
-      ]);
-    } catch (error) {
-      setRetrySyncError(
-        error instanceof Error ? error.message : 'Could not retry usage synchronization.',
-      );
-    } finally {
-      setRetryingSync(false);
-    }
-  };
-  useEffect(() => {
-    if (!groupsData || retryingSync) return;
-    if (pendingCount + projectPendingCount === 0) return;
-    if (syncStatus !== 'syncing' && projectSyncStatus !== 'syncing') return;
-    const rangeKey = `${rangeType}:${startDate ?? ''}:${endDate ?? ''}`;
-    if (autoQueuedRanges.current.has(rangeKey)) return;
-    autoQueuedRanges.current.add(rangeKey);
-    void retrySync();
-  }, [
-    endDate,
-    groupsData,
-    pendingCount,
-    projectPendingCount,
-    projectSyncStatus,
-    rangeType,
-    retryingSync,
-    startDate,
-    syncStatus,
-  ]);
 
   const retryRequests = async () => {
     setRetrySyncError(null);
@@ -301,7 +236,7 @@ export default function Dashboard() {
         : (serverTeamSpend?.spendUsd ?? 0);
       const spendLoaded = isPreviewing
         ? teamGroups.every((group) => group.spendLoaded)
-        : (serverTeamSpend?.spendLoaded ?? false);
+        : usageAvailable;
       const paceSpendLoaded = teamGroups.every((group) => group.paceSpendLoaded);
       const paceSpendUsd = teamGroups.reduce(
         (sum, group) => sum + (group.paceSpendUsd ?? 0),
@@ -923,48 +858,19 @@ export default function Dashboard() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <RangeFilter />
-          {(projectSyncStatus === 'failed' || projectSyncStatus === 'partial') && (
+          {(groupsData?.usageHealth.status === 'partial' ||
+            groupsData?.usageHealth.status === 'stale' ||
+            groupsData?.usageHealth.status === 'empty') && (
             <Badge
               variant="outline"
               className="flex items-center gap-2 border-yellow-500/50 text-yellow-700 dark:text-yellow-300"
-              data-testid="badge-project-sync-error"
-              title={groupsData?.projectSyncError ?? 'Some project detail could not be synchronized.'}
+              data-testid="badge-usage-health"
+              title={`Usage coverage: ${Math.round(groupsData.usageHealth.coverage.ratio * 100)}%`}
             >
               <AlertTriangle className="h-3 w-3" />
               <span className="hidden sm:inline">
-                Project detail {projectSyncStatus === 'failed' ? 'failed' : 'degraded'}
+                Usage data {groupsData.usageHealth.status}
               </span>
-              <button
-                type="button"
-                className="underline underline-offset-2 disabled:opacity-50"
-                disabled={retryingSync}
-                onClick={() => void retrySync()}
-              >
-                {retryingSync ? 'Retrying…' : 'Retry'}
-              </button>
-            </Badge>
-          )}
-          {(syncStatus === 'failed' || syncStatus === 'partial') && (
-            <Badge
-              variant="outline"
-              className="flex items-center gap-2 border-destructive/50 text-destructive"
-              data-testid="badge-sync-error"
-              title={groupsData?.syncError ?? 'Some usage scopes could not be synchronized.'}
-            >
-              <AlertTriangle className="h-3 w-3" />
-              <span className="hidden sm:inline">
-                {syncStatus === 'failed'
-                  ? `${groupsData?.failedCount ?? 0} sync failed`
-                  : `${groupsData?.partialCount ?? 0} sync partial`}
-              </span>
-              <button
-                type="button"
-                className="underline underline-offset-2 disabled:opacity-50"
-                disabled={retryingSync}
-                onClick={() => void retrySync()}
-              >
-                {retryingSync ? 'Retrying…' : 'Retry'}
-              </button>
             </Badge>
           )}
         </div>
@@ -1107,8 +1013,8 @@ export default function Dashboard() {
                       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
                       .map((group) => renderGroupRow(group))
                   )}
-                  {!isPreviewing && summary?.reconciliationSpendUsd != null &&
-                    (isAccountWide || summary.reconciliationSpendUsd > 0) && (
+                  {!isPreviewing && summary &&
+                    (isAccountWide || summary.usageHealth.accountWorkspaceUnreconciledUsd > 0) && (
                     <tr
                       className="border-b border-border bg-muted/10"
                       data-testid={isAccountWide ? "row-account-reconciliation" : "row-unattributed-projects"}
@@ -1131,7 +1037,7 @@ export default function Dashboard() {
                       <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
-                           ${summary.reconciliationSpendUsd.toFixed(2)}
+                           ${summary.usageHealth.accountWorkspaceUnreconciledUsd.toFixed(2)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>

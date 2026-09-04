@@ -5,8 +5,9 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { AccountTotalVerification } from './accountTotalVerification';
-import type { UsageOperationalDiagnostics } from './usageOperationalDiagnostics';
+import type { UsageIngestRun } from './usageIngestRun';
+import type { UsageRateLimitTelemetry } from './usageRateLimitTelemetry';
+import type { UsageReconciliationStatus } from './usageReconciliationStatus';
 
 export interface SystemStatus {
   /** Whether REPLIT_ENTERPRISE_API_KEY is set */
@@ -44,14 +45,18 @@ export interface SystemStatus {
   billingPeriodFallback: boolean;
   billingPeriodDiffersFromReportingCutoff: boolean;
   reportingCutoff: string;
-  /** Stable cache identity for the effective default reporting window */
-  reportingRangeKey: string;
   /** Effective inclusive reporting start after applying the spend cutoff */
   reportingRangeStart: string;
   /** Effective exclusive reporting end, capped at now and the billing-period end */
   reportingRangeEnd: string;
   /** Label that describes the effective reporting bounds */
   reportingRangeLabel: string;
-  accountTotalVerification: AccountTotalVerification | null;
-  usageSync: UsageOperationalDiagnostics;
+  recentRuns: UsageIngestRun[];
+  remainingBackfillCount: number;
+  currentMonthReconciliation: UsageReconciliationStatus[];
+  /** @nullable */
+  directoryDataAsOf: Date | null;
+  /** @nullable */
+  directoryAgeMs: number | null;
+  rateLimitTelemetry: UsageRateLimitTelemetry;
 }

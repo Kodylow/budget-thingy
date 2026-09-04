@@ -6,47 +6,15 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Group } from './group';
-import type { GroupsResponseProjectSyncStatus } from './groupsResponseProjectSyncStatus';
-import type { GroupsResponseSyncStatus } from './groupsResponseSyncStatus';
 import type { GroupsResponseTeamBudgets } from './groupsResponseTeamBudgets';
 import type { GroupsResponseTeamRawSpend } from './groupsResponseTeamRawSpend';
+import type { UsageHealth } from './usageHealth';
 
 export interface GroupsResponse {
   groups: Group[];
-  /** False while background usage fetches are still pending; poll every ~8s until true */
-  isComplete: boolean;
-  syncStatus: GroupsResponseSyncStatus;
-  /** @nullable */
-  syncError?: string | null;
-  failedCount: number;
-  partialCount: number;
-  /** Number of outstanding headline workspace/member inputs */
-  pendingCount: number;
-  /**
-     * Fetch time of the stored Enterprise directory snapshot
-     * @nullable
-     */
-  directoryDataAsOf: Date | null;
-  /** True when the stored directory snapshot is older than its refresh interval */
-  directoryStale: boolean;
-  /**
-     * Oldest fetch time among the stored usage inputs used by this response
-     * @nullable
-     */
-  usageDataAsOf: Date | null;
-  /** True when any stored usage input used by this response is older than its refresh interval */
-  usageStale: boolean;
-  projectSyncStatus: GroupsResponseProjectSyncStatus;
-  /** @nullable */
-  projectSyncError?: string | null;
-  /** Number of outstanding project-usage or project-metadata inputs */
-  projectPendingCount: number;
-  projectFailedCount: number;
-  projectPartialCount: number;
+  usageHealth: UsageHealth;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
-  /** True when project usage for every visible custom group is loaded */
-  projectSpendLoaded: boolean;
   /** True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members */
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */

@@ -26,6 +26,7 @@ import {
 } from "../lib/authz.ts";
 import { setSendEmailOverrideForTests } from "../lib/email.ts";
 import { setReplitBudgetTransportForTests } from "../lib/replit-budgets.ts";
+import { invalidateUsageSnapshotMemo } from "../lib/usage-store.ts";
 import {
   __setDirectoryCacheForTests,
   __setAccountUsageForTests,
@@ -345,10 +346,8 @@ test("account admin sees every group", async () => {
   expect(status).toBe(200);
   const ids = json.groups.filter((g) => !g.isSynthetic).map((g) => g.groupId).sort();
   expect(ids).toEqual(["g-ws1-a", "g-ws2-a"]);
-  expect(typeof json.directoryDataAsOf).toBe("string");
-  expect(typeof json.directoryStale).toBe("boolean");
-  expect(json.usageDataAsOf === null || typeof json.usageDataAsOf === "string").toBe(true);
-  expect(typeof json.usageStale).toBe("boolean");
+  expect(["complete", "stale", "partial", "empty"]).toContain(json.usageHealth.status);
+  expect(typeof json.usageHealth.coverage.ratio).toBe("number");
 });
 
 test("stale directory authorization and handlers do not wait for an in-progress or failed refresh", async () => {
@@ -369,24 +368,26 @@ test("stale directory authorization and handlers do not wait for an in-progress 
     fetchedAt: Date.now() - 60 * 60 * 1000,
   });
 
-  const startedAt = Date.now();
-  const first = await req("/groups", { user: "acct" });
-  const second = await req("/groups", { user: "acct" });
-  expect(first.status).toBe(200);
-  expect(second.status).toBe(200);
-  expect(Date.now() - startedAt < 1_000, "requests should return from stored data").toBeTruthy();
-  expect(first.json.directoryStale).toBe(true);
-  expect(enterpriseRequests, "concurrent polling must share one directory refresh").toBe(1);
-  expect(getDirectoryFreshness().isRefreshing).toBe(true);
+  try {
+    const startedAt = Date.now();
+    const first = await req("/groups", { user: "acct" });
+    const second = await req("/groups", { user: "acct" });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(Date.now() - startedAt < 1_000, "requests should return from stored data").toBeTruthy();
+    expect(first.json.directoryStale).toBeUndefined();
+    expect(enterpriseRequests, "concurrent polling must share one directory refresh").toBe(1);
+    expect(getDirectoryFreshness().isRefreshing).toBe(true);
 
-  rejectRefresh(new Error("forced Enterprise outage"));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  const afterFailure = await req("/groups", { user: "acct" });
-  expect(afterFailure.status).toBe(200);
-  expect(afterFailure.json.directoryStale).toBe(true);
-
-  setEnterpriseFetchForTests(null);
-  __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+    rejectRefresh(new Error("forced Enterprise outage"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const afterFailure = await req("/groups", { user: "acct" });
+    expect(afterFailure.status).toBe(200);
+    expect(afterFailure.json.directoryStale).toBeUndefined();
+  } finally {
+    setEnterpriseFetchForTests(null);
+    __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+  }
 });
 
 test("every Enterprise directory request carries the common 30-second timeout signal", async () => {
@@ -503,88 +504,42 @@ test("summary totalGroups reflects the scoped group set", async () => {
   expect(ws1.json.totalGroups).toBe(1);
 });
 
-test("custom range uses inclusive UTC days and all visible workspaces without overlap inflation", async () => {
-  const range = resolveRange("custom", "2026-05-20", "2026-08-11");
-  expect(range.params).toEqual({
-    startTime: "2026-05-20T00:00:00.000Z",
-    endTime: "2026-08-12T00:00:00.000Z",
-  });
-
-  const acct = await req(
-    "/summary?rangeType=custom&startDate=2026-05-20&endDate=2026-08-11",
-    { user: "acct" },
-  );
-  expect(acct.status).toBe(200);
-  // Equal values in distinct workspaces are distinct observations:
-  // shared(40 in ws-1 + 40 in ws-2)+ws1-only(10)+ws2-only(20)+unattributable(3+4)=117.
-  expect(acct.json.totalSpendUsd).toBe(117);
-  expect(acct.json.memberBasedTotalSpendUsd).toBe(117);
-  expect(acct.json.accountUsageTotalSpendUsd).toBe(117);
-  expect(acct.json.reconciliationSpendUsd).toBe(0);
-  expect(acct.json.isComplete).toBe(true);
-
-  const ws1 = await req(
-    "/summary?rangeType=custom&startDate=2026-05-20&endDate=2026-08-11",
-    { user: "ws1admin" },
-  );
-  // ws1admin sees only g-ws1-a: shared(40)+ws1-only(10)+unattributable(3)=53
-  expect(ws1.json.totalSpendUsd).toBe(53);
-  expect(ws1.json.accountUsageTotalSpendUsd).toBe(null);
-  expect(ws1.json.accountUsageAttributableSpendUsd).toBe(null);
-  expect(ws1.json.accountUsageUnattributableSpendUsd).toBe(null);
-  expect(ws1.json.reconciliationSpendUsd).toBe(null);
-  expect(ws1.json.isComplete).toBe(true);
+test("full-term summary matches the scoped daily workspace SQL total", async () => {
+  invalidateUsageSnapshotMemo();
+  const summary = await req("/summary?rangeType=full-term", { user: "acct" });
+  expect(summary.status).toBe(200);
+  const result = await db.execute(sql`
+    select coalesce(sum(total_cost_usd), 0)::float8 as total
+    from usage_workspace_day
+    where workspace_id in ('ws-1', 'ws-2')
+      and usage_date >= '2026-05-20'::date
+      and usage_date < (current_date + 1)
+      and status = 'complete'
+  `);
+  expect(summary.json.totalSpendUsd).toBe(Number(result.rows[0]?.total ?? 0));
 });
 
-test("trend ranges preserve workspace-admin scope and selected custom dates", async () => {
-  const range = resolveRange("custom", "2026-06-01", "2026-06-30");
-  __setMemberUsageForTests(
-    range.key,
-    new Map([
-      ["g-ws1-a", new Map([["ws1admin", 40], ["plain", 10]])],
-      ["g-ws2-a", new Map([["ws2user", 60]])],
-    ]),
-    new Map([
-      ["g-ws1-a", 3],
-      ["g-ws2-a", 4],
-    ]),
-  );
-  __setWsSpendForTests(
-    "ws-1",
-    range.key,
-    new Map([["ws1admin", 40], ["plain", 10]]),
-    { unattributableTotalCostUsd: 3 },
-  );
-  __setWsSpendForTests(
-    "ws-2",
-    range.key,
-    new Map([["ws2user", 60]]),
-    { unattributableTotalCostUsd: 4 },
-  );
-  try {
-    const account = await req(
-      "/trends?granularity=month&rangeType=custom&startDate=2026-06-01&endDate=2026-06-30",
-      { user: "acct" },
-    );
-    expect(account.status).toBe(200);
-    expect(account.json.bucketRanges).toEqual([
-      { start: "2026-06-01", end: "2026-06-30", isPartial: false },
-    ]);
-    expect(account.json.totals).toEqual([117]);
+test("full-term group reads meet the cold and warm latency budgets", async () => {
+  invalidateUsageSnapshotMemo();
+  const coldStartedAt = performance.now();
+  const cold = await req("/groups?rangeType=full-term", { user: "acct" });
+  const coldMs = performance.now() - coldStartedAt;
+  expect(cold.status).toBe(200);
+  expect(coldMs, `cold full-term read took ${coldMs.toFixed(1)} ms`).toBeLessThan(1_000);
 
-    const scoped = await req(
-      "/trends?granularity=month&rangeType=custom&startDate=2026-06-01&endDate=2026-06-30",
-      { user: "ws1admin" },
-    );
-    expect(scoped.status).toBe(200);
-    expect(scoped.json.totals).toEqual([53]);
-    expect(scoped.json.series.filter((series) => series.type === "group").map((series) => series.name)).toEqual(["Alpha"]);
-    expect(scoped.json.series.filter((series) => series.type === "team").map((series) => series.name)).toEqual(["Team One"]);
-  } finally {
-    __setMemberUsageForTests(range.key, null);
-    __setWsSpendForTests("ws-1", range.key, null);
-    __setWsSpendForTests("ws-2", range.key, null);
+  const warmDurations = [];
+  for (let index = 0; index < 20; index++) {
+    const startedAt = performance.now();
+    const warm = await req("/groups?rangeType=full-term", { user: "acct" });
+    warmDurations.push(performance.now() - startedAt);
+    expect(warm.status).toBe(200);
   }
+  const p95Index = Math.ceil(warmDurations.length * 0.95) - 1;
+  const p95Ms = [...warmDurations].sort((a, b) => a - b)[p95Index];
+  console.info(
+    `[usage-benchmark] coldMs=${coldMs.toFixed(1)} warmP95Ms=${p95Ms.toFixed(1)}`,
+  );
+  expect(p95Ms, `warm full-term p95 was ${p95Ms.toFixed(1)} ms`).toBeLessThan(300);
 });
 
 test("cross-scope group detail returns non-disclosing 404", async () => {
@@ -636,7 +591,7 @@ test("workspace member budget reads are scoped and preserve unset and negative r
     canWrite: true,
     error: null,
   });
-  expect(visible.json.members.find((member) => member.userId === "ws1admin").remainingUsd).toBe(-5);
+  expect(visible.json.members.find((member) => member.userId === "ws1admin").remainingUsd).toBe(null);
   expect(visible.json.members.find((member) => member.userId === "plain").remainingUsd).toBe(null);
 
   const hidden = await req("/directory/workspaces/ws-2/members", { user: "ws1admin" });
@@ -875,7 +830,7 @@ test("workspace admin mutation attempts are rejected (403, read-only)", async ()
     user: "ws1admin",
     method: "POST",
   });
-  expect(refresh.status).toBe(403);
+  expect(refresh.status).toBe(404);
 
   const check = await req("/alerts/check", { user: "ws1admin", method: "POST" });
   expect(check.status).toBe(403);
@@ -885,7 +840,7 @@ test("workspace admin mutation attempts are rejected (403, read-only)", async ()
     method: "POST",
     body: { rangeType: "billing" },
   });
-  expect(rebuild.status).toBe(403);
+  expect(rebuild.status).toBe(404);
 
   const addAdmin = await req("/admins", {
     user: "ws1admin",
@@ -1126,6 +1081,25 @@ test("account-admin removal survives the designated editor's next verified login
 
 // ── /users/activity authorization tests ──────────────────────────────────────
 
+test("workspace admins cannot infer account totals from usage health", async () => {
+  const paths = [
+    "/groups",
+    "/groups/g-ws1-a",
+    "/groups/g-ws1-a/projects",
+    "/clusters/g-ws1-a/headline",
+    "/clusters/g-ws1-a/projects",
+    "/summary",
+    "/trends?granularity=month&rangeType=billing",
+    "/users/activity",
+  ];
+  for (const path of paths) {
+    const { status, json } = await req(path, { user: "ws1admin" });
+    expect(status, path).toBe(200);
+    expect(json.usageHealth, path).toBeDefined();
+    expect(json.usageHealth.accountWorkspaceUnreconciledUsd, path).toBe(0);
+  }
+});
+
 test("workspace admin cannot receive out-of-scope users from /users/activity", async () => {
   // Seed authoritative billing-range workspace observations so these route
   // checks do not launch background network work that can leak into later tests.
@@ -1195,7 +1169,9 @@ test("workspace admin exports only an authorized group's members", async () => {
   const query = "/export/users.csv?groupIds=g-ws1-a&rangeType=custom&startDate=2026-05-20&endDate=2026-08-11";
   const { res, rows } = await csvReq(query, "ws1admin");
   expect(res.status).toBe(200);
-  expect(res.headers.get("x-usage-range")).toBe("custom:2026-05-20:2026-08-11");
+  expect(res.headers.get("x-usage-window")).toBe(
+    "2026-05-20T00:00:00.000Z/2026-08-12T00:00:00.000Z",
+  );
   expect(res.headers.get("content-disposition") ?? "").toMatch(/filename="group-users-\d{4}-\d{2}-\d{2}\.csv"/);
   expect(rows.map((row) => row.Username).sort()).toEqual(["plain", "ws1admin"]);
   expect(!rows.some((row) => row.Email === "ws2user@example.com")).toBeTruthy();

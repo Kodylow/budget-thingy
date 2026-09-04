@@ -50,7 +50,7 @@ export default function GroupDetail() {
     query: {
       queryKey: getGetGroupDetailQueryKey(groupId, queryParams),
       refetchInterval: (query) =>
-        query.state.status === 'error' || query.state.data?.isComplete ? false : 8000,
+        query.state.status === 'error' || query.state.data?.usageHealth ? false : 8000,
     }
   });
 
@@ -59,7 +59,7 @@ export default function GroupDetail() {
       queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
       refetchInterval: (query) =>
         query.state.status === 'error' ||
-        (query.state.data?.isComplete && query.state.data.titlesComplete) ? false : 8000,
+        (query.state.data?.usageHealth && query.state.data.titlesComplete) ? false : 8000,
       enabled: !!groupId,
     }
   });
@@ -118,7 +118,11 @@ export default function GroupDetail() {
     );
   }
 
-  const { group, members, membersSpendUsd, unattributedSpendUsd, isComplete, rangeLabel } = data;
+  const { group, members, membersSpendUsd, unattributedSpendUsd, rangeLabel } = data;
+  const usageAvailable = data.usageHealth.status !== 'empty';
+  const isComplete = data.usageHealth.status === 'complete' ||
+    data.usageHealth.status === 'stale';
+  const projectsUsageAvailable = projectsData?.usageHealth.status !== 'empty';
 
   // Use member-deduped rollup spend as the primary display — matches the dashboard row.
   // rollupSpendUsd is always populated (unlike spendUsd which is null until all groups
@@ -127,7 +131,7 @@ export default function GroupDetail() {
   const displaySpend = group.rollupSpendUsd !== undefined && group.rollupSpendUsd !== null
     ? group.rollupSpendUsd
     : null;
-  const displaySpendLoaded = group.rollupSpendLoaded ?? false;
+  const displaySpendLoaded = usageAvailable;
 
   const statCards = [
     {
@@ -160,8 +164,8 @@ export default function GroupDetail() {
   ];
 
   const sortedMembers = [...members].sort((a, b) => {
-    const aSpend = a.spendLoaded ? (a.spendUsd || 0) : -1;
-    const bSpend = b.spendLoaded ? (b.spendUsd || 0) : -1;
+    const aSpend = usageAvailable ? a.spendUsd : -1;
+    const bSpend = usageAvailable ? b.spendUsd : -1;
     return bSpend - aSpend;
   });
   const connector = workspaceMembersQuery.data?.connector;
@@ -307,15 +311,15 @@ export default function GroupDetail() {
                       ) : <span className="text-sm text-muted-foreground">—</span>}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      {!member.spendLoaded ? <div className="flex justify-end"><LoadingCell /></div> : (
-                        <span className="text-sm font-mono tabular-nums">${member.spendUsd?.toFixed(2) ?? '0.00'}</span>
+                      {!usageAvailable ? <div className="flex justify-end"><LoadingCell /></div> : (
+                        <span className="text-sm font-mono tabular-nums">${member.spendUsd.toFixed(2)}</span>
                       )}
                     </td>
                     <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
-                      {member.spendLoaded ? `$${(member.aiSpendUsd ?? 0).toFixed(2)}` : '—'}
+                      {usageAvailable ? `$${member.aiSpendUsd.toFixed(2)}` : '—'}
                     </td>
                     <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
-                      {member.spendLoaded ? `$${(member.nonAiSpendUsd ?? 0).toFixed(2)}` : '—'}
+                      {usageAvailable ? `$${member.nonAiSpendUsd.toFixed(2)}` : '—'}
                     </td>
                     <td className="py-3 px-4 text-right">
                       {workspaceMembersQuery.isLoading ? (
@@ -328,7 +332,7 @@ export default function GroupDetail() {
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className="flex justify-end">
-                        {!member.spendLoaded || member.allocatedBudgetUsd === null || member.allocatedBudgetUsd === undefined ? <span className="text-sm text-muted-foreground">—</span> : (
+                        {!usageAvailable || member.allocatedBudgetUsd === null || member.allocatedBudgetUsd === undefined ? <span className="text-sm text-muted-foreground">—</span> : (
                           <ThresholdBadge percentUsed={member.percentUsed ?? null} thresholdsFired={[]} />
                         )}
                       </div>
@@ -414,7 +418,7 @@ export default function GroupDetail() {
                 </tr>
               </thead>
               <tbody>
-                {!projectsData?.isComplete && (!projectsData || projectsData.projects.length === 0) ? (
+                {!projectsUsageAvailable && (!projectsData || projectsData.projects.length === 0) ? (
                   // Skeleton rows while loading
                   [1, 2, 3].map((i) => (
                     <tr key={i} className="border-b border-border/50">
@@ -453,22 +457,22 @@ export default function GroupDetail() {
                           </div>
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                          {!projectsUsageAvailable ? <div className="flex justify-end"><LoadingCell /></div> : (
                             <span className="text-sm font-mono tabular-nums">{aiSpend > 0 ? `$${aiSpend.toFixed(2)}` : '—'}</span>
                           )}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                          {!projectsUsageAvailable ? <div className="flex justify-end"><LoadingCell /></div> : (
                             <span className="text-sm font-mono tabular-nums">{hostingSpend > 0 ? `$${hostingSpend.toFixed(2)}` : '—'}</span>
                           )}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                          {!projectsUsageAvailable ? <div className="flex justify-end"><LoadingCell /></div> : (
                             <span className="text-sm font-mono tabular-nums">{storageSpend > 0 ? `$${storageSpend.toFixed(2)}` : '—'}</span>
                           )}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {!projectsData.isComplete ? <div className="flex justify-end"><LoadingCell /></div> : (
+                          {!projectsUsageAvailable ? <div className="flex justify-end"><LoadingCell /></div> : (
                             <span className="text-sm font-mono tabular-nums">{otherSpend > 0 ? `$${otherSpend.toFixed(2)}` : '—'}</span>
                           )}
                         </td>
@@ -498,7 +502,7 @@ export default function GroupDetail() {
                   </tr>
                 )}
               </tbody>
-              {projectsData?.isComplete && projectsData.projects.length > 0 && (
+              {projectsUsageAvailable && projectsData && projectsData.projects.length > 0 && (
                 <tfoot>
                   <tr className="bg-muted/30 font-medium border-t border-border">
                     <td className="py-3 px-4 text-sm">Total</td>

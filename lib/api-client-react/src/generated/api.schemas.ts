@@ -56,6 +56,7 @@ export interface AuthCapabilities {
   /** Server-derived capability for the persisted designated email-test identity. */
   emailTesting: boolean;
 }
+
 export interface AuthUserEnvelope {
   user: AuthUser | null;
   /** Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied). */
@@ -129,29 +130,12 @@ export interface Group {
   memberCount?: number | null;
   /** Unique members attributed to this group for team and org rollups */
   rollupMemberCount: number;
-  /** Whether spend for the current billing period has been fetched yet */
-  spendLoaded: boolean;
-  /**
-     * Raw per-group spend reported by the Enterprise API, null while loading
-     * @nullable
-     */
-  spendUsd?: number | null;
-  /** Whether usage bounded to the discovered pace period is complete */
-  paceSpendLoaded: boolean;
-  /**
-     * Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
-     * @nullable
-     */
-  paceSpendUsd?: number | null;
-  /** Whether project usage for every visible custom group is loaded */
-  projectSpendLoaded?: boolean;
-  /**
-     * Deduplicated project spend attributed to this group, null while project usage is loading
-     * @nullable
-     */
-  projectSpendUsd?: number | null;
-  /** Whether member-level usage for every custom group is loaded */
-  rollupSpendLoaded: boolean;
+  /** Raw per-group spend represented by the stored usage snapshot */
+  spendUsd: number;
+  /** Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend */
+  paceSpendUsd: number;
+  /** Deduplicated project spend attributed to this group */
+  projectSpendUsd: number;
   /** Member-deduplicated spend attributed to this group for team and org rollups */
   rollupSpendUsd: number;
   /**
@@ -190,34 +174,12 @@ export interface Group {
   projectedSpendUsd?: number | null;
 }
 
-export type GroupsResponseSyncStatus = typeof GroupsResponseSyncStatus[keyof typeof GroupsResponseSyncStatus];
-
-
-export const GroupsResponseSyncStatus = {
-  complete: 'complete',
-  syncing: 'syncing',
-  partial: 'partial',
-  failed: 'failed',
-} as const;
-
-export type GroupsResponseProjectSyncStatus = typeof GroupsResponseProjectSyncStatus[keyof typeof GroupsResponseProjectSyncStatus];
-
-
-export const GroupsResponseProjectSyncStatus = {
-  complete: 'complete',
-  syncing: 'syncing',
-  partial: 'partial',
-  failed: 'failed',
-} as const;
-
 /**
  * Per-team member-deduped rollup spend, with each member counted once across groups
  */
 export type GroupsResponseTeamRawSpend = {[key: string]: {
   /** Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team) */
   spendUsd: number;
-  /** True when member-level usage for every visible custom group is loaded */
-  spendLoaded: boolean;
 }};
 
 /**
@@ -225,42 +187,50 @@ export type GroupsResponseTeamRawSpend = {[key: string]: {
  */
 export type GroupsResponseTeamBudgets = {[key: string]: number};
 
+export type UsageHealthStatus = typeof UsageHealthStatus[keyof typeof UsageHealthStatus];
+
+
+export const UsageHealthStatus = {
+  complete: 'complete',
+  stale: 'stale',
+  partial: 'partial',
+  empty: 'empty',
+} as const;
+
+export interface UsageCoverageWorkspaceDay {
+  workspaceId: string;
+  usageDate: string;
+}
+
+export interface UsageCoverage {
+  requestedDays: number;
+  requestedWorkspaceDays: number;
+  presentWorkspaceDays: number;
+  failedWorkspaceDays: UsageCoverageWorkspaceDay[];
+  missingWorkspaceDays: UsageCoverageWorkspaceDay[];
+  presentAccountDays: number;
+  missingAccountDays: string[];
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  ratio: number;
+}
+
+export interface UsageHealth {
+  status: UsageHealthStatus;
+  /** @nullable */
+  dataAsOf: string | null;
+  coverage: UsageCoverage;
+  /** Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure. */
+  accountWorkspaceUnreconciledUsd: number;
+}
+
 export interface GroupsResponse {
   groups: Group[];
-  /** False while background usage fetches are still pending; poll every ~8s until true */
-  isComplete: boolean;
-  syncStatus: GroupsResponseSyncStatus;
-  /** @nullable */
-  syncError?: string | null;
-  failedCount: number;
-  partialCount: number;
-  /** Number of outstanding headline workspace/member inputs */
-  pendingCount: number;
-  /**
-     * Fetch time of the stored Enterprise directory snapshot
-     * @nullable
-     */
-  directoryDataAsOf: string | null;
-  /** True when the stored directory snapshot is older than its refresh interval */
-  directoryStale: boolean;
-  /**
-     * Oldest fetch time among the stored usage inputs used by this response
-     * @nullable
-     */
-  usageDataAsOf: string | null;
-  /** True when any stored usage input used by this response is older than its refresh interval */
-  usageStale: boolean;
-  projectSyncStatus: GroupsResponseProjectSyncStatus;
-  /** @nullable */
-  projectSyncError?: string | null;
-  /** Number of outstanding project-usage or project-metadata inputs */
-  projectPendingCount: number;
-  projectFailedCount: number;
-  projectPartialCount: number;
+  usageHealth: UsageHealth;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
-  /** True when project usage for every visible custom group is loaded */
-  projectSpendLoaded: boolean;
   /** True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members */
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */
@@ -280,8 +250,8 @@ export const TrendSeriesType = {
 export interface TrendSeries {
   name: string;
   type: TrendSeriesType;
-  /** Spend in USD for each corresponding bucket; null while loading */
-  data: (number | null)[];
+  /** Spend in USD for each corresponding bucket */
+  data: number[];
 }
 
 export interface TrendBucketRange {
@@ -295,22 +265,16 @@ export interface TrendsResponse {
   /** ISO date for the start of each bucket */
   buckets: string[];
   bucketRanges: TrendBucketRange[];
-  /** Canonical scoped spend for each bucket; null while loading */
-  totals: (number | null)[];
+  /** Canonical scoped spend for each bucket */
+  totals: number[];
   series: TrendSeries[];
-  isComplete: boolean;
-  loadedCount: number;
-  totalCount: number;
+  usageHealth: UsageHealth;
 }
 
 export interface ClusterHeadline {
-  /**
-     * Canonical member-deduped cluster spend; null until the scoped rollup is complete
-     * @nullable
-     */
-  spendUsd: number | null;
-  isComplete: boolean;
-  pendingCount: number;
+  /** Canonical member-deduped cluster spend */
+  spendUsd: number;
+  usageHealth: UsageHealth;
 }
 
 export interface GroupMember {
@@ -344,22 +308,12 @@ export interface GroupMember {
      * @nullable
      */
   budgetSource?: string | null;
-  spendLoaded: boolean;
-  /**
-     * Canonical total of member-grouped AI plus creator-attributed project non-AI for this group
-     * @nullable
-     */
-  spendUsd?: number | null;
-  /**
-     * Deduplicated member-grouped AI spend for this user in the group
-     * @nullable
-     */
-  aiSpendUsd: number | null;
-  /**
-     * Non-AI project spend attributed to projects this current member created
-     * @nullable
-     */
-  nonAiSpendUsd: number | null;
+  /** Canonical total of member-grouped AI plus creator-attributed project non-AI for this group */
+  spendUsd: number;
+  /** Deduplicated member-grouped AI spend for this user in the group */
+  aiSpendUsd: number;
+  /** Non-AI project spend attributed to projects this current member created */
+  nonAiSpendUsd: number;
   /** @nullable */
   remainingUsd?: number | null;
   /** @nullable */
@@ -409,8 +363,7 @@ export interface GroupProjectsResponse {
   projects: GroupProject[];
   /** Group spend not attributable to any returned project row */
   unattributedSpendUsd: number;
-  /** False while project usage or project titles are still loading; poll every ~8s until true */
-  isComplete: boolean;
+  usageHealth: UsageHealth;
   /** True once project metadata has loaded for every workspace represented by the response */
   titlesComplete: boolean;
 }
@@ -422,8 +375,7 @@ export interface GroupDetail {
   membersSpendUsd: number;
   /** True residual from rows without a project ID, missing creators, and creators who are no longer current group members */
   unattributedSpendUsd: number;
-  /** False while member usage is still loading; poll every ~8s until true */
-  isComplete: boolean;
+  usageHealth: UsageHealth;
   rangeLabel: string;
 }
 
@@ -443,61 +395,15 @@ export interface UserActivityEntry {
 }
 
 export interface UserActivityResponse {
-  isComplete: boolean;
-  /** Authoritative workspace usage scopes currently loaded */
-  loadedCount: number;
-  /** Authoritative workspace usage scopes in the caller's visibility */
-  totalCount: number;
+  usageHealth: UsageHealth;
   users: UserActivityEntry[];
 }
-
-export type SummarySyncStatus = typeof SummarySyncStatus[keyof typeof SummarySyncStatus];
-
-
-export const SummarySyncStatus = {
-  complete: 'complete',
-  syncing: 'syncing',
-  partial: 'partial',
-  failed: 'failed',
-} as const;
-
-export type SummaryProjectSyncStatus = typeof SummaryProjectSyncStatus[keyof typeof SummaryProjectSyncStatus];
-
-
-export const SummaryProjectSyncStatus = {
-  complete: 'complete',
-  syncing: 'syncing',
-  partial: 'partial',
-  failed: 'failed',
-} as const;
 
 export interface Summary {
   totalGroups: number;
   budgetedGroups: number;
   /** Workspace-aware member-deduped canonical rollup total for the caller's scope */
   totalSpendUsd: number;
-  /** Member-deduped rollup including extra-workspace-only users not assigned to any group; retained for backward compatibility */
-  memberBasedTotalSpendUsd?: number;
-  /**
-     * Unfiltered Enterprise usage total for account-wide callers; null while loading and for workspace-scoped callers
-     * @nullable
-     */
-  accountUsageTotalSpendUsd: number | null;
-  /**
-     * Attributable portion of the unfiltered account usage anchor; null outside account-wide scope
-     * @nullable
-     */
-  accountUsageAttributableSpendUsd: number | null;
-  /**
-     * Unattributable portion of the unfiltered account usage anchor; null outside account-wide scope
-     * @nullable
-     */
-  accountUsageUnattributableSpendUsd: number | null;
-  /**
-     * Account anchor minus the exact top-level team and unassigned-group rows displayed by the dashboard; null outside account-wide scope or while loading
-     * @nullable
-     */
-  reconciliationSpendUsd: number | null;
   /** Sum of all effective group budgets (app or platform) */
   totalBudgetUsd: number;
   /** Sum of remaining budget across budgeted groups with loaded spend */
@@ -521,42 +427,7 @@ export interface Summary {
   pacePeriodLabel: string;
   /** True when pace uses the fixed safe fallback because no discovered interval is available */
   pacePeriodIsFallback: boolean;
-  isComplete: boolean;
-  syncStatus: SummarySyncStatus;
-  /** @nullable */
-  syncError?: string | null;
-  pendingCount: number;
-  failedCount: number;
-  partialCount: number;
-  /** @nullable */
-  directoryDataAsOf: string | null;
-  directoryStale: boolean;
-  /** @nullable */
-  usageDataAsOf: string | null;
-  usageStale: boolean;
-  projectSyncStatus: SummaryProjectSyncStatus;
-  /** @nullable */
-  projectSyncError?: string | null;
-  projectPendingCount: number;
-  projectFailedCount: number;
-  projectPartialCount: number;
-}
-
-export type UsageRangeRebuildInputRangeType = typeof UsageRangeRebuildInputRangeType[keyof typeof UsageRangeRebuildInputRangeType];
-
-
-export const UsageRangeRebuildInputRangeType = {
-  billing: 'billing',
-  'full-term': 'full-term',
-  mtd: 'mtd',
-  ytd: 'ytd',
-  custom: 'custom',
-} as const;
-
-export interface UsageRangeRebuildInput {
-  rangeType: UsageRangeRebuildInputRangeType;
-  startDate?: string;
-  endDate?: string;
+  usageHealth: UsageHealth;
 }
 
 export interface GroupBudget {
@@ -970,6 +841,47 @@ export interface Alert {
 }
 
 export type EmailTestSelectionEntityType = typeof EmailTestSelectionEntityType[keyof typeof EmailTestSelectionEntityType];
+
+
+export const EmailTestSelectionEntityType = {
+  group: 'group',
+  team: 'team',
+} as const;
+
+export type EmailTestSelectionThreshold = typeof EmailTestSelectionThreshold[keyof typeof EmailTestSelectionThreshold];
+
+
+export const EmailTestSelectionThreshold = {
+  NUMBER_50: 50,
+  NUMBER_75: 75,
+  NUMBER_90: 90,
+  NUMBER_100: 100,
+} as const;
+
+export interface EmailTestSelection {
+  entityType: EmailTestSelectionEntityType;
+  threshold: EmailTestSelectionThreshold;
+}
+
+export type EmailTestResultRecipient = typeof EmailTestResultRecipient[keyof typeof EmailTestResultRecipient];
+
+
+export const EmailTestResultRecipient = {
+  'kodylow@replit': 'kody.low@repl.it',
+} as const;
+
+export interface EmailTestResult {
+  ok: boolean;
+  recipient: EmailTestResultRecipient;
+  subject: string;
+  /** @nullable */
+  error: string | null;
+  /** @nullable */
+  messageId: string | null;
+  /** @nullable */
+  senderEmail: string | null;
+}
+
 export interface CheckResult {
   checkedGroups: number;
   checkedTeams: number;
@@ -984,85 +896,56 @@ export interface CheckResult {
   skipReason: string | null;
 }
 
-export type AccountTotalVerificationOutcome = typeof AccountTotalVerificationOutcome[keyof typeof AccountTotalVerificationOutcome];
+export type UsageIngestRunKind = typeof UsageIngestRunKind[keyof typeof UsageIngestRunKind];
 
 
-export const AccountTotalVerificationOutcome = {
-  success: 'success',
-  healed: 'healed',
-  failed: 'failed',
+export const UsageIngestRunKind = {
+  live: 'live',
+  backfill: 'backfill',
+  reconcile: 'reconcile',
 } as const;
 
-export interface AccountTotalVerification {
-  verifiedAt: string;
-  outcome: AccountTotalVerificationOutcome;
-  /** @nullable */
-  error: string | null;
-  rangeKey: string;
-  rangeStart: string;
-  rangeEnd: string;
-  /** @nullable */
-  upstreamTotalUsd: number | null;
-  /** @nullable */
-  storedTotalUsd: number | null;
-  /** @nullable */
-  deltaUsd: number | null;
-}
-
-export interface UsageQueueActiveTask {
-  runId: string;
-  key: string;
-  priority: number;
-  enqueuedAt: string;
-  startedAt: string;
-  ageMs: number;
-  waitMs: number;
-}
-
-export type UsageScopeDiagnosticMode = typeof UsageScopeDiagnosticMode[keyof typeof UsageScopeDiagnosticMode];
+export type UsageIngestRunStatus = typeof UsageIngestRunStatus[keyof typeof UsageIngestRunStatus];
 
 
-export const UsageScopeDiagnosticMode = {
-  account_total: 'account_total',
-  group_total: 'group_total',
-  group_member: 'group_member',
-  workspace_member: 'workspace_member',
-  group_project: 'group_project',
-} as const;
-
-export type UsageScopeDiagnosticStatus = typeof UsageScopeDiagnosticStatus[keyof typeof UsageScopeDiagnosticStatus];
-
-
-export const UsageScopeDiagnosticStatus = {
-  syncing: 'syncing',
-  success: 'success',
+export const UsageIngestRunStatus = {
+  running: 'running',
+  succeeded: 'succeeded',
   partial: 'partial',
   failed: 'failed',
 } as const;
 
-export interface UsageScopeDiagnostic {
-  mode: UsageScopeDiagnosticMode;
-  rangeKey: string;
-  scopeKey: string;
-  status: UsageScopeDiagnosticStatus;
-  syncedThrough: string;
-  completedAt: string;
+export interface UsageIngestRun {
+  id: number;
+  kind: UsageIngestRunKind;
+  startedAt: string;
+  /** @nullable */
+  finishedAt: string | null;
+  units: number;
+  calls: number;
+  failures: number;
   /** @nullable */
   error: string | null;
+  status: UsageIngestRunStatus;
 }
 
-export interface UsageOperationalDiagnostics {
-  queueDepth: number;
-  queuedCount: number;
-  active: UsageQueueActiveTask | null;
+export interface UsageIngestReconciliation {
+  monthStart: string;
+  scope: string;
+  scopeId: string;
+  upstreamUsd: number;
+  storedUsd: number;
+  deltaUsd: number;
+}
+
+export type UsageReconciliationStatus = UsageIngestReconciliation & {
+  checkedAt: string;
+};
+
+export interface UsageRateLimitTelemetry {
+  peakRequestsPerMinute: number;
   /** @nullable */
-  oldestQueuedAgeMs: number | null;
-  /** @nullable */
-  lastProgressAt: string | null;
-  /** @nullable */
-  pauseUntil: string | null;
-  /** @maxItems 200 */
-  scopes: UsageScopeDiagnostic[];
+  lowestRateLimitRemaining: number | null;
 }
 
 export interface SystemStatus {
@@ -1101,16 +984,34 @@ export interface SystemStatus {
   billingPeriodFallback: boolean;
   billingPeriodDiffersFromReportingCutoff: boolean;
   reportingCutoff: string;
-  /** Stable cache identity for the effective default reporting window */
-  reportingRangeKey: string;
   /** Effective inclusive reporting start after applying the spend cutoff */
   reportingRangeStart: string;
   /** Effective exclusive reporting end, capped at now and the billing-period end */
   reportingRangeEnd: string;
   /** Label that describes the effective reporting bounds */
   reportingRangeLabel: string;
-  accountTotalVerification: AccountTotalVerification | null;
-  usageSync: UsageOperationalDiagnostics;
+  recentRuns: UsageIngestRun[];
+  remainingBackfillCount: number;
+  currentMonthReconciliation: UsageReconciliationStatus[];
+  /** @nullable */
+  directoryDataAsOf: string | null;
+  /** @nullable */
+  directoryAgeMs: number | null;
+  rateLimitTelemetry: UsageRateLimitTelemetry;
+}
+
+export interface UsageIngestCycleResult {
+  acquired: boolean;
+  unitsAttempted: number;
+  unitsSucceeded: number;
+  unitsFailed: number;
+  totalCalls: number;
+  durationMs: number;
+  reconciliations: UsageIngestReconciliation[];
+  remainingBackfillCount: number;
+  peakRequestsPerMinute: number;
+  /** @nullable */
+  lowestRateLimitRemaining: number | null;
 }
 
 /**
@@ -1250,21 +1151,6 @@ startDate?: StartDateParameter;
 endDate?: EndDateParameter;
 };
 
-export type RetryUsageSyncParams = {
-/**
- * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
- */
-rangeType?: RangeTypeParameter;
-/**
- * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
- */
-startDate?: StartDateParameter;
-/**
- * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
- */
-endDate?: EndDateParameter;
-};
-
 export type GetSummaryParams = {
 /**
  * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
@@ -1364,40 +1250,11 @@ export type ListAlertsParams = {
 limit?: number;
 };
 
+export type ListRecentUsageIngestRunsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+};
 
-export interface EmailTestResult {
-  ok: boolean;
-  recipient: EmailTestResultRecipient;
-  subject: string;
-  /** @nullable */
-  error: string | null;
-  /** @nullable */
-  messageId: string | null;
-  /** @nullable */
-  senderEmail: string | null;
-}
-
-export type EmailTestResultRecipient = typeof EmailTestResultRecipient[keyof typeof EmailTestResultRecipient];
-
-export const EmailTestSelectionThreshold = {
-  NUMBER_50: 50,
-  NUMBER_75: 75,
-  NUMBER_90: 90,
-  NUMBER_100: 100,
-} as const;
-
-export type EmailTestSelectionThreshold = typeof EmailTestSelectionThreshold[keyof typeof EmailTestSelectionThreshold];
-
-export const EmailTestSelectionEntityType = {
-  group: 'group',
-  team: 'team',
-} as const;
-
-export interface EmailTestSelection {
-  entityType: EmailTestSelectionEntityType;
-  threshold: EmailTestSelectionThreshold;
-}
-
-export const EmailTestResultRecipient = {
-  'kodylow@replit': 'kody.low@repl.it',
-} as const;

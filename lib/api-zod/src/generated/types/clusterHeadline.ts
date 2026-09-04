@@ -5,13 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { UsageHealth } from './usageHealth';
 
 export interface ClusterHeadline {
-  /**
-     * Canonical member-deduped cluster spend; null until the scoped rollup is complete
-     * @nullable
-     */
-  spendUsd: number | null;
-  isComplete: boolean;
-  pendingCount: number;
+  /** Canonical member-deduped cluster spend */
+  spendUsd: number;
+  usageHealth: UsageHealth;
 }

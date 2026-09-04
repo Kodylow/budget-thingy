@@ -7,6 +7,7 @@
  */
 import type { Group } from './group';
 import type { GroupMember } from './groupMember';
+import type { UsageHealth } from './usageHealth';
 
 export interface GroupDetail {
   group: Group;
@@ -15,7 +16,6 @@ export interface GroupDetail {
   membersSpendUsd: number;
   /** True residual from rows without a project ID, missing creators, and creators who are no longer current group members */
   unattributedSpendUsd: number;
-  /** False while member usage is still loading; poll every ~8s until true */
-  isComplete: boolean;
+  usageHealth: UsageHealth;
   rangeLabel: string;
 }

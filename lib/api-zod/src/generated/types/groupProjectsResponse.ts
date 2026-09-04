@@ -6,13 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { GroupProject } from './groupProject';
+import type { UsageHealth } from './usageHealth';
 
 export interface GroupProjectsResponse {
   projects: GroupProject[];
   /** Group spend not attributable to any returned project row */
   unattributedSpendUsd: number;
-  /** False while project usage or project titles are still loading; poll every ~8s until true */
-  isComplete: boolean;
+  usageHealth: UsageHealth;
   /** True once project metadata has loaded for every workspace represented by the response */
   titlesComplete: boolean;
 }

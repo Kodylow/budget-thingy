@@ -169,9 +169,11 @@ function UserActivityCard() {
   const hasMore = rows.length > visibleCount;
 
   const progressPct =
-    data && data.totalCount > 0
-      ? Math.round((data.loadedCount / data.totalCount) * 100)
+    data
+      ? Math.round(data.usageHealth.coverage.ratio * 100)
       : 0;
+  const usageSettled = data?.usageHealth.status === 'complete' ||
+    data?.usageHealth.status === 'stale';
 
   return (
     <Card>
@@ -182,7 +184,7 @@ function UserActivityCard() {
             <CardDescription className="mt-1">
               Workspace members ranked by member AI plus creator-attributed project
               hosting and other non-AI costs for the selected range.
-              {!data?.isComplete && data && (
+              {!usageSettled && data && (
                 <span className="text-amber-600 dark:text-amber-400">
                   {' '}Data is loading — updates as each group completes.
                 </span>
@@ -190,7 +192,7 @@ function UserActivityCard() {
             </CardDescription>
           </div>
           {/* Loading badge */}
-          {!data?.isComplete && (isFetching || isLoading) && (
+          {!usageSettled && (isFetching || isLoading) && (
             <Badge variant="outline" className="flex items-center gap-1.5 shrink-0 self-start mt-0.5">
               <RefreshCw className="h-3 w-3 animate-spin" />
               {data ? `${progressPct}% loaded` : 'Loading…'}
@@ -426,9 +428,11 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
     });
   }, [data, visibleSeries]);
 
-  const progress = data?.totalCount
-    ? Math.round((data.loadedCount / data.totalCount) * 100)
+  const progress = data
+    ? Math.round(data.usageHealth.coverage.ratio * 100)
     : 0;
+  const usageSettled = data?.usageHealth.status === 'complete' ||
+    data?.usageHealth.status === 'stale';
   const selectedLabel = selectedTeams.size === 0
     ? 'All teams'
     : `${selectedTeams.size} team${selectedTeams.size === 1 ? '' : 's'}`;
@@ -448,7 +452,7 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
                 Spend by date bucket from the May 20, 2026 data cutoff.
               </CardDescription>
             </div>
-            {!data?.isComplete && (isLoading || isFetching) && (
+            {!usageSettled && (isLoading || isFetching) && (
               <Badge variant="outline" className="mt-1 flex w-fit items-center gap-1.5">
                 <RefreshCw className="h-3 w-3 animate-spin" />
                 {data ? `${progress}% loaded` : 'Loading buckets…'}
