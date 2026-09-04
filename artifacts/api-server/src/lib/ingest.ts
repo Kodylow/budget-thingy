@@ -3,11 +3,10 @@ import {
   assertCompleteRosterDirectory,
   fetchEnterpriseForIngest,
   getCachedDirectory,
-  getDirectory,
   getDirectoryFreshness,
-  pendingUsageCount,
-  queueProjectTitlesFetch,
+  refreshBillingPeriodMetadata,
   refreshDirectoryForIngest,
+  refreshProjectMetadata,
   type DirectoryCache,
   withEnterpriseIngestAccess,
 } from "./enterprise";
@@ -24,8 +23,6 @@ import {
 const CUTOFF = "2026-05-20";
 const DAY_MS = 86_400_000;
 const DIRECTORY_TTL_MS = 15 * 60_000;
-const METADATA_WAIT_TIMEOUT_MS = 60_000;
-const METADATA_WAIT_POLL_MS = 25;
 const WORKERS = 3;
 const UNIT_ATTEMPTS = 3;
 const BATCH_SIZE = 500;
@@ -46,7 +43,11 @@ type UsagePayload = {
   unattributableTotalCostUsd?: number;
   metrics?: Metrics;
   groups?: UsageGroup[];
-  pagination?: { nextCursor?: string | null; hasMore?: boolean };
+  pagination?: {
+    nextCursor?: string | null;
+    cursor?: string | null;
+    hasMore?: boolean;
+  };
 };
 type UnitResult = {
   ok: boolean;
@@ -253,10 +254,12 @@ async function pagedUsage(
     top ??= response.data;
     groups.push(...(response.data.groups ?? []));
     if (!response.data.pagination?.hasMore) return { top, groups };
-    if (!response.data.pagination.nextCursor) {
+    const nextCursor = response.data.pagination.nextCursor ??
+      response.data.pagination.cursor;
+    if (!nextCursor) {
       throw new Error("Enterprise /usage pagination reported hasMore without a cursor");
     }
-    cursor = response.data.pagination.nextCursor;
+    cursor = nextCursor;
   }
   throw new Error("Enterprise /usage exceeded 200 pages");
 }
@@ -473,34 +476,6 @@ async function runQueue(units: QueueUnit[]): Promise<{
   return totals;
 }
 
-export async function waitForLegacyMetadata(
-  options: {
-    timeoutMs?: number;
-    pollMs?: number;
-    pending?: () => number;
-    sleep?: (delayMs: number) => Promise<void>;
-    now?: () => number;
-  } = {},
-): Promise<{ timedOut: boolean; pendingCount: number; waitedMs: number }> {
-  const timeoutMs = options.timeoutMs ?? METADATA_WAIT_TIMEOUT_MS;
-  const pollMs = options.pollMs ?? METADATA_WAIT_POLL_MS;
-  const pending = options.pending ?? pendingUsageCount;
-  const sleep = options.sleep ??
-    ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
-  const now = options.now ?? Date.now;
-  const started = now();
-  let pendingCount = pending();
-  while (pendingCount > 0 && now() - started < timeoutMs) {
-    await sleep(Math.min(pollMs, Math.max(0, timeoutMs - (now() - started))));
-    pendingCount = pending();
-  }
-  return {
-    timedOut: pendingCount > 0,
-    pendingCount,
-    waitedMs: now() - started,
-  };
-}
-
 async function refreshMetadata(now = Date.now()): Promise<DirectoryCache> {
   const freshness = getDirectoryFreshness();
   const rosterMissing = !(await hasDailyRosterSnapshot(now));
@@ -514,19 +489,12 @@ async function refreshMetadata(now = Date.now()): Promise<DirectoryCache> {
   }
   assertCompleteRosterDirectory(directory);
   await recordDailyRosters(directory.groups, directory.groupMembers, now);
-  for (const workspaceId of directory.workspaces.keys()) {
-    queueProjectTitlesFetch(workspaceId, 1, false, false);
-  }
-  const metadataWait = await waitForLegacyMetadata();
-  if (metadataWait.timedOut) {
-    logger.warn({
-      event: "usage_ingest_metadata_wait_timeout",
-      timeoutMs: METADATA_WAIT_TIMEOUT_MS,
-      pendingCount: metadataWait.pendingCount,
-      waitedMs: metadataWait.waitedMs,
-      workspaceCount: directory.workspaces.size,
-    }, "Legacy project metadata queue did not drain; continuing usage ingestion");
-  }
+  await Promise.all([
+    refreshBillingPeriodMetadata(),
+    ...[...directory.workspaces.keys()].map((workspaceId) =>
+      refreshProjectMetadata(workspaceId)
+    ),
+  ]);
   return directory;
 }
 

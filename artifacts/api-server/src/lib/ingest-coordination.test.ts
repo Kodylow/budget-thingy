@@ -8,7 +8,6 @@ import {
   nextReconciliationMismatchCount,
   reconciliationBounds,
   runBackgroundCycleOperations,
-  waitForLegacyMetadata,
 } from "./ingest.ts";
 
 test("reconciliation requires consecutive mismatches beyond the one-dollar tolerance", () => {
@@ -52,44 +51,6 @@ test("closed-month reconciliation bounds remain unchanged", () => {
   expect(reconciliationBounds("2026-05-01", "2026-09-04")).toEqual({
     effectiveStart: "2026-05-20",
     effectiveEnd: "2026-06-01",
-  });
-});
-
-test("legacy metadata coordination stops at its deadline", async () => {
-  let clock = 0;
-  const result = await waitForLegacyMetadata({
-    timeoutMs: 60_000,
-    pollMs: 25,
-    pending: () => 7,
-    now: () => clock,
-    sleep: async (delayMs) => {
-      clock += delayMs;
-    },
-  });
-  expect(result).toEqual({
-    timedOut: true,
-    pendingCount: 7,
-    waitedMs: 60_000,
-  });
-});
-
-test("legacy metadata coordination returns as soon as the queue drains", async () => {
-  let clock = 0;
-  let pendingCount = 2;
-  const result = await waitForLegacyMetadata({
-    timeoutMs: 60_000,
-    pollMs: 25,
-    pending: () => pendingCount,
-    now: () => clock,
-    sleep: async (delayMs) => {
-      clock += delayMs;
-      pendingCount--;
-    },
-  });
-  expect(result).toEqual({
-    timedOut: false,
-    pendingCount: 0,
-    waitedMs: 50,
   });
 });
 

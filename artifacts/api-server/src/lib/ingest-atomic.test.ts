@@ -8,24 +8,24 @@ const enterprise = await import("./enterprise.ts");
 const { ingestWorkspaceDay } = await import("./ingest.ts");
 
 const workspaceId = `atomic-ingest-${crypto.randomUUID()}`;
+const cursorWorkspaceId = `cursor-ingest-${crypto.randomUUID()}`;
 const usageDate = "2099-04-12";
 const successfulFetchAt = new Date("2099-04-13T01:02:03.000Z");
 const originalFetch = globalThis.fetch;
 
 async function cleanup() {
-  enterprise.setEnterpriseFetchForTests(null);
   globalThis.fetch = originalFetch;
   await pool.query(
-    "delete from usage_member_day where workspace_id=$1 and usage_date=$2::date",
-    [workspaceId, usageDate],
+    "delete from usage_member_day where workspace_id=any($1::text[]) and usage_date=$2::date",
+    [[workspaceId, cursorWorkspaceId], usageDate],
   );
   await pool.query(
-    "delete from usage_project_day where workspace_id=$1 and usage_date=$2::date",
-    [workspaceId, usageDate],
+    "delete from usage_project_day where workspace_id=any($1::text[]) and usage_date=$2::date",
+    [[workspaceId, cursorWorkspaceId], usageDate],
   );
   await pool.query(
-    "delete from usage_workspace_day where workspace_id=$1 and usage_date=$2::date",
-    [workspaceId, usageDate],
+    "delete from usage_workspace_day where workspace_id=any($1::text[]) and usage_date=$2::date",
+    [[workspaceId, cursorWorkspaceId], usageDate],
   );
 }
 
@@ -70,7 +70,7 @@ test("terminal grouped-fetch failure preserves the previous complete workspace d
 
   let memberRequests = 0;
   let projectRequests = 0;
-  enterprise.setEnterpriseFetchForTests(async (input) => {
+  globalThis.fetch = async (input) => {
     const url = new URL(String(input));
     if (url.searchParams.get("groupBy") === "project") {
       projectRequests++;
@@ -91,7 +91,7 @@ test("terminal grouped-fetch failure preserves the previous complete workspace d
         pagination: { hasMore: false, nextCursor: null },
       },
     });
-  });
+  };
 
   const result = await enterprise.withEnterpriseIngestAccess(
     () => ingestWorkspaceDay(workspaceId, usageDate),
@@ -141,4 +141,51 @@ test("terminal grouped-fetch failure preserves the previous complete workspace d
     status: "failed",
     error: "Enterprise API /usage failed (503): forced project failure",
   }]);
+});
+
+test("grouped usage ingestion follows pagination.cursor across every page", async () => {
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    const groupBy = url.searchParams.get("groupBy");
+    const cursor = url.searchParams.get("cursor");
+    const isMember = groupBy === "member";
+    return Response.json({
+      data: {
+        totalCostUsd: 12,
+        attributableTotalCostUsd: 12,
+        unattributableTotalCostUsd: 0,
+        metrics: [],
+        groups: [{
+          key: isMember
+            ? { userId: cursor ? "member-2" : "member-1" }
+            : { projectId: cursor ? "project-2" : "project-1" },
+          totalCostUsd: cursor ? 7 : 5,
+          metrics: [],
+        }],
+        pagination: cursor
+          ? { hasMore: false, cursor: null }
+          : { hasMore: true, cursor: `${groupBy}-page-2` },
+      },
+    });
+  };
+
+  const result = await enterprise.withEnterpriseIngestAccess(
+    () => ingestWorkspaceDay(cursorWorkspaceId, usageDate),
+  );
+  expect(result).toMatchObject({ ok: true, calls: 4, pages: 4 });
+
+  const [members, projects] = await Promise.all([
+    pool.query(
+      `select user_id from usage_member_day
+       where workspace_id=$1 and usage_date=$2::date order by user_id`,
+      [cursorWorkspaceId, usageDate],
+    ),
+    pool.query(
+      `select project_id from usage_project_day
+       where workspace_id=$1 and usage_date=$2::date order by project_id`,
+      [cursorWorkspaceId, usageDate],
+    ),
+  ]);
+  expect(members.rows).toEqual([{ user_id: "member-1" }, { user_id: "member-2" }]);
+  expect(projects.rows).toEqual([{ project_id: "project-1" }, { project_id: "project-2" }]);
 });

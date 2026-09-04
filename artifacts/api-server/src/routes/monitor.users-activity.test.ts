@@ -1,7 +1,27 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 
-const routeSource = await readFile(new URL("./monitor.ts", import.meta.url), "utf8");
+const routeModules = [
+  "monitor.ts",
+  "monitor.shared.ts",
+  "monitor.groups-list.ts",
+  "monitor.groups-detail.ts",
+  "monitor.summary.ts",
+  "monitor.teams.ts",
+  "monitor.limits.ts",
+  "monitor.alerts.ts",
+  "monitor.admin.ts",
+  "monitor.directory.ts",
+  "monitor.exports-projects.ts",
+  "monitor.exports-users.ts",
+];
+const routeSources = await Promise.all(
+  routeModules.map((file) =>
+    readFile(new URL(`./${file}`, import.meta.url), "utf8")
+  ),
+);
+const routeSource = routeSources.join("\n");
+const sharedSource = routeSources[1]!;
 
 describe("monitor usage snapshot cutover", () => {
   test("usage-facing routes use the immutable snapshot pipeline", () => {
@@ -53,9 +73,9 @@ describe("monitor usage snapshot cutover", () => {
   });
 
   test("one request performs one scoped snapshot read in the shared path", () => {
-    const helper = routeSource.slice(
-      routeSource.indexOf("async function usageForRequest"),
-      routeSource.indexOf("interface EffectiveBudget"),
+    const helper = sharedSource.slice(
+      sharedSource.indexOf("async function usageForRequest"),
+      sharedSource.indexOf("interface EffectiveBudget"),
     );
     expect(helper.match(/readUsageSnapshot\(/g)).toHaveLength(1);
     expect(helper).toContain("workspaceIds");

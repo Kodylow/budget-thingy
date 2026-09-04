@@ -1,1 +1,0 @@
-ALTER TABLE "team_budgets" ADD COLUMN "is_hidden" boolean DEFAULT false NOT NULL;

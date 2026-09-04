@@ -1,12 +1,13 @@
 /**
  * Seeds group→team mapping and team budgets into the database.
- * Run with: npx tsx src/seed-teams.ts
+ * Run with: pnpm --filter @workspace/db seed
  */
 import { db } from "./index.js";
 import {
   familyTeamMappingsTable,
   teamBudgetsTable,
   teamLimitTargetsTable,
+  workspaceDefaultLimitTargetsTable,
 } from "./schema/index.js";
 import { eq } from "drizzle-orm";
 
@@ -19,6 +20,45 @@ export const FAMILY_TEAM_OVERRIDES = new Map<string, string>([
   ["preprod", "PREPROD"],
 ]);
 
+export interface SeededTeamLimitTarget {
+  teamName: string;
+  workspaceId: string;
+  groupId: string;
+  groupName: string;
+}
+
+/**
+ * Stable upstream identities from the approved allocation workbook. New
+ * directory families are discovered by the API, while these known targets are
+ * installed explicitly so a clean database has the approved starting point.
+ */
+export const SEEDED_TEAM_LIMIT_TARGETS: SeededTeamLimitTarget[] = [
+  { teamName: "Comcast Advertising", workspaceId: "h7b8kqg88e", groupId: "8BGWR2yj", groupName: "AZ-Replit - Comcast Advertising - Member" },
+  { teamName: "Comcast Business Consumer Solutions", workspaceId: "66ox9cntlf", groupId: "biqK255d", groupName: "AZ-Replit - Comcast Business Customer Solutions - Member" },
+  { teamName: "Comcast Business Marketing", workspaceId: "66ox9cntlf", groupId: "Wbmoq9om", groupName: "AZ-Replit - Comcast Business Marketing - Member" },
+  { teamName: "Content Acquisition", workspaceId: "5hkg15xcxd", groupId: "bVhKuOQM", groupName: "AZ-Replit - Content Acquisition - Member" },
+  { teamName: "Corporate Communications", workspaceId: "stk0jl35jw", groupId: "qDIUFV0h", groupName: "AZ-Replit - Corporate Communications - Member" },
+  { teamName: "DXP", workspaceId: "ntcqubwqvl", groupId: "gzeQpyya", groupName: "AZ-Replit - Growth Strategy & Operations - Member" },
+  { teamName: "EBI AI ML", workspaceId: "nu6ymuuhox", groupId: "vvH4cngU", groupName: "AZ-Replit - EBI AI ML - Member" },
+  { teamName: "EBI Enterprise Analytics", workspaceId: "nu6ymuuhox", groupId: "OmRC2GN1", groupName: "AZ-Replit - EBI Enterprise Analytics - Member" },
+  { teamName: "Finance", workspaceId: "8h7pfz", groupId: "59T5lQxS", groupName: "AZ-Replit - Finance - Member" },
+  { teamName: "Finance", workspaceId: "ha7tj2", groupId: "tT7F9xlt", groupName: "AZ-Replit - Finance - Member" },
+  { teamName: "Freewheel", workspaceId: "ysf55yjzku", groupId: "9X1LGLv2", groupName: "AZ-Replit - Freewheel - Member" },
+  { teamName: "GPO Connected Living", workspaceId: "zigw1yqwrb", groupId: "NSZwFPKE", groupName: "AZ-Replit - GPO Connected Living - Member" },
+  { teamName: "GPO Creative Services", workspaceId: "zigw1yqwrb", groupId: "V0wOlcBL", groupName: "AZ-Replit - GPO Creative Services - Member" },
+  { teamName: "GPO CTS", workspaceId: "zigw1yqwrb", groupId: "q68m2wbl", groupName: "AZ-Replit - GPO CTS - Member" },
+  { teamName: "Growth CXSO Account Mgmt", workspaceId: "ntcqubwqvl", groupId: "32m70Gl8", groupName: "AZ-Replit - Growth CXSO Account Mgmt - Member" },
+  { teamName: "Growth MDU", workspaceId: "ntcqubwqvl", groupId: "ePu7SSUX", groupName: "AZ-Replit - Growth MDU - Member" },
+  { teamName: "Growth Xfinity Consumer Product Marketing", workspaceId: "ntcqubwqvl", groupId: "KBE16XLQ", groupName: "AZ-Replit - Growth Xfinity Consumer Product Marketing - Member" },
+  { teamName: "HR Compensation", workspaceId: "znvqc2gqxf", groupId: "RQ7HKxG4", groupName: "AZ-Replit - HR Compensation - Member" },
+  { teamName: "NBCU", workspaceId: "hewdniynr3", groupId: "pPymZapr", groupName: "AZ-Replit - NBCU - Member" },
+  { teamName: "Strategic Development LIFT Labs", workspaceId: "6g8nnwm9cc", groupId: "BHEytHnP", groupName: "AZ-Replit - Strategic Development LIFT Labs - Member" },
+  { teamName: "Strategic Development Mosaic", workspaceId: "6g8nnwm9cc", groupId: "C4ZqSTcM", groupName: "AZ-Replit - Strategic Development Mosaic - Member" },
+  { teamName: "Talent and Learning", workspaceId: "5b0iso4ru5", groupId: "n9GetIm5", groupName: "AZ-Replit - Talent and Learning - Member" },
+  { teamName: "TPX IT", workspaceId: "rpyg1v7i9q", groupId: "ac7UK3Ql", groupName: "AZ-Replit - TPX IT - Member" },
+  { teamName: "Wireless", workspaceId: "hyjfq2n04a", groupId: "mEEk0Sgn", groupName: "AZ-Replit - Wireless - Member" },
+];
+
 export interface DiscoveredFamilyMapping {
   workspaceId: string;
   familyKey: string;
@@ -29,6 +69,14 @@ export interface DiscoveredFamilyMapping {
 
 function normalizeSeedFamilyKey(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function familyNameFromGroupName(groupName: string): string {
+  return groupName
+    .replace(/^az-replit\s*-\s*/i, "")
+    .replace(/\s*-\s*(?:admins?|members?|viewers?|guests?)\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function collisionSafeFamilyTeamName(
@@ -288,14 +336,67 @@ export async function applyAnnualTeamBudgetBackfill(): Promise<void> {
   });
 }
 
-async function seed() {
-  console.log("Seeding team budgets...");
+export async function applyTeamMappingAndLimitTargetSeed(): Promise<void> {
+  await db.transaction(async (tx) => {
+    const legacyFamilies = new Map<string, { familyName: string; teamName: string }>();
+    for (const mapping of BASELINE_GROUP_TEAMS) {
+      const familyName = familyNameFromGroupName(mapping.groupName);
+      const familyKey = normalizeSeedFamilyKey(familyName);
+      legacyFamilies.set(familyKey, {
+        familyName,
+        teamName: FAMILY_TEAM_OVERRIDES.get(familyKey) ?? mapping.teamName,
+      });
+    }
+    for (const [familyKey, teamName] of FAMILY_TEAM_OVERRIDES) {
+      if (!legacyFamilies.has(familyKey)) {
+        legacyFamilies.set(familyKey, { familyName: teamName, teamName });
+      }
+    }
+    for (const [familyKey, family] of legacyFamilies) {
+      await tx.insert(familyTeamMappingsTable).values({
+        workspaceId: LEGACY_WORKSPACE_ID,
+        familyKey,
+        familyName: family.familyName,
+        teamName: family.teamName,
+        isLegacy: true,
+      }).onConflictDoNothing();
+    }
+
+    for (const target of SEEDED_TEAM_LIMIT_TARGETS) {
+      const familyName = familyNameFromGroupName(target.groupName);
+      const familyKey = normalizeSeedFamilyKey(familyName);
+      const teamName = FAMILY_TEAM_OVERRIDES.get(familyKey) ?? target.teamName;
+      await tx.insert(familyTeamMappingsTable).values({
+        workspaceId: target.workspaceId,
+        familyKey,
+        familyName,
+        teamName,
+        isLegacy: false,
+      }).onConflictDoNothing();
+      await tx.insert(teamLimitTargetsTable).values({
+        ...target,
+        teamName,
+        assignmentSource: "unconfirmed",
+      }).onConflictDoNothing();
+    }
+
+    await tx.insert(workspaceDefaultLimitTargetsTable).values({
+      workspaceId: LEGACY_WORKSPACE_ID,
+      displayName: "Legacy workspace per-user cap",
+      monthlyLimitUsd: 1,
+    }).onConflictDoNothing();
+  });
+}
+
+export async function seedDatabase(): Promise<void> {
+  console.log("Seeding team mappings, allocations, overrides, and limit targets...");
   await applyAnnualTeamBudgetBackfill();
-  console.log(`Inserted ${ORIGINAL_TEAM_BUDGETS.length} team budget rows`);
+  await applyTeamMappingAndLimitTargetSeed();
+  console.log("Database seed complete");
 }
 
 if (process.argv[1] && /(?:^|[/\\])seed-teams\.(?:ts|js)$/.test(process.argv[1])) {
-  seed()
+  seedDatabase()
     .then(() => process.exit(0))
     .catch((err) => {
       console.error(err);

@@ -327,6 +327,53 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
   });
 });
 
+function percentile(samples: number[], quantile: number): number {
+  const sorted = [...samples].sort((a, b) => a - b);
+  return sorted[Math.ceil(sorted.length * quantile) - 1] ?? 0;
+}
+
+describe("usage endpoint performance", () => {
+  it("keeps warm and cold p95 within the dashboard targets", async () => {
+    const fixture = fixtures[0]!;
+    const paths = [
+      "/groups?rangeType=full-term",
+      "/summary?rangeType=full-term",
+      `/groups/${GM}?rangeType=full-term`,
+    ];
+    const report = [];
+    for (const path of paths) {
+      const cold = [];
+      for (let index = 0; index < 20; index++) {
+        invalidateUsageSnapshotMemo();
+        const started = performance.now();
+        const response = await request(path, fixture);
+        expect(response.status).toBe(200);
+        cold.push(performance.now() - started);
+      }
+      const primed = await request(path, fixture);
+      expect(primed.status).toBe(200);
+      const warm = [];
+      for (let index = 0; index < 20; index++) {
+        const started = performance.now();
+        const response = await request(path, fixture);
+        expect(response.status).toBe(200);
+        warm.push(performance.now() - started);
+      }
+      const result = {
+        path,
+        coldP50Ms: percentile(cold, 0.5),
+        coldP95Ms: percentile(cold, 0.95),
+        warmP50Ms: percentile(warm, 0.5),
+        warmP95Ms: percentile(warm, 0.95),
+      };
+      report.push(result);
+      expect(result.coldP95Ms).toBeLessThan(1_000);
+      expect(result.warmP95Ms).toBeLessThan(300);
+    }
+    process.stdout.write(`USAGE_ENDPOINT_PERFORMANCE ${JSON.stringify(report)}\n`);
+  });
+});
+
 describe("persisted automated email settings authorization", () => {
   it("allows account operators to read and update the global setting", async () => {
     const account = fixtures[0]!;

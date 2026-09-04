@@ -3,7 +3,6 @@ import { logger } from "./lib/logger";
 import { hydrateCheckerState } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
 import { initializeUsageIngestScheduler } from "./lib/ingest";
-import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
 
 const rawPort = process.env["PORT"];
 
@@ -30,7 +29,6 @@ const server = app.listen(port, (err) => {
   // hydration is database-only and completes before Enterprise work is started.
   void initializeUsageIngestScheduler(Promise.all([
     initCache({ revalidateOnStartup: false }),
-    applyAnnualTeamBudgetBackfill(),
     hydrateCheckerState(),
   ]));
 });

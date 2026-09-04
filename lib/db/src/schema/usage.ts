@@ -50,9 +50,7 @@ export const usageWorkspaceDayTable = pgTable(
     usageDate: date("usage_date", { mode: "string" }).notNull(),
     totalCostUsd: doublePrecision("total_cost_usd").notNull(),
     memberAttributableUsd: doublePrecision("member_attributable_usd").notNull(),
-    memberUnattributableUsd: doublePrecision(
-      "member_unattributable_usd",
-    ).notNull(),
+    memberUnattributableUsd: doublePrecision("member_unattributable_usd").notNull(),
     metricsJson: jsonb("metrics_json").notNull(),
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
     status: text("status").notNull(),
@@ -60,10 +58,7 @@ export const usageWorkspaceDayTable = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.workspaceId, t.usageDate] }),
-    check(
-      "usage_workspace_day_status_check",
-      sql`${t.status} in ('complete', 'stale', 'failed')`,
-    ),
+    check("usage_workspace_day_status_check", sql`${t.status} in ('complete', 'stale', 'failed')`),
   ],
 );
 
@@ -85,10 +80,7 @@ export const usageAccountObservationTable = pgTable(
     error: text("error"),
   },
   (t) => [
-    check(
-      "usage_account_observation_source_status_check",
-      sql`${t.sourceStatus} in ('complete', 'failed')`,
-    ),
+    check("usage_account_observation_source_status_check", sql`${t.sourceStatus} in ('complete', 'failed')`),
   ],
 );
 
@@ -105,10 +97,7 @@ export const ingestRunTable = pgTable(
     error: text("error"),
   },
   (t) => [
-    check(
-      "ingest_run_kind_check",
-      sql`${t.kind} in ('live', 'backfill', 'reconcile')`,
-    ),
+    check("ingest_run_kind_check", sql`${t.kind} in ('live', 'backfill', 'reconcile')`),
   ],
 );
 
@@ -131,8 +120,6 @@ export type UsageMemberDay = typeof usageMemberDayTable.$inferSelect;
 export type UsageProjectDay = typeof usageProjectDayTable.$inferSelect;
 export type UsageWorkspaceDay = typeof usageWorkspaceDayTable.$inferSelect;
 export type UsageAccountDay = typeof usageAccountDayTable.$inferSelect;
-export type UsageAccountObservation =
-  typeof usageAccountObservationTable.$inferSelect;
+export type UsageAccountObservation = typeof usageAccountObservationTable.$inferSelect;
 export type IngestRun = typeof ingestRunTable.$inferSelect;
-export type IngestReconciliation =
-  typeof ingestReconciliationTable.$inferSelect;
+export type IngestReconciliation = typeof ingestReconciliationTable.$inferSelect;

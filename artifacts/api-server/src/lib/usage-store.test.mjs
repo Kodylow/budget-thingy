@@ -18,6 +18,7 @@ const {
 const { ingestAccountDay } = await import("./ingest.ts");
 const { ingestWorkspaceDay } = await import("./ingest.ts");
 const enterprise = await import("./enterprise.ts");
+const originalFetch = globalThis.fetch;
 
 const runId = crypto.randomUUID();
 const workspaceA = `usage-store-a-${runId}`;
@@ -89,7 +90,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  enterprise.setEnterpriseFetchForTests(null);
+  globalThis.fetch = originalFetch;
   await cleanup();
 });
 
@@ -432,8 +433,8 @@ test("successful account ingest invalidates the default memo", async () => {
   await readUsageSnapshot({ window, workspaceIds: [workspaceA] });
   const before = await readUsageSnapshot({ window, workspaceIds: [workspaceA] });
 
-  enterprise.setEnterpriseFetchForTests(async () =>
-    Response.json({ data: { totalCostUsd: 99 } }));
+  globalThis.fetch = async () =>
+    Response.json({ data: { totalCostUsd: 99 } });
   const result = await enterprise.withEnterpriseIngestAccess(
     () => ingestAccountDay("2099-07-03"),
   );
@@ -455,7 +456,7 @@ test("successful workspace ingest invalidates the default memo after commit", as
       window: ingestWindow,
       workspaceIds: [ingestWorkspace],
     });
-    enterprise.setEnterpriseFetchForTests(async (input) => {
+    globalThis.fetch = async (input) => {
       const groupBy = new URL(String(input)).searchParams.get("groupBy");
       return Response.json({
         data: {
@@ -469,7 +470,7 @@ test("successful workspace ingest invalidates the default memo after commit", as
           pagination: { hasMore: false, nextCursor: null },
         },
       });
-    });
+    };
     const result = await enterprise.withEnterpriseIngestAccess(
       () => ingestWorkspaceDay(ingestWorkspace, ingestDay),
     );
@@ -481,8 +482,8 @@ test("successful workspace ingest invalidates the default memo after commit", as
     assert.notStrictEqual(after, before);
     assert.equal(after.workspaces.get(ingestWorkspace)?.totalCostUsd, 12);
 
-    enterprise.setEnterpriseFetchForTests(async () =>
-      new Response("forced refresh failure", { status: 503 }));
+    globalThis.fetch = async () =>
+      new Response("forced refresh failure", { status: 503 });
     const failed = await enterprise.withEnterpriseIngestAccess(
       () => ingestWorkspaceDay(ingestWorkspace, ingestDay),
     );

@@ -1,1 +1,0 @@
-ALTER TABLE "family_team_mappings" ALTER COLUMN "team_name" DROP NOT NULL;
