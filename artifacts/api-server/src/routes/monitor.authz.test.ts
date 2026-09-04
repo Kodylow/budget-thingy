@@ -22,15 +22,17 @@ import { setAuthorizationResolver } from "../middlewares/requireAuth";
 import type { Authorization, AuthzRole } from "../lib/authz";
 import monitorRouter, { canSeeAlertEntity } from "./monitor";
 
-const PREFIX = "__rbac217__";
-const GROWTH = `${PREFIX}-growth`;
-const PLATFORM = `${PREFIX}-platform`;
-const GM = `${PREFIX}-growth-members`;
-const GA = `${PREFIX}-growth-admins`;
-const GL = `${PREFIX}-legacy-growth-members`;
-const PM = `${PREFIX}-platform-members`;
+const PREFIX = "rbac217";
+const GROWTH = `${PREFIX}growth`;
+const PLATFORM = `${PREFIX}platform`;
+const GM = `${PREFIX}growthmembers`;
+const GA = `${PREFIX}growthadmins`;
+const GL = `${PREFIX}legacygrowthmembers`;
+const PM = `${PREFIX}platformmembers`;
 const TEAM = `${PREFIX} Growth MDU`;
+const WRITE_USER = "217123";
 const TODAY = new Date().toISOString().slice(0, 10);
+const upstreamMemberBudgets = new Map<string, number>();
 
 function member(id, workspaces = {}, isAccountAdmin = false) {
   return {
@@ -64,9 +66,10 @@ function installDefaultDirectory() {
       ["member", member("member", { [GROWTH]: active })],
       ["other", member("other", { [GROWTH]: active })],
       ["platform", member("platform", { [PLATFORM]: active })],
+      [WRITE_USER, member(WRITE_USER, { [GROWTH]: active })],
     ]),
     groupMembers: new Map([
-      [GM, ["workspace", "team", "both", "member", "other"]],
+      [GM, ["workspace", "team", "both", "member", "other", WRITE_USER]],
       [GA, ["workspace", "both"]],
       [GL, ["team", "both", "other"]],
       [PM, ["platform"]],
@@ -97,10 +100,20 @@ function authorization(
 }
 
 const allGroups = [GM, GA, GL, PM];
-const allUsers = ["account", "workspace", "team", "both", "member", "other", "platform"];
+const allUsers = [
+  "account",
+  "workspace",
+  "team",
+  "both",
+  "member",
+  "other",
+  "platform",
+  WRITE_USER,
+];
 const spendByUser = new Map([
   ["workspace", 1], ["team", 2], ["both", 3], ["member", 4],
   ["other", 5], ["platform", 6], ["account", 0],
+  [WRITE_USER, 0],
 ]);
 const fixtures = [
   {
@@ -115,10 +128,10 @@ const fixtures = [
     id: "workspace",
     authz: authorization(
       "workspace", "workspace_admin", [GM, GA],
-      ["workspace", "team", "both", "member", "other"], [GROWTH],
+      ["workspace", "team", "both", "member", "other", WRITE_USER], [GROWTH],
     ),
     groups: [GM, GA],
-    users: ["workspace", "team", "both", "member", "other"],
+    users: ["workspace", "team", "both", "member", "other", WRITE_USER],
     teams: [TEAM],
     canWrite: true,
   },
@@ -126,10 +139,10 @@ const fixtures = [
     id: "team",
     authz: authorization(
       "team", "team_admin", [GM, GL],
-      ["workspace", "team", "both", "member", "other"], [], [TEAM],
+      ["workspace", "team", "both", "member", "other", WRITE_USER], [], [TEAM],
     ),
     groups: [GM, GL],
-    users: ["workspace", "team", "both", "member", "other"],
+    users: ["workspace", "team", "both", "member", "other", WRITE_USER],
     teams: [TEAM],
     canWrite: false,
   },
@@ -137,11 +150,11 @@ const fixtures = [
     id: "both",
     authz: authorization(
       "both", "workspace_admin", [GM, GA, GL],
-      ["workspace", "team", "both", "member", "other"], [GROWTH], [TEAM],
+      ["workspace", "team", "both", "member", "other", WRITE_USER], [GROWTH], [TEAM],
       ["workspace_admin", "team_admin"],
     ),
     groups: [GM, GA, GL],
-    users: ["workspace", "team", "both", "member", "other"],
+    users: ["workspace", "team", "both", "member", "other", WRITE_USER],
     teams: [TEAM],
     canWrite: true,
   },
@@ -175,7 +188,28 @@ beforeAll(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test";
   installDefaultDirectory();
   setAuthorizationResolver(fixtureResolver);
-  setReplitBudgetTransportForTests(async () => Response.json({ ok: true }), true);
+  setReplitBudgetTransportForTests(async (_path, init) => {
+    if (init.method === "GET") {
+      return Response.json({
+        data: [...upstreamMemberBudgets].map(([userId, amountUsd]) => ({
+          type: "workspace_user_limit",
+          workspaceId: GROWTH,
+          userId,
+          currency: "USD",
+          period: "billing_cycle",
+          amountUsd,
+        })),
+        pagination: { hasMore: false },
+      });
+    }
+    const body = JSON.parse(init.body ?? "{}");
+    if (body.amountUsd == null) {
+      upstreamMemberBudgets.delete(body.userId);
+    } else {
+      upstreamMemberBudgets.set(body.userId, body.amountUsd);
+    }
+    return Response.json({ data: body.amountUsd == null ? null : body });
+  }, true);
 
   await db.delete(alertsTable).where(like(alertsTable.groupId, `${PREFIX}%`));
   await db.delete(teamLimitTargetsTable).where(like(teamLimitTargetsTable.groupId, `${PREFIX}%`));
@@ -206,7 +240,10 @@ beforeAll(async () => {
   await db.insert(usageMemberDayTable).values(
     allUsers.filter((id) => id !== "account").map((id, index) => ({
       workspaceId: id === "platform" ? PLATFORM : GROWTH,
-      usageDate: TODAY, userId: id, totalCostUsd: index + 1, aiCostUsd: index + 1,
+      usageDate: TODAY,
+      userId: id,
+      totalCostUsd: id === WRITE_USER ? 0 : index + 1,
+      aiCostUsd: id === WRITE_USER ? 0 : index + 1,
       metricsJson: [], fetchedAt: new Date(),
     })),
   );
@@ -312,7 +349,7 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
 
   it("allows per-user writes only in canWriteUserLimitsIn", async () => {
     const response = await request(
-      `/directory/workspaces/${GROWTH}/members/member/budget`,
+      `/directory/workspaces/${GROWTH}/members/${WRITE_USER}/budget`,
       fixture,
       { method: "PUT", body: JSON.stringify({ amountUsd: 12 }) },
     );
@@ -678,5 +715,5 @@ it("hides independent and spanning same-team alerts on the mounted history route
 function dirMemberIdsForWorkspace(workspaceId: string): string[] {
   return workspaceId === PLATFORM
     ? ["platform"]
-    : ["workspace", "team", "both", "member", "other"];
+    : ["workspace", "team", "both", "member", "other", WRITE_USER];
 }

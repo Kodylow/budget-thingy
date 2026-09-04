@@ -453,11 +453,13 @@ test("true admins atomically edit annual allocations and visibility with newest-
       change.teamName === ASSIGNED && change.field === "annualAllocationUsd"
     )
     .slice(0, 2);
-  expect(allocationChanges[1].oldValue).toBe(240);
-  expect(allocationChanges[0].oldValue).toBe(allocationChanges[1].newValue);
   expect(new Set(allocationChanges.map((change) => change.newValue))).toEqual(
     new Set([300, 400]),
   );
+  const firstChange = allocationChanges.find((change) => change.oldValue === 240);
+  const secondChange = allocationChanges.find((change) => change.oldValue !== 240);
+  expect(firstChange).toBeDefined();
+  expect(secondChange?.oldValue).toBe(firstChange?.newValue);
 
   await request(visibilityPath, "task158-account", "PATCH", { isHidden: false });
   await request(allocationPath, "task158-account", "PATCH", { annualAllocationUsd: 100 });

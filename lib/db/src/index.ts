@@ -10,7 +10,17 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const databaseSchema = process.env.DATABASE_SCHEMA;
+if (databaseSchema && !/^[a-z_][a-z0-9_]{0,62}$/.test(databaseSchema)) {
+  throw new Error("DATABASE_SCHEMA must be a safe PostgreSQL identifier");
+}
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  options: databaseSchema
+    ? `-c search_path=${databaseSchema},public`
+    : undefined,
+});
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

@@ -7,3 +7,4 @@
 - [Upstream team limit targets](upstream-team-budget-targets.md) — explicit workspace/group identities control writes; legacy workspace copies are display-only.
 - [Editable team allocation baselines](editable-team-allocation-baselines.md) — admin baselines and visibility survive initialization; approved adjustments remain additive and upstream writes stay explicit.
 - [Concurrent task merge validation](concurrent-task-merge-validation.md) — re-check shared files after another task merges; a previously validated tree may be silently reconciled into broken code.
+- [Isolated API test baselines](isolated-api-test-baselines.md) — fresh test storage must receive canonical seed data; never let integration tests inherit development fixtures.
