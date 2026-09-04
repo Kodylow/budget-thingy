@@ -52,10 +52,15 @@ export interface AuthAuthorization {
   workspaceIds: string[];
 }
 
+export interface AuthCapabilities {
+  /** Server-derived capability for the persisted designated email-test identity. */
+  emailTesting: boolean;
+}
 export interface AuthUserEnvelope {
   user: AuthUser | null;
   /** Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied). */
   auth: AuthAuthorization | null;
+  capabilities: AuthCapabilities;
 }
 
 export interface MobileTokenExchangeRequest {
@@ -964,6 +969,7 @@ export interface Alert {
   currentUsageComplete: boolean;
 }
 
+export type EmailTestSelectionEntityType = typeof EmailTestSelectionEntityType[keyof typeof EmailTestSelectionEntityType];
 export interface CheckResult {
   checkedGroups: number;
   checkedTeams: number;
@@ -1358,3 +1364,40 @@ export type ListAlertsParams = {
 limit?: number;
 };
 
+
+export interface EmailTestResult {
+  ok: boolean;
+  recipient: EmailTestResultRecipient;
+  subject: string;
+  /** @nullable */
+  error: string | null;
+  /** @nullable */
+  messageId: string | null;
+  /** @nullable */
+  senderEmail: string | null;
+}
+
+export type EmailTestResultRecipient = typeof EmailTestResultRecipient[keyof typeof EmailTestResultRecipient];
+
+export const EmailTestSelectionThreshold = {
+  NUMBER_50: 50,
+  NUMBER_75: 75,
+  NUMBER_90: 90,
+  NUMBER_100: 100,
+} as const;
+
+export type EmailTestSelectionThreshold = typeof EmailTestSelectionThreshold[keyof typeof EmailTestSelectionThreshold];
+
+export const EmailTestSelectionEntityType = {
+  group: 'group',
+  team: 'team',
+} as const;
+
+export interface EmailTestSelection {
+  entityType: EmailTestSelectionEntityType;
+  threshold: EmailTestSelectionThreshold;
+}
+
+export const EmailTestResultRecipient = {
+  'kodylow@replit': 'kody.low@repl.it',
+} as const;

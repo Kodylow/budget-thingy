@@ -20,6 +20,7 @@ import {
   type SessionData,
 } from '../lib/auth';
 import {
+  canUseEmailTesting,
   getPersistedEditorRole,
   maybeBootstrapEditor,
   resolveCurrentAuthorization,
@@ -130,20 +131,30 @@ async function upsertUser(claims: Record<string, unknown>) {
 
 router.get('/auth/user', async (req: Request, res: Response) => {
   if (!req.isAuthenticated()) {
-    res.json(GetCurrentAuthUserResponse.parse({ user: null, auth: null }));
+    res.json(GetCurrentAuthUserResponse.parse({
+      user: null,
+      auth: null,
+      capabilities: { emailTesting: false },
+    }));
     return;
   }
-  const auth = await resolveCurrentAuthorization(req.user.id).catch((err) => {
-    req.log.error({ err }, 'resolveCurrentAuthorization failed');
-    // Fail closed: unresolved scope is treated as access denied.
-    return null;
-  });
+  const [auth, emailTesting] = await Promise.all([
+    resolveCurrentAuthorization(req.user.id).catch((err) => {
+      req.log.error({ err }, 'resolveCurrentAuthorization failed');
+      return null;
+    }),
+    canUseEmailTesting(req.user.id).catch((err) => {
+      req.log.error({ err }, 'email-test capability resolution failed');
+      return false;
+    }),
+  ]);
   res.json(
     GetCurrentAuthUserResponse.parse({
       user: req.user,
       auth: auth
         ? { role: auth.role, workspaceIds: auth.workspaceIds }
         : null,
+      capabilities: { emailTesting },
     }),
   );
 });

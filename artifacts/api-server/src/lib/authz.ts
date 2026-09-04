@@ -91,6 +91,11 @@ export async function isPersistedEditor(userId: string): Promise<boolean> {
   return (await getPersistedEditorRole(userId)) !== null;
 }
 
+/** Email tests belong only to the persisted designated bootstrap identity. */
+export async function canUseEmailTesting(userId: string): Promise<boolean> {
+  return (await getPersistedEditorRole(userId)) === "account_delegate";
+}
+
 async function lookupEditor(userId: string): Promise<PersistedEditorRole | null> {
   if (!injectedEditorLookup) return getPersistedEditorRole(userId);
   const result = await injectedEditorLookup(userId);

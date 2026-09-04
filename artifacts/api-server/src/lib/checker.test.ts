@@ -622,7 +622,8 @@ describe("highest due threshold only (email batching)", () => {
     ];
     expect(subject).toContain("Engineering");
     expect(subject).toContain("allocated pool alert");
-    expect(html).toContain("Enterprise group <strong>Engineering</strong>");
+    expect(html).toContain("Enterprise group");
+    expect(html).toContain(">Engineering</strong>");
     expect(html).toContain("Allocated pool");
   });
 });
@@ -1126,7 +1127,8 @@ describe("team allocated pool checks", () => {
     ];
     expect(subject).toContain("Platform");
     expect(subject).toContain("allocated pool alert");
-    expect(html).toContain("Enterprise team <strong>Platform</strong>");
+    expect(html).toContain("Enterprise team");
+    expect(html).toContain(">Platform</strong>");
     expect(html).toContain("Allocated pool");
   });
 

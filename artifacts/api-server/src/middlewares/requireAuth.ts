@@ -1,5 +1,6 @@
 import { type NextFunction, type Request, type Response } from "express";
 import {
+  canUseEmailTesting,
   isAccountAdmin,
   isApplicationAdmin,
   resolveCurrentAuthorization,
@@ -113,4 +114,22 @@ export function requireAccountOperator(
     return;
   }
   next();
+}
+
+/** Require the persisted designated Kody identity, independent of RBAC role. */
+export async function requireEmailTester(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    if (!req.user?.id || !(await canUseEmailTesting(req.user.id))) {
+      res.status(403).json({ error: "Access denied" });
+      return;
+    }
+    next();
+  } catch (err) {
+    req.log.error({ err }, "email-test capability resolution failed");
+    res.status(403).json({ error: "Access denied" });
+  }
 }

@@ -5,6 +5,7 @@ import express from "express";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
   alertsTable,
+  alertDeliveryClaimsTable,
   db,
   editorAllowlistTable,
   editorBootstrapStateTable,
@@ -17,6 +18,7 @@ import {
 } from "@workspace/db";
 
 import monitorRouter from "./monitor.ts";
+import authRouter from "./auth.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
 import {
   BOOTSTRAP_EDITOR_EMAIL,
@@ -248,9 +250,18 @@ test.before(async () => {
     req.isAuthenticated = function () {
       return this.user != null;
     };
-    if (uid) req.user = { id: String(uid) };
+    if (uid) {
+      req.user = {
+        id: String(uid),
+        email: null,
+        firstName: null,
+        lastName: null,
+        profileImageUrl: null,
+      };
+    }
     next();
   });
+  app.use("/api", authRouter);
   app.use("/api", monitorRouter);
 
   server = app.listen(0);
@@ -954,18 +965,63 @@ test("allowlisted editor has account-wide operational access but no settings or 
   );
 });
 
-test("account admin can test an alert without firing threshold state", async () => {
+test("non-Kody account admin cannot send test alerts", async () => {
   const source = (await req("/alerts", { user: "acct" })).json[0];
-  const firedBefore = await db.select().from(firedThresholdsTable);
   const response = await req(`/alerts/${source.id}/test`, {
     user: "acct",
     method: "POST",
   });
+  assert.equal(response.status, 403);
+  assert.equal(
+    (await req("/alerts/test-email", {
+      user: "acct",
+      method: "POST",
+      body: { entityType: "group", threshold: 50 },
+    })).status,
+    403,
+  );
+});
+
+test("auth envelope exposes immutable email-test capability only for Kody", async () => {
+  assert.equal((await req("/auth/user")).json.capabilities.emailTesting, false);
+  assert.equal(
+    (await req("/auth/user", { user: "acct" })).json.capabilities.emailTesting,
+    false,
+  );
+  await maybeBootstrapEditor({
+    sub: "bootstrap-editor",
+    email: BOOTSTRAP_EDITOR_EMAIL,
+    email_verified: true,
+  });
+  const kody = await req("/auth/user", { user: "bootstrap-editor" });
+  assert.equal(kody.status, 200);
+  assert.equal(kody.json.capabilities.emailTesting, true);
+});
+
+test("Kody can test an activity without mutating activity, threshold, or claim state", async () => {
+  await maybeBootstrapEditor({
+    sub: "bootstrap-editor",
+    email: BOOTSTRAP_EDITOR_EMAIL,
+    email_verified: true,
+  });
+  const source = (await req("/alerts", { user: "bootstrap-editor" })).json[0];
+  const firedBefore = await db.select().from(firedThresholdsTable);
+  const claimsBefore = await db.select().from(alertDeliveryClaimsTable);
+  const activityBefore = await db.select().from(alertsTable);
+  const response = await req(`/alerts/${source.id}/test`, {
+    user: "bootstrap-editor",
+    method: "POST",
+  });
   assert.equal(response.status, 200);
-  assert.equal(response.json.status, "sent");
-  assert.deepEqual(response.json.recipients, [BOOTSTRAP_EDITOR_EMAIL]);
+  assert.equal(response.json.ok, true);
+  assert.equal(response.json.recipient, BOOTSTRAP_EDITOR_EMAIL);
+  assert.equal(response.json.messageId, "test-message");
   const firedAfter = await db.select().from(firedThresholdsTable);
+  const claimsAfter = await db.select().from(alertDeliveryClaimsTable);
+  const activityAfter = await db.select().from(alertsTable);
   assert.equal(firedAfter.length, firedBefore.length);
+  assert.equal(claimsAfter.length, claimsBefore.length);
+  assert.equal(activityAfter.length, activityBefore.length);
 });
 
 test("workspace admin cannot send test alerts", async () => {
@@ -979,8 +1035,9 @@ test("workspace admin cannot send test alerts", async () => {
   );
 });
 
-test("failed test delivery is recorded in Email Activity", async () => {
-  const source = (await req("/alerts", { user: "acct" })).json[0];
+test("failed Kody test delivery returns the error without recording Email Activity", async () => {
+  const source = (await req("/alerts", { user: "bootstrap-editor" })).json[0];
+  const activityBefore = await db.select().from(alertsTable);
   setSendEmailOverrideForTests(async (to) => ({
     ok: false,
     error: "test transport failure",
@@ -988,12 +1045,14 @@ test("failed test delivery is recorded in Email Activity", async () => {
   }));
   try {
     const response = await req(`/alerts/${source.id}/test`, {
-      user: "acct",
+      user: "bootstrap-editor",
       method: "POST",
     });
     assert.equal(response.status, 200);
-    assert.equal(response.json.status, "failed");
-    assert.equal(response.json.errorMessage, "test transport failure");
+    assert.equal(response.json.ok, false);
+    assert.equal(response.json.error, "test transport failure");
+    assert.equal(response.json.recipient, BOOTSTRAP_EDITOR_EMAIL);
+    assert.equal((await db.select().from(alertsTable)).length, activityBefore.length);
   } finally {
     setSendEmailOverrideForTests(async (to) => ({
       ok: true,
@@ -1001,6 +1060,38 @@ test("failed test delivery is recorded in Email Activity", async () => {
       messageId: "test-message",
     }));
   }
+});
+
+test("Kody predefined test API accepts only the eight supported examples", async () => {
+  const activityBefore = await db.select().from(alertsTable);
+  const firedBefore = await db.select().from(firedThresholdsTable);
+  const claimsBefore = await db.select().from(alertDeliveryClaimsTable);
+  for (const entityType of ["group", "team"]) {
+    for (const threshold of [50, 75, 90, 100]) {
+      const response = await req("/alerts/test-email", {
+        user: "bootstrap-editor",
+        method: "POST",
+        body: { entityType, threshold },
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.json.ok, true);
+      assert.equal(response.json.recipient, BOOTSTRAP_EDITOR_EMAIL);
+      assert.match(response.json.subject, new RegExp(`${threshold}%|exceeded`));
+    }
+  }
+  assert.equal((await req("/alerts/test-email", {
+    user: "bootstrap-editor",
+    method: "POST",
+    body: { entityType: "group", threshold: 80 },
+  })).status, 400);
+  assert.equal((await req("/alerts/test-email", {
+    user: "bootstrap-editor",
+    method: "POST",
+    body: { entityType: "group", threshold: 50, recipient: "attacker@example.com" },
+  })).status, 400);
+  assert.equal((await db.select().from(alertsTable)).length, activityBefore.length);
+  assert.equal((await db.select().from(firedThresholdsTable)).length, firedBefore.length);
+  assert.equal((await db.select().from(alertDeliveryClaimsTable)).length, claimsBefore.length);
 });
 
 test("a full application admin can add and remove an editor", async () => {

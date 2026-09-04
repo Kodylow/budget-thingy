@@ -9,6 +9,7 @@ import {
 
 import {
   BOOTSTRAP_EDITOR_EMAIL,
+  canUseEmailTesting,
   isPersistedEditor,
   getPersistedEditorRole,
   maybeBootstrapEditor,
@@ -45,6 +46,7 @@ test("bootstrap persists the designated editor keyed by stable sub", async () =>
   assert.equal(created, true);
   assert.equal(await isPersistedEditor(BOOTSTRAP_SUB), true);
   assert.equal(await getPersistedEditorRole(BOOTSTRAP_SUB), "account_delegate");
+  assert.equal(await canUseEmailTesting(BOOTSTRAP_SUB), true);
 
   const [row] = await db
     .select()
@@ -126,6 +128,7 @@ test("bootstrap refuses a non-matching (imposter) email", async () => {
   });
   assert.equal(created, false);
   assert.equal(await isPersistedEditor(IMPOSTER_SUB), false);
+  assert.equal(await canUseEmailTesting(IMPOSTER_SUB), false);
 });
 
 test("bootstrap refuses when sub or email is missing", async () => {

@@ -3,10 +3,11 @@ import type {
   AuthUser,
   AuthAuthorization,
   AuthAuthorizationRole,
+  AuthCapabilities,
   AuthUserEnvelope,
 } from '@workspace/api-client-react';
 
-export type { AuthUser, AuthAuthorization, AuthAuthorizationRole };
+export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities };
 
 interface AuthState {
   /** Base identity for the signed-in user, or null when signed out. */
@@ -16,6 +17,8 @@ interface AuthState {
    * is neither an account admin nor an enabled workspace admin (access denied).
    */
   auth: AuthAuthorization | null;
+  /** Server-derived capabilities like email testing access. */
+  capabilities: AuthCapabilities | null;
   isLoading: boolean;
   /** A valid session exists (user present), regardless of authorization. */
   isAuthenticated: boolean;
@@ -30,6 +33,7 @@ function getBasePath() {
 export function useAuth(): AuthState {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [auth, setAuth] = useState<AuthAuthorization | null>(null);
+  const [capabilities, setCapabilities] = useState<AuthCapabilities | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -44,6 +48,7 @@ export function useAuth(): AuthState {
         if (!cancelled) {
           setUser(data.user ?? null);
           setAuth(data.auth ?? null);
+          setCapabilities(data.capabilities ?? null);
           setIsLoading(false);
         }
       })
@@ -51,6 +56,7 @@ export function useAuth(): AuthState {
         if (!cancelled) {
           setUser(null);
           setAuth(null);
+          setCapabilities(null);
           setIsLoading(false);
         }
       });
@@ -73,6 +79,7 @@ export function useAuth(): AuthState {
   return {
     user,
     auth,
+    capabilities,
     isLoading,
     isAuthenticated: !!user,
     login,

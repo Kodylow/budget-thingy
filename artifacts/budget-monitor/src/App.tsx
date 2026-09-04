@@ -15,6 +15,7 @@ import {
   pollingRetryDelay,
   QUERY_STALE_TIME_MS,
 } from '@/lib/client-performance';
+import { checkCanAccessSettings } from '@/lib/auth-helpers';
 
 const Settings = lazy(() => import('@/pages/settings'));
 const Trends = lazy(() => import('@/pages/trends'));
@@ -49,7 +50,9 @@ function Router() {
   // Account-only routes (settings) are removed for workspace admins so a
   // direct URL cannot render the account-admin surface. The server still
   // enforces authorization on the underlying data.
-  const { isAccountAdmin, isAccountWide, role, preview } = useAuthContext();
+  const { isAccountAdmin, realIsAccountAdmin, canTestEmail, isAccountWide, role, preview } = useAuthContext();
+
+  const canAccessSettings = checkCanAccessSettings(isAccountAdmin, realIsAccountAdmin, canTestEmail);
 
   function ScopedGroupRoute() {
     const [, params] = useRoute('/groups/:groupId');
@@ -81,7 +84,7 @@ function Router() {
           <Route path="/user-guide" component={AccountAdminGuideRoute} />
           <Route path="/alerts" component={Alerts} />
           {isAccountWide && <Route path="/trends" component={Trends} />}
-          {isAccountAdmin && <Route path="/settings" component={Settings} />}
+          {canAccessSettings && <Route path="/settings" component={Settings} />}
           {isAccountAdmin && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
           {isAccountAdmin && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
           {isAccountAdmin && <Route path="/team-budgets" component={TeamBudgets} />}

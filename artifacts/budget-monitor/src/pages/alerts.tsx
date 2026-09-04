@@ -20,7 +20,7 @@ export default function Alerts() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const canWrite = useCanWrite();
-  const { isAccountAdmin, preview } = useAuthContext();
+  const { canTestEmail, preview } = useAuthContext();
   const [runningCheck, setRunningCheck] = useState(false);
   const [testingAlertId, setTestingAlertId] = useState<number | null>(null);
 
@@ -55,27 +55,25 @@ export default function Alerts() {
     sendTest.mutate(
       { alertId },
       {
-        onSuccess: (activity) => {
-          queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey({ limit: 100 }) });
-          if (activity.status === 'sent') {
+        onSuccess: (result) => {
+          if (result.ok) {
             toast({
               title: 'Test email sent',
-              description: `${entityName}: ${activity.recipients.join(', ')}`,
+              description: `Sender: ${result.senderEmail}\nMessage ID: ${result.messageId}`,
             });
           } else {
             toast({
               title: 'Test email failed',
-              description: activity.errorMessage || 'The failure was added to Email Activity.',
+              description: result.error || 'Failed to send test email',
               variant: 'destructive',
             });
           }
           setTestingAlertId(null);
         },
-        onError: () => {
-          queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey({ limit: 100 }) });
+        onError: (err: any) => {
           toast({
             title: 'Test email failed',
-            description: 'The failed delivery was added to Email Activity.',
+              description: err?.data?.error || 'An unexpected error occurred.',
             variant: 'destructive',
           });
           setTestingAlertId(null);
@@ -115,8 +113,7 @@ export default function Alerts() {
           <CardTitle>Email Activity</CardTitle>
           <CardDescription>
             Delivery history for threshold notifications, including recipients and failures.
-            Test sends reuse the selected alert without changing threshold state; in development,
-            actual delivery is routed only to kody.low@repl.it.
+            Test sends reuse the selected alert without changing threshold state. All test sends are routed only to kody.low@repl.it in every environment.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -189,7 +186,7 @@ export default function Alerts() {
                     <span className="text-xs text-muted-foreground" data-testid={`text-time-${alert.id}`}>
                       {formatDistanceToNow(new Date(alert.sentAt), { addSuffix: true })}
                     </span>
-                    {isAccountAdmin && (
+                    {canTestEmail && (
                       <Button
                         variant="outline"
                         size="sm"

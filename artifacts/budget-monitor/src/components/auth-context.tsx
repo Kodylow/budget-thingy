@@ -4,6 +4,7 @@ import {
   type AuthUser,
   type AuthAuthorization,
   type AuthAuthorizationRole,
+  type AuthCapabilities,
 } from '@workspace/replit-auth-web';
 import {
   canUseRbacPreview,
@@ -11,8 +12,9 @@ import {
   sanitizePreview,
   type PreviewSelection,
 } from '@/lib/rbac-view';
+import { checkIsDenied, checkRealIsAccountAdmin, checkCanTestEmail } from '@/lib/auth-helpers';
 
-export type { AuthUser, AuthAuthorization, AuthAuthorizationRole };
+export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities };
 
 /** UI-facing role, including the derived `denied` state (auth === null). */
 export type ResolvedRole = AuthAuthorizationRole | 'denied';
@@ -27,6 +29,10 @@ interface AuthContextValue {
   role: ResolvedRole | null;
   /** The immutable role returned by the server for this session. */
   realRole: ResolvedRole | null;
+  /** Whether the user has true account admin/delegate privileges regardless of preview. */
+  realIsAccountAdmin: boolean;
+  /** Whether the user has the immutable emailTesting capability from the server. */
+  canTestEmail: boolean;
   preview: PreviewSelection | null;
   canPreviewRbac: boolean;
   setPreview: (preview: PreviewSelection | null) => void;
@@ -66,7 +72,7 @@ function readStoredPreview(
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { user, auth, isLoading, isAuthenticated, login, logout } = useReplitAuth();
+  const { user, auth, capabilities, isLoading, isAuthenticated, login, logout } = useReplitAuth();
   const [requestedPreview, setRequestedPreview] = useState<{
     userId: string;
     value: PreviewSelection | null;
@@ -105,7 +111,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isAccountAdmin = role === 'account_admin' || role === 'account_delegate';
     const isAccountEditor = role === 'account_editor';
     const isWorkspaceAdmin = role === 'workspace_admin';
-    const isDenied = isAuthenticated && auth == null;
+    const isDenied = checkIsDenied(isAuthenticated, auth);
+    const realIsAccountAdmin = checkRealIsAccountAdmin(realRole);
+    const canTestEmail = checkCanTestEmail(capabilities);
 
     return {
       user,
@@ -114,6 +122,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       role,
       realRole,
+      realIsAccountAdmin,
+      canTestEmail,
       preview,
       canPreviewRbac: canUseRbacPreview(auth?.role),
       setPreview,
@@ -131,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
     };
-  }, [user, auth, isLoading, isAuthenticated, login, logout, preview, setPreview, resetPreview]);
+  }, [user, auth, capabilities, isLoading, isAuthenticated, login, logout, preview, setPreview, resetPreview]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

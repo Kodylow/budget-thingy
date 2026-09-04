@@ -6,10 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AuthAuthorization } from './authAuthorization';
+import type { AuthCapabilities } from './authCapabilities';
 import type { AuthUser } from './authUser';
 
 export interface AuthUserEnvelope {
   user: AuthUser | null;
   /** Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied). */
   auth: AuthAuthorization | null;
+  capabilities: AuthCapabilities;
 }

@@ -27,7 +27,10 @@ export const GetCurrentAuthUserResponse = zod.object({
   "auth": zod.union([zod.object({
   "role": zod.enum(['account_admin', 'account_delegate', 'account_editor', 'workspace_admin']).describe('Effective role resolved from the Enterprise directory and managed editor allowlist.'),
   "workspaceIds": zod.array(zod.string()).describe('Workspace IDs the user may view. Empty and ignored for account_admin, account_delegate, and account_editor; the union of admin workspaces for workspace_admin.\n')
-}).describe('Resolved authorization for the signed-in user. account_admin, account_delegate, and account_editor see the whole account; workspace_admin sees only the listed workspaces. account_admin and account_delegate can manage editor access and settings.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied).\n')
+}).describe('Resolved authorization for the signed-in user. account_admin, account_delegate, and account_editor see the whole account; workspace_admin sees only the listed workspaces. account_admin and account_delegate can manage editor access and settings.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied).\n'),
+  "capabilities": zod.object({
+  "emailTesting": zod.boolean().describe('Server-derived capability for the persisted designated email-test identity.')
+})
 })
 
 
@@ -72,11 +75,6 @@ export const LogoutBrowserSessionResponse = zod.void()
 /**
  * @summary Exchange a mobile OIDC code for a session token
  */
-
-
-
-
-
 
 
 export const ExchangeMobileAuthorizationCodeBody = zod.object({
@@ -495,7 +493,6 @@ export const GetUserActivityResponse = zod.object({
  */
 
 
-
 export const ExportUsersCsvQueryParams = zod.object({
   "groupIds": zod.coerce.string().min(1).describe('Comma-separated group IDs from a group or cluster detail page'),
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
@@ -525,7 +522,6 @@ export const SetGroupBudgetParams = zod.object({
 })
 
 export const setGroupBudgetBodyAmountUsdExclusiveMin = 0;
-
 
 
 export const SetGroupBudgetBody = zod.object({
@@ -676,7 +672,6 @@ export const ListAdminsResponse = zod.array(ListAdminsResponseItem)
 export const addAdminBodyEmailMin = 3;
 
 
-
 export const AddAdminBody = zod.object({
   "email": zod.string().min(addAdminBodyEmailMin)
 })
@@ -717,7 +712,6 @@ export const ListEditorsResponse = zod.array(ListEditorsResponseItem)
  * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
  * @summary Add an account-wide app editor
  */
-
 
 
 export const AddEditorBody = zod.object({
@@ -780,7 +774,6 @@ export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersRespon
 export const listVisibleWorkspacesResponseMemberCountMin = 0;
 
 
-
 export const ListVisibleWorkspacesResponseItem = zod.object({
   "workspaceId": zod.string(),
   "workspaceName": zod.string(),
@@ -793,7 +786,6 @@ export const ListVisibleWorkspacesResponse = zod.array(ListVisibleWorkspacesResp
  * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget connector failures are returned explicitly and never fall back to the Enterprise API key.
  * @summary List members and Agent budgets for a visible workspace
  */
-
 
 
 export const ListVisibleWorkspaceMembersParams = zod.object({
@@ -829,7 +821,6 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
  */
 
 
-
 export const ListWorkspaceUsageLimitAuditsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -859,7 +850,6 @@ export const ListWorkspaceUsageLimitAuditsResponse = zod.array(ListWorkspaceUsag
  */
 
 
-
 export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -868,7 +858,6 @@ export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
 export const bulkSetWorkspaceMemberBudgetsBodyUserIdsMax = 100;
 
 export const bulkSetWorkspaceMemberBudgetsBodyAmountUsdExclusiveMin = 0;
-
 
 
 export const BulkSetWorkspaceMemberBudgetsBody = zod.object({
@@ -894,15 +883,12 @@ export const BulkSetWorkspaceMemberBudgetsResponse = zod.object({
  */
 
 
-
-
 export const SetWorkspaceMemberBudgetParams = zod.object({
   "workspaceId": zod.coerce.string().min(1),
   "userId": zod.coerce.string().min(1)
 })
 
 export const setWorkspaceMemberBudgetBodyAmountUsdExclusiveMin = 0;
-
 
 
 export const SetWorkspaceMemberBudgetBody = zod.object({
@@ -920,8 +906,6 @@ export const SetWorkspaceMemberBudgetResponse = zod.object({
  * Account-wide operators only. Clearing an already-unset budget is idempotent.
  * @summary Clear a member's desired Agent budget
  */
-
-
 
 
 export const ClearWorkspaceMemberBudgetParams = zod.object({
@@ -974,7 +958,6 @@ export const ListWorkspaceAdminsResponse = zod.array(ListWorkspaceAdminsResponse
  * @summary Alert history
  */
 export const listAlertsQueryLimitMax = 200;
-
 
 
 export const ListAlertsQueryParams = zod.object({
@@ -1036,39 +1019,34 @@ export const RunAlertCheckResponse = zod.object({
 
 
 /**
- * Re-resolves current RBAC recipients and sends a test copy without changing fired thresholds or delivery claims.
- * @summary Send a test copy of an email activity entry
+ * Sends a fixed-recipient test copy without changing alert activity, fired thresholds, or delivery claims.
+ * @summary Send Kody a test copy of an email activity entry
  */
 export const SendTestAlertParams = zod.object({
   "alertId": zod.coerce.number()
 })
 
 export const SendTestAlertResponse = zod.object({
-  "id": zod.number(),
-  "entityType": zod.enum(['group', 'team']),
-  "entityId": zod.string(),
-  "entityName": zod.string(),
-  "workspaceIds": zod.array(zod.string()),
-  "threshold": zod.number().describe('Threshold percent crossed (50, 75, 90, 100)'),
-  "spendUsd": zod.number().describe('Canonical spend snapshot captured when this delivery was attempted'),
-  "budgetUsd": zod.number(),
-  "recipients": zod.array(zod.string()),
-  "sentAt": zod.string(),
-  "status": zod.string().describe('sent or failed'),
-  "errorMessage": zod.string().nullish(),
-  "dataAsOf": zod.string().nullish().describe('Exclusive timestamp through which stored usage facts were evaluated'),
-  "currentSpendUsd": zod.number().nullable().describe('Current canonical spend for the entity; null while usage is incomplete'),
-  "currentPercentUsed": zod.number().nullable().describe('Current canonical spend as a percent of the current allocated pool'),
-  "currentUsageComplete": zod.boolean()
+  "ok": zod.boolean(),
+  "recipient": zod.enum(['kody.low@repl.it']),
+  "subject": zod.string(),
+  "error": zod.string().nullable(),
+  "messageId": zod.string().nullable(),
+  "senderEmail": zod.string().nullable()
 })
 
-
+/**
+ * @summary Send Kody a predefined threshold-alert example
+ */
+export const SendEmailTestExampleBody = zod.object({
+  "entityType": zod.enum(['group', 'team']),
+  "threshold": zod.union([zod.literal(50),zod.literal(75),zod.literal(90),zod.literal(100)])
+})
 /**
  * Enterprise API connectivity, email configuration, and background checker state.
  * @summary System status
  */
 export const getStatusResponseUsageSyncScopesMax = 200;
-
 
 
 export const GetStatusResponse = zod.object({
@@ -1148,3 +1126,11 @@ export const RebuildUsageRangeResponse = zod.object({
 })
 
 
+export const SendEmailTestExampleResponse = zod.object({
+  "ok": zod.boolean(),
+  "recipient": zod.enum(['kody.low@repl.it']),
+  "subject": zod.string(),
+  "error": zod.string().nullable(),
+  "messageId": zod.string().nullable(),
+  "senderEmail": zod.string().nullable()
+})

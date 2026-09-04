@@ -31,6 +31,8 @@ import {
   ListAlertsResponse,
   RunAlertCheckResponse,
   SendTestAlertResponse,
+  SendEmailTestExampleBody,
+  SendEmailTestExampleResponse,
   GetStatusResponse,
   GetGroupDetailResponse,
   GetGroupProjectsResponse,
@@ -98,7 +100,7 @@ import {
   type EnterpriseGroup,
   type ProjectUsageMetric,
 } from "../lib/enterprise";
-import { buildAlertEmail, isEmailConfigured, sendEmail } from "../lib/email";
+import { buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, EMAIL_TEST_RECIPIENT } from "../lib/email";
 import { resolveAlertRecipients } from "../lib/alert-recipients";
 import {
   runCheck,
@@ -113,6 +115,7 @@ import {
   requireAccountAdmin,
   requireAccountOperator,
   requireTrueAccountAdmin,
+  requireEmailTester,
 } from "../middlewares/requireAuth";
 import {
   canSeeGroup,
@@ -2439,7 +2442,7 @@ router.post("/alerts/check", requireAccountOperator, async (req, res): Promise<v
 
 router.post(
   "/alerts/:alertId/test",
-  requireAccountAdmin,
+  requireEmailTester,
   async (req, res): Promise<void> => {
     const alertId = Number(req.params["alertId"]);
     if (!Number.isInteger(alertId) || alertId <= 0) {
@@ -2456,45 +2459,80 @@ router.post(
       return;
     }
 
-    const recipients = await resolveAlertRecipients(source.workspaceIds);
     const { subject, html } = buildAlertEmail({
       entityType: source.entityType === "team" ? "team" : "group",
       entityName: source.entityName || source.groupName,
+      entityId: source.entityId || source.groupId,
       groupName: source.groupName,
       workspaceName: null,
       threshold: source.threshold,
       spendUsd: source.spendUsd,
       budgetUsd: source.budgetUsd,
       billingPeriodLabel: getBillingPeriod().label,
+      dataAsOf: source.dataAsOf,
+      testDeliveryLabel: "Email activity copy",
     });
-    const result = await sendEmail(
-      recipients,
-      `[TEST] ${subject}`,
-      `<div style="padding: 12px; margin-bottom: 16px; background: #ecfeff; border: 1px solid #06b6d4;"><strong>Test delivery:</strong> This message does not affect budget threshold state.</div>${html}`,
+    const testSubject = `[TEST] ${subject}`;
+    const result = await sendTestEmail(
+      testSubject,
+      html,
     );
-    const [activity] = await db
-      .insert(alertsTable)
-      .values({
-        groupId: source.groupId,
-        groupName: source.groupName,
-        entityType: source.entityType,
-        entityId: source.entityId,
-        entityName: source.entityName,
-        workspaceIds: source.workspaceIds,
-        threshold: source.threshold,
-        spendUsd: source.spendUsd,
-        budgetUsd: source.budgetUsd,
-        recipients: result.deliveredTo ?? recipients,
-        status: result.ok ? "sent" : "failed",
-        errorMessage: result.ok ? null : (result.error ?? "unknown error"),
-        dataAsOf: source.dataAsOf,
-      })
-      .returning();
-    if (!activity) {
-      res.status(500).json({ error: "Unable to record test delivery" });
+    res.json(SendTestAlertResponse.parse({
+      ok: result.ok,
+      recipient: EMAIL_TEST_RECIPIENT,
+      subject: testSubject,
+      error: result.error ?? null,
+      messageId: result.messageId ?? null,
+      senderEmail: result.senderEmail ?? null,
+    }));
+  },
+);
+
+router.post(
+  "/alerts/test-email",
+  requireEmailTester,
+  async (req, res): Promise<void> => {
+    const selection = SendEmailTestExampleBody.safeParse(req.body);
+    const allowedKeys = new Set(["entityType", "threshold"]);
+    const hasUnknownInput =
+      !req.body ||
+      typeof req.body !== "object" ||
+      Object.keys(req.body).some((key) => !allowedKeys.has(key));
+    if (!selection.success || hasUnknownInput) {
+      res.status(400).json({ error: "Choose a supported group or team threshold example" });
       return;
     }
-    res.json(SendTestAlertResponse.parse(alertToJson(activity)));
+    const { entityType, threshold } = selection.data;
+    const entityName = entityType === "group" ? "Engineering" : "Platform Team";
+    const entityId = entityType === "group" ? "example-engineering" : "Platform Team";
+    const budgetUsd = 10_000;
+    const spendUsd = threshold === 100 ? 10_250 : budgetUsd * (threshold / 100);
+    const { subject, html } = buildAlertEmail({
+      entityType,
+      entityName,
+      entityId,
+      groupName: entityName,
+      workspaceName: entityType === "group" ? "Example Workspace" : null,
+      threshold,
+      spendUsd,
+      budgetUsd,
+      billingPeriodLabel: getBillingPeriod().label,
+      dataAsOf: new Date(),
+      testDeliveryLabel: `Predefined ${entityType} example`,
+    });
+    const testSubject = `[TEST] ${subject}`;
+    const result = await sendTestEmail(
+      testSubject,
+      html,
+    );
+    res.json(SendEmailTestExampleResponse.parse({
+      ok: result.ok,
+      recipient: EMAIL_TEST_RECIPIENT,
+      subject: testSubject,
+      error: result.error ?? null,
+      messageId: result.messageId ?? null,
+      senderEmail: result.senderEmail ?? null,
+    }));
   },
 );
 

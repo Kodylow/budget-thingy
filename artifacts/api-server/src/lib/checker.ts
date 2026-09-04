@@ -206,12 +206,14 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
   const { subject, html } = buildAlertEmail({
     entityType: spec.entityType,
     entityName: spec.entityName,
+    entityId: spec.entityId,
     groupName: spec.entityName,
     workspaceName: spec.workspaceName,
     threshold: highest,
     spendUsd: spec.spendUsd,
     budgetUsd: spec.budgetUsd,
     billingPeriodLabel: label,
+    dataAsOf: spec.dataAsOf,
   });
   const result = await sendEmail(recipients, subject, html);
 
