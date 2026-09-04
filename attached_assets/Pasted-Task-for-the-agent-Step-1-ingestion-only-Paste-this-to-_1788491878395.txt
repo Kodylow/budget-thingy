@@ -1,0 +1,41 @@
+Task for the agent: Step 1, ingestion only
+Paste this to the agent as-is.
+
+Goal: Replace all Enterprise usage ingestion with one scheduler that stores per-day rows in Postgres. This step adds new code and tables only. Do not modify any route, the checker, or the frontend, and do not delete anything yet. The app is dev-only; there is no backwards compatibility to preserve.
+
+Facts about the upstream API you must design against:
+
+Limits per account, fixed windows: 600 req/min and 20,000 req/hour overall; /usage additionally 200 req/min. Read X-RateLimit-Remaining/Reset and honor Retry-After on 429.
+Live windows are cached upstream for 5 minutes; a 10-minute cycle is the right cadence. Usage for a UTC day can still change for up to ~2 days (deployments report every 2h; reconciliation re-ingests 2–4h gaps). Days older than 2 days are final.
+groupBy=member attributes only the agent metric to users; groupBy=project attributes all metrics to projects. Per-user non-AI comes from project rows joined to project creator (existing project-metadata fetch).
+Pagination cursors are reliable in the current API; do not add cursorless-hasMore recovery.
+New tables (Drizzle, lib/db/src/schema/usage.ts):
+
+usage_member_day(workspace_id, usage_date date, user_id, total_cost_usd double, ai_cost_usd double, metrics_json jsonb, fetched_at) PK (workspace_id, usage_date, user_id), index (usage_date).
+usage_project_day(workspace_id, usage_date, project_id, total_cost_usd, metrics_json, fetched_at) PK (workspace_id, usage_date, project_id).
+usage_workspace_day(workspace_id, usage_date, total_cost_usd, member_attributable_usd, member_unattributable_usd, metrics_json, fetched_at, status text check in ('complete','failed'), error text) PK (workspace_id, usage_date). Totals come from the member call's top-level totalCostUsd/attributableTotalCostUsd/unattributableTotalCostUsd.
+usage_account_day(usage_date, total_cost_usd, fetched_at) PK (usage_date). From one /usage call per day with no groupBy and no workspaceId.
+ingest_run(id, kind text check in ('live','backfill','reconcile'), started_at, finished_at, units, calls, failures, error).
+ingest_reconciliation(month_start, scope text, scope_id, upstream_usd, stored_usd, delta_usd, checked_at) PK (month_start, scope, scope_id).
+Ingest unit = one (workspace_id, usage_date). Fetch groupBy=member (all pages) then groupBy=project (all pages) for [date 00:00Z, date+1 00:00Z), entirely outside any transaction. Then one short transaction: DELETE both day tables for that key, batched INSERT of all rows, upsert usage_workspace_day with status='complete'. On any failure after 3 attempts with backoff, leave existing rows untouched and upsert usage_workspace_day with status='failed' and the error text. Account day is its own unit.
+
+Scheduler (artifacts/api-server/src/lib/ingest.ts):
+
+runCycle(): acquire pg_try_advisory_lock(hashtext('usage-ingest')) on a dedicated client for the duration; if not acquired, log and return.
+Live set every cycle: today, yesterday, day-before (UTC) × every workspace in the directory, plus those 3 account days.
+Backfill set: every (workspace, date) from 2026-05-20 to day-3 with no usage_workspace_day row or status='failed', oldest date first, plus missing account days. Runs after the live set in the same cycle until exhausted.
+Reconcile once per UTC day (first cycle after 02:00Z): for each month since the cutoff, one account totals call for the whole month and one totals call per workspace for the month; compare with SUM of stored day rows; write ingest_reconciliation. If a workspace-month delta exceeds $0.01, mark that workspace's days in that month status='failed' so the next cycle refetches them.
+Directory refresh (workspaces, groups, members, budgets) and project metadata refresh run at the start of each cycle if older than 15 minutes, reusing the existing fetch functions.
+Concurrency: 4 workers pulling from one queue. Replace EnterpriseRateBudget's workload classes, caps and fixed sleeps with a single per-minute token bucket seeded from the headers (200/min for /usage, 600/min otherwise). No sleeps between calls.
+Boot: after app.listen, call runCycle() once, then setInterval(runCycle, 10 * 60 * 1000). Nothing else in the process may call the Enterprise API.
+Structured log per unit and per run: {event, workspaceId, usageDate, calls, pages, durationMs, outcome}.
+Script: pnpm --filter @workspace/api-server run ingest:once runs one cycle (live + backfill + reconcile) and prints: units attempted/succeeded/failed, total calls, duration, per-month reconciliation deltas, and remaining backfill count.
+
+Acceptance (report all of these with numbers):
+
+From an empty database, ingest:once completes the full backfill in under 2 hours with zero status='failed' rows.
+A second ingest:once run immediately after performs only the live set (≈120 units, under 600 calls) and finishes in under 4 minutes.
+SELECT SUM(total_cost_usd) FROM usage_workspace_day WHERE usage_date >= '2026-08-19' is within $1 of the account total from a single billingPeriod=current call, and within $1 of SUM(usage_account_day) for the same dates.
+For the largest workspace (1awqan) on 2026-09-03: SUM(usage_member_day.ai_cost_usd) equals member_attributable_usd on the workspace_day row to the cent, and SUM(usage_project_day.total_cost_usd) equals total_cost_usd.
+Peak observed request rate stays under 200/min; paste the lowest X-RateLimit-Remaining seen.
+Paste the ingest_reconciliation table.
