@@ -1270,7 +1270,17 @@ export default function Dashboard() {
           <Card>
             <CardContent>
               <div className="overflow-x-auto">
-                <table className="w-full" data-testid="table-groups">
+                <table className="w-full table-fixed" data-testid="table-groups">
+                  <colgroup>
+                    <col className="w-[26%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[13%]" />
+                  </colgroup>
                   <thead>
                     <tr className="border-b border-border">
                       <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4"></th>
@@ -1291,13 +1301,10 @@ export default function Dashboard() {
                         Usage
                       </th>
                       <th
-                        className="text-right text-xs font-medium text-muted-foreground py-3 px-4"
+                        className="whitespace-nowrap text-right text-xs font-medium text-muted-foreground py-3 px-4"
                         title="Projected total spend by May 17 2027 vs budget"
                       >
-                        Pace{" "}
-                        <span className="font-normal opacity-60">
-                          → May '27
-                        </span>
+                        Pace <span className="font-normal opacity-60">→ May '27</span>
                       </th>
                     </tr>
                   </thead>
