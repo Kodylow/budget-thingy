@@ -137,7 +137,7 @@ function fmtRole(role: string): string {
 // ---------- UserActivityCard ----------
 
 function UserActivityCard() {
-  const { data, isLoading, isFetching } = useUserActivity();
+  const { data, isLoading, isFetching, isError } = useUserActivity();
   const [view, setView] = useState<'spenders' | 'inactive'>('spenders');
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -251,6 +251,10 @@ function UserActivityCard() {
         {isLoading && !data ? (
           <div className="px-6 py-8">
             <div className="h-48 w-full animate-pulse-glow bg-muted rounded" />
+          </div>
+        ) : isError && !data ? (
+          <div className="flex h-32 items-center justify-center px-6 text-sm text-muted-foreground">
+            User activity is unavailable.
           </div>
         ) : rows.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-muted-foreground text-sm px-6">
@@ -588,9 +592,9 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
 
           {isLoading && !data ? (
             <div className="h-80 animate-pulse-glow rounded-lg bg-muted" data-testid="trends-skeleton" />
-          ) : isError ? (
-            <div className="grid h-80 place-content-center rounded-lg border border-dashed text-sm text-destructive">
-              Trends could not be loaded. Please try again.
+          ) : isError && !data ? (
+            <div className="grid h-80 place-content-center rounded-lg border border-dashed text-sm text-muted-foreground">
+              Trends are unavailable.
             </div>
           ) : visibleSeries.length === 0 ? (
             <div className="grid h-80 place-content-center rounded-lg border border-dashed text-sm text-muted-foreground">

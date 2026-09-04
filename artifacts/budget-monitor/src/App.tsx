@@ -16,6 +16,9 @@ import {
   QUERY_STALE_TIME_MS,
 } from '@/lib/client-performance';
 import { checkCanAccessSettings } from '@/lib/auth-helpers';
+import { setUnauthorizedHandler } from '@workspace/api-client-react';
+import { clearAuthCache } from '@workspace/replit-auth-web';
+import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
 
 const Settings = lazy(() => import('@/pages/settings'));
 const Trends = lazy(() => import('@/pages/trends'));
@@ -32,11 +35,47 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: QUERY_STALE_TIME_MS,
       refetchOnWindowFocus: false,
-      retry: 1,
+      retry: shouldRetryRequest,
+      retryDelay: 1_000,
+    },
+    mutations: {
+      retry: shouldRetryRequest,
       retryDelay: pollingRetryDelay,
     },
   },
 });
+
+let loginRedirectStarted = false;
+const LOGIN_REDIRECT_DEBOUNCE_KEY = 'budget-monitor-login-redirect-at';
+const LOGIN_REDIRECT_DEBOUNCE_MS = 10_000;
+
+function recentlyRedirectedToLogin(): boolean {
+  try {
+    const redirectedAt = Number(window.sessionStorage.getItem(LOGIN_REDIRECT_DEBOUNCE_KEY));
+    return Number.isFinite(redirectedAt) && Date.now() - redirectedAt < LOGIN_REDIRECT_DEBOUNCE_MS;
+  } catch {
+    return false;
+  }
+}
+
+setUnauthorizedHandler(() => {
+  if (loginRedirectStarted || recentlyRedirectedToLogin()) return;
+  loginRedirectStarted = true;
+  try {
+    window.sessionStorage.setItem(LOGIN_REDIRECT_DEBOUNCE_KEY, String(Date.now()));
+  } catch {
+    // The in-memory guard still deduplicates redirects when storage is blocked.
+  }
+  clearAuthCache();
+  queryClient.clear();
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+  window.location.assign(`/api/login?returnTo=${encodeURIComponent(returnTo)}`);
+});
+
+function ApiErrorToasts() {
+  useApiErrorToasts(queryClient);
+  return null;
+}
 
 function RouteLoading() {
   return (
@@ -100,6 +139,7 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ApiErrorToasts />
       <TooltipProvider>
         <AuthProvider>
           <RangeProvider>

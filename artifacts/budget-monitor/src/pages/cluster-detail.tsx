@@ -299,7 +299,6 @@ export default function ClusterDetail() {
     if (userIds.length === 0) return;
     setBulkApplying(true);
     const outcomes: Array<{ userId: string; success: boolean }> = [];
-    let lastError: unknown;
     for (const batch of chunkMemberIds(userIds)) {
       try {
         const result = await bulkSetLimits.mutateAsync({
@@ -307,8 +306,7 @@ export default function ClusterDetail() {
           data: { userIds: batch, amountUsd },
         });
         outcomes.push(...result.outcomes);
-      } catch (error) {
-        lastError = error;
+      } catch {
         outcomes.push(...batch.map((userId) => ({ userId, success: false })));
       }
     }
@@ -330,9 +328,7 @@ export default function ClusterDetail() {
         : `Updated ${succeeded}; ${failed.size} failed`,
       description: failed.size === 0
         ? `Set selected members to $${amountUsd.toFixed(2)}.`
-        : lastError instanceof Error
-          ? `${lastError.message} Failed members remain selected so you can retry.`
-          : 'Failed members remain selected so you can retry.',
+        : 'Failed members remain selected so you can retry.',
       variant: failed.size === 0 ? 'default' : 'destructive',
     });
   };
@@ -350,6 +346,17 @@ export default function ClusterDetail() {
           {[1, 2].map((i) => <div key={i} className="h-28 bg-muted animate-pulse-glow rounded" />)}
         </div>
         <div className="h-64 bg-muted animate-pulse-glow rounded mt-8" />
+      </div>
+    );
+  }
+
+  if (allLoaded && results.every((r) => !r.data)) {
+    return (
+      <div className="p-4 md:p-8">
+        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+          <ChevronLeft className="mr-1 inline h-4 w-4" /> Back to Dashboard
+        </Link>
+        <p className="mt-4 text-sm text-muted-foreground">Cluster data is unavailable.</p>
       </div>
     );
   }
@@ -435,7 +442,7 @@ export default function ClusterDetail() {
         </Card>
       </div>
 
-      {(workspaceMembersQuery.isError || connectorUnavailable || mutationUnavailable) && (
+      {(connectorUnavailable || mutationUnavailable) && (
         <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm px-4 py-3 rounded-md flex items-start gap-3">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <div>
@@ -659,8 +666,8 @@ export default function ClusterDetail() {
           <CardContent>
             {usageLimitAuditsQuery.isLoading ? (
               <div className="h-16 bg-muted animate-pulse-glow rounded" />
-            ) : usageLimitAuditsQuery.isError ? (
-              <p className="text-sm text-destructive">Usage limit history could not be loaded.</p>
+            ) : usageLimitAuditsQuery.isError && !usageLimitAuditsQuery.data ? (
+              <p className="text-sm text-muted-foreground">Usage limit history is unavailable.</p>
             ) : usageLimitAuditsQuery.data?.length ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -730,7 +737,13 @@ export default function ClusterDetail() {
                 </tr>
               </thead>
               <tbody>
-                {!projectsComplete && mergedProjects.length === 0 ? (
+                {clusterProjectsQuery.isError && !clusterProjectsData ? (
+                  <tr>
+                    <td colSpan={2} className="py-8 text-center text-sm text-muted-foreground">
+                      Project data is unavailable.
+                    </td>
+                  </tr>
+                ) : !projectsComplete && mergedProjects.length === 0 ? (
                   [1, 2, 3].map((i) => (
                     <tr key={i} className="border-b border-border/50">
                       <td className="py-3 px-4"><LoadingCell /></td>

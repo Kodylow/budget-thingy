@@ -91,14 +91,6 @@ function formatAdjustment(amountUsd: number): string {
   return `${amountUsd >= 0 ? '+' : '−'}${currency.format(Math.abs(amountUsd))}`;
 }
 
-function getErrorMessage(error: unknown): string | null {
-  if (!error) return null;
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'object' && 'error' in error) return String((error as { error: unknown }).error);
-  if (typeof error === 'object' && 'message' in error) return String((error as { message: unknown }).message);
-  return String(error);
-}
-
 function StatusBadge({ status }: { status: string }) {
   if (status === 'synced') {
     return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700"><CheckCircle2 className="mr-1 h-3 w-3" />synced</Badge>;
@@ -129,10 +121,8 @@ export default function TeamBudgets() {
   const [allocationDrafts, setAllocationDrafts] = useState<Record<string, string>>({});
   const [optimisticAllocations, setOptimisticAllocations] = useState<Record<string, number>>({});
   const [optimisticVisibility, setOptimisticVisibility] = useState<Record<string, boolean>>({});
-  const [managementError, setManagementError] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [applyOutcomeError, setApplyOutcomeError] = useState<string | null>(null);
 
   const historyQuery = useGetTeamBudgetHistory({
     query: { queryKey: getGetTeamBudgetHistoryQueryKey(), staleTime: 60_000, refetchOnMount: 'always' },
@@ -199,13 +189,7 @@ export default function TeamBudgets() {
   });
   const applyLimits = useApplyTeamBudgetLimits({
     mutation: {
-      onSuccess: (response) => {
-        const failures = response.teams.flatMap((team) =>
-          team.targets
-            .filter((target) => target.outcome === 'failed')
-            .map((target) => `${target.targetGroupName}: ${target.error ?? 'Upstream write failed'}`),
-        );
-        setApplyOutcomeError(failures.length ? failures.join(' · ') : null);
+      onSuccess: () => {
         setConfirmation(null);
         invalidateAll();
       },
@@ -299,12 +283,10 @@ export default function TeamBudgets() {
   const saveAllocation = (team: (typeof teams)[number]) => {
     const value = Number(allocationDrafts[team.teamName]);
     if (!Number.isFinite(value) || value < 0) {
-      setManagementError('Annual allocation must be a non-negative number.');
       cancelAllocationEdit(team.teamName);
       return;
     }
     const previous = displayAllocation(team);
-    setManagementError(null);
     setOptimisticAllocations((old) => ({ ...old, [team.teamName]: value }));
     updateAllocation.mutate(
       { teamName: team.teamName, data: { annualAllocationUsd: value } },
@@ -318,10 +300,9 @@ export default function TeamBudgets() {
           });
           invalidateAll();
         },
-        onError: (error) => {
+        onError: () => {
           setOptimisticAllocations((old) => ({ ...old, [team.teamName]: previous }));
           cancelAllocationEdit(team.teamName);
-          setManagementError(getErrorMessage(error) ?? 'Annual allocation could not be saved.');
         },
       },
     );
@@ -329,7 +310,6 @@ export default function TeamBudgets() {
   const toggleVisibility = (team: (typeof teams)[number]) => {
     const previous = displayHidden(team);
     const nextValue = !previous;
-    setManagementError(null);
     setOptimisticVisibility((old) => ({ ...old, [team.teamName]: nextValue }));
     updateVisibility.mutate(
       { teamName: team.teamName, data: { isHidden: nextValue } },
@@ -342,32 +322,12 @@ export default function TeamBudgets() {
           });
           invalidateAll();
         },
-        onError: (error) => {
+        onError: () => {
           setOptimisticVisibility((old) => ({ ...old, [team.teamName]: previous }));
-          setManagementError(getErrorMessage(error) ?? 'Team visibility could not be saved.');
         },
       },
     );
   };
-
-  const requestErrors = [
-    getErrorMessage(historyQuery.error),
-    canManage ? getErrorMessage(auditQuery.error) : null,
-    canManage ? getErrorMessage(syncQuery.error) : null,
-    canManage ? getErrorMessage(configQuery.error) : null,
-    canManage ? getErrorMessage(groupsQuery.error) : null,
-    getErrorMessage(refresh.error),
-    getErrorMessage(refreshStatus.error),
-    getErrorMessage(updateTeam.error),
-    getErrorMessage(updateAllocation.error),
-    getErrorMessage(updateVisibility.error),
-    getErrorMessage(updateTarget.error),
-    getErrorMessage(updateLegacy.error),
-    getErrorMessage(assignTarget.error),
-    getErrorMessage(applyLimits.error),
-    applyOutcomeError,
-    managementError,
-  ].filter(Boolean);
 
   const driftRows = rowsFor((item) => item.status === 'drift');
   const knownTeamNames = [...new Set(teams.map((team) => team.teamName))];
@@ -410,14 +370,6 @@ export default function TeamBudgets() {
         </div>
       </div>
 
-      {requestErrors.length > 0 && (
-        <Alert variant="destructive" data-testid="alert-team-budget-request-error">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Action needs attention</AlertTitle>
-          <AlertDescription>{requestErrors.join(' · ')}</AlertDescription>
-        </Alert>
-      )}
-
       {canManage && (
         <Alert>
           <ShieldAlert className="h-4 w-4" />
@@ -447,7 +399,10 @@ export default function TeamBudgets() {
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            {configQuery.isLoading ? <div className="p-6"><Skeleton className="h-12 w-full" /></div> : (
+            {configQuery.isLoading && !config ? <div className="p-6"><Skeleton className="h-12 w-full" /></div> :
+            configQuery.isError && !config ? (
+              <div className="p-6 text-sm text-muted-foreground">Limit configuration is unavailable.</div>
+            ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px] text-sm">
                   <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">
@@ -483,8 +438,10 @@ export default function TeamBudgets() {
         </Card>
       )}
 
-      {canManage && (configQuery.isLoading ? (
+      {canManage && (configQuery.isLoading && !config ? (
         <Card><CardContent className="space-y-3 p-6"><Skeleton className="h-20 w-full" /><Skeleton className="h-40 w-full" /></CardContent></Card>
+      ) : configQuery.isError && !config ? (
+        <Card><CardContent className="p-6 text-sm text-muted-foreground">Team limits are unavailable.</CardContent></Card>
       ) : teams.map((team) => {
         const teamConfig = config?.teams.find((item) => item.teamName === team.teamName);
         const targets = (config?.targets ?? []).filter((target) => target.teamName === team.teamName);
@@ -600,7 +557,10 @@ export default function TeamBudgets() {
           <CardDescription>Admin-managed baseline plus approved Airtable adjustments by submission period. Press Enter to save an allocation or Escape to cancel. Account delegates have read-only access.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {historyQuery.isLoading ? <div className="space-y-4 p-6"><Skeleton className="h-10 w-full" /><Skeleton className="h-16 w-full" /></div> : teams.length === 0 ? (
+          {historyQuery.isLoading && !history ? <div className="space-y-4 p-6"><Skeleton className="h-10 w-full" /><Skeleton className="h-16 w-full" /></div> :
+          historyQuery.isError && !history ? (
+            <div className="p-12 text-center text-sm text-muted-foreground">Team allocations are unavailable.</div>
+          ) : teams.length === 0 ? (
             <div className="p-12 text-center text-sm text-muted-foreground">No visible team allocations.</div>
           ) : (
             <div className="overflow-x-auto">
@@ -676,7 +636,10 @@ export default function TeamBudgets() {
             <CardDescription>Allocation and visibility changes are recorded newest first.</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            {auditQuery.isLoading ? <div className="p-6"><Skeleton className="h-20 w-full" /></div> : (auditQuery.data?.changes.length ?? 0) === 0 ? (
+            {auditQuery.isLoading && !auditQuery.data ? <div className="p-6"><Skeleton className="h-20 w-full" /></div> :
+            auditQuery.isError && !auditQuery.data ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">Allocation history is unavailable.</div>
+            ) : (auditQuery.data?.changes.length ?? 0) === 0 ? (
               <div className="p-8 text-center text-sm text-muted-foreground">No administrator changes recorded yet.</div>
             ) : (
               <div className="overflow-x-auto">

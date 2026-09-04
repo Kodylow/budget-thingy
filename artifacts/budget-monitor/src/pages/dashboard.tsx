@@ -81,7 +81,6 @@ import {
   getGetSummaryQueryKey,
   getGetTeamsBudgetsQueryKey,
 } from '@workspace/api-client-react';
-import { useQueryClient } from '@tanstack/react-query';
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { BudgetInput } from '@/components/budget-input';
 import { useLocation } from 'wouter';
@@ -93,6 +92,7 @@ import { filterGroupsForView } from '@/lib/rbac-view';
 import { compareTeamNames, formatTeamName } from '@/lib/team-names';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 import { dashboardPollInterval } from '@/lib/client-performance';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface TeamSection {
   teamName: string;
@@ -108,13 +108,12 @@ interface TeamSection {
 }
 
 export default function Dashboard() {
-  const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const canWrite = useCanWrite();
   const { isAccountWide, role, preview, isPreviewing } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
-  const [retrySyncError, setRetrySyncError] = useState<string | null>(null);
+  const [coverageOpen, setCoverageOpen] = useState(false);
 
   const queryParams = useMemo(
     () => ({
@@ -127,9 +126,6 @@ export default function Dashboard() {
   const {
     data: groupsData,
     isError: groupsRequestFailed,
-    error: groupsRequestError,
-    refetch: refetchGroups,
-    isFetching: groupsFetching,
   } = useListGroups(queryParams, {
     query: {
       queryKey: getListGroupsQueryKey(queryParams),
@@ -142,9 +138,6 @@ export default function Dashboard() {
   const {
     data: summary,
     isError: summaryRequestFailed,
-    error: summaryRequestError,
-    refetch: refetchSummary,
-    isFetching: summaryFetching,
   } = useGetSummary(queryParams, {
     query: {
       queryKey: getGetSummaryQueryKey(queryParams),
@@ -176,30 +169,6 @@ export default function Dashboard() {
       }),
     [groupsData?.groups, role, preview, usageAvailable],
   );
-
-  const retryRequests = async () => {
-    setRetrySyncError(null);
-    const [groupsResult, summaryResult] = await Promise.all([
-      refetchGroups(),
-      refetchSummary(),
-    ]);
-    const error = groupsResult.error ?? summaryResult.error;
-    if (error) {
-      setRetrySyncError(
-        error instanceof Error ? error.message : 'Dashboard data is still unavailable.',
-      );
-    }
-  };
-
-  const requestErrorMessage = groupsRequestFailed
-    ? (groupsRequestError instanceof Error
-        ? groupsRequestError.message
-        : 'Group data is unavailable.')
-    : summaryRequestFailed
-      ? (summaryRequestError instanceof Error
-          ? summaryRequestError.message
-          : 'Summary data is unavailable.')
-      : null;
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
@@ -861,51 +830,50 @@ export default function Dashboard() {
           {(groupsData?.usageHealth.status === 'partial' ||
             groupsData?.usageHealth.status === 'stale' ||
             groupsData?.usageHealth.status === 'empty') && (
-            <Badge
-              variant="outline"
-              className="flex items-center gap-2 border-yellow-500/50 text-yellow-700 dark:text-yellow-300"
-              data-testid="badge-usage-health"
-              title={`Usage coverage: ${Math.round(groupsData.usageHealth.coverage.ratio * 100)}%`}
-            >
-              <AlertTriangle className="h-3 w-3" />
-              <span className="hidden sm:inline">
-                Usage data {groupsData.usageHealth.status}
-              </span>
-            </Badge>
+            <Popover open={coverageOpen} onOpenChange={setCoverageOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  onMouseEnter={() => setCoverageOpen(true)}
+                  data-testid="button-usage-coverage"
+                >
+                  <Badge
+                    variant="outline"
+                    className="flex items-center gap-2 border-yellow-500/50 text-yellow-700 dark:text-yellow-300"
+                    data-testid="badge-usage-health"
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                    <span className="hidden sm:inline">
+                      Usage data {groupsData.usageHealth.status}
+                    </span>
+                  </Badge>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80">
+                <p className="font-medium">
+                  Usage coverage {Math.round(groupsData.usageHealth.coverage.ratio * 100)}%
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Failed workspace-days</p>
+                {groupsData.usageHealth.coverage.failedWorkspaceDays.length > 0 ? (
+                  <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs">
+                    {groupsData.usageHealth.coverage.failedWorkspaceDays.map((item) => (
+                      <li key={`${item.workspaceId}-${item.usageDate}`} className="font-mono">
+                        {item.workspaceId} · {item.usageDate}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">None reported.</p>
+                )}
+              </PopoverContent>
+            </Popover>
           )}
         </div>
       </div>
-      {requestErrorMessage && (
-        <div
-          className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
-          data-testid="dashboard-request-error"
-        >
-          <div>
-            <p className="font-medium text-destructive">Dashboard data could not be refreshed.</p>
-            <p className="text-muted-foreground">
-              {groupsData || summary
-                ? 'Showing the last available data. '
-                : ''}
-              {requestErrorMessage}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="self-start rounded-md border px-3 py-1.5 font-medium hover:bg-muted disabled:opacity-50 sm:self-auto"
-            disabled={groupsFetching || summaryFetching}
-            onClick={() => void retryRequests()}
-          >
-            {groupsFetching || summaryFetching ? 'Retrying…' : 'Retry requests'}
-          </button>
-        </div>
-      )}
-      {retrySyncError && (
-        <div
-          className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-          data-testid="dashboard-retry-error"
-        >
-          {retrySyncError}
-        </div>
+      {(groupsRequestFailed || summaryRequestFailed) && !groupsData && !summary && (
+        <p className="text-sm text-muted-foreground" data-testid="empty-dashboard-failed">
+          Dashboard data is unavailable.
+        </p>
       )}
       {summary && (
         <p className="text-xs text-muted-foreground">

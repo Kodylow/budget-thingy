@@ -24,7 +24,7 @@ export default function Alerts() {
   const [runningCheck, setRunningCheck] = useState(false);
   const [testingAlertId, setTestingAlertId] = useState<number | null>(null);
 
-  const { data: alerts, isLoading } = useListAlerts({ limit: 100 });
+  const { data: alerts, isLoading, isError } = useListAlerts({ limit: 100 });
   const visibleAlerts = filterAlertsForView(alerts ?? [], preview);
   const runCheck = useRunAlertCheck();
   const sendTest = useSendTestAlert();
@@ -40,11 +40,7 @@ export default function Alerts() {
         });
         setRunningCheck(false);
       },
-      onError: () => {
-        toast({
-          title: 'Alert check failed',
-          variant: 'destructive',
-        });
+      onSettled: () => {
         setRunningCheck(false);
       },
     });
@@ -68,14 +64,8 @@ export default function Alerts() {
               variant: 'destructive',
             });
           }
-          setTestingAlertId(null);
         },
-        onError: (err: any) => {
-          toast({
-            title: 'Test email failed',
-              description: err?.data?.error || 'An unexpected error occurred.',
-            variant: 'destructive',
-          });
+        onSettled: () => {
           setTestingAlertId(null);
         },
       },
@@ -122,6 +112,10 @@ export default function Alerts() {
               {[1, 2, 3].map((i) => (
                 <div key={i} className="h-16 bg-muted animate-pulse-glow rounded" />
               ))}
+            </div>
+          ) : isError && !alerts ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Email activity is unavailable.
             </div>
           ) : visibleAlerts.length > 0 ? (
             <div className="space-y-3">
@@ -175,11 +169,6 @@ export default function Alerts() {
                       <p className="break-words" data-testid={`text-recipients-${alert.id}`}>
                         Recipients: {alert.recipients.join(', ')}
                       </p>
-                      {alert.errorMessage && (
-                        <p className="text-destructive text-xs" data-testid={`text-error-${alert.id}`}>
-                          Error: {alert.errorMessage}
-                        </p>
-                      )}
                     </div>
                   </div>
                   <div className="w-full pl-8 sm:w-auto sm:pl-0 flex-shrink-0 flex sm:flex-col items-center sm:items-end justify-between gap-2">

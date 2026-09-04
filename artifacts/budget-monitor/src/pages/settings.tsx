@@ -55,8 +55,8 @@ export default function Settings() {
   const [testThreshold, setTestThreshold] = useState<50 | 75 | 90 | 100>(100);
   const [testResult, setTestResult] = useState<EmailTestResult | null>(null);
 
-  const { data: status, isLoading: statusLoading } = useGetStatus();
-  const { data: editors, isLoading: editorsLoading } = useListEditors();
+  const { data: status, isLoading: statusLoading, isError: statusError } = useGetStatus();
+  const { data: editors, isLoading: editorsLoading, isError: editorsError } = useListEditors();
   const addEditor = useAddEditor();
   const deleteEditor = useDeleteEditor();
   const sendEmailTest = useSendEmailTestExample();
@@ -75,13 +75,6 @@ export default function Settings() {
           setNewEditorUserId('');
           toast({ title: 'Editor added', description: 'Account-wide pool access is now enabled.' });
         },
-        onError: (error: any) => {
-          toast({
-            title: 'Failed to add editor',
-            description: error?.error || 'Confirm the user has signed in to this app.',
-            variant: 'destructive',
-          });
-        },
       },
     );
   };
@@ -94,7 +87,6 @@ export default function Settings() {
           queryClient.invalidateQueries({ queryKey: getListEditorsQueryKey() });
           toast({ title: 'Editor removed' });
         },
-        onError: () => toast({ title: 'Failed to remove editor', variant: 'destructive' }),
       },
     );
   };
@@ -106,16 +98,6 @@ export default function Settings() {
       {
         onSuccess: (result) => {
           setTestResult(result);
-        },
-        onError: (error: any) => {
-          setTestResult({
-            ok: false,
-            recipient: 'kody.low@repl.it',
-            subject: '',
-            error: error?.data?.error || 'Failed to send test email.',
-            messageId: null,
-            senderEmail: null,
-          });
         },
       }
     );
@@ -421,8 +403,10 @@ export default function Settings() {
                 </div>
               )}
             </div>
+          ) : statusError && !status ? (
+            <p className="text-muted-foreground text-sm">System status is unavailable.</p>
           ) : (
-            <p className="text-muted-foreground text-sm">Unable to load status</p>
+            <p className="text-muted-foreground text-sm">No system status is available.</p>
           )}
         </CardContent>
       </Card>
@@ -458,6 +442,8 @@ export default function Settings() {
           </div>
           {editorsLoading ? (
             <div className="h-12 bg-muted animate-pulse-glow rounded" />
+          ) : editorsError && !editors ? (
+            <p className="text-sm text-muted-foreground">Editor data is unavailable.</p>
           ) : editors && editors.length > 0 ? (
             <div className="space-y-2">
               {editors.map((editor) => (

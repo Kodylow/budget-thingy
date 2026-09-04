@@ -26,6 +26,14 @@ interface AuthState {
   logout: () => void;
 }
 
+type AuthCacheClearListener = () => void;
+const authCacheClearListeners = new Set<AuthCacheClearListener>();
+
+/** Clears the in-memory browser auth snapshot without making a server call. */
+export function clearAuthCache(): void {
+  authCacheClearListeners.forEach((listener) => listener());
+}
+
 function getBasePath() {
   return import.meta.env.BASE_URL.replace(/\/+$/, '') || '/';
 }
@@ -63,6 +71,19 @@ export function useAuth(): AuthState {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const clear = () => {
+      setUser(null);
+      setAuth(null);
+      setCapabilities(null);
+      setIsLoading(false);
+    };
+    authCacheClearListeners.add(clear);
+    return () => {
+      authCacheClearListeners.delete(clear);
     };
   }, []);
 

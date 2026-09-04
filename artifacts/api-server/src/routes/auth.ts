@@ -15,8 +15,7 @@ import {
   getOidcConfig,
   getSessionId,
   ISSUER_URL,
-  SESSION_COOKIE,
-  SESSION_TTL,
+  setSessionCookie,
   type SessionData,
 } from '../lib/auth';
 import {
@@ -36,16 +35,6 @@ function getOrigin(req: Request): string {
   const host =
     req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost';
   return `${proto}://${host}`;
-}
-
-function setSessionCookie(res: Response, sid: string) {
-  res.cookie(SESSION_COOKIE, sid, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: SESSION_TTL,
-  });
 }
 
 function setOidcCookie(res: Response, name: string, value: string) {
@@ -172,7 +161,7 @@ router.get('/login', async (req: Request, res: Response) => {
 
   const redirectTo = oidc.buildAuthorizationUrl(config, {
     redirect_uri: callbackUrl,
-    scope: 'openid email profile offline_access',
+    scope: 'openid email profile',
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
     prompt: 'login consent',
@@ -242,7 +231,6 @@ router.get('/callback', async (req: Request, res: Response) => {
     req.log.error({ err }, 'editor bootstrap failed');
   });
 
-  const now = Math.floor(Date.now() / 1000);
   const sessionData: SessionData = {
     user: {
       id: dbUser.id,
@@ -251,9 +239,6 @@ router.get('/callback', async (req: Request, res: Response) => {
       lastName: dbUser.lastName,
       profileImageUrl: dbUser.profileImageUrl,
     },
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_at: tokens.expiresIn() ? now + tokens.expiresIn()! : claims.exp,
   };
 
   const sid = await createSession(sessionData);
@@ -358,7 +343,6 @@ router.post(
         req.log.error({ err }, 'editor bootstrap failed');
       });
 
-      const now = Math.floor(Date.now() / 1000);
       const sessionData: SessionData = {
         user: {
           id: dbUser.id,
@@ -367,9 +351,6 @@ router.post(
           lastName: dbUser.lastName,
           profileImageUrl: dbUser.profileImageUrl,
         },
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: tokens.expiresIn() ? now + tokens.expiresIn()! : claims.exp,
       };
 
       const sid = await createSession(sessionData);

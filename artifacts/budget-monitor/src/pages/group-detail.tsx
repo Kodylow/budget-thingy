@@ -54,7 +54,7 @@ export default function GroupDetail() {
     }
   });
 
-  const { data: projectsData } = useGetGroupProjects(groupId, queryParams, {
+  const { data: projectsData, isError: projectsError } = useGetGroupProjects(groupId, queryParams, {
     query: {
       queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
       refetchInterval: (query) =>
@@ -113,7 +113,7 @@ export default function GroupDetail() {
             <ChevronLeft className="h-4 w-4" /> Back to Dashboard
           </Link>
         </div>
-        <p className="text-muted-foreground">Group not found.</p>
+        <p className="text-muted-foreground">Group data is unavailable.</p>
       </div>
     );
   }
@@ -174,7 +174,6 @@ export default function GroupDetail() {
   });
   const connector = workspaceMembersQuery.data?.connector;
   const connectorUnavailable =
-    workspaceMembersQuery.isError ||
     connector?.status === 'unavailable' ||
     connector?.status === 'error';
   const mutationUnavailable =
@@ -422,7 +421,13 @@ export default function GroupDetail() {
                 </tr>
               </thead>
               <tbody>
-                {!projectsUsageAvailable && (!projectsData || projectsData.projects.length === 0) ? (
+                {projectsError && !projectsData ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                      Project data is unavailable.
+                    </td>
+                  </tr>
+                ) : !projectsUsageAvailable && (!projectsData || projectsData.projects.length === 0) ? (
                   // Skeleton rows while loading
                   [1, 2, 3].map((i) => (
                     <tr key={i} className="border-b border-border/50">
