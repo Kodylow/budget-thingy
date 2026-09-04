@@ -136,7 +136,9 @@ import { RangeFilter } from "@/components/range-filter";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { roleBadgeClass, roleLabel } from "@/lib/hierarchy-presentation";
 import {
-  reportDashboardNumbersPainted,
+  markDashboardMilestone,
+  reportDashboardMilestonePainted,
+  type DashboardPerformanceContext,
 } from "@/lib/client-performance";
 import {
   allocateWorkspaceTeamBudgets,
@@ -828,14 +830,30 @@ export default function Dashboard() {
   );
   const initialExpansionSignature = useRef("");
   const [showLegacyGroups, setShowLegacyGroups] = useState(false);
-  const dashboardReadyMeasured = useRef(false);
+  const dashboardMeasurement = useRef<{
+    signature: string;
+    context: DashboardPerformanceContext;
+    phaseStartMark: string;
+    isRangeChange: boolean;
+    requiredRequestsComplete: boolean;
+    firstUsefulPainted: boolean;
+    allRequiredPainted: boolean;
+    refreshStartMark: string | null;
+    cleanupPaints: Array<() => void>;
+  } | null>(null);
 
   const queryParams = useMemo(
     () => buildRangeQueryParams(rangeType, startDate, endDate),
     [rangeType, startDate, endDate],
   );
 
-  const { data: groupsData, isFetching: groupsFetching } = useListGroups(
+  const {
+    data: groupsData,
+    isError: groupsError,
+    isFetched: groupsFetched,
+    isFetching: groupsFetching,
+    isPlaceholderData: groupsPlaceholder,
+  } = useListGroups(
     queryParams,
     {
       query: {
@@ -845,7 +863,13 @@ export default function Dashboard() {
     },
   );
 
-  const { data: summary, isFetching: summaryFetching } = useGetSummary(
+  const {
+    data: summary,
+    isError: summaryError,
+    isFetched: summaryFetched,
+    isFetching: summaryFetching,
+    isPlaceholderData: summaryPlaceholder,
+  } = useGetSummary(
     queryParams,
     {
       query: {
@@ -854,12 +878,22 @@ export default function Dashboard() {
       },
     },
   );
-  const { data: teamBudgetsData } = useGetTeamsBudgets({
+  const {
+    data: teamBudgetsData,
+    isError: teamBudgetsError,
+    isFetched: teamBudgetsFetched,
+    isFetching: teamBudgetsFetching,
+  } = useGetTeamsBudgets({
       query: {
         queryKey: getGetTeamsBudgetsQueryKey(),
       },
     });
-  const { data: memberCycleActivity } = useGetUserActivity(
+  const {
+    data: memberCycleActivity,
+    isError: memberCycleError,
+    isFetched: memberCycleFetched,
+    isFetching: memberCycleFetching,
+  } = useGetUserActivity(
     { rangeType: "billing" },
     {
       query: {
@@ -868,7 +902,12 @@ export default function Dashboard() {
       },
     },
   );
-  const { data: memberTermActivity } = useGetUserActivity(
+  const {
+    data: memberTermActivity,
+    isError: memberTermError,
+    isFetched: memberTermFetched,
+    isFetching: memberTermFetching,
+  } = useGetUserActivity(
     { rangeType: "full-term" },
     {
       query: {
@@ -907,17 +946,176 @@ export default function Dashboard() {
     ),
   });
 
+  const scopeKey = JSON.stringify({
+    userId: user?.id ?? null,
+    role,
+    preview: auth?.isPreview ?? false,
+    workspaceIds: auth?.workspaceIds ?? [],
+    teamNames: auth?.teamNames ?? [],
+    groupIds: auth?.groupIds ?? [],
+    userIds: auth?.userIds ?? [],
+  });
+  const rangeKey = JSON.stringify(queryParams);
+  const measurementSignature = `${scopeKey}|${rangeKey}`;
+  const memberLimitsFetching = memberLimitQueries.some((query) => query.isFetching);
+  const memberLimitsSettled = role !== "member" || (
+    groupsData !== undefined &&
+    memberLimitQueries.every((query) => query.isFetched || query.isError) &&
+    !memberLimitsFetching
+  );
+  const memberLimitValuesReady = role !== "member" || (
+    groupsData !== undefined &&
+    memberLimitQueries.every((query) => query.data !== undefined)
+  );
+  const memberRequestsSettled = role !== "member" || (
+    (memberCycleFetched || memberCycleError) &&
+    (memberTermFetched || memberTermError) &&
+    !memberCycleFetching &&
+    !memberTermFetching &&
+    memberLimitsSettled
+  );
+  const memberValuesReady = role !== "member" || (
+    memberCycleActivity !== undefined &&
+    memberTermActivity !== undefined &&
+    memberLimitValuesReady
+  );
+  const requiredRequestsFetching =
+    groupsFetching ||
+    summaryFetching ||
+    teamBudgetsFetching ||
+    memberCycleFetching ||
+    memberTermFetching ||
+    memberLimitsFetching;
+  const requiredRequestsSettled =
+    (groupsFetched || groupsError) &&
+    (summaryFetched || summaryError) &&
+    (teamBudgetsFetched || teamBudgetsError) &&
+    memberRequestsSettled &&
+    !requiredRequestsFetching;
+  const currentRangeValuesReady =
+    groupsData !== undefined &&
+    summary !== undefined &&
+    !groupsPlaceholder &&
+    !summaryPlaceholder;
+  const firstUsefulValuesReady = currentRangeValuesReady && memberValuesReady;
+  const allRequiredValuesReady =
+    firstUsefulValuesReady &&
+    teamBudgetsData !== undefined &&
+    requiredRequestsSettled;
+
   useLayoutEffect(() => {
+    const previous = dashboardMeasurement.current;
+    if (!previous || previous.signature !== measurementSignature) {
+      previous?.cleanupPaints.forEach((cleanup) => cleanup());
+      const generation = (previous?.context.generation ?? 0) + 1;
+      const context = { generation, scopeKey, rangeKey };
+      const isRangeChange = Boolean(
+        previous &&
+        previous.context.scopeKey === scopeKey &&
+        previous.context.rangeKey !== rangeKey,
+      );
+      const phaseStartMark = markDashboardMilestone(
+        isRangeChange ? "range-change-start" : "initial-load-start",
+        context,
+      );
+      dashboardMeasurement.current = {
+        signature: measurementSignature,
+        context,
+        phaseStartMark,
+        isRangeChange,
+        requiredRequestsComplete: false,
+        firstUsefulPainted: false,
+        allRequiredPainted: false,
+        refreshStartMark: null,
+        cleanupPaints: [],
+      };
+    }
+
+    const measurement = dashboardMeasurement.current;
+    if (!measurement) return;
+
     if (
-      dashboardReadyMeasured.current ||
-      !groupsData ||
-      !summary ||
-      groupsFetching ||
-      summaryFetching
-    ) return;
-    dashboardReadyMeasured.current = true;
-    return reportDashboardNumbersPainted();
-  }, [groupsData, groupsFetching, summary, summaryFetching]);
+      measurement.allRequiredPainted &&
+      requiredRequestsFetching &&
+      !measurement.refreshStartMark
+    ) {
+      measurement.refreshStartMark = markDashboardMilestone(
+        "background-refresh-start",
+        measurement.context,
+      );
+    }
+
+    if (requiredRequestsSettled && !measurement.requiredRequestsComplete) {
+      markDashboardMilestone("required-requests-complete", measurement.context);
+      measurement.requiredRequestsComplete = true;
+    }
+
+    if (firstUsefulValuesReady && !measurement.firstUsefulPainted) {
+      const readyMark = markDashboardMilestone(
+        "first-useful-values-ready",
+        measurement.context,
+      );
+      measurement.cleanupPaints.push(reportDashboardMilestonePainted(
+        "first-useful-values",
+        measurement.context,
+        readyMark,
+        measurement.isRangeChange ? measurement.phaseStartMark : undefined,
+      ));
+      measurement.firstUsefulPainted = true;
+    }
+
+    if (allRequiredValuesReady && !measurement.allRequiredPainted) {
+      const readyMark = markDashboardMilestone(
+        "all-required-values-ready",
+        measurement.context,
+      );
+      measurement.cleanupPaints.push(reportDashboardMilestonePainted(
+        "all-required-values",
+        measurement.context,
+        readyMark,
+        measurement.phaseStartMark,
+      ));
+      if (measurement.isRangeChange) {
+        measurement.cleanupPaints.push(reportDashboardMilestonePainted(
+          "range-change-complete",
+          measurement.context,
+          readyMark,
+          measurement.phaseStartMark,
+        ));
+      }
+      measurement.allRequiredPainted = true;
+    }
+
+    if (
+      measurement.refreshStartMark &&
+      requiredRequestsSettled &&
+      allRequiredValuesReady
+    ) {
+      const readyMark = markDashboardMilestone(
+        "background-refresh-ready",
+        measurement.context,
+      );
+      measurement.cleanupPaints.push(reportDashboardMilestonePainted(
+        "background-refresh-complete",
+        measurement.context,
+        readyMark,
+        measurement.refreshStartMark,
+      ));
+      measurement.refreshStartMark = null;
+    }
+  }, [
+    allRequiredValuesReady,
+    firstUsefulValuesReady,
+    measurementSignature,
+    rangeKey,
+    requiredRequestsFetching,
+    requiredRequestsSettled,
+    scopeKey,
+  ]);
+
+  useEffect(() => () => {
+    dashboardMeasurement.current?.cleanupPaints.forEach((cleanup) => cleanup());
+  }, []);
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {

@@ -37,29 +37,101 @@ export function dashboardPollInterval(
   return progressivePollInterval(data, dataUpdateCount, queryStatus);
 }
 
-export function reportDashboardNumbersPainted(): () => void {
-  const fetchCompleteMark = 'dashboard-final-fetch-complete';
-  const numbersPaintedMark = 'dashboard-numbers-painted';
-  const fetchToPaintMeasurement = 'dashboard-fetch-complete-to-numbers-painted';
-  const navigationToPaintMeasurement = 'dashboard-navigation-to-numbers-painted';
+export type DashboardPerformanceMilestone =
+  | 'initial-load-start'
+  | 'range-change-start'
+  | 'background-refresh-start'
+  | 'required-requests-complete'
+  | 'first-useful-values-ready'
+  | 'all-required-values-ready'
+  | 'background-refresh-ready';
 
-  performance.mark(fetchCompleteMark);
+export interface DashboardPerformanceContext {
+  generation: number;
+  scopeKey: string;
+  rangeKey: string;
+}
+
+function dashboardEntryName(
+  milestone: string,
+  context: DashboardPerformanceContext,
+): string {
+  return `dashboard-${milestone}:g${context.generation}`;
+}
+
+function logDashboardPerformance(
+  kind: 'mark' | 'measure',
+  name: string,
+  durationMs: number | undefined,
+  context: DashboardPerformanceContext,
+): void {
+  console.info('[performance]', JSON.stringify({
+    kind,
+    name,
+    durationMs: durationMs === undefined ? undefined : Number(durationMs.toFixed(1)),
+    ...context,
+  }));
+}
+
+export function markDashboardMilestone(
+  milestone: DashboardPerformanceMilestone,
+  context: DashboardPerformanceContext,
+): string {
+  const name = dashboardEntryName(milestone, context);
+  performance.mark(name, { detail: context });
+  logDashboardPerformance('mark', name, undefined, context);
+  return name;
+}
+
+/**
+ * Records the first paint after a Dashboard data milestone. The caller owns
+ * request readiness; this helper deliberately measures paint separately.
+ */
+export function reportDashboardMilestonePainted(
+  milestone:
+    | 'first-useful-values'
+    | 'all-required-values'
+    | 'range-change-complete'
+    | 'background-refresh-complete',
+  context: DashboardPerformanceContext,
+  readyMark: string,
+  phaseStartMark?: string,
+): () => void {
+  const paintedMark = dashboardEntryName(`${milestone}-painted`, context);
+  const readyToPaintMeasurement = dashboardEntryName(
+    `${milestone}-ready-to-painted`,
+    context,
+  );
+  const phaseMeasurement = dashboardEntryName(`${milestone}-duration`, context);
   let paintedFrame = 0;
   const committedFrame = requestAnimationFrame(() => {
     paintedFrame = requestAnimationFrame(() => {
-      performance.mark(numbersPaintedMark);
-      performance.measure(fetchToPaintMeasurement, fetchCompleteMark, numbersPaintedMark);
-      const paintedAt = performance.getEntriesByName(numbersPaintedMark).at(-1)?.startTime;
-      if (paintedAt !== undefined) {
-        performance.measure(navigationToPaintMeasurement, {
-          start: 0,
-          duration: paintedAt,
-        });
-      }
-      for (const measurement of [fetchToPaintMeasurement, navigationToPaintMeasurement]) {
-        const duration = performance.getEntriesByName(measurement).at(-1)?.duration;
-        if (duration !== undefined) {
-          console.info(`[performance] ${measurement}: ${duration.toFixed(1)}ms`);
+      performance.mark(paintedMark, { detail: context });
+      performance.measure(readyToPaintMeasurement, readyMark, paintedMark);
+      const readyToPaintDuration = performance
+        .getEntriesByName(readyToPaintMeasurement)
+        .at(-1)?.duration;
+      logDashboardPerformance(
+        'measure',
+        readyToPaintMeasurement,
+        readyToPaintDuration,
+        context,
+      );
+
+      if (phaseStartMark) {
+        performance.measure(phaseMeasurement, phaseStartMark, paintedMark);
+        const phaseDuration = performance
+          .getEntriesByName(phaseMeasurement)
+          .at(-1)?.duration;
+        logDashboardPerformance('measure', phaseMeasurement, phaseDuration, context);
+      } else if (milestone === 'first-useful-values') {
+        const paintedAt = performance.getEntriesByName(paintedMark).at(-1)?.startTime;
+        if (paintedAt !== undefined) {
+          performance.measure(phaseMeasurement, {
+            start: 0,
+            duration: paintedAt,
+          });
+          logDashboardPerformance('measure', phaseMeasurement, paintedAt, context);
         }
       }
     });

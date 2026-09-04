@@ -8,8 +8,8 @@ import {
 } from './range-selection.ts';
 
 test('full term uses the spend cutoff through the UTC calendar date', () => {
-  const localDate = new Date(2026, 7, 28, 23, 59, 59);
-  expect(fullTermDates(localDate)).toEqual({
+  const utcInstant = new Date('2026-08-28T23:59:59.000Z');
+  expect(fullTermDates(utcInstant)).toEqual({
     startDate: '2026-05-20',
     endDate: '2026-08-28',
   });
