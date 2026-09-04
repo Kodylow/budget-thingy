@@ -6,6 +6,10 @@ import { Badge } from '@/components/ui/badge';
 import { AlertCircle, CheckCircle, Trash2, Plus, XCircle, Send, ShieldAlert } from 'lucide-react';
 import {
   useGetStatus,
+  getGetStatusQueryKey,
+  useGetEmailSettings,
+  useUpdateEmailSettings,
+  getGetEmailSettingsQueryKey,
   useListAppAdmins,
   useAddAppAdmin,
   useDeleteAppAdmin,
@@ -23,6 +27,11 @@ import {
   getTestEmailResultView,
 } from '@/lib/test-email-helpers';
 import { getEnterpriseApiStatusPresentation } from '@/lib/enterprise-api-status';
+import {
+  getAutomatedEmailPolicyPresentation,
+  getEmailConnectorPresentation,
+} from '@/lib/email-policy';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -55,12 +64,24 @@ export default function Settings() {
   const [testResult, setTestResult] = useState<EmailTestResult | null>(null);
 
   const { data: status, isLoading: statusLoading, isError: statusError } = useGetStatus();
+  const {
+    data: emailSettings,
+    isLoading: emailSettingsLoading,
+    isError: emailSettingsError,
+  } = useGetEmailSettings();
   const { data: editors, isLoading: editorsLoading, isError: editorsError } = useListAppAdmins();
   const addEditor = useAddAppAdmin();
   const deleteEditor = useDeleteAppAdmin();
   const sendEmailTest = useSendEmailTestExample();
+  const updateEmailSettings = useUpdateEmailSettings();
   const enterpriseApi = status
     ? getEnterpriseApiStatusPresentation(status)
+    : null;
+  const connectorPresentation = status
+    ? getEmailConnectorPresentation(status.emailConfigured)
+    : null;
+  const emailPolicyPresentation = emailSettings
+    ? getAutomatedEmailPolicyPresentation(emailSettings.automatedEmailEnabled)
     : null;
 
   const handleAddEditor = () => {
@@ -117,6 +138,33 @@ export default function Settings() {
     if (open) {
       setTestResult(null);
     }
+  };
+
+  const handleAutomatedEmailChange = (automatedEmailEnabled: boolean) => {
+    updateEmailSettings.mutate(
+      { data: { automatedEmailEnabled } },
+      {
+        onSuccess: (saved) => {
+          queryClient.setQueryData(getGetEmailSettingsQueryKey(), saved);
+          queryClient.invalidateQueries({ queryKey: getGetStatusQueryKey() });
+          toast({
+            title: saved.automatedEmailEnabled
+              ? 'Automated email delivery enabled'
+              : 'Automated email delivery disabled',
+            description: saved.automatedEmailEnabled
+              ? 'Still-due threshold alerts can send on the next budget check.'
+              : 'Budget checks will preserve due alerts without sending them.',
+          });
+        },
+        onError: () => {
+          toast({
+            variant: 'destructive',
+            title: 'Email setting was not saved',
+            description: 'The previous automated delivery policy is still active.',
+          });
+        },
+      },
+    );
   };
 
   if (!canAccessSettings) {
@@ -193,7 +241,7 @@ export default function Settings() {
                 </Badge>
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg border border-border" data-testid="status-email">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg border border-border" data-testid="status-email-connector">
                 <div className="flex items-start sm:items-center gap-3">
                   {status.emailConfigured ? (
                     <CheckCircle className="h-5 w-5 text-chart-1 shrink-0 mt-0.5 sm:mt-0" />
@@ -201,15 +249,15 @@ export default function Settings() {
                     <AlertCircle className="h-5 w-5 text-chart-2 shrink-0 mt-0.5 sm:mt-0" />
                   )}
                   <div>
-                    <p className="text-sm font-medium">Email Sending</p>
+                    <p className="text-sm font-medium">Email Connector</p>
                     <p className="text-xs text-muted-foreground">
-                      {status.emailConfigured ? 'Configured' : 'Not configured'}
+                      {connectorPresentation?.detail}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge className="w-fit" variant={status.emailConfigured ? 'default' : 'secondary'}>
-                    {status.emailConfigured ? 'OK' : 'Not Set'}
+                    {connectorPresentation?.label}
                   </Badge>
                   {capabilities.canManageAccess && (
                     <Dialog open={testModalOpen} onOpenChange={handleModalOpenChange}>
@@ -322,6 +370,65 @@ export default function Settings() {
                       </DialogContent>
                     </Dialog>
                   )}
+                </div>
+              </div>
+
+              <div
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-3 rounded-lg border border-border"
+                data-testid="setting-automated-email"
+              >
+                <div className="flex items-start gap-3">
+                  {emailSettings?.automatedEmailEnabled ? (
+                    <CheckCircle className="h-5 w-5 text-chart-1 shrink-0 mt-0.5" />
+                  ) : (
+                    <ShieldAlert className="h-5 w-5 text-chart-2 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <label
+                      htmlFor="automated-email-toggle"
+                      className="text-sm font-medium cursor-pointer"
+                    >
+                      Automated budget-alert delivery
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {emailSettingsLoading
+                        ? 'Loading saved delivery policy…'
+                        : emailSettingsError
+                          ? 'The saved delivery policy could not be loaded.'
+                          : emailPolicyPresentation?.detail}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      This does not configure AgentMail or disable the fixed-recipient Test Email.
+                    </p>
+                    {updateEmailSettings.isError && (
+                      <p className="text-xs text-destructive mt-1" role="alert">
+                        Save failed. The previous policy remains active.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 self-end sm:self-auto">
+                  <Badge
+                    variant={emailSettings?.automatedEmailEnabled ? 'default' : 'secondary'}
+                    data-testid="automated-email-state"
+                  >
+                    {updateEmailSettings.isPending
+                      ? 'Saving…'
+                      : emailPolicyPresentation?.label ?? 'Unknown'}
+                  </Badge>
+                  <Switch
+                    id="automated-email-toggle"
+                    aria-label="Enable automated budget-alert delivery"
+                    checked={emailSettings?.automatedEmailEnabled ?? false}
+                    disabled={
+                      emailSettingsLoading ||
+                      emailSettingsError ||
+                      !emailSettings ||
+                      updateEmailSettings.isPending
+                    }
+                    onCheckedChange={handleAutomatedEmailChange}
+                    data-testid="switch-automated-email"
+                  />
                 </div>
               </div>
 

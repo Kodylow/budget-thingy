@@ -1587,6 +1587,51 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /settings/email:
+    get:
+      operationId: getEmailSettings
+      tags: [status]
+      summary: Get automated email delivery policy
+      description: Returns the persisted global policy for automated budget-alert delivery.
+      responses:
+        "200":
+          description: Email settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateEmailSettings
+      tags: [status]
+      summary: Update automated email delivery policy
+      description: Enables or disables automated budget-alert delivery without affecting fixed-recipient test sends.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailSettingsUpdate"
+      responses:
+        "200":
+          description: Updated email settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "400":
+          description: Invalid email settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /status:
     get:
       operationId: getStatus
@@ -3165,6 +3210,23 @@ components:
           type: boolean
         skipReason:
           type: ["string", "null"]
+    EmailSettings:
+      type: object
+      required: [automatedEmailEnabled, updatedAt]
+      properties:
+        automatedEmailEnabled:
+          type: boolean
+          description: Whether scheduled and manually triggered budget checks may send threshold emails
+        updatedAt:
+          type: string
+          format: date-time
+    EmailSettingsUpdate:
+      type: object
+      additionalProperties: false
+      required: [automatedEmailEnabled]
+      properties:
+        automatedEmailEnabled:
+          type: boolean
     SystemStatus:
       type: object
       required:
@@ -3172,6 +3234,7 @@ components:
           enterpriseApiConfigured,
           enterpriseApiOk,
           emailConfigured,
+          automatedEmailEnabled,
           checkerIntervalMinutes,
           lastCheckAt,
           lastSuccessfulEvaluationAt,
@@ -3208,7 +3271,10 @@ components:
           description: Last Enterprise API error message, if any
         emailConfigured:
           type: boolean
-          description: Whether the email connector is set up
+          description: Whether the email connector transport is set up
+        automatedEmailEnabled:
+          type: boolean
+          description: Whether automated budget-alert delivery is enabled by persisted policy
         checkerIntervalMinutes:
           type: integer
         lastCheckAt:

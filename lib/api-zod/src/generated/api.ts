@@ -1624,6 +1624,30 @@ export const SendEmailTestExampleResponse = zod.object({
 
 
 /**
+ * Returns the persisted global policy for automated budget-alert delivery.
+ * @summary Get automated email delivery policy
+ */
+export const GetEmailSettingsResponse = zod.object({
+  "automatedEmailEnabled": zod.boolean().describe('Whether scheduled and manually triggered budget checks may send threshold emails'),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * Enables or disables automated budget-alert delivery without affecting fixed-recipient test sends.
+ * @summary Update automated email delivery policy
+ */
+export const UpdateEmailSettingsBody = zod.object({
+  "automatedEmailEnabled": zod.boolean()
+})
+
+export const UpdateEmailSettingsResponse = zod.object({
+  "automatedEmailEnabled": zod.boolean().describe('Whether scheduled and manually triggered budget checks may send threshold emails'),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * Enterprise API connectivity, email configuration, and background checker state.
  * @summary System status
  */
@@ -1631,7 +1655,8 @@ export const GetStatusResponse = zod.object({
   "enterpriseApiConfigured": zod.boolean().describe('Whether REPLIT_ENTERPRISE_API_KEY is set'),
   "enterpriseApiOk": zod.boolean().describe('Whether the last Enterprise API call succeeded'),
   "enterpriseApiError": zod.string().nullish().describe('Last Enterprise API error message, if any'),
-  "emailConfigured": zod.boolean().describe('Whether the email connector is set up'),
+  "emailConfigured": zod.boolean().describe('Whether the email connector transport is set up'),
+  "automatedEmailEnabled": zod.boolean().describe('Whether automated budget-alert delivery is enabled by persisted policy'),
   "checkerIntervalMinutes": zod.number(),
   "lastCheckAt": zod.string().nullable().describe('Alias for lastSuccessfulEvaluationAt'),
   "lastSuccessfulEvaluationAt": zod.string().nullable(),

@@ -225,6 +225,13 @@
       "when": 1788572000000,
       "tag": "0031_reset_draft_target_inference",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1788573000000,
+      "tag": "0032_notification_settings",
+      "breakpoints": true
     }
   ]
 }

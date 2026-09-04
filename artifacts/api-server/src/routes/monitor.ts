@@ -79,6 +79,9 @@ import {
   GetUserActivityResponse,
   GetAccountUsageObservationExportQueryParams,
   GetAccountUsageObservationExportResponse,
+  GetEmailSettingsResponse,
+  UpdateEmailSettingsBody,
+  UpdateEmailSettingsResponse,
 } from "@workspace/api-zod";
 
 function escapeCsvCell(value: unknown): string {
@@ -166,6 +169,10 @@ import {
   type SnapshotUsageRollup,
 } from "../lib/usage-rollup";
 import { BACKGROUND_CYCLE_INTERVAL_MINUTES, runCycle } from "../lib/ingest";
+import {
+  getNotificationSettings,
+  updateNotificationSettings,
+} from "../lib/notification-settings";
 
 const router: IRouter = Router();
 
@@ -2553,10 +2560,44 @@ router.post(
   },
 );
 
+router.get(
+  "/settings/email",
+  requireCapability("canManageAccess"),
+  async (_req, res): Promise<void> => {
+    const settings = await getNotificationSettings();
+    res.json(GetEmailSettingsResponse.parse({
+      automatedEmailEnabled: settings.automatedEmailEnabled,
+      updatedAt: settings.updatedAt.toISOString(),
+    }));
+  },
+);
+
+router.patch(
+  "/settings/email",
+  requireCapability("canManageAccess"),
+  async (req, res): Promise<void> => {
+    const update = UpdateEmailSettingsBody.safeParse(req.body);
+    if (!update.success) {
+      res.status(400).json({ error: "automatedEmailEnabled must be a boolean" });
+      return;
+    }
+    const settings = await updateNotificationSettings(
+      update.data.automatedEmailEnabled,
+    );
+    res.json(UpdateEmailSettingsResponse.parse({
+      automatedEmailEnabled: settings.automatedEmailEnabled,
+      updatedAt: settings.updatedAt.toISOString(),
+    }));
+  },
+);
+
 // System status is account-only configuration; not exposed to workspace admins.
 router.get("/status", requireRole("account"), async (_req, res): Promise<void> => {
   const health = getApiHealth();
-  const emailConfigured = await isEmailConfigured();
+  const [emailConfigured, notificationSettings] = await Promise.all([
+    isEmailConfigured(),
+    getNotificationSettings(),
+  ]);
   const billingPeriod = getBillingPeriodMetadata();
   const reportingRange = windowFromQuery({ rangeType: "billing" });
   const checker = getCheckerState();
@@ -2602,6 +2643,7 @@ router.get("/status", requireRole("account"), async (_req, res): Promise<void> =
       enterpriseApiOk: health.ok,
       enterpriseApiError: health.error,
       emailConfigured,
+      automatedEmailEnabled: notificationSettings.automatedEmailEnabled,
       checkerIntervalMinutes: BACKGROUND_CYCLE_INTERVAL_MINUTES,
       lastCheckAt: getLastCheckAt()?.toISOString() ?? null,
       lastSuccessfulEvaluationAt: checker.lastSuccessfulEvaluationAt?.toISOString() ?? null,

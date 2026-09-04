@@ -102,6 +102,10 @@ import {
   runCheck,
   THRESHOLDS,
 } from "./checker";
+import {
+  getNotificationSettings,
+  updateNotificationSettings,
+} from "./notification-settings";
 import { invalidateUsageSnapshotMemo } from "./usage-store";
 import type { EnterpriseGroup } from "./enterprise";
 
@@ -120,7 +124,7 @@ beforeEach(async () => {
       team_budgets, team_limit_targets, workspace_default_limit_targets,
       team_budget_upstream_sync, admin_emails, budget_checker_state,
       api_project_metadata, usage_member_day, usage_project_day,
-      usage_workspace_day, usage_account_day CASCADE;
+      usage_workspace_day, usage_account_day, notification_settings CASCADE;
     CREATE TABLE alerts (
       id SERIAL PRIMARY KEY, group_id TEXT NOT NULL, group_name TEXT NOT NULL,
       entity_type TEXT NOT NULL DEFAULT 'group', entity_id TEXT NOT NULL DEFAULT '',
@@ -194,6 +198,11 @@ beforeEach(async () => {
       last_evaluated_data_as_of TIMESTAMPTZ, last_attempt_at TIMESTAMPTZ,
       last_skip_reason TEXT
     );
+    CREATE TABLE notification_settings (
+      id TEXT PRIMARY KEY DEFAULT 'singleton',
+      automated_email_enabled BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE api_project_metadata (
       workspace_id TEXT NOT NULL, project_id TEXT NOT NULL, title TEXT,
       creator_id TEXT, fetched_at TIMESTAMPTZ NOT NULL,
@@ -224,6 +233,8 @@ beforeEach(async () => {
     );
     INSERT INTO group_budgets(group_id, amount_usd) VALUES ('grp-1', 1000);
     INSERT INTO admin_emails(email) VALUES ('admin@example.com');
+    INSERT INTO notification_settings(id, automated_email_enabled)
+    VALUES ('singleton', true);
   `);
   groups = [GROUP];
   groupMembers = new Map([[GROUP.id, ["u-1"]]]);
@@ -275,6 +286,42 @@ async function insertCompleteUsage(
 }
 
 describe("checker Postgres snapshot cutover", () => {
+  it("initializes persisted automated email delivery off without resetting a saved choice", async () => {
+    await pglite.exec(`DELETE FROM notification_settings`);
+    expect(await getNotificationSettings()).toMatchObject({
+      automatedEmailEnabled: false,
+    });
+    const enabled = await updateNotificationSettings(true);
+    expect(enabled.automatedEmailEnabled).toBe(true);
+    expect((await getNotificationSettings()).automatedEmailEnabled).toBe(true);
+  });
+
+  it("preserves due threshold state while disabled and sends after re-enabling", async () => {
+    await insertCompleteUsage({
+      "ws-1": [{ userId: "u-1", spendUsd: 800 }],
+    });
+    await updateNotificationSettings(false);
+
+    const disabled = await runCheck();
+    expect(disabled).toMatchObject({
+      skipped: true,
+      checkedGroups: 0,
+      checkedTeams: 0,
+      skipReason: "Automated email delivery is disabled",
+    });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(await testDb.select().from(schema.alertDeliveryClaimsTable)).toEqual([]);
+    expect(await testDb.select().from(schema.firedThresholdsTable)).toEqual([]);
+    expect(await testDb.select().from(schema.alertsTable)).toEqual([]);
+
+    await updateNotificationSettings(true);
+    const enabled = await runCheck();
+    expect(enabled.skipped).toBe(false);
+    expect(enabled.alerts[0]).toMatchObject({ threshold: 75, status: "sent" });
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    expect(await getFiredThresholds(GROUP.id, PERIOD_START)).toEqual([50, 75]);
+  });
+
   it("uses Postgres daily facts and not legacy canonical usage", async () => {
     await insertCompleteUsage({
       "ws-1": [{ userId: "u-1", spendUsd: 800 }],

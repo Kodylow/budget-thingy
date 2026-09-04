@@ -32,6 +32,8 @@ export * from './directoryGroup';
 export * from './directoryMember';
 export * from './directoryMemberWorkspace';
 export * from './directoryRole';
+export * from './emailSettings';
+export * from './emailSettingsUpdate';
 export * from './emailTestResult';
 export * from './emailTestSelection';
 export * from './emailTestSelectionEntityType';

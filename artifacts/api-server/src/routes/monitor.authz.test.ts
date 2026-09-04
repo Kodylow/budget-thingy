@@ -11,11 +11,13 @@ import {
   usageLimitAuditsTable,
   usageMemberDayTable,
   usageWorkspaceDayTable,
+  notificationSettingsTable,
 } from "@workspace/db";
 
 import { __setDirectoryCacheForTests } from "../lib/enterprise";
 import { invalidateUsageSnapshotMemo } from "../lib/usage-store";
 import { setReplitBudgetTransportForTests } from "../lib/replit-budgets";
+import { setSendEmailOverrideForTests } from "../lib/email";
 import { setAuthorizationResolver } from "../middlewares/requireAuth";
 import type { Authorization, AuthzRole } from "../lib/authz";
 import monitorRouter, { canSeeAlertEntity } from "./monitor";
@@ -228,6 +230,7 @@ afterAll(async () => {
   await new Promise((resolve) => server?.close(resolve));
   setAuthorizationResolver(null);
   setReplitBudgetTransportForTests(null);
+  setSendEmailOverrideForTests(null);
   __setDirectoryCacheForTests(null);
   await db.delete(usageLimitAuditsTable).where(like(usageLimitAuditsTable.workspaceId, `${PREFIX}%`));
   await db.delete(alertsTable).where(like(alertsTable.groupId, `${PREFIX}%`));
@@ -321,6 +324,76 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
     expect(body.groups
       .filter((group) => !group.isSynthetic)
       .map((group) => group.groupId).sort()).toEqual([...fixture.groups].sort());
+  });
+});
+
+describe("persisted automated email settings authorization", () => {
+  it("allows account operators to read and update the global setting", async () => {
+    const account = fixtures[0]!;
+    const update = await request("/settings/email", account, {
+      method: "PATCH",
+      body: JSON.stringify({ automatedEmailEnabled: true }),
+    });
+    expect(update.status).toBe(200);
+    expect(await update.json()).toMatchObject({ automatedEmailEnabled: true });
+
+    const read = await request("/settings/email", account);
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ automatedEmailEnabled: true });
+
+    const [stored] = await db.select().from(notificationSettingsTable);
+    expect(stored?.automatedEmailEnabled).toBe(true);
+
+    await request("/settings/email", account, {
+      method: "PATCH",
+      body: JSON.stringify({ automatedEmailEnabled: false }),
+    });
+  });
+
+  it.each(fixtures.slice(1))("denies $id from reading or changing the setting", async (fixture) => {
+    expect((await request("/settings/email", fixture)).status).toBe(403);
+    expect((await request("/settings/email", fixture, {
+      method: "PATCH",
+      body: JSON.stringify({ automatedEmailEnabled: true }),
+    })).status).toBe(403);
+  });
+
+  it("rejects malformed updates without changing the saved value", async () => {
+    const account = fixtures[0]!;
+    const response = await request("/settings/email", account, {
+      method: "PATCH",
+      body: JSON.stringify({ automatedEmailEnabled: "yes" }),
+    });
+    expect(response.status).toBe(400);
+    const read = await request("/settings/email", account);
+    expect(await read.json()).toMatchObject({ automatedEmailEnabled: false });
+  });
+
+  it("keeps fixed-recipient Test Email available while automation is off", async () => {
+    const account = fixtures[0]!;
+    process.env.BOOTSTRAP_ADMIN_EMAIL = "kody@example.test";
+    setSendEmailOverrideForTests(async (to) => ({
+      ok: true,
+      deliveredTo: to,
+      messageId: "test-message",
+      senderEmail: "budget-monitor@example.test",
+    }));
+    await request("/settings/email", account, {
+      method: "PATCH",
+      body: JSON.stringify({ automatedEmailEnabled: false }),
+    });
+
+    const response = await request("/alerts/test-email", account, {
+      method: "POST",
+      body: JSON.stringify({ entityType: "group", threshold: 50 }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      recipient: "kody@example.test",
+      messageId: "test-message",
+    });
+    setSendEmailOverrideForTests(null);
   });
 });
 

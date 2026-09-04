@@ -29,6 +29,7 @@ import {
 import { sendEmail, buildAlertEmail, isEmailConfigured } from "./email";
 import { resolveAlertRecipients } from "./alert-recipients";
 import { getVisibleEffectiveTeamBudgetMap } from "./team-budgets";
+import { isAutomatedEmailEnabled } from "./notification-settings";
 
 export const THRESHOLDS = [50, 75, 90, 100];
 
@@ -212,6 +213,7 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
     await getFiredThresholds(spec.entityId, spec.periodStart, spec.entityType);
   const due = THRESHOLDS.filter((t) => pct >= t && !fired.includes(t));
   if (due.length === 0) return [];
+  if (!(await isAutomatedEmailEnabled())) return [];
 
   const recipients = await resolveAlertRecipients(spec.workspaceIds);
   if (recipients.length === 0) {
@@ -344,6 +346,7 @@ async function evaluateEntity(spec: EntitySpec): Promise<Alert[]> {
 async function evaluateGroupOnce(
   group: EnterpriseGroup,
 ): Promise<Alert[]> {
+  if (!(await isAutomatedEmailEnabled())) return [];
   const dir = await getDirectory();
   const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
   const primaryId = mergePlan.primaryByGroupId.get(group.id) ?? group.id;
@@ -565,6 +568,19 @@ async function persistSkippedCheckerState(
 
 async function runCheckInternal(): Promise<CheckResult> {
   const lastAttemptAt = new Date();
+  if (!(await isAutomatedEmailEnabled())) {
+    const skipReason = "Automated email delivery is disabled";
+    await persistSkippedCheckerState(lastAttemptAt, skipReason);
+    return {
+      checkedGroups: 0,
+      checkedTeams: 0,
+      alerts: [],
+      evaluatedAt: null,
+      dataAsOf: null,
+      skipped: true,
+      skipReason,
+    };
+  }
   let dir: CheckerDirectory;
   try {
     dir = await getDirectory();

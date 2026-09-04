@@ -1127,6 +1127,16 @@ export interface CheckResult {
   skipReason: string | null;
 }
 
+export interface EmailSettings {
+  /** Whether scheduled and manually triggered budget checks may send threshold emails */
+  automatedEmailEnabled: boolean;
+  updatedAt: string;
+}
+
+export interface EmailSettingsUpdate {
+  automatedEmailEnabled: boolean;
+}
+
 export type UsageIngestRunKind = typeof UsageIngestRunKind[keyof typeof UsageIngestRunKind];
 
 
@@ -1189,8 +1199,10 @@ export interface SystemStatus {
      * @nullable
      */
   enterpriseApiError?: string | null;
-  /** Whether the email connector is set up */
+  /** Whether the email connector transport is set up */
   emailConfigured: boolean;
+  /** Whether automated budget-alert delivery is enabled by persisted policy */
+  automatedEmailEnabled: boolean;
   checkerIntervalMinutes: number;
   /**
      * Alias for lastSuccessfulEvaluationAt

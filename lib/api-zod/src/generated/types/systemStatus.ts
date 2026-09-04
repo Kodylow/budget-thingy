@@ -19,8 +19,10 @@ export interface SystemStatus {
      * @nullable
      */
   enterpriseApiError?: string | null;
-  /** Whether the email connector is set up */
+  /** Whether the email connector transport is set up */
   emailConfigured: boolean;
+  /** Whether automated budget-alert delivery is enabled by persisted policy */
+  automatedEmailEnabled: boolean;
   checkerIntervalMinutes: number;
   /**
      * Alias for lastSuccessfulEvaluationAt

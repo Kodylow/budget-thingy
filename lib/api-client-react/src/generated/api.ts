@@ -33,6 +33,8 @@ import type {
   ClusterHeadline,
   DirectoryGroup,
   DirectoryMember,
+  EmailSettings,
+  EmailSettingsUpdate,
   EmailTestResult,
   EmailTestSelection,
   ErrorEnvelope,
@@ -4323,6 +4325,156 @@ export const useSendEmailTestExample = <TError = ErrorType<ApiError | Unauthoriz
         TContext
       > => {
       return useMutation(getSendEmailTestExampleMutationOptions(options));
+    }
+
+export const getGetEmailSettingsUrl = () => {
+
+
+
+
+  return `/api/settings/email`
+}
+
+/**
+ * Returns the persisted global policy for automated budget-alert delivery.
+ * @summary Get automated email delivery policy
+ */
+export const getEmailSettings = async ( options?: RequestInit): Promise<EmailSettings> => {
+
+  return customFetch<EmailSettings>(getGetEmailSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetEmailSettingsQueryKey = () => {
+    return [
+    `/api/settings/email`
+    ] as const;
+    }
+
+
+export const getGetEmailSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getEmailSettings>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmailSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEmailSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmailSettings>>> = ({ signal }) => getEmailSettings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEmailSettings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEmailSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getEmailSettings>>>
+export type GetEmailSettingsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Get automated email delivery policy
+ */
+
+export function useGetEmailSettings<TData = Awaited<ReturnType<typeof getEmailSettings>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmailSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEmailSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateEmailSettingsUrl = () => {
+
+
+
+
+  return `/api/settings/email`
+}
+
+/**
+ * Enables or disables automated budget-alert delivery without affecting fixed-recipient test sends.
+ * @summary Update automated email delivery policy
+ */
+export const updateEmailSettings = async (emailSettingsUpdate: EmailSettingsUpdate, options?: RequestInit): Promise<EmailSettings> => {
+
+  return customFetch<EmailSettings>(getUpdateEmailSettingsUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(emailSettingsUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateEmailSettingsMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateEmailSettings>>, TError,{data: BodyType<EmailSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateEmailSettings>>, TError,{data: BodyType<EmailSettingsUpdate>}, TContext> => {
+
+const mutationKey = ['updateEmailSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateEmailSettings>>, {data: BodyType<EmailSettingsUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateEmailSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateEmailSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateEmailSettings>>>
+    export type UpdateEmailSettingsMutationBody = BodyType<EmailSettingsUpdate>
+    export type UpdateEmailSettingsMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Update automated email delivery policy
+ */
+export const useUpdateEmailSettings = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateEmailSettings>>, TError,{data: BodyType<EmailSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateEmailSettings>>,
+        TError,
+        {data: BodyType<EmailSettingsUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateEmailSettingsMutationOptions(options));
     }
 
 export const getGetStatusUrl = () => {
