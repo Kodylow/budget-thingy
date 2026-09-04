@@ -7,6 +7,7 @@ import {
   type AuthAuthorization,
   type AuthAuthorizationRole,
   type AuthCapabilities,
+  type AuthAvailability,
 } from '@workspace/replit-auth-web';
 
 export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities };
@@ -22,6 +23,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   auth: AuthAuthorization | null;
   isLoading: boolean;
+  availability: AuthAvailability;
+  isUnavailable: boolean;
   /** Signed in with a valid session (regardless of authorization). */
   isAuthenticated: boolean;
   /** Resolved role, or null when signed out / unknown. */
@@ -50,6 +53,7 @@ interface AuthContextValue {
   workspaceIds: string[];
   login: () => void;
   logout: () => void;
+  retryAuthorization: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -61,7 +65,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const previewTransitionRef = useRef(0);
   previewRef.current = preview;
   setPreviewAsGetter(() => previewRef.current);
-  const { user, auth, capabilities, isLoading, isAuthenticated, login, logout } = useReplitAuth(preview);
+  const {
+    user,
+    auth,
+    capabilities,
+    isLoading,
+    availability,
+    isUnavailable,
+    isAuthenticated,
+    login,
+    logout,
+    retryAuthorization,
+  } = useReplitAuth(preview);
   const realAuthRef = useRef<{ userId: string; auth: AuthAuthorization } | null>(null);
   if (user && !preview && auth && !auth.isPreview) {
     realAuthRef.current = { userId: user.id, auth };
@@ -111,6 +126,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     identityRef.current = identity;
   }, [queryClient, user?.id]);
   useEffect(() => {
+    if (availability === 'authorized') return;
+    void queryClient.cancelQueries().then(() => queryClient.clear());
+  }, [availability, queryClient]);
+  useEffect(() => {
     if (!isLoading && preview && !canPreviewRbac) resetPreview();
   }, [canPreviewRbac, isLoading, preview, resetPreview]);
 
@@ -135,6 +154,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       auth,
       isLoading,
+      availability,
+      isUnavailable,
       isAuthenticated,
       role,
       realRole: resolvedRealRole,
@@ -155,8 +176,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       workspaceIds: auth?.workspaceIds ?? [],
       login,
       logout: logoutAndClearPreview,
+      retryAuthorization,
     };
-  }, [user, auth, capabilities, isLoading, isAuthenticated, login, logoutAndClearPreview, preview, realRole, canPreviewRbac, setPreview, resetPreview]);
+  }, [user, auth, capabilities, isLoading, availability, isUnavailable, isAuthenticated, login, logoutAndClearPreview, retryAuthorization, preview, realRole, canPreviewRbac, setPreview, resetPreview]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

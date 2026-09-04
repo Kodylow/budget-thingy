@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { hydrateCheckerState } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
 import { initializeUsageIngestScheduler } from "./lib/ingest";
+import type { Server } from "node:http";
 
 const rawPort = process.env["PORT"];
 
@@ -18,23 +19,32 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const server = app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+let server: Server | null = null;
 
-  logger.info({ port }, "Server listening");
-  // None of these tasks may delay the listening socket. In particular, cache
-  // hydration is database-only and completes before Enterprise work is started.
-  void initializeUsageIngestScheduler(Promise.all([
-    initCache({ revalidateOnStartup: false }),
-    hydrateCheckerState(),
-  ]));
+async function start(): Promise<void> {
+  // Authorization-dependent traffic must not race persisted directory hydration.
+  await initCache({ revalidateOnStartup: false });
+  server = app.listen(port, (err) => {
+    if (err) {
+      logger.error({ err }, "Error listening on port");
+      process.exit(1);
+    }
+
+    logger.info({ port }, "Server listening after directory hydration");
+    void initializeUsageIngestScheduler(hydrateCheckerState());
+  });
+}
+
+void start().catch((err) => {
+  logger.error({ err }, "API startup failed");
+  process.exit(1);
 });
 
 function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down gracefully");
+  if (!server) {
+    process.exit(0);
+  }
   server.close(() => {
     logger.info("HTTP server closed");
     process.exit(0);

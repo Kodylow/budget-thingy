@@ -306,6 +306,34 @@ describe("designated account-admin bootstrap", () => {
     ).toBe(resolved);
   });
 
+  it("resolves an active persisted app admin without directory membership", async () => {
+    const detachedUserId = "authz-detached-admin";
+    await db.delete(appAdminsTable).where(inArray(appAdminsTable.userId, [detachedUserId]));
+    await db.insert(appAdminsTable).values({
+      userId: detachedUserId,
+      email: "detached-admin@example.test",
+      createdBy: BOOTSTRAP_USER_ID,
+    });
+    try {
+      const resolved = await resolveAuthorization(detachedUserId);
+      expect(resolved).toMatchObject({
+        role: "account",
+        roles: ["account"],
+        userId: detachedUserId,
+        isTrueAccountAdmin: false,
+        capabilities: {
+          canManageAccess: true,
+          canEditAllocations: true,
+          canPreviewRoles: false,
+          canWriteGroupLimits: false,
+          canWriteUserLimitsIn: [...WORKSPACE_IDS].sort(),
+        },
+      });
+    } finally {
+      await db.delete(appAdminsTable).where(inArray(appAdminsTable.userId, [detachedUserId]));
+    }
+  });
+
   it("retains true-admin access in real mode and supports every scoped preview target", async () => {
     await maybeBootstrapAppAdmin({
       sub: BOOTSTRAP_USER_ID,

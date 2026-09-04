@@ -1,8 +1,12 @@
 import type { AuthAuthorizationRole, AuthCapabilities } from '@workspace/replit-auth-web';
 import type { ResolvedRole } from '../components/auth-context';
 
-export function checkIsDenied(isAuthenticated: boolean, auth: any | null): boolean {
-  return isAuthenticated && auth == null;
+export function checkIsDenied(
+  isAuthenticated: boolean,
+  auth: any | null,
+  isUnavailable = false,
+): boolean {
+  return isAuthenticated && auth == null && !isUnavailable;
 }
 
 export function checkRealIsAccountAdmin(realRole: ResolvedRole | null): boolean {

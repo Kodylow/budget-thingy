@@ -1,5 +1,6 @@
 import { type NextFunction, type Request, type Response } from "express";
 import {
+  asAuthorizationUnavailable,
   hasCapability,
   hasRole,
   resolveCurrentAuthorization,
@@ -37,8 +38,15 @@ export async function requireAuth(
     req.authz = await resolvePreviewAuthorization(real, req.header("X-Preview-As"));
     next();
   } catch (err) {
-    req.log.error({ err }, "authorization resolution failed");
-    res.status(403).json({ error: "Access denied" });
+    const unavailable = asAuthorizationUnavailable(err, "authorization");
+    req.log.error(
+      { errorName: unavailable.name, source: unavailable.source },
+      "authorization resolution unavailable",
+    );
+    res.status(503).json({
+      error: "Authorization temporarily unavailable",
+      retryable: true,
+    });
   }
 }
 

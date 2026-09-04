@@ -6,8 +6,19 @@ import type {
   AuthCapabilities,
   AuthUserEnvelope,
 } from '@workspace/api-client-react';
+import {
+  AuthRequestCancelledError,
+  loadAuthorization,
+  nextAuthorizationRequestVersion,
+} from './auth-request';
 
 export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities };
+export type AuthAvailability =
+  | 'loading'
+  | 'authorized'
+  | 'signed-out'
+  | 'denied'
+  | 'unavailable';
 
 interface AuthState {
   /** Base identity for the signed-in user, or null when signed out. */
@@ -20,10 +31,13 @@ interface AuthState {
   /** Server-derived capabilities like email testing access. */
   capabilities: AuthCapabilities | null;
   isLoading: boolean;
+  availability: AuthAvailability;
+  isUnavailable: boolean;
   /** A valid session exists (user present), regardless of authorization. */
   isAuthenticated: boolean;
   login: () => void;
   logout: () => void;
+  retryAuthorization: () => void;
 }
 
 type AuthCacheClearListener = () => void;
@@ -43,42 +57,45 @@ export function useAuth(previewAs: string | null = null): AuthState {
   const [auth, setAuth] = useState<AuthAuthorization | null>(null);
   const [capabilities, setCapabilities] = useState<AuthCapabilities | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [availability, setAvailability] = useState<AuthAvailability>('loading');
   const [loadedPreviewAs, setLoadedPreviewAs] = useState<string | null>(null);
+  const [requestVersion, setRequestVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setIsLoading(true);
+    setAvailability('loading');
+    setUser(null);
+    setAuth(null);
+    setCapabilities(null);
+    setLoadedPreviewAs(null);
 
-    const headers = new Headers();
-    if (previewAs) headers.set('X-Preview-As', previewAs);
-    fetch('/api/auth/user', { credentials: 'include', headers })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<AuthUserEnvelope>;
-      })
-      .then((data) => {
-        if (!cancelled) {
-          setUser(data.user ?? null);
-          setAuth(data.auth ?? null);
-          setCapabilities(data.capabilities ?? null);
-          setLoadedPreviewAs(previewAs);
-          setIsLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setUser(null);
-          setAuth(null);
-          setCapabilities(null);
-          setLoadedPreviewAs(previewAs);
-          setIsLoading(false);
-        }
-      });
+    void loadAuthorization({
+      previewAs,
+      signal: controller.signal,
+    }).then((result) => {
+      if (cancelled) return;
+      setAvailability(result.availability);
+      setUser(result.envelope?.user ?? null);
+      setAuth(result.envelope?.auth ?? null);
+      setCapabilities(result.envelope?.capabilities ?? null);
+    }).catch((error) => {
+      if (!cancelled && !(error instanceof AuthRequestCancelledError)) {
+        setAvailability('unavailable');
+      }
+    }).finally(() => {
+      if (!cancelled) {
+        setLoadedPreviewAs(previewAs);
+        setIsLoading(false);
+      }
+    });
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [previewAs]);
+  }, [previewAs, requestVersion]);
 
   useEffect(() => {
     const clear = () => {
@@ -86,11 +103,17 @@ export function useAuth(previewAs: string | null = null): AuthState {
       setAuth(null);
       setCapabilities(null);
       setIsLoading(false);
+      setAvailability('signed-out');
+      setLoadedPreviewAs(previewAs);
     };
     authCacheClearListeners.add(clear);
     return () => {
       authCacheClearListeners.delete(clear);
     };
+  }, [previewAs]);
+
+  const retryAuthorization = useCallback(() => {
+    setRequestVersion(nextAuthorizationRequestVersion);
   }, []);
 
   const login = useCallback(() => {
@@ -112,8 +135,11 @@ export function useAuth(previewAs: string | null = null): AuthState {
     auth,
     capabilities,
     isLoading: isLoading || loadedPreviewAs !== previewAs,
-    isAuthenticated: !!user,
+    availability,
+    isUnavailable: availability === 'unavailable',
+    isAuthenticated: availability === 'authorized' || availability === 'denied',
     login,
     logout,
+    retryAuthorization,
   };
 }

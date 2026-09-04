@@ -48,6 +48,27 @@ export type AuthorizationScope =
 export type AuthorizationResolver = (userId: string) => Promise<Authorization | null>;
 export type AppAdminLookup = (userId: string) => Promise<boolean>;
 
+export class AuthorizationUnavailableError extends Error {
+  readonly status = 503;
+
+  constructor(
+    public readonly source: "directory" | "app_admin" | "authorization",
+    options?: { cause?: unknown },
+  ) {
+    super("Authorization is temporarily unavailable", options);
+    this.name = "AuthorizationUnavailableError";
+  }
+}
+
+export function asAuthorizationUnavailable(
+  error: unknown,
+  source: AuthorizationUnavailableError["source"],
+): AuthorizationUnavailableError {
+  return error instanceof AuthorizationUnavailableError
+    ? error
+    : new AuthorizationUnavailableError(source, { cause: error });
+}
+
 let injectedResolver: AuthorizationResolver | null = null;
 let injectedAppAdminLookup: AppAdminLookup | null = null;
 
@@ -184,9 +205,21 @@ async function resolveFromDirectory(
   forceRole?: Exclude<AuthzRole, "account">,
   forceValue?: string,
 ): Promise<Authorization | null> {
-  const dir = await getDirectory();
+  const dir = await getDirectory().catch((error) => {
+    throw asAuthorizationUnavailable(error, "directory");
+  });
   const member = dir.members.get(userId);
-  if (!member && !forceRole) return null;
+  const isAllowlisted = !forceRole
+    ? await lookupAppAdmin(userId).catch((error) => {
+        throw asAuthorizationUnavailable(error, "app_admin");
+      })
+    : false;
+  const isBootstrapAccountAdmin = !forceRole && isAllowlisted
+    ? await isPersistedBootstrapAccountAdmin(userId).catch((error) => {
+        throw asAuthorizationUnavailable(error, "app_admin");
+      })
+    : false;
+  if (!member && !forceRole && !isAllowlisted) return null;
 
   const targets = await db.select().from(teamLimitTargetsTable);
   const families = [...dir.account.familiesById.values()];
@@ -221,10 +254,6 @@ async function resolveFromDirectory(
   const groupIds = new Set<string>();
   const userIds = new Set<string>([userId]);
 
-  const isAllowlisted = !forceRole && member ? await lookupAppAdmin(userId) : false;
-  const isBootstrapAccountAdmin = !forceRole && isAllowlisted
-    ? await isPersistedBootstrapAccountAdmin(userId)
-    : false;
   const trueAdmin = !forceRole &&
     (member?.isAccountAdmin === true || isBootstrapAccountAdmin);
   const isActiveMember = member

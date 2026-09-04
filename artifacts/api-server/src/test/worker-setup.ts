@@ -3,7 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll } from "vitest";
 import { sql } from "drizzle-orm";
-import { applyTestMigrations, type TestMigration } from "./migration-safety";
+import {
+  applyTestMigrations,
+  assertAuthRepairMigrationOrder,
+  type TestMigration,
+} from "./migration-safety";
 
 const schemaPrefix = process.env.VITEST_DATABASE_SCHEMA_PREFIX;
 const workerId = process.env.VITEST_POOL_ID;
@@ -37,7 +41,7 @@ try {
     const migrationsFolder = path.resolve(currentDir, "../../../../lib/db/drizzle");
     const journal = JSON.parse(
       await readFile(path.join(migrationsFolder, "meta/_journal.json"), "utf8"),
-    ) as { entries: Array<{ idx: number; tag: string }> };
+    ) as { entries: Array<{ idx: number; tag: string; when: number }> };
     const migrations: TestMigration[] = await Promise.all(
       journal.entries.map(async (migration) => ({
         ...migration,
@@ -47,6 +51,7 @@ try {
         ),
       })),
     );
+    assertAuthRepairMigrationOrder(migrations);
     await applyTestMigrations(bootstrapClient, migrations);
 
     // Keep every isolated schema complete when a rebased migration journal has

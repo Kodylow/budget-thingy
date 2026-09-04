@@ -463,6 +463,11 @@ export interface DirectoryFreshness {
   isRefreshing: boolean;
 }
 
+export interface DirectoryHydrationState {
+  status: "pending" | "ready" | "unavailable";
+  reason: "not_started" | "hydrated" | "not_found" | "lookup_failed";
+}
+
 interface SerializedDirectory {
   fetchedAt: number;
   workspaces: Record<string, EnterpriseWorkspace>;
@@ -482,6 +487,10 @@ interface SerializedDirectory {
 
 let directoryCache: DirectoryCache | null = null;
 let directoryPromise: Promise<DirectoryCache> | null = null;
+let directoryHydrationState: DirectoryHydrationState = {
+  status: "pending",
+  reason: "not_started",
+};
 
 function serializeDirectory(directory: DirectoryCache): SerializedDirectory {
   return {
@@ -682,6 +691,10 @@ export function getDirectoryFreshness(now = Date.now()): DirectoryFreshness {
   };
 }
 
+export function getDirectoryHydrationState(): DirectoryHydrationState {
+  return { ...directoryHydrationState };
+}
+
 export async function getDirectory(force = false): Promise<DirectoryCache> {
   if (force) return refreshDirectory();
   if (directoryCache) return directoryCache;
@@ -720,6 +733,7 @@ export function __setDirectoryCacheForTests(
 ): void {
   if (!fixture) {
     directoryCache = null;
+    directoryHydrationState = { status: "unavailable", reason: "not_found" };
     return;
   }
   const workspaces = fixture.workspaces ?? new Map();
@@ -754,6 +768,7 @@ export function __setDirectoryCacheForTests(
       mappings: fixture.mappings,
     }),
   };
+  directoryHydrationState = { status: "ready", reason: "hydrated" };
 }
 
 export interface ProjectInfo {
@@ -861,18 +876,32 @@ export interface GroupSpend {
 export async function initCache(
   _options: { revalidateOnStartup?: boolean } = {},
 ): Promise<void> {
+  directoryHydrationState = { status: "pending", reason: "not_started" };
   try {
-    const [directory, billing, projects, projectStates] = await Promise.all([
-      db.query.apiDirectoryCacheTable.findFirst({
-        where: eq(apiDirectoryCacheTable.id, "singleton"),
-      }),
+    const directory = await db.query.apiDirectoryCacheTable.findFirst({
+      where: eq(apiDirectoryCacheTable.id, "singleton"),
+    });
+    if (directory) {
+      directoryCache = deserializeDirectory(directory.directoryJson as SerializedDirectory);
+      directoryHydrationState = { status: "ready", reason: "hydrated" };
+    } else {
+      directoryCache = null;
+      directoryHydrationState = { status: "unavailable", reason: "not_found" };
+    }
+  } catch (error) {
+    directoryCache = null;
+    directoryHydrationState = { status: "unavailable", reason: "lookup_failed" };
+    logger.warn({ err: error }, "Failed to hydrate Enterprise directory");
+  }
+
+  try {
+    const [billing, projects, projectStates] = await Promise.all([
       db.query.apiBillingPeriodCacheTable.findFirst({
         where: eq(apiBillingPeriodCacheTable.id, "current"),
       }),
       db.select().from(apiProjectMetadataTable),
       db.select().from(apiProjectMetadataStateTable),
     ]);
-    if (directory) directoryCache = deserializeDirectory(directory.directoryJson as SerializedDirectory);
     if (billing) {
       billingPeriodCache = {
         start: billing.periodStart.toISOString(),
@@ -892,6 +921,6 @@ export async function initCache(
       }
     }
   } catch (error) {
-    logger.warn({ err: error }, "Failed to hydrate Enterprise metadata");
+    logger.warn({ err: error }, "Failed to hydrate non-directory Enterprise metadata");
   }
 }

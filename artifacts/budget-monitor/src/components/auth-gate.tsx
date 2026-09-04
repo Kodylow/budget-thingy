@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { ShieldAlert, LogIn, Loader2, Wallet } from 'lucide-react';
+import { ShieldAlert, LogIn, Loader2, RefreshCw, Wallet, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthContext } from '@/components/auth-context';
@@ -12,10 +12,28 @@ import { useAuthContext } from '@/components/auth-context';
  * - the authenticated app (children) for account or workspace admins.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { isLoading, isAuthenticated, isDenied, user, login, logout } = useAuthContext();
+  const {
+    isLoading,
+    isUnavailable,
+    isAuthenticated,
+    isDenied,
+    user,
+    login,
+    logout,
+    retryAuthorization,
+  } = useAuthContext();
 
   if (isLoading) {
     return <LoadingShell />;
+  }
+
+  if (isUnavailable) {
+    return (
+      <UnavailableShell
+        onRetry={retryAuthorization}
+        onLogout={logout}
+      />
+    );
   }
 
   if (!isAuthenticated) {
@@ -27,6 +45,45 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return <>{children}</>;
+}
+
+function UnavailableShell({
+  onRetry,
+  onLogout,
+}: {
+  onRetry: () => void;
+  onLogout: () => void;
+}) {
+  return (
+    <CenteredShell>
+      <Card data-testid="auth-unavailable">
+        <CardHeader className="items-center text-center">
+          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10">
+            <WifiOff className="h-6 w-6 text-amber-600" />
+          </div>
+          <CardTitle>Access check unavailable</CardTitle>
+          <CardDescription>
+            We couldn&apos;t verify your authorization right now. No budget data has
+            been loaded. Try again in a moment.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button className="w-full" onClick={onRetry} data-testid="button-retry-auth">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Retry
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={onLogout}
+            data-testid="button-logout-unavailable"
+          >
+            Log out
+          </Button>
+        </CardContent>
+      </Card>
+    </CenteredShell>
+  );
 }
 
 function CenteredShell({ children }: { children: ReactNode }) {

@@ -20,12 +20,19 @@ import {
   type SessionData,
 } from '../lib/auth';
 import {
+  BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
   isPersistedAppAdmin,
+  asAuthorizationUnavailable,
   maybeBootstrapAppAdmin,
+  normalizeEmail,
   resolveCurrentAuthorization,
   resolvePreviewAuthorization,
 } from '../lib/authz';
-import { getDirectory } from '../lib/enterprise';
+import {
+  getDirectory,
+  getDirectoryFreshness,
+  getDirectoryHydrationState,
+} from '../lib/enterprise';
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
@@ -127,13 +134,25 @@ router.get('/auth/user', async (req: Request, res: Response) => {
     }));
     return;
   }
-  const realAuth = await resolveCurrentAuthorization(req.user.id).catch((err) => {
-    req.log.error({ err }, 'resolveCurrentAuthorization failed');
-    return null;
-  });
-  const auth = realAuth
-    ? await resolvePreviewAuthorization(realAuth, req.header('X-Preview-As'))
-    : null;
+  let realAuth;
+  let auth;
+  try {
+    realAuth = await resolveCurrentAuthorization(req.user.id);
+    auth = realAuth
+      ? await resolvePreviewAuthorization(realAuth, req.header('X-Preview-As'))
+      : null;
+  } catch (err) {
+    const unavailable = asAuthorizationUnavailable(err, 'authorization');
+    req.log.error(
+      { errorName: unavailable.name, source: unavailable.source },
+      'authorization lookup unavailable',
+    );
+    res.status(503).json({
+      error: 'Authorization temporarily unavailable',
+      retryable: true,
+    });
+    return;
+  }
   res.json(
     GetCurrentAuthUserResponse.parse({
       user: req.user,
@@ -279,27 +298,66 @@ router.get('/auth/me/debug', async (req: Request, res: Response) => {
 
   const userId = req.user.id;
 
-  const [dir, appAdmin, authz] = await Promise.all([
-    getDirectory().catch(() => null),
-    isPersistedAppAdmin(userId).catch(() => false),
-    resolveCurrentAuthorization(userId).catch(() => null),
+  const capture = async <T,>(lookup: () => Promise<T>) => {
+    try {
+      return { status: 'success' as const, value: await lookup() };
+    } catch (error) {
+      return {
+        status: 'failed' as const,
+        error: getSafeErrorMetadata(error),
+      };
+    }
+  };
+  const [directoryResult, appAdminResult, authzResult] = await Promise.all([
+    capture(() => getDirectory()),
+    capture(() => isPersistedAppAdmin(userId)),
+    capture(() => resolveCurrentAuthorization(userId)),
   ]);
 
-  const member = dir?.members.get(userId) ?? null;
+  const member = directoryResult.status === 'success'
+    ? directoryResult.value.members.get(userId) ?? null
+    : null;
 
   res.json({
     userId,
-    foundInDirectory: member !== null,
-    isAccountAdmin: member?.isAccountAdmin ?? false,
-    workspaces: member
-      ? [...member.workspaces.entries()].map(([workspaceId, ws]) => ({
-          workspaceId,
-          role: ws.role,
-          isDisabled: ws.isDisabled,
-        }))
-      : [],
-    appAdmin,
-    authzRole: authz?.role ?? null,
+    hydration: {
+      ...getDirectoryHydrationState(),
+      ...getDirectoryFreshness(),
+    },
+    directory: directoryResult.status === 'failed'
+      ? directoryResult
+      : {
+          status: member ? 'success' : 'missing',
+          isAccountAdmin: member?.isAccountAdmin ?? false,
+          workspaces: member
+            ? [...member.workspaces.entries()].map(([workspaceId, ws]) => ({
+                workspaceId,
+                role: ws.role,
+                isDisabled: ws.isDisabled,
+              }))
+            : [],
+        },
+    appAdmin: appAdminResult.status === 'failed'
+      ? appAdminResult
+      : {
+          status: appAdminResult.value ? 'success' : 'missing',
+          active: appAdminResult.value,
+        },
+    authorization: authzResult.status === 'failed'
+      ? authzResult
+      : {
+          status: authzResult.value ? 'success' : 'missing',
+          role: authzResult.value?.role ?? null,
+          roles: authzResult.value?.roles ?? [],
+        },
+    bootstrap: appAdminResult.status === 'failed'
+      ? { status: 'lookup_failed' }
+      : appAdminResult.value
+        ? { status: 'active_record_confirmed' }
+        : typeof req.user.email === 'string' &&
+            normalizeEmail(req.user.email) === BOOTSTRAP_ACCOUNT_ADMIN_EMAIL
+          ? { status: 'verified_oidc_sign_in_required' }
+          : { status: 'not_designated_identity' },
   });
 });
 

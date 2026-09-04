@@ -38,6 +38,7 @@ describe('authorization helpers', () => {
     expect(checkIsDenied(true, null)).toBe(true);
     expect(checkIsDenied(false, null)).toBe(false);
     expect(checkIsDenied(true, { role: 'member' })).toBe(false);
+    expect(checkIsDenied(true, null, true)).toBe(false);
   });
 
   it('permits settings when any account-access signal is present', () => {
