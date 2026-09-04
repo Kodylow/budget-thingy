@@ -267,6 +267,13 @@ describe("dashboard and spend endpoint contracts", () => {
       "utf8",
     );
     expect(route).toContain("buildScopedAccounting");
+    expect(route).toContain("BoundedStaleCache<string>");
+    expect(route).toContain("prepared.cacheIdentity");
+    expect(route).toContain("canonicalValue(parsed.data)");
+    expect(route).toContain("authorization;dur=");
+    expect(route).toContain("stored-read;dur=");
+    expect(route).toContain("rollups;dur=");
+    expect(route).toContain("response;dur=");
     expect(route).not.toMatch(/getSummary|GetSummary|getTrends|GetTrends/);
     expect(accounting).toContain("getCachedDirectory");
     expect(accounting).not.toMatch(

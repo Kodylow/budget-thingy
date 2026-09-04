@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
   db,
+  familyTeamMappingsTable,
   groupBudgetsTable,
+  teamBudgetAdjustmentsTable,
   teamBudgetsTable,
   teamLimitTargetsTable,
 } from "@workspace/db";
@@ -36,9 +38,31 @@ export function committedGenerationId(identity: {
   limitObservation: unknown;
   period: unknown;
   scope: unknown;
+  allocationRevision?: unknown;
 }): string {
   return createHash("sha256").update(JSON.stringify(identity))
     .digest("hex").slice(0, 24);
+}
+
+async function getAllocationRevision(): Promise<string> {
+  const [groupBudgets, targets, teams, adjustments, mappings] = await Promise.all([
+    db.select().from(groupBudgetsTable),
+    db.select().from(teamLimitTargetsTable),
+    db.select().from(teamBudgetsTable),
+    db.select().from(teamBudgetAdjustmentsTable),
+    db.select().from(familyTeamMappingsTable),
+  ]);
+  const canonicalRows = (rows: readonly Record<string, unknown>[]) =>
+    rows.map((row) => Object.fromEntries(Object.entries(row)
+      .sort(([a], [b]) => a.localeCompare(b))))
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return createHash("sha256").update(JSON.stringify({
+    groupBudgets: canonicalRows(groupBudgets),
+    targets: canonicalRows(targets),
+    teams: canonicalRows(teams),
+    adjustments: canonicalRows(adjustments),
+    mappings: canonicalRows(mappings),
+  })).digest("hex").slice(0, 24);
 }
 
 export interface SpendRow {
@@ -53,6 +77,9 @@ export interface SpendRow {
   allocationUsd: number | null;
   remainingUsd: number | null;
   percentUsed: number | null;
+  currentCycleAgentSpendUsd?: number | null;
+  currentCycleRemainingUsd?: number | null;
+  currentCyclePercentUsed?: number | null;
   status: string;
   memberCount: number | null;
   ownerName: string | null;
@@ -285,6 +312,24 @@ function round(value: number): number {
   return Math.round((value + Number.EPSILON) * 1e8) / 1e8;
 }
 
+export function currentCycleLimitMetrics(
+  limitUsd: number | null,
+  currentCycleAgentSpendUsd: number | null,
+): {
+  remainingUsd: number | null;
+  percentUsed: number | null;
+} {
+  return {
+    remainingUsd: limitUsd === null || currentCycleAgentSpendUsd === null
+      ? null
+      : round(limitUsd - currentCycleAgentSpendUsd),
+    percentUsed: limitUsd !== null && limitUsd > 0 &&
+        currentCycleAgentSpendUsd !== null
+      ? round(currentCycleAgentSpendUsd / limitUsd * 100)
+      : null,
+  };
+}
+
 function statusFor(allocation: number | null, spend: number, shared = false): string {
   if (shared && allocation === null) return "shared";
   if (allocation === null || allocation <= 0) return "no_allocation";
@@ -312,6 +357,11 @@ export interface ScopedAccountingContext {
   viewScope: ViewScope;
   effectiveAuth: Authorization;
   cacheIdentity: string;
+  allocationRevision: string;
+  phaseDurations: {
+    authorizationMs: number;
+    storedReadsMs: number;
+  };
 }
 
 function sortedAuthorization(authz: Authorization): unknown {
@@ -340,14 +390,26 @@ export async function prepareScopedAccounting(
   authz: Authorization,
   query: Record<string, unknown>,
 ): Promise<ScopedAccountingContext> {
+  const directoryStartedAt = performance.now();
   const dir = await getCachedDirectory();
+  const directoryMs = performance.now() - directoryStartedAt;
+  const authorizationStartedAt = performance.now();
   const viewScope = requestedViewScope(authz, query["viewScope"]);
   const effectiveAuth = resolveAuthorizationForView(authz, viewScope, dir.groupMembers);
   const window = windowFromQuery(query).window;
+  const authorizationMs = performance.now() - authorizationStartedAt;
+  const allocationStartedAt = performance.now();
+  const allocationRevision = await getAllocationRevision();
+  const allocationMs = performance.now() - allocationStartedAt;
   return {
     dir,
     viewScope,
     effectiveAuth,
+    allocationRevision,
+    phaseDurations: {
+      authorizationMs,
+      storedReadsMs: directoryMs + allocationMs,
+    },
     cacheIdentity: committedGenerationId({
       usageDataAsOf: String(getUsageSnapshotGeneration()),
       directoryDataAsOf: new Date(dir.fetchedAt).toISOString(),
@@ -356,6 +418,7 @@ export async function prepareScopedAccounting(
       limitObservation: dir.budgets.observation.generation,
       period: window,
       scope: sortedAuthorization(effectiveAuth),
+      allocationRevision,
     }),
   };
 }
@@ -367,7 +430,7 @@ export async function buildScopedAccounting(
   prepared?: ScopedAccountingContext,
 ) {
   const context = prepared ?? await prepareScopedAccounting(authz, query);
-  const { dir, viewScope, effectiveAuth } = context;
+  const { dir, viewScope, effectiveAuth, allocationRevision } = context;
   const [usage, budgets, assignments, teamBudgetSnapshot, teamRows] = await Promise.all([
     usageForRequest(effectiveAuth, dir, query, true),
     db.select().from(groupBudgetsTable),
@@ -579,23 +642,61 @@ export async function buildScopedAccounting(
     ? qualifiedUserSpendByWorkspace(
       daily, effectiveAuth, usage.groups, usage.workspaceIds)
     : new Map<string, Map<string, { agent: number; other: number }>>();
+  const billingWindow = windowFromQuery({ rangeType: "billing" }).window;
+  const currentCycleUsage = detailView === "people" &&
+      (usage.selection.window.start !== billingWindow.start ||
+       usage.selection.window.end !== billingWindow.end)
+    ? await usageForRequest(effectiveAuth, dir, { rangeType: "billing" }, true)
+    : usage;
+  const currentCycleDaily = currentCycleUsage === usage
+    ? daily
+    : await dailyUsageRollups(dir, currentCycleUsage);
+  const currentCycleUsers = detailView === "people"
+    ? qualifiedUserSpendByWorkspace(
+      currentCycleDaily, effectiveAuth, currentCycleUsage.groups,
+      currentCycleUsage.workspaceIds)
+    : new Map<string, Map<string, { agent: number; other: number }>>();
+  const currentCycleComplete =
+    currentCycleUsage.snapshot.status === "complete" ||
+    currentCycleUsage.snapshot.status === "stale";
   if (detailView === "people") for (const workspaceId of usage.workspaceIds) {
-    for (const [userId, totals] of qualifiedUsers.get(workspaceId) ?? []) {
+    const authorizedUserIds = effectiveAuth.roles.includes("account") ||
+        effectiveAuth.workspaceIds.includes(workspaceId)
+      ? [...dir.members.values()]
+        .filter((member) => member.workspaces.has(workspaceId))
+        .map((member) => member.userId)
+      : [...new Set([
+        effectiveAuth.userId,
+        ...usage.groups
+          .filter((group) => group.workspaceId === workspaceId)
+          .flatMap((group) => effectiveAuth.groupUserIds?.[group.id] ?? []),
+      ])].filter((userId) => dir.members.get(userId)?.workspaces.has(workspaceId));
+    for (const userId of authorizedUserIds) {
       if (dir.internalUserIds.has(userId) && userId !== effectiveAuth.userId) continue;
       const member = dir.members.get(userId);
+      const totals = qualifiedUsers.get(workspaceId)?.get(userId) ??
+        { agent: 0, other: 0 };
       const agent = dir.internalUserIds.has(userId) ? 0 : totals.agent;
       const other = totals.other;
       const spend = agent + other;
       const limit = resolveStoredMemberLimit(dir, workspaceId, userId);
-      const remaining = limit.amount === null ? null : limit.amount - agent;
+      const currentAgent = currentCycleComplete
+        ? dir.internalUserIds.has(userId)
+          ? 0
+          : (currentCycleUsers.get(workspaceId)?.get(userId)?.agent ?? 0)
+        : null;
+      const currentMetrics = currentCycleLimitMetrics(limit.amount, currentAgent);
       peopleRows.push({
         id: `person:${workspaceId}:${userId}`, kind: "person",
         name: member?.name ?? member?.username ?? userId, workspaceId,
         workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
         spendUsd: round(spend), agentSpendUsd: round(agent), otherServicesUsd: round(other),
-        allocationUsd: limit.amount, remainingUsd: remaining === null ? null : round(remaining),
-        percentUsed: limit.amount !== null && limit.amount > 0
-          ? round(agent / limit.amount * 100) : null,
+        allocationUsd: limit.amount,
+        remainingUsd: currentMetrics.remainingUsd,
+        percentUsed: currentMetrics.percentUsed,
+        currentCycleAgentSpendUsd: currentAgent === null ? null : round(currentAgent),
+        currentCycleRemainingUsd: currentMetrics.remainingUsd,
+        currentCyclePercentUsed: currentMetrics.percentUsed,
         status: limit.state, memberCount: null, ownerName: null,
         limitState: limit.state,
         limitObservationStatus: dir.budgets.observation.status,
@@ -702,6 +803,7 @@ export async function buildScopedAccounting(
     usageStatus: usage.snapshot.status,
     coverage: usage.snapshot.coverage,
     limitObservation: dir.budgets.observation,
+    allocationRevision,
     period: usage.selection.window, scope: {
       viewScope, workspaceIds: [...usage.workspaceIds].sort(),
       groupIds: usage.groups.map((group) => group.id).sort(),

@@ -2,7 +2,10 @@ import { describe, expect, test } from "vitest";
 import { ExportSpendPeopleCsvQueryParams } from "@workspace/api-zod";
 import type { Authorization } from "../lib/authz";
 import type { SpendRow } from "../services/scoped-accounting";
-import { resolveAuthorizationForView } from "../services/scoped-accounting";
+import {
+  currentCycleLimitMetrics,
+  resolveAuthorizationForView,
+} from "../services/scoped-accounting";
 import {
   authorizeSpendView,
   filterAndSortSpendRows,
@@ -111,5 +114,26 @@ describe("Spend details CSV parity and authorization", () => {
     ], { sort: "name_asc" });
     expect(pageSpendRows(selected, 2, 1).map((item) => item.name)).toEqual(["Bob"]);
     expect(selected.reduce((sum, item) => sum + item.spendUsd, 0)).toBe(60);
+  });
+
+  test("People remaining uses current-cycle consumption, not full-term spend", () => {
+    const metrics = currentCycleLimitMetrics(250, 40);
+    const fullTerm = {
+      ...row("person:w1:1", "Alice", 900, "explicit"),
+      allocationUsd: 250,
+      agentSpendUsd: 900,
+      remainingUsd: metrics.remainingUsd,
+      percentUsed: metrics.percentUsed,
+      currentCycleAgentSpendUsd: 40,
+      currentCycleRemainingUsd: metrics.remainingUsd,
+      currentCyclePercentUsed: metrics.percentUsed,
+      limitState: "explicit" as const,
+    };
+    expect(metrics.remainingUsd).toBe(210);
+    const csv = serializeSpendCsv([fullTerm]);
+    expect(csv).toContain('"current_cycle_remaining_usd"');
+    expect(csv).toContain('"current_cycle_agent_spend_usd"');
+    expect(csv).toContain('"900","900","0","250","210","16","40","210","16"');
+    expect(csv).not.toContain("-650");
   });
 });

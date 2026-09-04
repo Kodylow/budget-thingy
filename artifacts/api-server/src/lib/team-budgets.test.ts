@@ -21,6 +21,8 @@ import {
   applyTeamBudgetLimits,
   buildSnapshotRows,
   calculateTeamTargetAmount,
+  fetchAirtableBudgetRecords,
+  getAirtableSourceConfigurationStatus,
   getEffectiveTeamBudgets,
   getVisibleEffectiveTeamBudgetMap,
   isAssignableTeamLimitGroup,
@@ -29,6 +31,7 @@ import {
   refreshTeamBudgetSnapshot,
   reconcileTeamBudgetsUpstream,
   setAirtableBudgetFetcherForTests,
+  setAirtableBudgetTransportForTests,
   setTeamBudgetDirectoryFetcherForTests,
   TEAM_BUDGET_SOURCE,
   updateTeamMonthlyLimit,
@@ -328,6 +331,100 @@ describe("team budget Airtable parsing", () => {
   });
 });
 
+describe("configured Airtable allocation transport", () => {
+  const env = {
+    AIRTABLE_TEAM_BUDGET_BASE_ID: "appStable",
+    AIRTABLE_TEAM_BUDGET_TABLE_ID: "tblStable",
+    AIRTABLE_TEAM_BUDGET_APPROVAL_STATUS_FIELD_ID: "fldApproval",
+    AIRTABLE_TEAM_BUDGET_TEAM_STATUS_FIELD_ID: "fldTeamStatus",
+    AIRTABLE_TEAM_BUDGET_EXISTING_TEAM_FIELD_ID: "fldExisting",
+    AIRTABLE_TEAM_BUDGET_NEW_TEAM_FIELD_ID: "fldNew",
+    AIRTABLE_TEAM_BUDGET_AMOUNT_FIELD_ID: "fldAmount",
+    AIRTABLE_TEAM_BUDGET_PERIOD_FIELD_ID: "fldPeriod",
+  };
+  const prior = new Map<string, string | undefined>();
+  const schemaFields = [
+    { id: "fldApproval", type: "singleSelect" },
+    { id: "fldTeamStatus", type: "singleSelect" },
+    { id: "fldExisting", type: "singleLineText" },
+    { id: "fldNew", type: "singleLineText" },
+    { id: "fldAmount", type: "currency" },
+    { id: "fldPeriod", type: "date" },
+  ];
+
+  beforeAll(() => {
+    for (const [key, value] of Object.entries(env)) {
+      prior.set(key, process.env[key]);
+      process.env[key] = value;
+    }
+  });
+
+  afterAll(() => {
+    setAirtableBudgetTransportForTests(null);
+    for (const key of Object.keys(env)) {
+      const value = prior.get(key);
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("rejects a configured schema with a missing required field", async () => {
+    setAirtableBudgetTransportForTests(async (path) => {
+      expect(path).toContain("/v0/meta/bases/appStable/tables");
+      return Response.json({
+        tables: [{ id: "tblStable", fields: schemaFields.filter((field) => field.id !== "fldApproval") }],
+      });
+    });
+    await expect(fetchAirtableBudgetRecords()).rejects.toThrow(
+      "approvalStatus field fldApproval is unavailable",
+    );
+  });
+
+  it("rejects the whole snapshot when a later page fails", async () => {
+    setAirtableBudgetTransportForTests(async (path) => {
+      if (path.includes("/meta/")) {
+        return Response.json({ tables: [{ id: "tblStable", fields: schemaFields }] });
+      }
+      if (path.includes("offset=next")) {
+        return Response.json({ error: { message: "later page unavailable" } }, { status: 503 });
+      }
+      return Response.json({ records: [], offset: "next" });
+    });
+    await expect(fetchAirtableBudgetRecords()).rejects.toThrow("later page unavailable");
+  });
+
+  it("accepts a complete, schema-valid source with no records", async () => {
+    setAirtableBudgetTransportForTests(async (path) =>
+      path.includes("/meta/")
+        ? Response.json({ tables: [{ id: "tblStable", fields: schemaFields }] })
+        : Response.json({ records: [] })
+    );
+    await expect(fetchAirtableBudgetRecords()).resolves.toEqual({
+      records: [],
+      baseId: "appStable",
+      tableId: "tblStable",
+    });
+  });
+
+  it("reports explicitly which stable source IDs are unavailable", () => {
+    const priorBaseId = process.env.AIRTABLE_TEAM_BUDGET_BASE_ID;
+    delete process.env.AIRTABLE_TEAM_BUDGET_BASE_ID;
+    try {
+      expect(getAirtableSourceConfigurationStatus()).toMatchObject({
+        configured: false,
+        baseId: null,
+        tableId: null,
+      });
+      expect(getAirtableSourceConfigurationStatus().reason).toContain(
+        "AIRTABLE_TEAM_BUDGET_BASE_ID",
+      );
+    } finally {
+      if (priorBaseId == null) delete process.env.AIRTABLE_TEAM_BUDGET_BASE_ID;
+      else process.env.AIRTABLE_TEAM_BUDGET_BASE_ID = priorBaseId;
+    }
+  });
+});
+
 describe("team budget synchronization schedule", () => {
   it("allows only canonical nonlegacy member role groups", () => {
     const groups = [
@@ -414,7 +511,7 @@ describe("effective team budget persistence", () => {
     }
   });
 
-  it("sums every accepted record onto the immutable original and ignores issues", async () => {
+  it("retires legacy imported credits from active totals while retaining their history", async () => {
     await db.insert(teamBudgetAdjustmentsTable).values([
       {
         source: "airtable",
@@ -449,14 +546,14 @@ describe("effective team budget persistence", () => {
     const snapshot = await getEffectiveTeamBudgets();
     const existing = snapshot.teams.find((team) => team.teamName === EXISTING);
     expect(existing?.originalAmountUsd).toBe(100);
-    expect(existing?.effectiveAmountUsd).toBe(155);
-    expect(existing?.annualAllocationUsd).toBe(155);
-    expect(existing?.monthlyLimitUsd).toBe(12.92);
+    expect(existing?.effectiveAmountUsd).toBe(100);
+    expect(existing?.annualAllocationUsd).toBe(100);
+    expect(existing?.monthlyLimitUsd).toBe(8.33);
     expect(existing?.monthlyLimitSource).toBe("derived");
     expect(existing?.amountUsd).toBe(100);
 
     const visible = await getVisibleEffectiveTeamBudgetMap();
-    expect(visible.get(EXISTING)).toBe(155);
+    expect(visible.get(EXISTING)).toBe(100);
     expect(visible.has(HIDDEN)).toBe(false);
 
     await db.delete(teamBudgetAdjustmentsTable).where(inArray(
@@ -482,7 +579,7 @@ describe("effective team budget persistence", () => {
     });
   });
 
-  it("refresh is idempotent, preserves legacy history, and a failure preserves the last good snapshot", async () => {
+  it("refresh retires legacy history, is idempotent, and a failure preserves the last good snapshot", async () => {
     await db.insert(teamBudgetAdjustmentsTable).values({
       source: "airtable",
       sourceRecordId: `${PREFIX}-legacy`,
@@ -551,11 +648,14 @@ describe("effective team budget persistence", () => {
 
     let snapshot = await getEffectiveTeamBudgets();
     expect(snapshot.adjustments.filter((row) => row.sourceRecordId.startsWith(PREFIX))).toHaveLength(4);
-    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(150);
+    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(140);
     expect(snapshot.teams.find((team) => team.teamName === NEW_TEAM)?.effectiveAmountUsd).toBe(60);
     expect(snapshot.adjustments.find(
       (row) => row.sourceRecordId === `${PREFIX}-legacy`,
-    )?.source).toBe("airtable");
+    )).toMatchObject({
+      source: "airtable",
+      isActive: false,
+    });
     expect(snapshot.adjustments.filter(
       (row) => row.source === TEAM_BUDGET_SOURCE,
     )).toHaveLength(3);
@@ -580,7 +680,7 @@ describe("effective team budget persistence", () => {
 
     snapshot = await getEffectiveTeamBudgets();
     expect(snapshot.adjustments.filter((row) => row.sourceRecordId.startsWith(PREFIX))).toHaveLength(4);
-    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(150);
+    expect(snapshot.teams.find((team) => team.teamName === EXISTING)?.effectiveAmountUsd).toBe(140);
     expect(snapshot.sync?.lastSuccessfulAt).not.toBeNull();
     expect(snapshot.sync?.lastError).toBe("simulated Airtable outage");
   });
@@ -622,6 +722,10 @@ describe("effective team budget persistence", () => {
     expect((await refreshTeamBudgetSnapshot()).ok).toBe(true);
     snapshot = await getEffectiveTeamBudgets();
     expect(snapshot.teams.some((team) => team.teamName === RENAMED_TEAM)).toBe(false);
+    expect(snapshot.adjustments.find((row) => row.sourceRecordId === sourceRecordId)).toMatchObject({
+      isActive: false,
+      retirementReason: "Record was removed or is no longer approved in the complete source snapshot",
+    });
   });
 });
 
@@ -896,10 +1000,10 @@ describe("team budget upstream reconciliation", () => {
     expect(applied.teams.map((team) => team.teamName)).toEqual([TEAM_ONE, TEAM_TWO]);
     expect(applied.teams.find((team) => team.teamName === TEAM_ONE)?.outcome).toBe("success");
     expect(applied.teams.find((team) => team.teamName === TEAM_TWO)?.outcome).toBe("failed");
-    expect(upstream.get("member2")).toBe(0.92);
+    expect(upstream.get("member2")).toBe(0.83);
     expect(upstream.get("member3")).toBe(0);
     expect(mutations).toEqual(expect.arrayContaining([
-      { method: "POST", groupId: "member2", amountUsd: 0.92 },
+      { method: "POST", groupId: "member2", amountUsd: 0.83 },
       { method: "POST", groupId: "member3", amountUsd: 1.83 },
     ]));
     expect(await db.select().from(teamBudgetAdjustmentsTable).where(eq(

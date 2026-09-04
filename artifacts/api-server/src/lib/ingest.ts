@@ -13,7 +13,10 @@ import {
 import { ENTERPRISE_USAGE_REQUESTS_PER_MINUTE } from "./enterprise-rate-limit";
 import { hasDailyRosterSnapshot, recordDailyRosters } from "./history";
 import { logger } from "./logger";
-import { invalidateUsageSnapshotMemo } from "./usage-store";
+import {
+  beginUsageGenerationUpdate,
+  invalidateUsageSnapshotMemo,
+} from "./usage-store";
 import { sumAgentUsageMetrics } from "./usage-metrics";
 import { runCheck } from "./checker";
 import {
@@ -707,6 +710,7 @@ async function runAuthorizedCycle(now = new Date()): Promise<CycleSummary> {
   peakRequestsPerMinute = 0;
   lowestRateLimitRemaining = null;
   const lockClient = await pool.connect();
+  let publishGeneration: (() => void) | null = null;
   const empty: CycleSummary = {
     acquired: false, unitsAttempted: 0, unitsSucceeded: 0, unitsFailed: 0,
     totalCalls: 0, durationMs: 0, reconciliations: [], remainingBackfillCount: 0,
@@ -721,6 +725,7 @@ async function runAuthorizedCycle(now = new Date()): Promise<CycleSummary> {
       return { ...empty, durationMs: Date.now() - started };
     }
     empty.acquired = true;
+    publishGeneration = beginUsageGenerationUpdate();
     const directory = await refreshMetadata(now.getTime());
     const workspaceIds = [...directory.workspaces.keys()].sort();
     const today = day(now);
@@ -782,6 +787,7 @@ async function runAuthorizedCycle(now = new Date()): Promise<CycleSummary> {
     logger.error({ event: "usage_ingest_run", err: error, outcome: "failed" });
     throw error;
   } finally {
+    publishGeneration?.();
     if (empty.acquired) {
       await lockClient.query("select pg_advisory_unlock(hashtext('usage-ingest'))");
     }

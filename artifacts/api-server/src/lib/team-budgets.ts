@@ -28,13 +28,19 @@ import {
 import { logger } from "./logger";
 
 const AIRTABLE_CONNECTOR = "airtable";
-const BASE_NAMES = [
-  "Project Management",
-  "LIFT Labs Master Project Management",
-] as const;
 export const TEAM_BUDGET_SOURCE = "airtable-finance-approval";
 export const TEAM_BUDGET_SOURCE_TABLE = "Replit Finance Approval";
 export const TEAM_BUDGET_REQUIRED_APPROVAL_STATUS = "Approved";
+const AIRTABLE_CONFIG_ENV = {
+  baseId: "AIRTABLE_TEAM_BUDGET_BASE_ID",
+  tableId: "AIRTABLE_TEAM_BUDGET_TABLE_ID",
+  approvalStatus: "AIRTABLE_TEAM_BUDGET_APPROVAL_STATUS_FIELD_ID",
+  teamStatus: "AIRTABLE_TEAM_BUDGET_TEAM_STATUS_FIELD_ID",
+  existingTeamName: "AIRTABLE_TEAM_BUDGET_EXISTING_TEAM_FIELD_ID",
+  newTeamName: "AIRTABLE_TEAM_BUDGET_NEW_TEAM_FIELD_ID",
+  amount: "AIRTABLE_TEAM_BUDGET_AMOUNT_FIELD_ID",
+  period: "AIRTABLE_TEAM_BUDGET_PERIOD_FIELD_ID",
+} as const;
 const SYNC_STATE_ID = 1;
 const LEGACY_EXACT_MATCHES = new Map([
   ["Growth Strategy & Operations", "DXP"],
@@ -45,11 +51,14 @@ const LEGACY_EXACT_MATCHES = new Map([
 export interface AirtableBudgetRecord {
   id: string;
   createdTime?: string;
+  updatedTime?: string;
   fields: Record<string, unknown>;
 }
 
 export type AirtableBudgetFetcher = () => Promise<AirtableBudgetRecord[]>;
+export type AirtableBudgetTransport = (path: string) => Promise<Response>;
 let fetchOverride: AirtableBudgetFetcher | null = null;
+let transportOverride: AirtableBudgetTransport | null = null;
 let refreshInFlight: ReturnType<typeof performTeamBudgetSnapshotRefresh> | null = null;
 let upstreamReconciliationInFlight:
   ReturnType<typeof performTeamBudgetUpstreamReconciliation> | null = null;
@@ -61,6 +70,13 @@ let directoryFetchOverride: TeamBudgetDirectoryFetcher | null = null;
 /** Test-only seam. */
 export function setAirtableBudgetFetcherForTests(fetcher: AirtableBudgetFetcher | null): void {
   fetchOverride = fetcher;
+}
+
+/** Test-only seam for schema, pagination, and transport failure coverage. */
+export function setAirtableBudgetTransportForTests(
+  transport: AirtableBudgetTransport | null,
+): void {
+  transportOverride = transport;
 }
 
 /** Test-only seam; production always forces a fresh Enterprise directory. */
@@ -162,44 +178,189 @@ async function readConnectorError(response: Response): Promise<string> {
 }
 
 async function getJson(connectors: ReplitConnectors, path: string): Promise<any> {
-  const response = await connectors.proxy(AIRTABLE_CONNECTOR, path, { method: "GET" });
-  if (!response.ok) throw new Error(`Airtable ${path} failed: ${await readConnectorError(response)}`);
-  return response.json();
-}
-
-async function fetchAirtableBudgetRecords(): Promise<AirtableBudgetRecord[]> {
-  const connectors = new ReplitConnectors();
-  const bases = await getJson(connectors, "/v0/meta/bases");
-  const base = BASE_NAMES
-    .map((name) => (bases.bases ?? []).find((candidate: any) => candidate.name === name))
-    .find((candidate) => candidate?.id);
-  if (!base?.id) {
-    throw new Error(`Airtable base was not found (expected one of: ${BASE_NAMES.join(", ")})`);
-  }
-  const schema = await getJson(connectors, `/v0/meta/bases/${encodeURIComponent(base.id)}/tables`);
-  const table = (schema.tables ?? []).find(
-    (candidate: any) => candidate.name === TEAM_BUDGET_SOURCE_TABLE,
-  );
-  if (!table?.id) {
-    throw new Error(
-      `Airtable table "${TEAM_BUDGET_SOURCE_TABLE}" was not found in "${base.name}"`,
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = transportOverride
+      ? await transportOverride(path)
+      : await connectors.proxy(AIRTABLE_CONNECTOR, path, { method: "GET" });
+    if (response.ok) {
+      try {
+        return await response.json();
+      } catch {
+        throw new Error(`Airtable ${path} returned invalid JSON`);
+      }
+    }
+    if (response.status !== 429 || attempt === 2) {
+      throw new Error(`Airtable ${path} failed: ${await readConnectorError(response)}`);
+    }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    await new Promise((resolve) =>
+      setTimeout(resolve, Number.isFinite(retryAfter) ? Math.max(0, retryAfter * 1000) : 250),
     );
   }
+  throw new Error(`Airtable ${path} failed after retry`);
+}
+
+export interface AirtableSourceConfig {
+  baseId: string;
+  tableId: string;
+  fields: {
+    approvalStatus: string;
+    teamStatus: string;
+    existingTeamName: string;
+    newTeamName: string;
+    amount: string;
+    period: string;
+  };
+}
+
+function configuredAirtableSource(): AirtableSourceConfig {
+  const missing = Object.entries(AIRTABLE_CONFIG_ENV)
+    .filter(([, envName]) => !process.env[envName]?.trim())
+    .map(([, envName]) => envName);
+  if (missing.length) {
+    throw new Error(
+      `Airtable allocation source unavailable: missing stable source configuration ${missing.join(", ")}`,
+    );
+  }
+  return {
+    baseId: process.env[AIRTABLE_CONFIG_ENV.baseId]!.trim(),
+    tableId: process.env[AIRTABLE_CONFIG_ENV.tableId]!.trim(),
+    fields: {
+      approvalStatus: process.env[AIRTABLE_CONFIG_ENV.approvalStatus]!.trim(),
+      teamStatus: process.env[AIRTABLE_CONFIG_ENV.teamStatus]!.trim(),
+      existingTeamName: process.env[AIRTABLE_CONFIG_ENV.existingTeamName]!.trim(),
+      newTeamName: process.env[AIRTABLE_CONFIG_ENV.newTeamName]!.trim(),
+      amount: process.env[AIRTABLE_CONFIG_ENV.amount]!.trim(),
+      period: process.env[AIRTABLE_CONFIG_ENV.period]!.trim(),
+    },
+  };
+}
+
+export function getAirtableSourceConfigurationStatus(): {
+  configured: boolean;
+  baseId: string | null;
+  tableId: string | null;
+  reason: string | null;
+} {
+  try {
+    const config = configuredAirtableSource();
+    return {
+      configured: true,
+      baseId: config.baseId,
+      tableId: config.tableId,
+      reason: null,
+    };
+  } catch (error) {
+    return {
+      configured: false,
+      baseId: null,
+      tableId: null,
+      reason: error instanceof Error ? error.message : "Airtable allocation source unavailable",
+    };
+  }
+}
+
+const FIELD_TYPE_CONTRACT: Record<keyof AirtableSourceConfig["fields"], ReadonlySet<string>> = {
+  approvalStatus: new Set(["singleSelect", "singleLineText", "formula"]),
+  teamStatus: new Set(["singleSelect", "singleLineText", "formula"]),
+  existingTeamName: new Set(["singleLineText", "multilineText", "formula", "multipleRecordLinks"]),
+  newTeamName: new Set(["singleLineText", "multilineText", "formula"]),
+  amount: new Set(["number", "currency", "formula"]),
+  period: new Set(["date", "dateTime", "singleLineText", "formula"]),
+};
+
+export function validateAirtableBudgetSchema(
+  schema: unknown,
+  config: AirtableSourceConfig,
+): void {
+  const tables = (schema as { tables?: unknown })?.tables;
+  if (!Array.isArray(tables)) throw new Error("Airtable schema response is missing tables");
+  const table = tables.find((candidate) =>
+    candidate && typeof candidate === "object" &&
+    (candidate as { id?: unknown }).id === config.tableId
+  ) as { id: string; name?: string; fields?: unknown } | undefined;
+  if (!table) throw new Error(`Configured Airtable table ${config.tableId} is unavailable`);
+  if (!Array.isArray(table.fields)) {
+    throw new Error(`Configured Airtable table ${config.tableId} has no readable field schema`);
+  }
+  const fieldsById = new Map(
+    table.fields
+      .filter((field): field is { id: string; name?: string; type?: string } =>
+        !!field && typeof field === "object" && typeof (field as { id?: unknown }).id === "string")
+      .map((field) => [field.id, field]),
+  );
+  for (const [kind, fieldId] of Object.entries(config.fields) as [
+    keyof AirtableSourceConfig["fields"],
+    string,
+  ][]) {
+    const field = fieldsById.get(fieldId);
+    if (!field) throw new Error(`Configured Airtable ${kind} field ${fieldId} is unavailable`);
+    if (!field.type || !FIELD_TYPE_CONTRACT[kind].has(field.type)) {
+      throw new Error(
+        `Configured Airtable ${kind} field ${fieldId} has unsupported type ${field.type ?? "(missing)"}`,
+      );
+    }
+  }
+}
+
+export interface FetchedAirtableSnapshot {
+  records: AirtableBudgetRecord[];
+  baseId: string;
+  tableId: string;
+}
+
+export async function fetchAirtableBudgetRecords(): Promise<FetchedAirtableSnapshot> {
+  const config = configuredAirtableSource();
+  const connectors = new ReplitConnectors();
+  const schema = await getJson(
+    connectors,
+    `/v0/meta/bases/${encodeURIComponent(config.baseId)}/tables`,
+  );
+  validateAirtableBudgetSchema(schema, config);
 
   const records: AirtableBudgetRecord[] = [];
   let offset: string | undefined;
+  const seenOffsets = new Set<string>();
   do {
-    const query = new URLSearchParams({ pageSize: "100" });
+    const query = new URLSearchParams({
+      pageSize: "100",
+      returnFieldsByFieldId: "true",
+    });
     if (offset) query.set("offset", offset);
     const page = await getJson(
       connectors,
-      `/v0/${encodeURIComponent(base.id)}/${encodeURIComponent(table.id)}?${query}`,
+      `/v0/${encodeURIComponent(config.baseId)}/${encodeURIComponent(config.tableId)}?${query}`,
     );
     if (!Array.isArray(page.records)) throw new Error("Airtable returned an invalid records page");
-    records.push(...page.records);
-    offset = typeof page.offset === "string" ? page.offset : undefined;
+    for (const raw of page.records) {
+      if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !raw.fields ||
+        typeof raw.fields !== "object" || Array.isArray(raw.fields)) {
+        throw new Error("Airtable returned an invalid record");
+      }
+      records.push({
+        id: raw.id,
+        createdTime: typeof raw.createdTime === "string" ? raw.createdTime : undefined,
+        updatedTime: typeof raw.updatedTime === "string" ? raw.updatedTime : undefined,
+        fields: {
+          "Approval Status": raw.fields[config.fields.approvalStatus],
+          "Team Status": raw.fields[config.fields.teamStatus],
+          "Existing Team Name": raw.fields[config.fields.existingTeamName],
+          "New Team Name": raw.fields[config.fields.newTeamName],
+          "Total Credit Amount": raw.fields[config.fields.amount],
+          "Submission Month/Year": raw.fields[config.fields.period],
+        },
+      });
+    }
+    if (page.offset != null && typeof page.offset !== "string") {
+      throw new Error("Airtable returned an invalid pagination offset");
+    }
+    offset = page.offset;
+    if (offset && seenOffsets.has(offset)) {
+      throw new Error("Airtable returned a repeated pagination offset");
+    }
+    if (offset) seenOffsets.add(offset);
   } while (offset);
-  return records;
+  return { records, baseId: config.baseId, tableId: config.tableId };
 }
 
 type ParsedAdjustment = typeof teamBudgetAdjustmentsTable.$inferInsert;
@@ -208,6 +369,7 @@ export function parseAirtableBudgetRecord(
   record: AirtableBudgetRecord,
   existingTeams: ReadonlySet<string>,
   acceptedNewTeamsByRecordId: ReadonlyMap<string, string> = new Map(),
+  provenance: { baseId?: string; tableId?: string } = {},
 ): ParsedAdjustment {
   const fields = record.fields ?? {};
   const status = valueAsString(fields["Team Status"]);
@@ -250,7 +412,13 @@ export function parseAirtableBudgetRecord(
 
   return {
     source: TEAM_BUDGET_SOURCE,
+    sourceKind: "approved_credit",
+    sourceBaseId: provenance.baseId ?? null,
+    sourceTableId: provenance.tableId ?? null,
     sourceRecordId: record.id || "(missing)",
+    sourceRecordUrl: provenance.baseId && provenance.tableId && record.id
+      ? `https://airtable.com/${encodeURIComponent(provenance.baseId)}/${encodeURIComponent(provenance.tableId)}/${encodeURIComponent(record.id)}`
+      : null,
     sourceTeamStatus: status,
     sourceTeamName: existingName ?? newName,
     teamName: errors.length === 0 ? selectedName : null,
@@ -258,10 +426,18 @@ export function parseAirtableBudgetRecord(
     submissionPeriod: period,
     matchState: errors.length === 0 ? "accepted" : (existingName ? "unmatched" : "invalid"),
     errorMessage: errors.length ? errors.join("; ") : null,
-    sourceUpdatedAt:
+    isActive: true,
+    retiredAt: null,
+    retirementReason: null,
+    sourceCreatedAt:
       record.createdTime && Number.isFinite(new Date(record.createdTime).getTime())
         ? new Date(record.createdTime)
         : null,
+    sourceUpdatedAt:
+      record.updatedTime && Number.isFinite(new Date(record.updatedTime).getTime())
+        ? new Date(record.updatedTime)
+        : null,
+    ingestedAt: new Date(),
     syncedAt: new Date(),
   };
 }
@@ -271,6 +447,7 @@ export function buildSnapshotRows(
   records: readonly AirtableBudgetRecord[],
   existingTeams: ReadonlySet<string>,
   acceptedNewTeamsByRecordId: ReadonlyMap<string, string> = new Map(),
+  provenance: { baseId?: string; tableId?: string } = {},
 ): ParsedAdjustment[] {
   const byIdentity = new Map<string, AirtableBudgetRecord>();
   for (const record of records) {
@@ -281,20 +458,31 @@ export function buildSnapshotRows(
     byIdentity.set(record.id, record);
   }
   return [...byIdentity.values()].map((record) =>
-    parseAirtableBudgetRecord(record, existingTeams, acceptedNewTeamsByRecordId),
+    parseAirtableBudgetRecord(record, existingTeams, acceptedNewTeamsByRecordId, provenance),
   );
 }
 
 async function performTeamBudgetSnapshotRefresh(): Promise<{
   ok: boolean;
   recordCount: number;
+  fetchedCount: number;
+  approvedCount: number;
   acceptedCount: number;
+  unmatchedCount: number;
+  invalidCount: number;
   issueCount: number;
   error: string | null;
 }> {
   const attemptedAt = new Date();
   try {
-    const records = await (fetchOverride ?? fetchAirtableBudgetRecords)();
+    const fetched = fetchOverride
+      ? {
+          records: await fetchOverride(),
+          baseId: "test-configured-base",
+          tableId: "test-configured-table",
+        }
+      : await fetchAirtableBudgetRecords();
+    const { records, baseId, tableId } = fetched;
     const [current, priorAdjustments, groupAssignments] = await Promise.all([
       db.select().from(teamBudgetsTable),
       db.select().from(teamBudgetAdjustmentsTable),
@@ -311,7 +499,12 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
         )
         .map((row) => [row.sourceRecordId, row.teamName!]),
     );
-    const parsed = buildSnapshotRows(records, existingTeams, acceptedNewTeamsByRecordId);
+    const parsed = buildSnapshotRows(
+      records,
+      existingTeams,
+      acceptedNewTeamsByRecordId,
+      { baseId, tableId },
+    );
     const acceptedNewTeams = [
       ...new Set(
         parsed
@@ -324,17 +517,12 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
       ),
     ];
     const acceptedCount = parsed.filter((row) => row.matchState === "accepted").length;
+    const unmatchedCount = parsed.filter((row) => row.matchState === "unmatched").length;
+    const invalidCount = parsed.filter((row) => row.matchState === "invalid").length;
     const issueCount = parsed.length - acceptedCount;
     const nextReferencedTeams = new Set([
       ...parsed
         .filter((row) => row.matchState === "accepted" && row.teamName)
-        .map((row) => row.teamName!),
-      ...priorAdjustments
-        .filter((row) =>
-          row.source !== TEAM_BUDGET_SOURCE &&
-          row.matchState === "accepted" &&
-          row.teamName,
-        )
         .map((row) => row.teamName!),
     ]);
     const assignedTeams = new Set(groupAssignments.map((row) => row.teamName));
@@ -354,10 +542,33 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
           })),
         ).onConflictDoNothing();
       }
-      await tx.delete(teamBudgetAdjustmentsTable).where(
+      const retiredAt = new Date();
+      await tx.update(teamBudgetAdjustmentsTable).set({
+        isActive: false,
+        retiredAt,
+        retirementReason: "Record was removed or is no longer approved in the complete source snapshot",
+      }).where(and(
         eq(teamBudgetAdjustmentsTable.source, TEAM_BUDGET_SOURCE),
-      );
-      if (parsed.length) await tx.insert(teamBudgetAdjustmentsTable).values(parsed);
+        eq(teamBudgetAdjustmentsTable.isActive, true),
+      ));
+      await tx.update(teamBudgetAdjustmentsTable).set({
+        isActive: false,
+        retiredAt,
+        retirementReason:
+          "Legacy Airtable source retired; relationship to Finance Approval has not been verified",
+      }).where(and(
+        eq(teamBudgetAdjustmentsTable.source, "airtable"),
+        eq(teamBudgetAdjustmentsTable.isActive, true),
+      ));
+      for (const row of parsed) {
+        await tx.insert(teamBudgetAdjustmentsTable).values(row).onConflictDoUpdate({
+          target: [
+            teamBudgetAdjustmentsTable.source,
+            teamBudgetAdjustmentsTable.sourceRecordId,
+          ],
+          set: row,
+        });
+      }
       if (staleSourceCreatedTeams.length) {
         await tx.delete(teamBudgetsTable).where(and(
           inArray(teamBudgetsTable.teamName, staleSourceCreatedTeams),
@@ -370,8 +581,16 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
         lastAttemptAt: attemptedAt,
         lastSuccessfulAt: new Date(),
         lastError: null,
+        sourceBaseId: baseId,
+        sourceTableId: tableId,
+        sourceAvailable: true,
+        unavailableReason: null,
+        fetchedCount: records.length,
+        approvedCount: parsed.length,
         recordCount: parsed.length,
         acceptedCount,
+        unmatchedCount,
+        invalidCount,
         issueCount,
       }).onConflictDoUpdate({
         target: teamBudgetSyncStateTable.id,
@@ -379,29 +598,76 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
           lastAttemptAt: attemptedAt,
           lastSuccessfulAt: new Date(),
           lastError: null,
+          sourceBaseId: baseId,
+          sourceTableId: tableId,
+          sourceAvailable: true,
+          unavailableReason: null,
+          fetchedCount: records.length,
+          approvedCount: parsed.length,
           recordCount: parsed.length,
           acceptedCount,
+          unmatchedCount,
+          invalidCount,
           issueCount,
         },
       });
     });
-    return { ok: true, recordCount: parsed.length, acceptedCount, issueCount, error: null };
+    logger.info({
+      event: "airtable_allocation_sync",
+      outcome: "complete",
+      source: TEAM_BUDGET_SOURCE,
+      baseId,
+      tableId,
+      fetchedCount: records.length,
+      approvedCount: parsed.length,
+      acceptedCount,
+      unmatchedCount,
+      invalidCount,
+    }, "Airtable allocation snapshot published");
+    return {
+      ok: true,
+      recordCount: parsed.length,
+      fetchedCount: records.length,
+      approvedCount: parsed.length,
+      acceptedCount,
+      unmatchedCount,
+      invalidCount,
+      issueCount,
+      error: null,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Airtable synchronization error";
     await db.insert(teamBudgetSyncStateTable).values({
       id: SYNC_STATE_ID,
       lastAttemptAt: attemptedAt,
       lastError: message,
+      sourceAvailable: false,
+      unavailableReason: message,
     }).onConflictDoUpdate({
       target: teamBudgetSyncStateTable.id,
-      set: { lastAttemptAt: attemptedAt, lastError: message },
+      set: {
+        lastAttemptAt: attemptedAt,
+        lastError: message,
+        sourceAvailable: false,
+        unavailableReason: message,
+      },
     });
+    logger.error({
+      event: "airtable_allocation_sync",
+      outcome: "failed",
+      source: TEAM_BUDGET_SOURCE,
+      err: error,
+    }, "Airtable allocation snapshot was not published");
     const [state] = await db.select().from(teamBudgetSyncStateTable)
       .where(eq(teamBudgetSyncStateTable.id, SYNC_STATE_ID));
     return {
       ok: false,
       recordCount: state?.recordCount ?? 0,
+      fetchedCount: state?.fetchedCount ?? 0,
+      approvedCount: state?.approvedCount ?? 0,
       acceptedCount: state?.acceptedCount ?? 0,
+      unmatchedCount: state?.unmatchedCount ?? 0,
+      invalidCount: state?.invalidCount ?? 0,
       issueCount: state?.issueCount ?? 0,
       error: message,
     };
@@ -425,7 +691,13 @@ export async function getEffectiveTeamBudgets() {
   ]);
   const acceptedByTeam = new Map<string, number>();
   for (const adjustment of adjustments) {
-    if (adjustment.matchState !== "accepted" || !adjustment.teamName || adjustment.amountUsd == null) continue;
+    if (
+      adjustment.source !== TEAM_BUDGET_SOURCE ||
+      !adjustment.isActive ||
+      adjustment.matchState !== "accepted" ||
+      !adjustment.teamName ||
+      adjustment.amountUsd == null
+    ) continue;
     acceptedByTeam.set(
       adjustment.teamName,
       (acceptedByTeam.get(adjustment.teamName) ?? 0) + adjustment.amountUsd,

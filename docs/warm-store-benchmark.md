@@ -1,9 +1,10 @@
 # Current authenticated read-path benchmark
 
-This benchmark covers all 12 paths in the current runner: generated Dashboard,
-all active Spend JSON and CSV views, full-term and billing group detail, and
-group projects. It measures the durable Postgres store; it is not a production
-capacity claim.
+This benchmark covers all 16 paths in the current runner: generated Dashboard,
+all active Spend JSON and CSV views, full-term and billing group detail, group
+projects, canonical cluster headline/projects, the Set Limits workspace read
+model, and the allocation read model. It performs GET requests only. It measures
+the durable Postgres store; it is not a production capacity claim.
 
 ## Reproduce
 
@@ -26,8 +27,11 @@ HTTP loopback URL ending in `/api`. Each endpoint records:
 
 The optional ingestion-active profile runs the same eight-request batches while
 `ingest:once` is active. Before measurement, the runner requests the full-term
-group list and candidate group detail paths to select an authorized
-representative fixture. Paths are then measured serially, so route-cache-cold
+group list, candidate group detail paths, and current authorization to select an
+authorized representative family cluster and writable Set Limits workspace.
+That capability is used only for the Set Limits GET; the runner never calls a
+prepare, commit, retry, refresh, or other mutation endpoint. Paths are then
+measured serially, so route-cache-cold
 samples are order-dependent and are not process-cold. A true process-cold
 measurement requires restarting the API immediately before the runner.
 
@@ -50,7 +54,7 @@ Payload sizes ranged from 8,159 bytes for Dashboard to 577,431 bytes for
 project CSV. Every response supplied `Content-Length`, matching the decoded
 size, and reported identity encoding.
 
-## Current result
+## Last measured result (before the current Dashboard cache)
 
 | Endpoint | Decoded bytes | Warm requests | Warm p50 / p95 | Concurrent requests | Concurrent p50 / p95 | Server-Timing |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -81,6 +85,14 @@ ingestion profile being disabled. No capacity or regression-cause claim is made
 from this run; it is the current observed result and should be investigated
 separately rather than hidden by reusing the older number.
 
+The Dashboard implementation has since gained a bounded response cache and
+phase-level Server-Timing, and the runner has gained the four read paths listed
+above. No populated authenticated fixture was available to this change set, so
+the table remains the September 4 pre-change measurement. In particular, this
+document does **not** claim that the new implementation meets the <150 ms warm
+p95 target. Rerun both the stable profile and `BENCHMARK_WITH_INGEST=1` before
+making that claim.
+
 Route-cache-cold results are reported by the runner but are sensitive to which
 lower-level snapshot was warmed by the preceding endpoint. They are not used as
 an optimization claim. Aggregate event-loop delay for the complete run was mean
@@ -110,14 +122,25 @@ web artifact and are therefore outside this server-read profile.
 
 ## Cache and correctness notes
 
-- Cache keys include identity, preview/capabilities, effective authorized scope,
-  canonical query, resolved reporting window, directory/limit generation, and
-  the process usage generation.
+- Dashboard and Spend cache keys include identity, preview/capabilities,
+  effective authorized scope, canonical query, resolved reporting window,
+  directory/limit generation, the process usage generation, and a content
+  revision of allocation, target, mapping, and adjustment rows.
 - The cache is capped at 256 LRU entries, uses a 30-second fresh interval and a
   two-minute same-key stale-success interval, and deduplicates cold misses and
   refreshes.
-- Usage ingestion invalidates the generation before subsequent requests can
-  reuse an old result. A failed refresh leaves only the already-authorized
-  same-key stale success available.
+- Dashboard caches the validated serialized response. Stale success is
+  available only under the exact same identity, scope, range, generation, and
+  allocation-revision key.
+- Unit-level usage invalidations are coalesced while the process owns an
+  ingestion cycle, then published once when that cycle exits. This reduces
+  process-local generation churn, but is not a transactional cross-process
+  database generation: a first-time uncached scope can still observe committed
+  units while ingestion is active. Dashboard suppresses refresh of an available
+  same-key stale response during that local publication window.
 - Scope resolution happens before independent stored reads are started, and
   the prepared directory/effective authorization context is reused by a miss.
+- Dashboard Server-Timing separates `authorization`, `stored-read`, cache
+  lookup (`hit`, `stale`, `in-flight`, or `miss`), `accounting`, `rollups`,
+  serialized `response` assembly, and total route time. On a response-cache hit,
+  accounting, rollups, and response assembly report zero for that request.

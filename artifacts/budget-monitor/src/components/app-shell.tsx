@@ -129,6 +129,7 @@ function getNavSections(
       items: [
         { path: '/', label: 'Dashboard', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
         { path: '/spend', label: 'Spend details', icon: WalletCards, show: true, testId: 'nav-spend' },
+        { path: '/limits', label: 'Set limits', icon: ShieldCheck, show: capabilities.canWriteUserLimitsIn && capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
       ],
     },
     {

@@ -5,6 +5,238 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface SetLimitsGroup {
+  groupId: string;
+  name: string;
+  /** @nullable */
+  familyName: string | null;
+  /** @nullable */
+  role: string | null;
+  /** @items.pattern ^[1-9]\d*$ */
+  eligibleUserIds: string[];
+}
+
+export type SetLimitsMemberLimitState = typeof SetLimitsMemberLimitState[keyof typeof SetLimitsMemberLimitState];
+
+
+export const SetLimitsMemberLimitState = {
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+export interface SetLimitsMember {
+  /** @pattern ^[1-9]\d*$ */
+  userId: string;
+  username: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  email: string | null;
+  role: string;
+  groupIds: string[];
+  isInternal: boolean;
+  isDisabled: boolean;
+  eligible: boolean;
+  /** @nullable */
+  usageUsd: number | null;
+  /** @nullable */
+  explicitLimitUsd: number | null;
+  /** @nullable */
+  effectiveLimitUsd: number | null;
+  limitState: SetLimitsMemberLimitState;
+}
+
+export type SetLimitsWorkspaceBillingPeriod = {
+  start: string;
+  end: string;
+};
+
+export type SetLimitsWorkspaceLimitObservationStatus = typeof SetLimitsWorkspaceLimitObservationStatus[keyof typeof SetLimitsWorkspaceLimitObservationStatus];
+
+
+export const SetLimitsWorkspaceLimitObservationStatus = {
+  available: 'available',
+  unavailable: 'unavailable',
+  failed: 'failed',
+} as const;
+
+export type SetLimitsWorkspaceLimitObservation = {
+  status: SetLimitsWorkspaceLimitObservationStatus;
+  /** @nullable */
+  observedAt: string | null;
+  /** @nullable */
+  error: string | null;
+};
+
+export interface SetLimitsWorkspace {
+  /** @pattern ^[A-Za-z0-9]+$ */
+  workspaceId: string;
+  workspaceName: string;
+  canWrite: boolean;
+  /** @nullable */
+  unavailableReason: string | null;
+  billingPeriod: SetLimitsWorkspaceBillingPeriod;
+  limitObservation: SetLimitsWorkspaceLimitObservation;
+  groups: SetLimitsGroup[];
+  members: SetLimitsMember[];
+}
+
+export interface LimitOperationPrepareInput {
+  /** @pattern ^[A-Za-z0-9]+$ */
+  workspaceId: string;
+  /** @exclusiveMinimum 0 */
+  amountUsd: number;
+  /**
+     * @maxItems 1000
+     * @items.pattern ^[1-9]\d*$
+     */
+  userIds: string[];
+  /**
+     * @maxItems 1000
+     * @items.minLength 1
+     */
+  groupIds: string[];
+  /**
+     * @minLength 8
+     * @maxLength 200
+     */
+  idempotencyKey: string;
+}
+
+export interface LimitOperationCommitInput {
+  /**
+     * @minLength 64
+     * @maxLength 64
+     */
+  reviewFingerprint: string;
+  /** @exclusiveMinimum 0 */
+  amountUsd: number;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     * @items.pattern ^[1-9]\d*$
+     */
+  userIds: string[];
+}
+
+export interface LimitOperationRetryInput {
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     * @items.pattern ^[1-9]\d*$
+     */
+  userIds: string[];
+  /**
+     * @minLength 8
+     * @maxLength 200
+     */
+  idempotencyKey: string;
+}
+
+export type LimitTargetAttemptStage = typeof LimitTargetAttemptStage[keyof typeof LimitTargetAttemptStage];
+
+
+export const LimitTargetAttemptStage = {
+  authorization: 'authorization',
+  membership: 'membership',
+  reconcile: 'reconcile',
+  write: 'write',
+  verification: 'verification',
+  audit: 'audit',
+} as const;
+
+export interface LimitTargetAttempt {
+  at: string;
+  stage: LimitTargetAttemptStage;
+  outcome: string;
+  /** @nullable */
+  requestId?: string | null;
+  /** @nullable */
+  retryAfterMs?: number | null;
+  /** @nullable */
+  message?: string | null;
+}
+
+export type LimitOperationTargetState = typeof LimitOperationTargetState[keyof typeof LimitOperationTargetState];
+
+
+export const LimitOperationTargetState = {
+  queued: 'queued',
+  applying: 'applying',
+  verified: 'verified',
+  failed: 'failed',
+  verification_pending: 'verification_pending',
+} as const;
+
+export interface LimitOperationTarget {
+  workspaceId: string;
+  userId: string;
+  /** @nullable */
+  memberName: string | null;
+  /** @nullable */
+  memberEmail: string | null;
+  /** @nullable */
+  oldAmountUsd: number | null;
+  newAmountUsd: number;
+  state: LimitOperationTargetState;
+  attempts: number;
+  history: LimitTargetAttempt[];
+  /** @nullable */
+  errorStage: string | null;
+  /** @nullable */
+  errorCode: string | null;
+  /** @nullable */
+  errorMessage: string | null;
+  /** @nullable */
+  upstreamRequestId: string | null;
+  /** @nullable */
+  queuedAt: string | null;
+  /** @nullable */
+  applyingAt: string | null;
+  /** @nullable */
+  verifiedAt: string | null;
+  /** @nullable */
+  failedAt: string | null;
+}
+
+export type LimitOperationState = typeof LimitOperationState[keyof typeof LimitOperationState];
+
+
+export const LimitOperationState = {
+  prepared: 'prepared',
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+} as const;
+
+export type LimitOperationCounts = {
+  total: number;
+  queued: number;
+  applying: number;
+  verified: number;
+  failed: number;
+  verificationPending: number;
+};
+
+export interface LimitOperation {
+  /** @pattern ^[0-9a-fA-F-]{36}$ */
+  id: string;
+  workspaceId: string;
+  state: LimitOperationState;
+  amountUsd: number;
+  reviewFingerprint: string;
+  actorUserId: string;
+  preparedAt: string;
+  /** @nullable */
+  committedAt: string | null;
+  /** @nullable */
+  completedAt: string | null;
+  counts: LimitOperationCounts;
+  targets: LimitOperationTarget[];
+}
+
 export interface ReportingPeriod {
   start: string;
   endExclusive: string;
@@ -285,6 +517,21 @@ export interface SpendTableRow {
   remainingUsd: number | null;
   /** @nullable */
   percentUsed: number | null;
+  /**
+     * Agent spend in the current billing cycle; populated for People independently of the selected reporting range.
+     * @nullable
+     */
+  currentCycleAgentSpendUsd?: number | null;
+  /**
+     * Current monthly limit minus current-cycle Agent spend; never selected-range spend.
+     * @nullable
+     */
+  currentCycleRemainingUsd?: number | null;
+  /**
+     * Current-cycle Agent spend as a percentage of the current monthly limit.
+     * @nullable
+     */
+  currentCyclePercentUsed?: number | null;
   status: string;
   /** @nullable */
   memberCount: number | null;
@@ -1008,6 +1255,16 @@ export interface BudgetConnectorState {
   error: string | null;
 }
 
+export type WorkspaceMemberBudgetLimitState = typeof WorkspaceMemberBudgetLimitState[keyof typeof WorkspaceMemberBudgetLimitState];
+
+
+export const WorkspaceMemberBudgetLimitState = {
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
 /**
  * @nullable
  */
@@ -1030,10 +1287,16 @@ export interface WorkspaceMemberBudget {
   role: string;
   isDisabled: boolean;
   /**
-     * Desired Agent budget; null means unset.
+     * Explicit member Agent limit; null means no explicit member override.
      * @nullable
      */
   budgetUsd: number | null;
+  /**
+     * Applicable explicit or inherited current monthly Agent limit.
+     * @nullable
+     */
+  effectiveLimitUsd: number | null;
+  limitState: WorkspaceMemberBudgetLimitState;
   /**
      * Agent usage in the current billing cycle.
      * @nullable
@@ -1064,11 +1327,46 @@ export const WorkspaceMembersResponseBillingPeriod = {
   current: 'current',
 } as const;
 
+export type WorkspaceMembersResponseLimitObservationStatus = typeof WorkspaceMembersResponseLimitObservationStatus[keyof typeof WorkspaceMembersResponseLimitObservationStatus];
+
+
+export const WorkspaceMembersResponseLimitObservationStatus = {
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+  refreshing: 'refreshing',
+} as const;
+
+export type WorkspaceMembersResponseLimitObservation = {
+  status: WorkspaceMembersResponseLimitObservationStatus;
+  /** @nullable */
+  observedAt: number | null;
+  /** @nullable */
+  lastSuccessfulAt: number | null;
+  /** @nullable */
+  lastAttemptAt: number | null;
+  /** @nullable */
+  refreshStartedAt: number | null;
+  /** @nullable */
+  generation: string | null;
+  /** @nullable */
+  error: string | null;
+};
+
+export type WorkspaceMembersResponseDirectoryFreshness = {
+  /** @nullable */
+  dataAsOf: string | null;
+  isStale: boolean;
+  isRefreshing: boolean;
+};
+
 export interface WorkspaceMembersResponse {
   workspaceId: string;
   workspaceName: string;
   billingPeriod: WorkspaceMembersResponseBillingPeriod;
   connector: BudgetConnectorState;
+  limitObservation: WorkspaceMembersResponseLimitObservation;
+  directoryFreshness: WorkspaceMembersResponseDirectoryFreshness;
   members: WorkspaceMemberBudget[];
 }
 
@@ -1285,6 +1583,19 @@ export interface TeamBudgetAdjustment {
   amountUsd: number;
   /** @pattern ^\d{4}-(0[1-9]|1[0-2])$ */
   submissionPeriod: string;
+  source: string;
+  sourceKind: string;
+  /** @nullable */
+  sourceBaseId: string | null;
+  /** @nullable */
+  sourceTableId: string | null;
+  /** @nullable */
+  sourceUrl: string | null;
+  /** @nullable */
+  sourceCreatedAt: string | null;
+  /** @nullable */
+  sourceUpdatedAt: string | null;
+  ingestedAt: string;
 }
 
 export type TeamBudgetHistoryTeamMonthlyLimitSource = typeof TeamBudgetHistoryTeamMonthlyLimitSource[keyof typeof TeamBudgetHistoryTeamMonthlyLimitSource];
@@ -1318,9 +1629,28 @@ export interface TeamBudgetMatchIssue {
   recordId: string;
   /** @nullable */
   sourceTeamName: string | null;
+  source: string;
+  sourceKind: string;
+  /** @nullable */
+  sourceBaseId: string | null;
+  /** @nullable */
+  sourceTableId: string | null;
+  /** @nullable */
+  sourceUrl: string | null;
+  /** @nullable */
+  teamName: string | null;
+  /** @nullable */
+  amountUsd: number | null;
+  /** @nullable */
+  submissionPeriod: string | null;
   matchState: TeamBudgetMatchIssueMatchState;
   /** @nullable */
   error: string | null;
+  /** @nullable */
+  sourceCreatedAt: string | null;
+  /** @nullable */
+  sourceUpdatedAt: string | null;
+  ingestedAt: string;
 }
 
 export interface TeamBudgetHistoryResponse {
@@ -1418,8 +1748,19 @@ export interface TeamBudgetSyncStatus {
   lastSuccessfulAt: string | null;
   /** @nullable */
   lastError: string | null;
+  /** @nullable */
+  sourceBaseId: string | null;
+  /** @nullable */
+  sourceTableId: string | null;
+  sourceAvailable: boolean;
+  /** @nullable */
+  unavailableReason: string | null;
+  fetchedCount: number;
+  approvedCount: number;
   recordCount: number;
   acceptedCount: number;
+  unmatchedCount: number;
+  invalidCount: number;
   issueCount: number;
   teams: TeamBudgetUpstreamSync[];
 }
@@ -1556,7 +1897,11 @@ export interface TeamBudgetRefreshResult {
   requiredApprovalStatus: TeamBudgetRefreshResultRequiredApprovalStatus;
   ok: boolean;
   recordCount: number;
+  fetchedCount: number;
+  approvedCount: number;
   acceptedCount: number;
+  unmatchedCount: number;
+  invalidCount: number;
   issueCount: number;
   /** @nullable */
   error: string | null;

@@ -159,11 +159,12 @@ async function selectRepresentativeGroup(
   groups: Array<{
     groupId: string;
     workspaceId?: string;
+    familyKey?: string;
     isSynthetic?: boolean;
     memberCount?: number;
   }>,
   sid: string,
-): Promise<{ groupId: string; workspaceId: string }> {
+): Promise<{ groupId: string; workspaceId: string; clusterKey: string }> {
   const candidates = groups
     .filter((candidate): candidate is typeof candidate & { workspaceId: string } =>
       !candidate.isSynthetic && Boolean(candidate.workspaceId))
@@ -174,16 +175,31 @@ async function selectRepresentativeGroup(
       headers: { Authorization: `Bearer ${sid}` },
     });
     await response.arrayBuffer();
-    if (response.ok) return candidate;
+    if (response.ok) {
+      const clusterIds = groups
+        .filter((item) =>
+          !item.isSynthetic &&
+          item.familyKey === candidate.familyKey &&
+          item.workspaceId === candidate.workspaceId)
+        .map((item) => item.groupId);
+      return {
+        ...candidate,
+        clusterKey: clusterIds.length > 0
+          ? clusterIds.join(",")
+          : candidate.groupId,
+      };
+    }
   }
   throw new Error("No accessible real group has a readable full-term detail snapshot.");
 }
 
 async function selectAuthorizedSession(): Promise<{
   sid: string;
+  setLimitsWorkspaceId: string;
   groups: Array<{
     groupId: string;
     workspaceId?: string;
+    familyKey?: string;
     isSynthetic?: boolean;
     memberCount?: number;
   }>;
@@ -207,17 +223,28 @@ async function selectAuthorizedSession(): Promise<{
       groups?: Array<{
         groupId: string;
         workspaceId?: string;
+        familyKey?: string;
         isSynthetic?: boolean;
         memberCount?: number;
       }>;
     };
-    if (payload.groups?.length) {
-      return { sid: session.sid, groups: payload.groups };
+    const authResponse = await fetch(`${baseUrl}/auth/user`, {
+      headers: { Authorization: `Bearer ${session.sid}` },
+    });
+    const authPayload = authResponse.ok
+      ? await authResponse.json() as {
+        capabilities?: { canWriteUserLimitsIn?: string[] };
+      }
+      : null;
+    const setLimitsWorkspaceId =
+      authPayload?.capabilities?.canWriteUserLimitsIn?.[0];
+    if (payload.groups?.length && setLimitsWorkspaceId) {
+      return { sid: session.sid, groups: payload.groups, setLimitsWorkspaceId };
     }
   }
 
   throw new Error(
-    "No unexpired development session can read an accessible real group. Sign in to the app first.",
+    "No unexpired development session can read groups and the Set Limits read model. Sign in with an authorized workspace administrator first.",
   );
 }
 
@@ -231,6 +258,8 @@ async function main(): Promise<void> {
   const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
   eventLoopDelay.enable();
   const commonQuery = "rangeType=full-term&viewScope=all_authorized";
+  const clusterKey = encodeURIComponent(group.clusterKey);
+  const clusterQuery = `${commonQuery}&scopeGroupIds=${encodeURIComponent(group.clusterKey)}`;
   const benchmarkPaths = [
     `/dashboard?${commonQuery}`,
     `/spend/pools?${commonQuery}`,
@@ -244,6 +273,10 @@ async function main(): Promise<void> {
     `/groups/${encodeURIComponent(group.groupId)}?rangeType=full-term`,
     `/groups/${encodeURIComponent(group.groupId)}?rangeType=billing`,
     `/groups/${encodeURIComponent(group.groupId)}/projects?rangeType=full-term`,
+    `/clusters/${clusterKey}/headline?${clusterQuery}`,
+    `/clusters/${clusterKey}/projects?${clusterQuery}`,
+    `/limits/workspaces/${encodeURIComponent(session.setLimitsWorkspaceId)}?page=1&pageSize=100`,
+    "/teams/budgets",
   ];
   const results = [];
   for (const path of benchmarkPaths) {
@@ -262,6 +295,8 @@ async function main(): Promise<void> {
       process.env["BENCHMARK_WITH_INGEST"] === "1" ? "enabled" : "disabled",
     representativeGroupId: group.groupId,
     representativeWorkspaceId: group.workspaceId,
+    setLimitsWorkspaceId: session.setLimitsWorkspaceId,
+    representativeClusterGroupCount: group.clusterKey.split(",").length,
     eventLoopDelayMs: {
       mean: Number((eventLoopDelay.mean / 1e6).toFixed(1)),
       p95: Number((eventLoopDelay.percentile(95) / 1e6).toFixed(1)),

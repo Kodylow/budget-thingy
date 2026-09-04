@@ -291,7 +291,7 @@ function SpendTable({
   let columns: string[] = [];
   if (type === 'pools') columns = ['name', 'spendUsd', 'allocationUsd', 'remainingUsd', 'percentUsed', 'status'];
   else if (type === 'groups') columns = ['name', 'memberCount', 'spendUsd', 'agentSpendUsd', 'otherServicesUsd', 'allocationUsd'];
-  else if (type === 'people') columns = ['name', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'allocationUsd', 'remainingUsd', 'limitState', 'limitObservationStatus'];
+  else if (type === 'people') columns = ['name', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'currentCycleAgentSpendUsd', 'allocationUsd', 'currentCycleRemainingUsd', 'limitState', 'limitObservationStatus'];
   else columns = ['name', 'ownerName', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'otherServicesUsd'];
 
   const totalPages = Math.max(1, Math.ceil(data.filteredRows / pageSize));
@@ -446,16 +446,20 @@ function GenericSpendTable({
     return <div className="p-12 text-center text-muted-foreground">No data available for this view.</div>;
   }
 
-  const formatCurrency = (val: number | null) => {
-    if (val === null) return '—';
+  const formatCurrency = (val: number | null | undefined) => {
+    if (val == null) return '—';
     if (val === 0) return '$0.00';
     return '$' + val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
   
   const colLabel = (col: string) => {
     const labels: Record<string, string> = {
-      name: 'Name', spendUsd: 'Spend', allocationUsd: 'Allocation', remainingUsd: 'Remaining',
-      percentUsed: 'Used %', status: 'Status', memberCount: 'Members', agentSpendUsd: 'Agent Spend',
+      name: 'Name', spendUsd: 'Selected-range spend',
+      allocationUsd: 'Current monthly limit', remainingUsd: 'Remaining',
+      percentUsed: 'Used %', status: 'Status', memberCount: 'Members',
+      agentSpendUsd: 'Selected-range Agent spend',
+      currentCycleAgentSpendUsd: 'Agent spend this cycle',
+      currentCycleRemainingUsd: 'Remaining this cycle',
       otherServicesUsd: 'Other Services', workspaceName: 'Workspace', ownerName: 'Owner', limitState: 'Limit State'
     };
     return labels[col] || col;
@@ -524,12 +528,12 @@ function GenericSpendTable({
               const isNumeric = col.includes('Usd') || col === 'percentUsed' || col === 'memberCount';
               
               let displayVal: React.ReactNode = val;
-               if (col.includes('Usd')) {
-                 if (val !== null) displayVal = formatCurrency(val);
+                 if (col.includes('Usd')) {
+                  if (val != null) displayVal = formatCurrency(val);
                  else if (col === 'allocationUsd') {
                    displayVal = row.limitState === 'unavailable' ? 'Unavailable'
                      : row.kind === 'person' ? 'No limit' : 'No allocation';
-                 } else if (col === 'remainingUsd') {
+                  } else if (col === 'remainingUsd' || col === 'currentCycleRemainingUsd') {
                    displayVal = row.limitState === 'unavailable' ? 'Unavailable'
                      : row.kind === 'person' ? 'No limit' : 'Not applicable';
                  }

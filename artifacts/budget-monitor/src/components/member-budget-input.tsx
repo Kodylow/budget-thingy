@@ -26,8 +26,14 @@ export const invalidateBudgetCaches = (queryClient: QueryClient, workspaceId?: s
   queryClient.invalidateQueries({
     predicate: (query) =>
       typeof query.queryKey[0] === 'string' &&
-      (query.queryKey[0].startsWith('/api/clusters/') ||
-       query.queryKey[0].startsWith('/api/groups/'))
+      (query.queryKey[0] === '/api/summary' ||
+       query.queryKey[0].startsWith('/api/spend/') ||
+       query.queryKey[0].startsWith('/api/limits') ||
+       query.queryKey[0].startsWith('/api/directory/workspaces') ||
+       query.queryKey[0].startsWith('/api/clusters/') ||
+       query.queryKey[0].startsWith('/api/groups/') ||
+       query.queryKey[0].includes('history') ||
+       query.queryKey[0].includes('audit'))
   });
 };
 

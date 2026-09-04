@@ -13,7 +13,11 @@ export interface TeamBudgetRefreshResult {
   requiredApprovalStatus: TeamBudgetRefreshResultRequiredApprovalStatus;
   ok: boolean;
   recordCount: number;
+  fetchedCount: number;
+  approvedCount: number;
   acceptedCount: number;
+  unmatchedCount: number;
+  invalidCount: number;
   issueCount: number;
   /** @nullable */
   error: string | null;

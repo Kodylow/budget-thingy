@@ -27,6 +27,7 @@ const Settings = lazy(() => import('@/pages/settings'));
 const Help = lazy(() => import('@/pages/user-guide'));
 const GroupDetail = lazy(() => import('@/pages/group-detail'));
 const ClusterDetail = lazy(() => import('@/pages/cluster-detail'));
+const Limits = lazy(() => import('@/pages/limits'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -155,6 +156,17 @@ function AllocationsRoute() {
   );
 }
 
+function LimitsRoute() {
+  const { capabilities, isPreviewing } = useAuthContext();
+  if (capabilities.canWriteUserLimitsIn && capabilities.canWriteUserLimitsIn.length > 0) return <Limits />;
+  return (
+    <ForbiddenRoute
+      testId="limits-forbidden"
+      message={isPreviewing ? "Setting limits is not available in preview mode." : "Setting limits is only available to authorized workspace administrators."}
+    />
+  );
+}
+
 function PreserveQueryRedirect({ to }: { to: string }) {
   const [, setLocation] = useLocation();
   useEffect(() => {
@@ -171,6 +183,7 @@ function Router() {
         <Switch>
           <Route path="/" component={Dashboard} />
           <Route path="/spend" component={Spend} />
+          <Route path="/limits" component={LimitsRoute} />
           <Route path="/allocations" component={AllocationsRoute} />
           <Route path="/alerts" component={AlertsRoute} />
           <Route path="/access" component={AccessRoute} />

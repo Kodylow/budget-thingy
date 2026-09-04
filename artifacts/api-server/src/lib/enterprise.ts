@@ -175,18 +175,39 @@ class EnterpriseRateBudget {
     if (limit !== null) this.limit = Math.max(1, Math.floor(limit));
     if (remaining !== null) this.remaining = Math.floor(remaining);
     if (reset !== null) this.resetAt = Math.max(now + 1, resetTimestamp(reset, now));
-    if (status === 429) {
-      this.remaining = 0;
+    if (status === 429 || status === 409 || status === 503) {
+      if (status === 429) this.remaining = 0;
+      const retryDelay = retryAfter == null
+        ? (status === 429
+            ? reset === null
+              ? 5_000
+              : Math.max(0, resetTimestamp(reset, now) - now)
+            : 0)
+        : retryAfter * 1_000;
       this.embargoUntil = Math.max(
         this.embargoUntil,
-        now + Math.max(1000, (retryAfter ?? 5) * 1000),
+        now + retryDelay,
       );
-      this.resetAt = Math.max(this.resetAt, this.embargoUntil);
+      if (status === 429 && reset === null) {
+        this.resetAt = this.embargoUntil;
+      } else {
+        this.resetAt = Math.max(this.resetAt, this.embargoUntil);
+      }
     }
   }
 }
 
 const enterpriseBudget = new EnterpriseRateBudget();
+
+/** Shared admission lane for non-usage Admin API transports such as budgets. */
+export async function admitEnterpriseAdminRequest(): Promise<void> {
+  await enterpriseBudget.admit(false);
+}
+
+/** Feed every Admin API response back into the account-scoped rate scheduler. */
+export function observeEnterpriseAdminResponse(response: Response): void {
+  enterpriseBudget.observe(response.headers, response.status);
+}
 
 async function rawFetch(
   path: string,

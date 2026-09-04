@@ -64,6 +64,10 @@ import type {
   HandleBrowserLoginCallbackParams,
   HealthStatus,
   LegacyWorkspaceLimitTarget,
+  LimitOperation,
+  LimitOperationCommitInput,
+  LimitOperationPrepareInput,
+  LimitOperationRetryInput,
   ListAlertsParams,
   ListDirectoryMembersParams,
   ListGroupsParams,
@@ -79,6 +83,7 @@ import type {
   MobileTokenExchangeRequest,
   MobileTokenExchangeSuccess,
   OkResponse,
+  SetLimitsWorkspace,
   SpendCsvResponse,
   SpendTableResponse,
   Summary,
@@ -5708,4 +5713,374 @@ export function useListRecentUsageIngestRuns<TData = Awaited<ReturnType<typeof l
 
 
 
+
+export const getGetSetLimitsWorkspaceUrl = (workspaceId: string,) => {
+
+
+
+
+  return `/api/limits/workspaces/${encodeURIComponent(String(workspaceId))}`
+}
+
+/**
+ * Reads persisted directory, billing-cycle usage, and limit observations without refreshing upstream data.
+ * @summary Get the composed Set Limits read model
+ */
+export const getSetLimitsWorkspace = async (workspaceId: string, options?: RequestInit): Promise<SetLimitsWorkspace> => {
+
+  return customFetch<SetLimitsWorkspace>(getGetSetLimitsWorkspaceUrl(workspaceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSetLimitsWorkspaceQueryKey = (workspaceId: string,) => {
+    return [
+    `/api/limits/workspaces/${workspaceId}`
+    ] as const;
+    }
+
+
+export const getGetSetLimitsWorkspaceQueryOptions = <TData = Awaited<ReturnType<typeof getSetLimitsWorkspace>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSetLimitsWorkspace>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSetLimitsWorkspaceQueryKey(workspaceId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetLimitsWorkspace>>> = ({ signal }) => getSetLimitsWorkspace(workspaceId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workspaceId !== null && workspaceId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSetLimitsWorkspace>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSetLimitsWorkspaceQueryResult = NonNullable<Awaited<ReturnType<typeof getSetLimitsWorkspace>>>
+export type GetSetLimitsWorkspaceQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Get the composed Set Limits read model
+ */
+
+export function useGetSetLimitsWorkspace<TData = Awaited<ReturnType<typeof getSetLimitsWorkspace>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSetLimitsWorkspace>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSetLimitsWorkspaceQueryOptions(workspaceId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPrepareLimitOperationUrl = () => {
+
+
+
+
+  return `/api/limits/operations/prepare`
+}
+
+/**
+ * @summary Freeze and review workspace member-limit targets
+ */
+export const prepareLimitOperation = async (limitOperationPrepareInput: LimitOperationPrepareInput, options?: RequestInit): Promise<LimitOperation> => {
+
+  return customFetch<LimitOperation>(getPrepareLimitOperationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(limitOperationPrepareInput)
+  }
+);}
+
+
+
+
+
+export const getPrepareLimitOperationMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareLimitOperation>>, TError,{data: BodyType<LimitOperationPrepareInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof prepareLimitOperation>>, TError,{data: BodyType<LimitOperationPrepareInput>}, TContext> => {
+
+const mutationKey = ['prepareLimitOperation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof prepareLimitOperation>>, {data: BodyType<LimitOperationPrepareInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  prepareLimitOperation(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PrepareLimitOperationMutationResult = NonNullable<Awaited<ReturnType<typeof prepareLimitOperation>>>
+    export type PrepareLimitOperationMutationBody = BodyType<LimitOperationPrepareInput>
+    export type PrepareLimitOperationMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Freeze and review workspace member-limit targets
+ */
+export const usePrepareLimitOperation = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareLimitOperation>>, TError,{data: BodyType<LimitOperationPrepareInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof prepareLimitOperation>>,
+        TError,
+        {data: BodyType<LimitOperationPrepareInput>},
+        TContext
+      > => {
+      return useMutation(getPrepareLimitOperationMutationOptions(options));
+    }
+
+export const getCommitLimitOperationUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/limits/operations/${encodeURIComponent(String(operationId))}/commit`
+}
+
+/**
+ * @summary Commit an exactly reviewed limit operation
+ */
+export const commitLimitOperation = async (operationId: string,
+    limitOperationCommitInput: LimitOperationCommitInput, options?: RequestInit): Promise<LimitOperation> => {
+
+  return customFetch<LimitOperation>(getCommitLimitOperationUrl(operationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(limitOperationCommitInput)
+  }
+);}
+
+
+
+
+
+export const getCommitLimitOperationMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitLimitOperation>>, TError,{operationId: string;data: BodyType<LimitOperationCommitInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof commitLimitOperation>>, TError,{operationId: string;data: BodyType<LimitOperationCommitInput>}, TContext> => {
+
+const mutationKey = ['commitLimitOperation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof commitLimitOperation>>, {operationId: string;data: BodyType<LimitOperationCommitInput>}> = (props) => {
+          const {operationId,data} = props ?? {};
+
+          return  commitLimitOperation(operationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CommitLimitOperationMutationResult = NonNullable<Awaited<ReturnType<typeof commitLimitOperation>>>
+    export type CommitLimitOperationMutationBody = BodyType<LimitOperationCommitInput>
+    export type CommitLimitOperationMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Commit an exactly reviewed limit operation
+ */
+export const useCommitLimitOperation = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitLimitOperation>>, TError,{operationId: string;data: BodyType<LimitOperationCommitInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof commitLimitOperation>>,
+        TError,
+        {operationId: string;data: BodyType<LimitOperationCommitInput>},
+        TContext
+      > => {
+      return useMutation(getCommitLimitOperationMutationOptions(options));
+    }
+
+export const getGetLimitOperationUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/limits/operations/${encodeURIComponent(String(operationId))}`
+}
+
+/**
+ * @summary Get and resume a durable limit operation
+ */
+export const getLimitOperation = async (operationId: string, options?: RequestInit): Promise<LimitOperation> => {
+
+  return customFetch<LimitOperation>(getGetLimitOperationUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLimitOperationQueryKey = (operationId: string,) => {
+    return [
+    `/api/limits/operations/${operationId}`
+    ] as const;
+    }
+
+
+export const getGetLimitOperationQueryOptions = <TData = Awaited<ReturnType<typeof getLimitOperation>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(operationId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLimitOperation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLimitOperationQueryKey(operationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLimitOperation>>> = ({ signal }) => getLimitOperation(operationId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: operationId !== null && operationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLimitOperation>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLimitOperationQueryResult = NonNullable<Awaited<ReturnType<typeof getLimitOperation>>>
+export type GetLimitOperationQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Get and resume a durable limit operation
+ */
+
+export function useGetLimitOperation<TData = Awaited<ReturnType<typeof getLimitOperation>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ operationId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLimitOperation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLimitOperationQueryOptions(operationId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRetryLimitOperationTargetsUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/limits/operations/${encodeURIComponent(String(operationId))}/retry`
+}
+
+/**
+ * @summary Retry selected failed or verification-pending targets
+ */
+export const retryLimitOperationTargets = async (operationId: string,
+    limitOperationRetryInput: LimitOperationRetryInput, options?: RequestInit): Promise<LimitOperation> => {
+
+  return customFetch<LimitOperation>(getRetryLimitOperationTargetsUrl(operationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(limitOperationRetryInput)
+  }
+);}
+
+
+
+
+
+export const getRetryLimitOperationTargetsMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryLimitOperationTargets>>, TError,{operationId: string;data: BodyType<LimitOperationRetryInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryLimitOperationTargets>>, TError,{operationId: string;data: BodyType<LimitOperationRetryInput>}, TContext> => {
+
+const mutationKey = ['retryLimitOperationTargets'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryLimitOperationTargets>>, {operationId: string;data: BodyType<LimitOperationRetryInput>}> = (props) => {
+          const {operationId,data} = props ?? {};
+
+          return  retryLimitOperationTargets(operationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryLimitOperationTargetsMutationResult = NonNullable<Awaited<ReturnType<typeof retryLimitOperationTargets>>>
+    export type RetryLimitOperationTargetsMutationBody = BodyType<LimitOperationRetryInput>
+    export type RetryLimitOperationTargetsMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Retry selected failed or verification-pending targets
+ */
+export const useRetryLimitOperationTargets = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryLimitOperationTargets>>, TError,{operationId: string;data: BodyType<LimitOperationRetryInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryLimitOperationTargets>>,
+        TError,
+        {operationId: string;data: BodyType<LimitOperationRetryInput>},
+        TContext
+      > => {
+      return useMutation(getRetryLimitOperationTargetsMutationOptions(options));
+    }
 

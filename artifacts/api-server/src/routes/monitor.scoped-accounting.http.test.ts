@@ -317,6 +317,22 @@ afterAll(async () => {
 });
 
 describe("authenticated scoped accounting HTTP endpoints", () => {
+  test("People includes authorized directory members with no spend or group", async () => {
+    const response = await get(
+      `/spend/people?viewScope=managed&${RANGE}`,
+      DETAIL_WORKSPACE_ADMIN,
+    );
+    expect(response.status).toBe(200);
+    const value = await response.json() as {
+      rows: Array<{ id: string; spendUsd: number; agentSpendUsd: number }>;
+    };
+    expect(value.rows).toContainEqual(expect.objectContaining({
+      id: `person:${W5}:${DETAIL_WORKSPACE_ADMIN}`,
+      spendUsd: 0,
+      agentSpendUsd: 0,
+    }));
+  });
+
   test("cross-workspace pool returns only authorized contribution and no denominator", async () => {
     const poolResponse = await get(
       `/spend/pools?viewScope=managed&${RANGE}`,
@@ -344,8 +360,8 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
     const poolCells = poolCsv.trim().split("\r\n")[1]!
       .split(",").map((cell) => JSON.parse(cell) as string);
     expect(poolCells[5]).toBe("5");
-    expect(poolCells.slice(8, 11)).toEqual(["", "", ""]);
-    expect(poolCells[11]).toBe("shared");
+    expect(poolCells.slice(8, 14)).toEqual(["", "", "", "", "", ""]);
+    expect(poolCells[14]).toBe("shared");
 
     const dashboardResponse = await get(
       `/dashboard?viewScope=managed&${RANGE}`,

@@ -18,8 +18,19 @@ export interface TeamBudgetSyncStatus {
   lastSuccessfulAt: string | null;
   /** @nullable */
   lastError: string | null;
+  /** @nullable */
+  sourceBaseId: string | null;
+  /** @nullable */
+  sourceTableId: string | null;
+  sourceAvailable: boolean;
+  /** @nullable */
+  unavailableReason: string | null;
+  fetchedCount: number;
+  approvedCount: number;
   recordCount: number;
   acceptedCount: number;
+  unmatchedCount: number;
+  invalidCount: number;
   issueCount: number;
   teams: TeamBudgetUpstreamSync[];
 }

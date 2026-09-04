@@ -171,15 +171,24 @@ beforeEach(async () => {
     );
     CREATE TABLE team_budget_adjustments (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, source TEXT NOT NULL DEFAULT 'airtable',
-      source_record_id TEXT NOT NULL, source_team_status TEXT, source_team_name TEXT,
+      source_kind TEXT NOT NULL DEFAULT 'approved_credit',
+      source_base_id TEXT, source_table_id TEXT, source_record_id TEXT NOT NULL,
+      source_record_url TEXT, source_team_status TEXT, source_team_name TEXT,
       team_name TEXT, amount_usd DOUBLE PRECISION, submission_period TEXT,
-      match_state TEXT NOT NULL, error_message TEXT, source_updated_at TIMESTAMPTZ,
+      match_state TEXT NOT NULL, error_message TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT true, retired_at TIMESTAMPTZ,
+      retirement_reason TEXT, source_created_at TIMESTAMPTZ,
+      source_updated_at TIMESTAMPTZ, ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       synced_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE team_budget_sync_state (
       id INTEGER PRIMARY KEY, last_attempt_at TIMESTAMPTZ, last_successful_at TIMESTAMPTZ,
-      last_error TEXT, record_count INTEGER NOT NULL DEFAULT 0,
-      accepted_count INTEGER NOT NULL DEFAULT 0, issue_count INTEGER NOT NULL DEFAULT 0
+      last_error TEXT, source_base_id TEXT, source_table_id TEXT,
+      source_available BOOLEAN NOT NULL DEFAULT false, unavailable_reason TEXT,
+      fetched_count INTEGER NOT NULL DEFAULT 0, approved_count INTEGER NOT NULL DEFAULT 0,
+      record_count INTEGER NOT NULL DEFAULT 0, accepted_count INTEGER NOT NULL DEFAULT 0,
+      unmatched_count INTEGER NOT NULL DEFAULT 0, invalid_count INTEGER NOT NULL DEFAULT 0,
+      issue_count INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE team_limit_targets (
       team_name TEXT NOT NULL, workspace_id TEXT NOT NULL, group_id TEXT NOT NULL,

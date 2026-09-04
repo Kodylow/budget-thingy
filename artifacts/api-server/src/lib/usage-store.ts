@@ -524,6 +524,8 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
 
 const usageStore = createUsageStore();
 let usageSnapshotGeneration = 0;
+let generationUpdateDepth = 0;
+let generationInvalidationPending = false;
 
 export function readUsageSnapshot(
   request: UsageSnapshotRequest,
@@ -532,12 +534,39 @@ export function readUsageSnapshot(
 }
 
 export function invalidateUsageSnapshotMemo(): void {
+  if (generationUpdateDepth > 0) {
+    generationInvalidationPending = true;
+    return;
+  }
   usageStore.invalidate();
   usageSnapshotGeneration += 1;
 }
 
+/**
+ * Coalesces unit-level invalidations so route caches continue identifying the
+ * last published generation until a complete ingestion cycle has finished.
+ */
+export function beginUsageGenerationUpdate(): () => void {
+  generationUpdateDepth += 1;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    generationUpdateDepth = Math.max(0, generationUpdateDepth - 1);
+    if (generationUpdateDepth === 0 && generationInvalidationPending) {
+      generationInvalidationPending = false;
+      usageStore.invalidate();
+      usageSnapshotGeneration += 1;
+    }
+  };
+}
+
 export function getUsageSnapshotGeneration(): number {
   return usageSnapshotGeneration;
+}
+
+export function isUsageGenerationUpdateActive(): boolean {
+  return generationUpdateDepth > 0;
 }
 
 export function __getUsageSnapshotMemoSizeForTests(): number {

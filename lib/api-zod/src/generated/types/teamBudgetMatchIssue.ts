@@ -11,7 +11,26 @@ export interface TeamBudgetMatchIssue {
   recordId: string;
   /** @nullable */
   sourceTeamName: string | null;
+  source: string;
+  sourceKind: string;
+  /** @nullable */
+  sourceBaseId: string | null;
+  /** @nullable */
+  sourceTableId: string | null;
+  /** @nullable */
+  sourceUrl: string | null;
+  /** @nullable */
+  teamName: string | null;
+  /** @nullable */
+  amountUsd: number | null;
+  /** @nullable */
+  submissionPeriod: string | null;
   matchState: TeamBudgetMatchIssueMatchState;
   /** @nullable */
   error: string | null;
+  /** @nullable */
+  sourceCreatedAt: string | null;
+  /** @nullable */
+  sourceUpdatedAt: string | null;
+  ingestedAt: string;
 }

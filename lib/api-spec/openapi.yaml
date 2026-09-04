@@ -24,6 +24,8 @@ tags:
     description: App/system status
   - name: directory
     description: Workspace directory
+  - name: limits
+    description: Durable workspace member-limit operations
   - name: Auth
     description: Browser and mobile authentication endpoints.
 paths:
@@ -2036,6 +2038,141 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /limits/workspaces/{workspaceId}:
+    get:
+      operationId: getSetLimitsWorkspace
+      tags: [limits]
+      summary: Get the composed Set Limits read model
+      description: Reads persisted directory, billing-cycle usage, and limit observations without refreshing upstream data.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      responses:
+        "200":
+          description: Set Limits workspace model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetLimitsWorkspace"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/prepare:
+    post:
+      operationId: prepareLimitOperation
+      tags: [limits]
+      summary: Freeze and review workspace member-limit targets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LimitOperationPrepareInput" }
+      responses:
+        "200":
+          description: Frozen operation review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "400":
+          description: Invalid amount or target selection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Idempotency key was reused for a different request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/{operationId}/commit:
+    post:
+      operationId: commitLimitOperation
+      tags: [limits]
+      summary: Commit an exactly reviewed limit operation
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LimitOperationCommitInput" }
+      responses:
+        "202":
+          description: Durable operation accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "400":
+          description: Commit does not match the frozen review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Operation not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "409":
+          description: A selected member already has an active operation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/{operationId}:
+    get:
+      operationId: getLimitOperation
+      tags: [limits]
+      summary: Get and resume a durable limit operation
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      responses:
+        "200":
+          description: Current operation and per-target status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Operation not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/{operationId}/retry:
+    post:
+      operationId: retryLimitOperationTargets
+      tags: [limits]
+      summary: Retry selected failed or verification-pending targets
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LimitOperationRetryInput" }
+      responses:
+        "202":
+          description: Eligible targets queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "400":
+          description: No eligible targets selected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Operation not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
 components:
   responses:
     SpendCsv:
@@ -2068,6 +2205,13 @@ components:
           schema:
             $ref: "#/components/schemas/ApiError"
   parameters:
+    LimitOperationIdPath:
+      name: operationId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F-]{36}$'
     WorkspaceIdPath:
       name: workspaceId
       in: path
@@ -2221,6 +2365,163 @@ components:
         type: string
         pattern: '^(workspace_admin|team_admin|member):.+$'
   schemas:
+    SetLimitsGroup:
+      type: object
+      required: [groupId, name, familyName, role, eligibleUserIds]
+      properties:
+        groupId: { type: string }
+        name: { type: string }
+        familyName: { type: ["string", "null"] }
+        role: { type: ["string", "null"] }
+        eligibleUserIds:
+          type: array
+          items: { type: string, pattern: '^[1-9]\d*$' }
+    SetLimitsMember:
+      type: object
+      required: [userId, username, name, email, role, groupIds, isInternal, isDisabled, eligible, usageUsd, explicitLimitUsd, effectiveLimitUsd, limitState]
+      properties:
+        userId: { type: string, pattern: '^[1-9]\d*$' }
+        username: { type: string }
+        name: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        role: { type: string }
+        groupIds:
+          type: array
+          items: { type: string }
+        isInternal: { type: boolean }
+        isDisabled: { type: boolean }
+        eligible: { type: boolean }
+        usageUsd: { type: ["number", "null"] }
+        explicitLimitUsd: { type: ["number", "null"] }
+        effectiveLimitUsd: { type: ["number", "null"] }
+        limitState:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
+    SetLimitsWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, canWrite, unavailableReason, billingPeriod, limitObservation, groups, members]
+      properties:
+        workspaceId: { type: string, pattern: '^[A-Za-z0-9]+$' }
+        workspaceName: { type: string }
+        canWrite: { type: boolean }
+        unavailableReason: { type: ["string", "null"] }
+        billingPeriod:
+          type: object
+          required: [start, end]
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+        limitObservation:
+          type: object
+          required: [status, observedAt, error]
+          properties:
+            status: { type: string, enum: [available, unavailable, failed] }
+            observedAt: { type: ["string", "null"], format: date-time }
+            error: { type: ["string", "null"] }
+        groups:
+          type: array
+          items: { $ref: "#/components/schemas/SetLimitsGroup" }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/SetLimitsMember" }
+    LimitOperationPrepareInput:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, amountUsd, userIds, groupIds, idempotencyKey]
+      properties:
+        workspaceId: { type: string, pattern: '^[A-Za-z0-9]+$' }
+        amountUsd: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        userIds:
+          type: array
+          maxItems: 1000
+          items: { type: string, pattern: '^[1-9]\d*$' }
+        groupIds:
+          type: array
+          maxItems: 1000
+          items: { type: string, minLength: 1 }
+        idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+    LimitOperationCommitInput:
+      type: object
+      additionalProperties: false
+      required: [reviewFingerprint, amountUsd, userIds]
+      properties:
+        reviewFingerprint: { type: string, minLength: 64, maxLength: 64 }
+        amountUsd: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        userIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { type: string, pattern: '^[1-9]\d*$' }
+    LimitOperationRetryInput:
+      type: object
+      additionalProperties: false
+      required: [userIds, idempotencyKey]
+      properties:
+        userIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { type: string, pattern: '^[1-9]\d*$' }
+        idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+    LimitTargetAttempt:
+      type: object
+      required: [at, stage, outcome]
+      properties:
+        at: { type: string, format: date-time }
+        stage: { type: string, enum: [authorization, membership, reconcile, write, verification, audit] }
+        outcome: { type: string }
+        requestId: { type: ["string", "null"] }
+        retryAfterMs: { type: ["integer", "null"] }
+        message: { type: ["string", "null"] }
+    LimitOperationTarget:
+      type: object
+      required: [workspaceId, userId, memberName, memberEmail, oldAmountUsd, newAmountUsd, state, attempts, history, errorStage, errorCode, errorMessage, upstreamRequestId, queuedAt, applyingAt, verifiedAt, failedAt]
+      properties:
+        workspaceId: { type: string }
+        userId: { type: string }
+        memberName: { type: ["string", "null"] }
+        memberEmail: { type: ["string", "null"] }
+        oldAmountUsd: { type: ["number", "null"] }
+        newAmountUsd: { type: number }
+        state: { type: string, enum: [queued, applying, verified, failed, verification_pending] }
+        attempts: { type: integer }
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/LimitTargetAttempt" }
+        errorStage: { type: ["string", "null"] }
+        errorCode: { type: ["string", "null"] }
+        errorMessage: { type: ["string", "null"] }
+        upstreamRequestId: { type: ["string", "null"] }
+        queuedAt: { type: ["string", "null"], format: date-time }
+        applyingAt: { type: ["string", "null"], format: date-time }
+        verifiedAt: { type: ["string", "null"], format: date-time }
+        failedAt: { type: ["string", "null"], format: date-time }
+    LimitOperation:
+      type: object
+      required: [id, workspaceId, state, amountUsd, reviewFingerprint, actorUserId, preparedAt, committedAt, completedAt, counts, targets]
+      properties:
+        id: { type: string, pattern: '^[0-9a-fA-F-]{36}$' }
+        workspaceId: { type: string }
+        state: { type: string, enum: [prepared, queued, running, completed] }
+        amountUsd: { type: number }
+        reviewFingerprint: { type: string }
+        actorUserId: { type: string }
+        preparedAt: { type: string, format: date-time }
+        committedAt: { type: ["string", "null"], format: date-time }
+        completedAt: { type: ["string", "null"], format: date-time }
+        counts:
+          type: object
+          required: [total, queued, applying, verified, failed, verificationPending]
+          properties:
+            total: { type: integer }
+            queued: { type: integer }
+            applying: { type: integer }
+            verified: { type: integer }
+            failed: { type: integer }
+            verificationPending: { type: integer }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/LimitOperationTarget" }
     ReportingPeriod:
       type: object
       required: [start, endExclusive, timezone, label]
@@ -2394,6 +2695,15 @@ components:
         allocationUsd: { type: [number, "null"] }
         remainingUsd: { type: [number, "null"] }
         percentUsed: { type: [number, "null"] }
+        currentCycleAgentSpendUsd:
+          type: [number, "null"]
+          description: Agent spend in the current billing cycle; populated for People independently of the selected reporting range.
+        currentCycleRemainingUsd:
+          type: [number, "null"]
+          description: Current monthly limit minus current-cycle Agent spend; never selected-range spend.
+        currentCyclePercentUsed:
+          type: [number, "null"]
+          description: Current-cycle Agent spend as a percentage of the current monthly limit.
         status: { type: string }
         memberCount: { type: [integer, "null"] }
         ownerName: { type: [string, "null"] }
@@ -3295,7 +3605,7 @@ components:
           type: [string, "null"]
     WorkspaceMemberBudget:
       type: object
-      required: [userId, username, name, email, isInternal, role, isDisabled, budgetUsd, usageUsd, remainingUsd, percentUsed, blocked, effectiveBaselineUsd, baselineSourceType, baselineSourceId, isHandSetOverride]
+      required: [userId, username, name, email, isInternal, role, isDisabled, budgetUsd, effectiveLimitUsd, limitState, usageUsd, remainingUsd, percentUsed, blocked, effectiveBaselineUsd, baselineSourceType, baselineSourceId, isHandSetOverride]
       properties:
         userId:
           type: string
@@ -3314,7 +3624,13 @@ components:
           type: boolean
         budgetUsd:
           type: [number, "null"]
-          description: Desired Agent budget; null means unset.
+          description: Explicit member Agent limit; null means no explicit member override.
+        effectiveLimitUsd:
+          type: [number, "null"]
+          description: Applicable explicit or inherited current monthly Agent limit.
+        limitState:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
         usageUsd:
           type: [number, "null"]
           description: Agent usage in the current billing cycle.
@@ -3337,7 +3653,7 @@ components:
           type: boolean
     WorkspaceMembersResponse:
       type: object
-      required: [workspaceId, workspaceName, billingPeriod, connector, members]
+      required: [workspaceId, workspaceName, billingPeriod, connector, limitObservation, directoryFreshness, members]
       properties:
         workspaceId:
           type: string
@@ -3348,6 +3664,26 @@ components:
           enum: [current]
         connector:
           $ref: "#/components/schemas/BudgetConnectorState"
+        limitObservation:
+          type: object
+          required: [status, observedAt, lastSuccessfulAt, lastAttemptAt, refreshStartedAt, generation, error]
+          properties:
+            status:
+              type: string
+              enum: [complete, failed, unavailable, refreshing]
+            observedAt: { type: [integer, "null"] }
+            lastSuccessfulAt: { type: [integer, "null"] }
+            lastAttemptAt: { type: [integer, "null"] }
+            refreshStartedAt: { type: [integer, "null"] }
+            generation: { type: [string, "null"] }
+            error: { type: [string, "null"] }
+        directoryFreshness:
+          type: object
+          required: [dataAsOf, isStale, isRefreshing]
+          properties:
+            dataAsOf: { type: [string, "null"], format: date-time }
+            isStale: { type: boolean }
+            isRefreshing: { type: boolean }
         members:
           type: array
           items:
@@ -3559,7 +3895,7 @@ components:
           minimum: 0
     TeamBudgetAdjustment:
       type: object
-      required: [recordId, amountUsd, submissionPeriod]
+      required: [recordId, amountUsd, submissionPeriod, source, sourceKind, sourceBaseId, sourceTableId, sourceUrl, sourceCreatedAt, sourceUpdatedAt, ingestedAt]
       properties:
         recordId:
           type: string
@@ -3568,6 +3904,14 @@ components:
         submissionPeriod:
           type: string
           pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+        source: { type: string }
+        sourceKind: { type: string }
+        sourceBaseId: { type: [string, "null"] }
+        sourceTableId: { type: [string, "null"] }
+        sourceUrl: { type: [string, "null"] }
+        sourceCreatedAt: { type: [string, "null"] }
+        sourceUpdatedAt: { type: [string, "null"] }
+        ingestedAt: { type: string }
     TeamBudgetHistoryTeam:
       type: object
       required: [teamName, originalAmountUsd, effectiveAmountUsd, annualAllocationUsd, monthlyLimitUsd, monthlyLimitSource, isHidden, adjustments]
@@ -3593,17 +3937,28 @@ components:
             $ref: "#/components/schemas/TeamBudgetAdjustment"
     TeamBudgetMatchIssue:
       type: object
-      required: [recordId, sourceTeamName, matchState, error]
+      required: [recordId, source, sourceKind, sourceBaseId, sourceTableId, sourceUrl, sourceTeamName, teamName, amountUsd, submissionPeriod, matchState, error, sourceCreatedAt, sourceUpdatedAt, ingestedAt]
       properties:
         recordId:
           type: string
         sourceTeamName:
           type: [string, "null"]
+        source: { type: string }
+        sourceKind: { type: string }
+        sourceBaseId: { type: [string, "null"] }
+        sourceTableId: { type: [string, "null"] }
+        sourceUrl: { type: [string, "null"] }
+        teamName: { type: [string, "null"] }
+        amountUsd: { type: [number, "null"] }
+        submissionPeriod: { type: [string, "null"] }
         matchState:
           type: string
           enum: [unmatched, invalid]
         error:
           type: [string, "null"]
+        sourceCreatedAt: { type: [string, "null"] }
+        sourceUpdatedAt: { type: [string, "null"] }
+        ingestedAt: { type: string }
     TeamBudgetHistoryResponse:
       type: object
       required: [teams, issues]
@@ -3665,7 +4020,7 @@ components:
             $ref: "#/components/schemas/TeamAllocationAudit"
     TeamBudgetSyncStatus:
       type: object
-      required: [sourceTable, requiredApprovalStatus, lastAttemptAt, lastSuccessfulAt, lastError, recordCount, acceptedCount, issueCount, teams]
+      required: [sourceTable, requiredApprovalStatus, sourceBaseId, sourceTableId, sourceAvailable, unavailableReason, lastAttemptAt, lastSuccessfulAt, lastError, fetchedCount, approvedCount, recordCount, acceptedCount, unmatchedCount, invalidCount, issueCount, teams]
       properties:
         sourceTable:
           type: string
@@ -3679,9 +4034,25 @@ components:
           type: [string, "null"]
         lastError:
           type: [string, "null"]
+        sourceBaseId:
+          type: [string, "null"]
+        sourceTableId:
+          type: [string, "null"]
+        sourceAvailable:
+          type: boolean
+        unavailableReason:
+          type: [string, "null"]
+        fetchedCount:
+          type: integer
+        approvedCount:
+          type: integer
         recordCount:
           type: integer
         acceptedCount:
+          type: integer
+        unmatchedCount:
+          type: integer
+        invalidCount:
           type: integer
         issueCount:
           type: integer
@@ -3860,7 +4231,7 @@ components:
           items: { $ref: "#/components/schemas/UnassignedTeamBudgetGroup" }
     TeamBudgetRefreshResult:
       type: object
-      required: [sourceTable, requiredApprovalStatus, ok, recordCount, acceptedCount, issueCount, error]
+      required: [sourceTable, requiredApprovalStatus, ok, fetchedCount, approvedCount, recordCount, acceptedCount, unmatchedCount, invalidCount, issueCount, error]
       properties:
         sourceTable:
           type: string
@@ -3872,7 +4243,15 @@ components:
           type: boolean
         recordCount:
           type: integer
+        fetchedCount:
+          type: integer
+        approvedCount:
+          type: integer
         acceptedCount:
+          type: integer
+        unmatchedCount:
+          type: integer
+        invalidCount:
           type: integer
         issueCount:
           type: integer

@@ -26,6 +26,21 @@ export interface SpendTableRow {
   remainingUsd: number | null;
   /** @nullable */
   percentUsed: number | null;
+  /**
+     * Agent spend in the current billing cycle; populated for People independently of the selected reporting range.
+     * @nullable
+     */
+  currentCycleAgentSpendUsd?: number | null;
+  /**
+     * Current monthly limit minus current-cycle Agent spend; never selected-range spend.
+     * @nullable
+     */
+  currentCycleRemainingUsd?: number | null;
+  /**
+     * Current-cycle Agent spend as a percentage of the current monthly limit.
+     * @nullable
+     */
+  currentCyclePercentUsed?: number | null;
   status: string;
   /** @nullable */
   memberCount: number | null;

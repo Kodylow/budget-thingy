@@ -11,4 +11,17 @@ export interface TeamBudgetAdjustment {
   amountUsd: number;
   /** @pattern ^\d{4}-(0[1-9]|1[0-2])$ */
   submissionPeriod: string;
+  source: string;
+  sourceKind: string;
+  /** @nullable */
+  sourceBaseId: string | null;
+  /** @nullable */
+  sourceTableId: string | null;
+  /** @nullable */
+  sourceUrl: string | null;
+  /** @nullable */
+  sourceCreatedAt: string | null;
+  /** @nullable */
+  sourceUpdatedAt: string | null;
+  ingestedAt: string;
 }

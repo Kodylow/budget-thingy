@@ -8,11 +8,15 @@
 import type { BudgetConnectorState } from './budgetConnectorState';
 import type { WorkspaceMemberBudget } from './workspaceMemberBudget';
 import type { WorkspaceMembersResponseBillingPeriod } from './workspaceMembersResponseBillingPeriod';
+import type { WorkspaceMembersResponseDirectoryFreshness } from './workspaceMembersResponseDirectoryFreshness';
+import type { WorkspaceMembersResponseLimitObservation } from './workspaceMembersResponseLimitObservation';
 
 export interface WorkspaceMembersResponse {
   workspaceId: string;
   workspaceName: string;
   billingPeriod: WorkspaceMembersResponseBillingPeriod;
   connector: BudgetConnectorState;
+  limitObservation: WorkspaceMembersResponseLimitObservation;
+  directoryFreshness: WorkspaceMembersResponseDirectoryFreshness;
   members: WorkspaceMemberBudget[];
 }

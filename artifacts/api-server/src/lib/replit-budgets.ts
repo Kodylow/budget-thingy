@@ -1,4 +1,8 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
+import {
+  admitEnterpriseAdminRequest,
+  observeEnterpriseAdminResponse,
+} from "./enterprise";
 
 const CONNECTOR = "replit";
 const BUDGETS_API_BASE_URL = "https://api.replit.com";
@@ -89,6 +93,12 @@ export type ReplitBudgetTransport = (
 
 let transportOverride: ReplitBudgetTransport | null = null;
 let writeCapabilityOverride: boolean | null = null;
+
+export function isReplitBudgetWriteConfigured(): boolean {
+  return transportOverride
+    ? writeCapabilityOverride === true
+    : Boolean(process.env[BUDGETS_API_KEY_ENV]?.trim());
+}
 
 /** Test-only seam; null restores the real Replit connector. */
 export function setReplitBudgetTransportForTests(
@@ -234,18 +244,24 @@ async function requestDetailed(
   path: string,
   init: ReplitBudgetRequest,
   requiredStatus?: number,
+  retryTransient = true,
 ): Promise<ReplitBudgetResponse> {
   let response: Response | undefined;
   for (let attempt = 0; attempt < MAX_REQUEST_ATTEMPTS; attempt++) {
     try {
+      await admitEnterpriseAdminRequest();
       response = await (transportOverride ?? configuredTransport())(path, init);
+      observeEnterpriseAdminResponse(response);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Replit connector unavailable";
       throw new ReplitBudgetConnectorError(errorKind(message), message);
     }
     if (
-      (response.status !== 409 && response.status !== 429) ||
+      !retryTransient ||
+      (response.status !== 409 &&
+        response.status !== 429 &&
+        response.status !== 503) ||
       attempt === MAX_REQUEST_ATTEMPTS - 1
     ) {
       break;
@@ -695,10 +711,12 @@ function validateBudgetWrite(budget: ReplitBudgetWrite): void {
   }
   if (
     budget.amountUsd !== null &&
-    (!Number.isFinite(budget.amountUsd) || budget.amountUsd <= 0)
+    (!Number.isFinite(budget.amountUsd) ||
+      budget.amountUsd <= 0 ||
+      Math.abs(Math.round(budget.amountUsd * 100) / 100 - budget.amountUsd) > 1e-9)
   ) {
     throw new TypeError(
-      "amountUsd must be null or a finite number greater than zero",
+      "amountUsd must be null or a finite positive USD amount with at most two decimal places",
     );
   }
 }
@@ -815,6 +833,7 @@ async function readbackBudget(
 
 export async function setBudget(
   budget: ReplitBudgetWrite,
+  options: { retryTransient?: boolean } = {},
 ): Promise<ReplitBudgetWriteResult> {
   validateBudgetWrite(budget);
   const hasEnterpriseKey = Boolean(process.env[BUDGETS_API_KEY_ENV]?.trim());
@@ -831,19 +850,15 @@ export async function setBudget(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(desiredBudgetBody(budget)),
-  }, 200);
+  }, 200, options.retryTransient !== false);
 
-  if (
-    !response.body ||
-    typeof response.body !== "object" ||
-    !Object.prototype.hasOwnProperty.call(response.body, "data")
-  ) {
-    throw validationError(
-      "Replit budgets API returned an invalid budget update response",
-      response.requestId,
-    );
-  }
-  const data = (response.body as Record<string, unknown>).data;
+  // The current endpoint returns the resulting budget (or null). Accept the
+  // earlier data envelope as well while deployments transition contracts.
+  const data = response.body &&
+      typeof response.body === "object" &&
+      Object.prototype.hasOwnProperty.call(response.body, "data")
+    ? (response.body as Record<string, unknown>).data
+    : response.body;
   if (
     (budget.amountUsd === null && data !== null) ||
     (budget.amountUsd !== null && !matchesDesiredBudget(data, budget))

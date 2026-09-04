@@ -19,6 +19,9 @@ import {
   type MemberLimitPolicyOutcome,
 } from "../lib/member-limit-policies";
 import {
+  getCachedDirectory,
+  getDirectoryFreshness as getPersistedDirectoryFreshness,
+  hasSuccessfulLimitObservation,
   isInternalReplitMember,
   reconcilePersistedLimitWrite,
 } from "../lib/enterprise";
@@ -57,7 +60,7 @@ router.get(
   async (req, res): Promise<void> => {
     try {
       const workspaceId = String(req.params["workspaceId"]);
-      const dir = await getDirectory();
+      const dir = await getCachedDirectory();
       const workspace = dir.workspaces.get(workspaceId);
       const authzScope = scopeFor(req.authz!);
       const hasScopedGroupInWorkspace =
@@ -76,13 +79,12 @@ router.get(
         res.status(404).json({ error: "Workspace not found" });
         return;
       }
-      const snapshot = await listReplitMemberBudgets(workspaceId);
+      const observation = dir.budgets.observation;
+      const hasKnownLimits = hasSuccessfulLimitObservation(dir.budgets);
+      const explicitLimits = dir.budgets.userLimits.get(workspaceId) ?? new Map();
       const policyViews = await getWorkspaceMemberLimitPolicyViews(
         workspaceId,
-        new Map([...snapshot.budgets].map(([userId, value]) => [
-          userId,
-          value.budgetUsd,
-        ])),
+        explicitLimits,
         dir,
       );
       const selection = windowFromQuery({ rangeType: "billing" });
@@ -103,8 +105,17 @@ router.get(
               !authzScope.userIds.has(member.userId))
           ) return [];
           seen.add(member.userId);
-          const budget = snapshot.budgets.get(member.userId);
-          const budgetUsd = budget?.budgetUsd ?? null;
+          const explicitLimit = explicitLimits.get(member.userId);
+          const inheritedLimit = dir.budgets.workspaceDefaults.get(workspaceId);
+          const budgetUsd = explicitLimit ?? null;
+          const effectiveLimitUsd = explicitLimit ?? inheritedLimit ?? null;
+          const limitState = !hasKnownLimits
+            ? "unavailable"
+            : explicitLimit !== undefined
+              ? "explicit"
+              : inheritedLimit !== undefined
+                ? "inherited"
+                : "no_limit";
           const isInternal = member.isInternalReplitUser;
           const usageUsd = !workspaceUsage || !workspaceUsageComplete
             ? null
@@ -113,7 +124,9 @@ router.get(
               : (workspaceUsage.get(member.userId)?.aiCostUsd ?? null);
           const policyView = isInternal ? undefined : policyViews.get(member.userId);
           const percentUsed =
-            budgetUsd == null || usageUsd == null ? null : (usageUsd / budgetUsd) * 100;
+            effectiveLimitUsd == null || effectiveLimitUsd <= 0 || usageUsd == null
+              ? null
+              : (usageUsd / effectiveLimitUsd) * 100;
           return [{
             userId: member.userId,
             username: member.username,
@@ -123,11 +136,16 @@ router.get(
             role: membership.role,
             isDisabled: membership.isDisabled,
             budgetUsd,
+            effectiveLimitUsd,
+            limitState,
             usageUsd,
             remainingUsd:
-              budgetUsd == null || usageUsd == null ? null : budgetUsd - usageUsd,
+              effectiveLimitUsd == null || usageUsd == null
+                ? null
+                : effectiveLimitUsd - usageUsd,
             percentUsed,
-            blocked: !isInternal && percentUsed != null && percentUsed >= 100,
+            blocked: !isInternal && effectiveLimitUsd != null &&
+              usageUsd != null && usageUsd >= effectiveLimitUsd,
             effectiveBaselineUsd: policyView?.effectiveBaseline?.amountUsd ?? null,
             baselineSourceType: policyView?.effectiveBaseline?.sourceType ?? null,
             baselineSourceId: policyView?.effectiveBaseline?.sourceId ?? null,
@@ -143,10 +161,16 @@ router.get(
         workspaceName: workspace.name,
         billingPeriod: "current",
         connector: {
-          status: snapshot.status,
-          canWrite: snapshot.canWrite,
-          error: snapshot.error,
+          status: observation.status === "failed"
+            ? "error"
+            : hasKnownLimits ? "available" : "unavailable",
+          canWrite:
+            req.authz!.capabilities.canWriteUserLimitsIn.includes(workspaceId) &&
+            !req.authz!.isPreview,
+          error: observation.error,
         },
+        limitObservation: observation,
+        directoryFreshness: getPersistedDirectoryFreshness(),
         members,
       }));
     } catch (err) {

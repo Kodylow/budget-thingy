@@ -6,13 +6,35 @@ import {
 import {
   bucketRollupSpend,
   buildScopedAccounting,
+  prepareScopedAccounting,
 } from "../services/scoped-accounting";
 import { buildDashboardBuckets } from "../services/dashboard-buckets";
 import { UsageWindowError } from "../lib/usage-window";
+import { BoundedStaleCache } from "../lib/bounded-stale-cache";
+import { isUsageGenerationUpdateActive } from "../lib/usage-store";
 
 const router: IRouter = Router();
 const DAY_MS = 86_400_000;
 const UTC_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const dashboardCache = new BoundedStaleCache<string>({
+  maxEntries: 256,
+  freshMs: 30_000,
+  staleMs: 2 * 60_000,
+});
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => [key, canonicalValue(item)]));
+  }
+  return value;
+}
+
+export function __getDashboardCacheSizeForTests(): number {
+  return dashboardCache.size;
+}
 
 function isUtcDay(value: string): boolean {
   if (!UTC_DAY.test(value)) return false;
@@ -76,7 +98,26 @@ router.get("/dashboard", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const result = await buildScopedAccounting(req.authz!, parsed.data);
+    const prepared = await prepareScopedAccounting(req.authz!, parsed.data);
+    const key = JSON.stringify([
+      prepared.cacheIdentity,
+      canonicalValue(parsed.data),
+    ]);
+    const cacheStatus = dashboardCache.status(key);
+    let accountingMs = 0;
+    let rollupsMs = 0;
+    let responseMs = 0;
+    const cacheStartedAt = performance.now();
+    const responseBody = await dashboardCache.getOrLoad(key, async () => {
+      const accountingStartedAt = performance.now();
+      const result = await buildScopedAccounting(
+        req.authz!,
+        parsed.data,
+        undefined,
+        prepared,
+      );
+      accountingMs = performance.now() - accountingStartedAt;
+      const rollupsStartedAt = performance.now();
     const granularity = parsed.data.granularity ??
       defaultGranularity(result.period.start, result.period.endExclusive);
     const mode = parsed.data.trendMode ?? "period";
@@ -190,12 +231,27 @@ router.get("/dashboard", async (req, res): Promise<void> => {
         result.period.endExclusive,
       ),
     }];
-    res.setHeader("Server-Timing", `accounting;dur=${(performance.now() - startedAt).toFixed(1)}`);
-    res.json(GetDashboardResponse.parse({
+      rollupsMs = performance.now() - rollupsStartedAt;
+      const responseStartedAt = performance.now();
+      const body = JSON.stringify(GetDashboardResponse.parse({
       scope: result.scope, period: result.period, cardVariant, cards,
       trend: { granularity, mode, buckets }, breakdown,
       accounting: result.accounting, metadata: result.metadata,
-    }));
+      }));
+      responseMs = performance.now() - responseStartedAt;
+      return body;
+    }, { refreshStale: !isUsageGenerationUpdateActive() });
+    const cacheMs = performance.now() - cacheStartedAt;
+    res.setHeader("Server-Timing", [
+      `authorization;dur=${prepared.phaseDurations.authorizationMs.toFixed(1)}`,
+      `stored-read;dur=${prepared.phaseDurations.storedReadsMs.toFixed(1)}`,
+      `cache;dur=${cacheMs.toFixed(1)};desc="${cacheStatus}"`,
+      `accounting;dur=${accountingMs.toFixed(1)}`,
+      `rollups;dur=${rollupsMs.toFixed(1)}`,
+      `response;dur=${responseMs.toFixed(1)}`,
+      `total;dur=${(performance.now() - startedAt).toFixed(1)}`,
+    ].join(", "));
+    res.type("application/json").send(responseBody);
   } catch (error) {
     if (error instanceof UsageWindowError) {
       res.status(400).json({ error: error.message });

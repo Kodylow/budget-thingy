@@ -238,6 +238,7 @@ describe("Replit budgets transport", () => {
   it.each([
     [409, { "retry-after": "0" }],
     [429, { "x-ratelimit-reset": "0" }],
+    [503, { "retry-after": "0" }],
   ])("retries HTTP %i with upstream retry headers", async (status, headers) => {
     let postCalls = 0;
     setReplitBudgetTransportForTests(async (_path, init) => {
@@ -278,6 +279,7 @@ describe("Replit budgets transport", () => {
     const invalid: ReplitBudgetWrite[] = [
       { type: "workspace_default_user_limit", workspaceId: "", amountUsd: 1 },
       { type: "workspace_default_user_limit", workspaceId: "ws-1", amountUsd: 1 },
+      { type: "workspace_default_user_limit", workspaceId: "ws1", amountUsd: 1.001 },
       {
         type: "workspace_group_limit",
         workspaceId: "ws1",

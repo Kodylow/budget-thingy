@@ -3,15 +3,19 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   getGetTeamAllocationAuditQueryKey,
   getGetTeamBudgetHistoryQueryKey,
+  getGetTeamBudgetSyncStatusQueryKey,
   useGetTeamAllocationAudit,
   useGetTeamBudgetHistory,
+  useGetTeamBudgetSyncStatus,
   useRefreshTeamBudgets,
   useUpdateTeamAnnualAllocation,
   useUpdateTeamVisibility,
   type TeamAllocationAuditResponse,
+  type TeamBudgetHistoryResponse,
+  type TeamBudgetSyncStatus,
   type TeamBudgetHistoryTeam,
 } from '@workspace/api-client-react';
-import { Database, Eye, EyeOff, WalletCards } from 'lucide-react';
+import { AlertTriangle, Database, ExternalLink, Eye, EyeOff, WalletCards } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -246,6 +250,98 @@ function AuditHistoryCard({ audit, isLoading, isError }: {
   );
 }
 
+function SyncSummaryCard({ sync, isLoading, isError }: {
+  sync?: TeamBudgetSyncStatus;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  return (
+    <Card className="shadow-sm">
+      <CardHeader>
+        <CardTitle className="text-lg">Airtable sync summary</CardTitle>
+        <CardDescription>
+          Finance Approval is treated as the configured approved-credit source. Legacy Airtable
+          imports remain in history but are excluded from active totals; Order Forms are not
+          assumed to be a separate credit source.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading && !sync ? <Skeleton className="h-20 w-full" /> : isError && !sync ? (
+          <p className="text-sm text-destructive" data-testid="status-allocation-sync-error">
+            Synchronization diagnostics are unavailable.
+          </p>
+        ) : sync ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div><p className="text-xs text-muted-foreground">Source</p><p className="font-medium" data-testid="text-sync-source">{sync.sourceTable}</p></div>
+              <div><p className="text-xs text-muted-foreground">Last attempt</p><p className="font-medium" data-testid="text-sync-attempt">{sync.lastAttemptAt ? new Date(sync.lastAttemptAt).toLocaleString() : 'Never'}</p></div>
+              <div><p className="text-xs text-muted-foreground">Last successful</p><p className="font-medium" data-testid="text-sync-success">{sync.lastSuccessfulAt ? new Date(sync.lastSuccessfulAt).toLocaleString() : 'Never'}</p></div>
+              <div><p className="text-xs text-muted-foreground">Status</p><Badge variant={sync.sourceAvailable ? 'secondary' : 'destructive'} data-testid="status-sync-availability">{sync.sourceAvailable ? 'Available' : 'Unavailable'}</Badge></div>
+            </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm tabular-nums">
+              <span>Fetched <strong>{sync.fetchedCount}</strong></span>
+              <span>Approved <strong>{sync.approvedCount}</strong></span>
+              <span>Accepted <strong>{sync.acceptedCount}</strong></span>
+              <span>Unmatched <strong>{sync.unmatchedCount}</strong></span>
+              <span>Invalid <strong>{sync.invalidCount}</strong></span>
+            </div>
+            {(sync.unavailableReason || sync.lastError) && (
+              <div className="flex gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" data-testid="status-sync-diagnostic">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{sync.unavailableReason ?? sync.lastError}</span>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AllocationIssuesCard({ issues }: {
+  issues: TeamBudgetHistoryResponse['issues'];
+}) {
+  return (
+    <Card className="overflow-hidden shadow-sm">
+      <CardHeader className="border-b bg-muted/30">
+        <CardTitle className="text-lg">Source issues</CardTitle>
+        <CardDescription>Approved records that were not included in allocation totals.</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        {issues.length === 0 ? (
+          <p className="p-8 text-center text-sm text-muted-foreground" data-testid="status-allocation-issues-empty">No active source issues.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-sm" data-testid="table-allocation-issues">
+              <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">
+                <tr><th className="px-5 py-3">Source record</th><th className="px-5 py-3">Team</th><th className="px-5 py-3">Amount / period</th><th className="px-5 py-3">State</th><th className="px-5 py-3">Reason</th></tr>
+              </thead>
+              <tbody>
+                {issues.map((issue) => (
+                  <tr key={`${issue.source}-${issue.recordId}`} className="border-t">
+                    <td className="px-5 py-4 font-mono text-xs">
+                      {issue.sourceUrl ? (
+                        <a className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline" href={issue.sourceUrl} target="_blank" rel="noreferrer" data-testid={`link-allocation-issue-${issue.recordId}`}>
+                          {issue.recordId}<ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : issue.recordId}
+                      <div className="mt-1 text-muted-foreground">{issue.sourceKind}</div>
+                    </td>
+                    <td className="px-5 py-4">{issue.teamName ?? issue.sourceTeamName ?? 'Unknown'}</td>
+                    <td className="px-5 py-4 tabular-nums">{issue.amountUsd == null ? '—' : currency.format(issue.amountUsd)} · {issue.submissionPeriod ?? '—'}</td>
+                    <td className="px-5 py-4"><Badge variant="outline">{issue.matchState}</Badge></td>
+                    <td className="px-5 py-4">{issue.error ?? 'No reason supplied'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function useTeamBudgetEditor(teams: TeamBudgetHistoryTeam[]) {
   const queryClient = useQueryClient();
   const [allocationDrafts, setAllocationDrafts] = useState<Record<string, string>>({});
@@ -254,6 +350,7 @@ function useTeamBudgetEditor(teams: TeamBudgetHistoryTeam[]) {
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetHistoryQueryKey() });
     void queryClient.invalidateQueries({ queryKey: getGetTeamAllocationAuditQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetSyncStatusQueryKey() });
   };
   const updateAllocation = useUpdateTeamAnnualAllocation();
   const updateVisibility = useUpdateTeamVisibility();
@@ -307,11 +404,19 @@ function useTeamBudgetEditor(teams: TeamBudgetHistoryTeam[]) {
 export default function TeamBudgets() {
   const { capabilities } = useAuthContext();
   const canEdit = capabilities.canEditAllocations;
+  const canManageSystem = capabilities.canManageSystem;
   const historyQuery = useGetTeamBudgetHistory({
     query: { queryKey: getGetTeamBudgetHistoryQueryKey(), refetchOnMount: 'always' },
   });
   const auditQuery = useGetTeamAllocationAudit({
     query: { queryKey: getGetTeamAllocationAuditQueryKey(), refetchOnMount: 'always', enabled: canEdit },
+  });
+  const syncQuery = useGetTeamBudgetSyncStatus({
+    query: {
+      queryKey: getGetTeamBudgetSyncStatusQueryKey(),
+      refetchOnMount: 'always',
+      enabled: canManageSystem,
+    },
   });
   const teams = useMemo(
     () => [...(historyQuery.data?.teams ?? [])].sort((a, b) =>
@@ -337,13 +442,25 @@ export default function TeamBudgets() {
             Annual allocations use an admin-managed baseline plus approved Airtable adjustments.
           </p>
         </div>
-        {canEdit && (
+        {canManageSystem && (
           <Button type="button" variant="outline" onClick={() => refresh.mutate()} disabled={refresh.isPending} data-testid="button-refresh-allocations">
             <Database className={`mr-2 h-4 w-4 ${refresh.isPending ? 'animate-spin' : ''}`} />
             {refresh.isPending ? 'Refreshing…' : 'Refresh allocations'}
           </Button>
         )}
       </div>
+      {refresh.isError && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" data-testid="status-refresh-allocations-error">
+          Refresh failed. The last successful allocation snapshot remains active.
+        </div>
+      )}
+      {canManageSystem && (
+        <SyncSummaryCard
+          sync={syncQuery.data}
+          isLoading={syncQuery.isLoading}
+          isError={syncQuery.isError}
+        />
+      )}
       <AllocationHistoryCard
         {...editor}
         teams={teams}
@@ -352,6 +469,7 @@ export default function TeamBudgets() {
         isLoading={historyQuery.isLoading && !historyQuery.data}
         isError={historyQuery.isError && !historyQuery.data}
       />
+      <AllocationIssuesCard issues={historyQuery.data?.issues ?? []} />
       {canEdit && <AuditHistoryCard audit={auditQuery.data} isLoading={auditQuery.isLoading} isError={auditQuery.isError} />}
     </div>
   );

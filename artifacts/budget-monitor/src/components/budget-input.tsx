@@ -3,8 +3,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Pencil, Check, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useSetGroupBudget, useDeleteGroupBudget, getListGroupsQueryKey } from '@workspace/api-client-react';
+import { useSetGroupBudget, useDeleteGroupBudget } from '@workspace/api-client-react';
 import { useToast } from '@/hooks/use-toast';
+import { invalidateBudgetCaches } from './member-budget-input';
 
 interface BudgetInputProps {
   groupId: string;
@@ -43,7 +44,7 @@ export function BudgetInput({ groupId, currentBudget }: BudgetInputProps) {
       { groupId, data: { amountUsd: numValue } },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey() });
+          invalidateBudgetCaches(queryClient);
           setEditing(false);
           toast({
             title: 'Budget updated',
@@ -65,7 +66,7 @@ export function BudgetInput({ groupId, currentBudget }: BudgetInputProps) {
       { groupId },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey() });
+          invalidateBudgetCaches(queryClient);
           setEditing(false);
           setValue('');
           toast({

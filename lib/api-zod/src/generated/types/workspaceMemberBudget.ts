@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { WorkspaceMemberBudgetBaselineSourceType } from './workspaceMemberBudgetBaselineSourceType';
+import type { WorkspaceMemberBudgetLimitState } from './workspaceMemberBudgetLimitState';
 
 export interface WorkspaceMemberBudget {
   userId: string;
@@ -18,10 +19,16 @@ export interface WorkspaceMemberBudget {
   role: string;
   isDisabled: boolean;
   /**
-     * Desired Agent budget; null means unset.
+     * Explicit member Agent limit; null means no explicit member override.
      * @nullable
      */
   budgetUsd: number | null;
+  /**
+     * Applicable explicit or inherited current monthly Agent limit.
+     * @nullable
+     */
+  effectiveLimitUsd: number | null;
+  limitState: WorkspaceMemberBudgetLimitState;
   /**
      * Agent usage in the current billing cycle.
      * @nullable

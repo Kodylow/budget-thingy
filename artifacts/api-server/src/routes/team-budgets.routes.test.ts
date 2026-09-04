@@ -19,7 +19,10 @@ import {
 import monitorRouter from "./monitor.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
 import { __setDirectoryCacheForTests } from "../lib/enterprise.ts";
-import { setTeamBudgetDirectoryFetcherForTests } from "../lib/team-budgets.ts";
+import {
+  setTeamBudgetDirectoryFetcherForTests,
+  TEAM_BUDGET_SOURCE,
+} from "../lib/team-budgets.ts";
 import { invalidateUsageSnapshotMemo } from "../lib/usage-store.ts";
 const PREFIX = "__task158_route__";
 const ASSIGNED = `${PREFIX} Assigned`;
@@ -320,7 +323,7 @@ beforeAll(async () => {
   invalidateUsageSnapshotMemo();
   await db.insert(teamBudgetAdjustmentsTable).values([
     {
-      source: `${PREFIX}-source`,
+      source: TEAM_BUDGET_SOURCE,
       sourceRecordId: `${PREFIX}-assigned`,
       sourceTeamName: ASSIGNED,
       teamName: ASSIGNED,
@@ -329,7 +332,7 @@ beforeAll(async () => {
       matchState: "accepted",
     },
     {
-      source: `${PREFIX}-source`,
+      source: TEAM_BUDGET_SOURCE,
       sourceRecordId: `${PREFIX}-budget-only`,
       sourceTeamName: BUDGET_ONLY,
       teamName: BUDGET_ONLY,
@@ -338,7 +341,7 @@ beforeAll(async () => {
       matchState: "accepted",
     },
     {
-      source: `${PREFIX}-source`,
+      source: TEAM_BUDGET_SOURCE,
       sourceRecordId: `${PREFIX}-hidden`,
       sourceTeamName: HIDDEN,
       teamName: HIDDEN,

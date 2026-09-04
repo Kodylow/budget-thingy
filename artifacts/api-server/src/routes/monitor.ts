@@ -12,6 +12,7 @@ import projectExportsRouter from "./monitor.exports-projects";
 import userExportsRouter from "./monitor.exports-users";
 import dashboardRouter from "./monitor.dashboard";
 import spendTablesRouter from "./monitor.spend-tables";
+import setLimitsRouter from "./set-limits";
 
 const router: IRouter = Router();
 router.use(requireAuth);
@@ -27,6 +28,7 @@ router.use(projectExportsRouter);
 router.use(userExportsRouter);
 router.use(dashboardRouter);
 router.use(spendTablesRouter);
+router.use(setLimitsRouter);
 
 export { canSeeAlertEntity };
 export default router;

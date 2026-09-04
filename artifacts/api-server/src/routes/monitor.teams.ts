@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getAirtableSourceConfigurationStatus } from "../lib/team-budgets";
 import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsTable, teamLimitTargetsTable, teamBudgetsTable, adminEmailsTable, alertsTable, appAdminsTable, usersTable, apiProjectMetadataTable, apiProjectMetadataStateTable, usageLimitAuditsTable, ListGroupsResponse, GetSummaryResponse, ListBudgetsResponse, SetGroupBudgetBody, SetGroupBudgetResponse, DeleteGroupBudgetResponse, GetTeamsBudgetsResponse, ListAdminsResponse, AddAdminBody, AddAdminResponse, DeleteAdminResponse, ListWorkspaceAdminsResponse, ListAlertsQueryParams, ListAlertsResponse, RunAlertCheckResponse, SendTestAlertResponse, SendEmailTestExampleBody, SendEmailTestExampleResponse, GetStatusResponse, GetGroupDetailResponse, GetGroupProjectsResponse, GetCanonicalClusterHeadlineResponse, GetTrendsQueryParams, GetTrendsResponse, ListAppAdminsResponse, AddAppAdminBody, AddAppAdminResponse, DeleteAppAdminResponse, ListDirectoryGroupsResponse, GetTeamBudgetHistoryResponse, GetTeamAllocationAuditResponse, UpdateTeamAnnualAllocationParams, UpdateTeamAnnualAllocationBody, UpdateTeamAnnualAllocationResponse, UpdateTeamVisibilityParams, UpdateTeamVisibilityBody, UpdateTeamVisibilityResponse, GetTeamBudgetSyncStatusResponse, RetryTeamBudgetUpstreamSyncResponse, RefreshTeamBudgetsResponse, UpdateTeamBudgetLimitParams, UpdateTeamBudgetLimitBody, UpdateTeamBudgetLimitResponse, ApplyTeamBudgetLimitsBody, ApplyTeamBudgetLimitsResponse, GetTeamBudgetTargetsResponse, AssignTeamBudgetTargetBody, AssignTeamBudgetTargetResponse, UpdateTeamBudgetTargetParams, UpdateTeamBudgetTargetBody, UpdateTeamBudgetTargetResponse, ListVisibleWorkspacesResponse, ListVisibleWorkspaceMembersResponse, SetWorkspaceMemberBudgetBody, SetWorkspaceMemberBudgetResponse, ClearWorkspaceMemberBudgetResponse, BulkSetWorkspaceMemberBudgetsBody, BulkSetWorkspaceMemberBudgetsResponse, ListWorkspaceUsageLimitAuditsResponse, GetUserActivityResponse, GetAccountUsageObservationExportQueryParams, GetAccountUsageObservationExportResponse, GetEmailSettingsResponse, UpdateEmailSettingsBody, UpdateEmailSettingsResponse, isConfigured, getApiHealth, getDirectory, getDirectoryFreshness, getBillingPeriod, getBillingPeriodMetadata, buildCanonicalGroupMergePlan, buildCanonicalEffectiveTeams, type CanonicalAccountDirectory, resolveCanonicalMergedGroupBudget, type EnterpriseGroup, buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, getEmailTestRecipient, resolveAlertRecipients, runCheck, getFiredThresholds, getFiredThresholdsBatch, getLastCheckAt, getCheckerState, requireAuth, requireRole, requireCapability, requireTrueAccountAdmin, requireUserLimitWorkspace, canSeeGroup, isAccountWide, isAdminRole, scopeGroups, type Authorization, scopeFor, getRosterHistory, projectEndOfPeriod, generateTrendBuckets, getEffectiveTeamBudgets, applyTeamBudgetLimits, assignTeamLimitTarget, getFreshEligibleTeamLimitGroup, getTeamLimitTargetConfiguration, getTeamBudgetUpstreamSyncRows, getVisibleEffectiveTeamBudgetMap, queueTeamBudgetUpstreamReconciliation, reconcileTeamBudgetsUpstream, refreshTeamBudgetSnapshot, updateTeamMonthlyLimit, updateTeamAnnualAllocation, updateTeamVisibility, getTeamAllocationAudits, updateTeamLimitTargetOverride, TEAM_BUDGET_REQUIRED_APPROVAL_STATUS, TEAM_BUDGET_SOURCE_TABLE, listReplitMemberBudgets, ReplitBudgetConnectorError, setReplitMemberBudget, resolveUsageWindow, USAGE_DATA_CUTOFF_ISO, type UsageWindowSelection, readUsageSnapshot, type UsageSnapshot, computeDedupedMemberCounts, computeHistoricalSnapshotUsageRollups, computeSnapshotUsageRollup, projectAttributionKey, type SnapshotUsageRollup, BACKGROUND_CYCLE_INTERVAL_MINUTES, runCycle, getNotificationSettings, updateNotificationSettings, visibleGroups, visibleGroupMembers, visibleRosterMembers, buildTeamAlertCanonicalScope, canSeeAlertEntity, targetTeamForGroup, groupTeamKey, buildGroupTeamMap, windowFromQuery, workspaceScope, readProjectMetadata, usageForRequest, usageHealth, dailyUsageRollups, effectiveGroupBudget, mergedGroupMemberIds, canonicalUserAttribution, alertToJson } from "./monitor.shared";
 
 const router = Router();
@@ -96,12 +97,21 @@ function serializeTeamBudgetHistoryTeam(
     adjustments: adjustments
       .filter((adjustment) =>
         adjustment.teamName === team.teamName &&
+        adjustment.isActive &&
         adjustment.matchState === "accepted"
       )
       .map((adjustment) => ({
         recordId: adjustment.sourceRecordId,
         amountUsd: adjustment.amountUsd!,
         submissionPeriod: adjustment.submissionPeriod!,
+        source: adjustment.source,
+        sourceKind: adjustment.sourceKind,
+        sourceBaseId: adjustment.sourceBaseId,
+        sourceTableId: adjustment.sourceTableId,
+        sourceUrl: adjustment.sourceRecordUrl,
+        sourceCreatedAt: adjustment.sourceCreatedAt?.toISOString() ?? null,
+        sourceUpdatedAt: adjustment.sourceUpdatedAt?.toISOString() ?? null,
+        ingestedAt: adjustment.ingestedAt.toISOString(),
       })),
   };
 }
@@ -116,12 +126,23 @@ router.get("/admin/team-budgets/history", requireCapability("canViewAccountUsage
       serializeTeamBudgetHistoryTeam(team, snapshot.adjustments)
     ),
     issues: snapshot.adjustments
-      .filter((adjustment) => adjustment.matchState !== "accepted")
+      .filter((adjustment) => adjustment.isActive && adjustment.matchState !== "accepted")
       .map((adjustment) => ({
         recordId: adjustment.sourceRecordId,
+        source: adjustment.source,
+        sourceKind: adjustment.sourceKind,
+        sourceBaseId: adjustment.sourceBaseId,
+        sourceTableId: adjustment.sourceTableId,
+        sourceUrl: adjustment.sourceRecordUrl,
         sourceTeamName: adjustment.sourceTeamName,
+        teamName: adjustment.teamName,
+        amountUsd: adjustment.amountUsd,
+        submissionPeriod: adjustment.submissionPeriod,
         matchState: adjustment.matchState,
         error: adjustment.errorMessage,
+        sourceCreatedAt: adjustment.sourceCreatedAt?.toISOString() ?? null,
+        sourceUpdatedAt: adjustment.sourceUpdatedAt?.toISOString() ?? null,
+        ingestedAt: adjustment.ingestedAt.toISOString(),
       })),
   }));
 });
@@ -229,6 +250,7 @@ router.patch(
 );
 
 async function buildTeamBudgetSyncStatus() {
+  const configuration = getAirtableSourceConfigurationStatus();
   const [{ sync }, teams] = await Promise.all([
     getEffectiveTeamBudgets(),
     getTeamBudgetUpstreamSyncRows(),
@@ -239,8 +261,19 @@ async function buildTeamBudgetSyncStatus() {
     lastAttemptAt: sync?.lastAttemptAt?.toISOString() ?? null,
     lastSuccessfulAt: sync?.lastSuccessfulAt?.toISOString() ?? null,
     lastError: sync?.lastError ?? null,
+    sourceBaseId: sync?.sourceBaseId ?? configuration.baseId,
+    sourceTableId: sync?.sourceTableId ?? configuration.tableId,
+    sourceAvailable: configuration.configured && (sync?.sourceAvailable ?? false),
+    unavailableReason: configuration.reason ?? sync?.unavailableReason ??
+      (!sync?.sourceAvailable
+        ? "Airtable allocation source has not completed a validated synchronization"
+        : null),
+    fetchedCount: sync?.fetchedCount ?? 0,
+    approvedCount: sync?.approvedCount ?? 0,
     recordCount: sync?.recordCount ?? 0,
     acceptedCount: sync?.acceptedCount ?? 0,
+    unmatchedCount: sync?.unmatchedCount ?? 0,
+    invalidCount: sync?.invalidCount ?? 0,
     issueCount: sync?.issueCount ?? 0,
     teams: teams.map((team) => ({
       teamName: team.teamName,

@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { hydrateCheckerState } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
 import { initializeUsageIngestScheduler } from "./lib/ingest";
+import { resumeDurableLimitOperations } from "./lib/limit-operations";
 import type { Server } from "node:http";
 
 const rawPort = process.env["PORT"];
@@ -24,6 +25,7 @@ let server: Server | null = null;
 async function start(): Promise<void> {
   // Authorization-dependent traffic must not race persisted directory hydration.
   await initCache({ revalidateOnStartup: false });
+  await resumeDurableLimitOperations();
   server = app.listen(port, (err) => {
     if (err) {
       logger.error({ err }, "Error listening on port");

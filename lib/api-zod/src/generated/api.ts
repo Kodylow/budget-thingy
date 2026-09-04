@@ -853,6 +853,9 @@ export const ListSpendPoolsResponse = zod.object({
   "allocationUsd": zod.number().nullable(),
   "remainingUsd": zod.number().nullable(),
   "percentUsed": zod.number().nullable(),
+  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Agent spend in the current billing cycle; populated for People independently of the selected reporting range.'),
+  "currentCycleRemainingUsd": zod.number().nullish().describe('Current monthly limit minus current-cycle Agent spend; never selected-range spend.'),
+  "currentCyclePercentUsed": zod.number().nullish().describe('Current-cycle Agent spend as a percentage of the current monthly limit.'),
   "status": zod.string(),
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
@@ -981,6 +984,9 @@ export const ListSpendGroupsResponse = zod.object({
   "allocationUsd": zod.number().nullable(),
   "remainingUsd": zod.number().nullable(),
   "percentUsed": zod.number().nullable(),
+  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Agent spend in the current billing cycle; populated for People independently of the selected reporting range.'),
+  "currentCycleRemainingUsd": zod.number().nullish().describe('Current monthly limit minus current-cycle Agent spend; never selected-range spend.'),
+  "currentCyclePercentUsed": zod.number().nullish().describe('Current-cycle Agent spend as a percentage of the current monthly limit.'),
   "status": zod.string(),
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
@@ -1109,6 +1115,9 @@ export const ListSpendPeopleResponse = zod.object({
   "allocationUsd": zod.number().nullable(),
   "remainingUsd": zod.number().nullable(),
   "percentUsed": zod.number().nullable(),
+  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Agent spend in the current billing cycle; populated for People independently of the selected reporting range.'),
+  "currentCycleRemainingUsd": zod.number().nullish().describe('Current monthly limit minus current-cycle Agent spend; never selected-range spend.'),
+  "currentCyclePercentUsed": zod.number().nullish().describe('Current-cycle Agent spend as a percentage of the current monthly limit.'),
   "status": zod.string(),
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
@@ -1237,6 +1246,9 @@ export const ListSpendProjectsResponse = zod.object({
   "allocationUsd": zod.number().nullable(),
   "remainingUsd": zod.number().nullable(),
   "percentUsed": zod.number().nullable(),
+  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Agent spend in the current billing cycle; populated for People independently of the selected reporting range.'),
+  "currentCycleRemainingUsd": zod.number().nullish().describe('Current monthly limit minus current-cycle Agent spend; never selected-range spend.'),
+  "currentCyclePercentUsed": zod.number().nullish().describe('Current-cycle Agent spend as a percentage of the current monthly limit.'),
   "status": zod.string(),
   "memberCount": zod.number().nullable(),
   "ownerName": zod.string().nullable(),
@@ -1669,14 +1681,33 @@ export const GetTeamBudgetHistoryResponse = zod.object({
   "adjustments": zod.array(zod.object({
   "recordId": zod.string(),
   "amountUsd": zod.number(),
-  "submissionPeriod": zod.string().regex(getTeamBudgetHistoryResponseTeamsItemAdjustmentsItemSubmissionPeriodRegExp)
+  "submissionPeriod": zod.string().regex(getTeamBudgetHistoryResponseTeamsItemAdjustmentsItemSubmissionPeriodRegExp),
+  "source": zod.string(),
+  "sourceKind": zod.string(),
+  "sourceBaseId": zod.string().nullable(),
+  "sourceTableId": zod.string().nullable(),
+  "sourceUrl": zod.string().nullable(),
+  "sourceCreatedAt": zod.string().nullable(),
+  "sourceUpdatedAt": zod.string().nullable(),
+  "ingestedAt": zod.string()
 }))
 })),
   "issues": zod.array(zod.object({
   "recordId": zod.string(),
   "sourceTeamName": zod.string().nullable(),
+  "source": zod.string(),
+  "sourceKind": zod.string(),
+  "sourceBaseId": zod.string().nullable(),
+  "sourceTableId": zod.string().nullable(),
+  "sourceUrl": zod.string().nullable(),
+  "teamName": zod.string().nullable(),
+  "amountUsd": zod.number().nullable(),
+  "submissionPeriod": zod.string().nullable(),
   "matchState": zod.enum(['unmatched', 'invalid']),
-  "error": zod.string().nullable()
+  "error": zod.string().nullable(),
+  "sourceCreatedAt": zod.string().nullable(),
+  "sourceUpdatedAt": zod.string().nullable(),
+  "ingestedAt": zod.string()
 }))
 })
 
@@ -1728,7 +1759,15 @@ export const UpdateTeamAnnualAllocationResponse = zod.object({
   "adjustments": zod.array(zod.object({
   "recordId": zod.string(),
   "amountUsd": zod.number(),
-  "submissionPeriod": zod.string().regex(updateTeamAnnualAllocationResponseAdjustmentsItemSubmissionPeriodRegExp)
+  "submissionPeriod": zod.string().regex(updateTeamAnnualAllocationResponseAdjustmentsItemSubmissionPeriodRegExp),
+  "source": zod.string(),
+  "sourceKind": zod.string(),
+  "sourceBaseId": zod.string().nullable(),
+  "sourceTableId": zod.string().nullable(),
+  "sourceUrl": zod.string().nullable(),
+  "sourceCreatedAt": zod.string().nullable(),
+  "sourceUpdatedAt": zod.string().nullable(),
+  "ingestedAt": zod.string()
 }))
 })
 
@@ -1759,7 +1798,15 @@ export const UpdateTeamVisibilityResponse = zod.object({
   "adjustments": zod.array(zod.object({
   "recordId": zod.string(),
   "amountUsd": zod.number(),
-  "submissionPeriod": zod.string().regex(updateTeamVisibilityResponseAdjustmentsItemSubmissionPeriodRegExp)
+  "submissionPeriod": zod.string().regex(updateTeamVisibilityResponseAdjustmentsItemSubmissionPeriodRegExp),
+  "source": zod.string(),
+  "sourceKind": zod.string(),
+  "sourceBaseId": zod.string().nullable(),
+  "sourceTableId": zod.string().nullable(),
+  "sourceUrl": zod.string().nullable(),
+  "sourceCreatedAt": zod.string().nullable(),
+  "sourceUpdatedAt": zod.string().nullable(),
+  "ingestedAt": zod.string()
 }))
 })
 
@@ -1774,8 +1821,16 @@ export const GetTeamBudgetSyncStatusResponse = zod.object({
   "lastAttemptAt": zod.string().nullable(),
   "lastSuccessfulAt": zod.string().nullable(),
   "lastError": zod.string().nullable(),
+  "sourceBaseId": zod.string().nullable(),
+  "sourceTableId": zod.string().nullable(),
+  "sourceAvailable": zod.boolean(),
+  "unavailableReason": zod.string().nullable(),
+  "fetchedCount": zod.number(),
+  "approvedCount": zod.number(),
   "recordCount": zod.number(),
   "acceptedCount": zod.number(),
+  "unmatchedCount": zod.number(),
+  "invalidCount": zod.number(),
   "issueCount": zod.number(),
   "teams": zod.array(zod.object({
   "teamName": zod.string(),
@@ -1802,8 +1857,16 @@ export const RetryTeamBudgetUpstreamSyncResponse = zod.object({
   "lastAttemptAt": zod.string().nullable(),
   "lastSuccessfulAt": zod.string().nullable(),
   "lastError": zod.string().nullable(),
+  "sourceBaseId": zod.string().nullable(),
+  "sourceTableId": zod.string().nullable(),
+  "sourceAvailable": zod.boolean(),
+  "unavailableReason": zod.string().nullable(),
+  "fetchedCount": zod.number(),
+  "approvedCount": zod.number(),
   "recordCount": zod.number(),
   "acceptedCount": zod.number(),
+  "unmatchedCount": zod.number(),
+  "invalidCount": zod.number(),
   "issueCount": zod.number(),
   "teams": zod.array(zod.object({
   "teamName": zod.string(),
@@ -1850,7 +1913,15 @@ export const UpdateTeamBudgetLimitResponse = zod.object({
   "adjustments": zod.array(zod.object({
   "recordId": zod.string(),
   "amountUsd": zod.number(),
-  "submissionPeriod": zod.string().regex(updateTeamBudgetLimitResponseAdjustmentsItemSubmissionPeriodRegExp)
+  "submissionPeriod": zod.string().regex(updateTeamBudgetLimitResponseAdjustmentsItemSubmissionPeriodRegExp),
+  "source": zod.string(),
+  "sourceKind": zod.string(),
+  "sourceBaseId": zod.string().nullable(),
+  "sourceTableId": zod.string().nullable(),
+  "sourceUrl": zod.string().nullable(),
+  "sourceCreatedAt": zod.string().nullable(),
+  "sourceUpdatedAt": zod.string().nullable(),
+  "ingestedAt": zod.string()
 }))
 })
 
@@ -2008,7 +2079,11 @@ export const RefreshTeamBudgetsResponse = zod.object({
   "requiredApprovalStatus": zod.enum(['Approved']),
   "ok": zod.boolean(),
   "recordCount": zod.number(),
+  "fetchedCount": zod.number(),
+  "approvedCount": zod.number(),
   "acceptedCount": zod.number(),
+  "unmatchedCount": zod.number(),
+  "invalidCount": zod.number(),
   "issueCount": zod.number(),
   "error": zod.string().nullable()
 })
@@ -2166,6 +2241,20 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
   "canWrite": zod.boolean().describe('True when the configured Replit budgets credential grants write:budgets.'),
   "error": zod.string().nullable()
 }),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
+  "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable(),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable(),
+  "error": zod.string().nullable()
+}),
+  "directoryFreshness": zod.object({
+  "dataAsOf": zod.coerce.date().nullable(),
+  "isStale": zod.boolean(),
+  "isRefreshing": zod.boolean()
+}),
   "members": zod.array(zod.object({
   "userId": zod.string(),
   "username": zod.string(),
@@ -2174,7 +2263,9 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
   "isInternal": zod.boolean().describe('Whether this is an internal Replit user'),
   "role": zod.string(),
   "isDisabled": zod.boolean(),
-  "budgetUsd": zod.number().nullable().describe('Desired Agent budget; null means unset.'),
+  "budgetUsd": zod.number().nullable().describe('Explicit member Agent limit; null means no explicit member override.'),
+  "effectiveLimitUsd": zod.number().nullable().describe('Applicable explicit or inherited current monthly Agent limit.'),
+  "limitState": zod.enum(['explicit', 'inherited', 'no_limit', 'unavailable']),
   "usageUsd": zod.number().nullable().describe('Agent usage in the current billing cycle.'),
   "remainingUsd": zod.number().nullable().describe('Budget minus current-cycle Agent usage; may be negative and is null when unset.'),
   "percentUsed": zod.number().nullable(),
@@ -2713,5 +2804,346 @@ export const ListRecentUsageIngestRunsResponseItem = zod.object({
   "status": zod.enum(['running', 'succeeded', 'partial', 'failed'])
 })
 export const ListRecentUsageIngestRunsResponse = zod.array(ListRecentUsageIngestRunsResponseItem)
+
+
+/**
+ * Reads persisted directory, billing-cycle usage, and limit observations without refreshing upstream data.
+ * @summary Get the composed Set Limits read model
+ */
+
+
+
+export const GetSetLimitsWorkspaceParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1)
+})
+
+export const getSetLimitsWorkspaceResponseWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const getSetLimitsWorkspaceResponseGroupsItemEligibleUserIdsItemRegExp = new RegExp('^[1-9]\\d*$');
+export const getSetLimitsWorkspaceResponseMembersItemUserIdRegExp = new RegExp('^[1-9]\\d*$');
+
+
+export const GetSetLimitsWorkspaceResponse = zod.object({
+  "workspaceId": zod.string().regex(getSetLimitsWorkspaceResponseWorkspaceIdRegExp),
+  "workspaceName": zod.string(),
+  "canWrite": zod.boolean(),
+  "unavailableReason": zod.string().nullable(),
+  "billingPeriod": zod.object({
+  "start": zod.coerce.date(),
+  "end": zod.coerce.date()
+}),
+  "limitObservation": zod.object({
+  "status": zod.enum(['available', 'unavailable', 'failed']),
+  "observedAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullable()
+}),
+  "groups": zod.array(zod.object({
+  "groupId": zod.string(),
+  "name": zod.string(),
+  "familyName": zod.string().nullable(),
+  "role": zod.string().nullable(),
+  "eligibleUserIds": zod.array(zod.string().regex(getSetLimitsWorkspaceResponseGroupsItemEligibleUserIdsItemRegExp))
+})),
+  "members": zod.array(zod.object({
+  "userId": zod.string().regex(getSetLimitsWorkspaceResponseMembersItemUserIdRegExp),
+  "username": zod.string(),
+  "name": zod.string().nullable(),
+  "email": zod.string().nullable(),
+  "role": zod.string(),
+  "groupIds": zod.array(zod.string()),
+  "isInternal": zod.boolean(),
+  "isDisabled": zod.boolean(),
+  "eligible": zod.boolean(),
+  "usageUsd": zod.number().nullable(),
+  "explicitLimitUsd": zod.number().nullable(),
+  "effectiveLimitUsd": zod.number().nullable(),
+  "limitState": zod.enum(['explicit', 'inherited', 'no_limit', 'unavailable'])
+}))
+})
+
+
+/**
+ * @summary Freeze and review workspace member-limit targets
+ */
+export const prepareLimitOperationBodyWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const prepareLimitOperationBodyAmountUsdExclusiveMin = 0;
+export const prepareLimitOperationBodyAmountUsdMultipleOf = 0.01;
+
+export const prepareLimitOperationBodyUserIdsItemRegExp = new RegExp('^[1-9]\\d*$');
+export const prepareLimitOperationBodyUserIdsMax = 1000;
+
+
+export const prepareLimitOperationBodyGroupIdsMax = 1000;
+
+export const prepareLimitOperationBodyIdempotencyKeyMin = 8;
+export const prepareLimitOperationBodyIdempotencyKeyMax = 200;
+
+
+
+export const PrepareLimitOperationBody = zod.object({
+  "workspaceId": zod.string().regex(prepareLimitOperationBodyWorkspaceIdRegExp),
+  "amountUsd": zod.number().gt(prepareLimitOperationBodyAmountUsdExclusiveMin).multipleOf(prepareLimitOperationBodyAmountUsdMultipleOf),
+  "userIds": zod.array(zod.string().regex(prepareLimitOperationBodyUserIdsItemRegExp)).max(prepareLimitOperationBodyUserIdsMax),
+  "groupIds": zod.array(zod.string().min(1)).max(prepareLimitOperationBodyGroupIdsMax),
+  "idempotencyKey": zod.string().min(prepareLimitOperationBodyIdempotencyKeyMin).max(prepareLimitOperationBodyIdempotencyKeyMax)
+})
+
+export const prepareLimitOperationResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const PrepareLimitOperationResponse = zod.object({
+  "id": zod.string().regex(prepareLimitOperationResponseIdRegExp),
+  "workspaceId": zod.string(),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number(),
+  "reviewFingerprint": zod.string(),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Commit an exactly reviewed limit operation
+ */
+export const commitLimitOperationPathOperationIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const CommitLimitOperationParams = zod.object({
+  "operationId": zod.coerce.string().regex(commitLimitOperationPathOperationIdRegExp)
+})
+
+export const commitLimitOperationBodyReviewFingerprintMin = 64;
+export const commitLimitOperationBodyReviewFingerprintMax = 64;
+
+export const commitLimitOperationBodyAmountUsdExclusiveMin = 0;
+export const commitLimitOperationBodyAmountUsdMultipleOf = 0.01;
+
+export const commitLimitOperationBodyUserIdsItemRegExp = new RegExp('^[1-9]\\d*$');
+export const commitLimitOperationBodyUserIdsMax = 1000;
+
+
+
+export const CommitLimitOperationBody = zod.object({
+  "reviewFingerprint": zod.string().min(commitLimitOperationBodyReviewFingerprintMin).max(commitLimitOperationBodyReviewFingerprintMax),
+  "amountUsd": zod.number().gt(commitLimitOperationBodyAmountUsdExclusiveMin).multipleOf(commitLimitOperationBodyAmountUsdMultipleOf),
+  "userIds": zod.array(zod.string().regex(commitLimitOperationBodyUserIdsItemRegExp)).min(1).max(commitLimitOperationBodyUserIdsMax)
+})
+
+export const commitLimitOperationResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const CommitLimitOperationResponse = zod.object({
+  "id": zod.string().regex(commitLimitOperationResponseIdRegExp),
+  "workspaceId": zod.string(),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number(),
+  "reviewFingerprint": zod.string(),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Get and resume a durable limit operation
+ */
+export const getLimitOperationPathOperationIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const GetLimitOperationParams = zod.object({
+  "operationId": zod.coerce.string().regex(getLimitOperationPathOperationIdRegExp)
+})
+
+export const getLimitOperationResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const GetLimitOperationResponse = zod.object({
+  "id": zod.string().regex(getLimitOperationResponseIdRegExp),
+  "workspaceId": zod.string(),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number(),
+  "reviewFingerprint": zod.string(),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Retry selected failed or verification-pending targets
+ */
+export const retryLimitOperationTargetsPathOperationIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const RetryLimitOperationTargetsParams = zod.object({
+  "operationId": zod.coerce.string().regex(retryLimitOperationTargetsPathOperationIdRegExp)
+})
+
+export const retryLimitOperationTargetsBodyUserIdsItemRegExp = new RegExp('^[1-9]\\d*$');
+export const retryLimitOperationTargetsBodyUserIdsMax = 1000;
+
+export const retryLimitOperationTargetsBodyIdempotencyKeyMin = 8;
+export const retryLimitOperationTargetsBodyIdempotencyKeyMax = 200;
+
+
+
+export const RetryLimitOperationTargetsBody = zod.object({
+  "userIds": zod.array(zod.string().regex(retryLimitOperationTargetsBodyUserIdsItemRegExp)).min(1).max(retryLimitOperationTargetsBodyUserIdsMax),
+  "idempotencyKey": zod.string().min(retryLimitOperationTargetsBodyIdempotencyKeyMin).max(retryLimitOperationTargetsBodyIdempotencyKeyMax)
+})
+
+export const retryLimitOperationTargetsResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const RetryLimitOperationTargetsResponse = zod.object({
+  "id": zod.string().regex(retryLimitOperationTargetsResponseIdRegExp),
+  "workspaceId": zod.string(),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number(),
+  "reviewFingerprint": zod.string(),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
 
 

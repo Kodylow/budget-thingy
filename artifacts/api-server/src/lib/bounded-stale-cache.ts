@@ -12,6 +12,12 @@ export interface BoundedStaleCacheOptions {
   now?: () => number;
 }
 
+export type BoundedStaleCacheStatus =
+  | "hit"
+  | "stale"
+  | "in-flight"
+  | "miss";
+
 /**
  * Process-local, bounded LRU cache. Cold misses are single-flight; expired
  * authorized successes remain available while one same-key refresh runs.
@@ -44,7 +50,20 @@ export class BoundedStaleCache<T> {
     return this.entries.size;
   }
 
-  getOrLoad(key: string, load: () => Promise<T>): Promise<T> {
+  status(key: string): BoundedStaleCacheStatus {
+    const at = this.now();
+    const current = this.entries.get(key);
+    if (current?.value !== undefined && at < current.freshUntil) return "hit";
+    if (current?.value !== undefined && at < current.staleUntil) return "stale";
+    if (current?.inFlight) return "in-flight";
+    return "miss";
+  }
+
+  getOrLoad(
+    key: string,
+    load: () => Promise<T>,
+    options: { refreshStale?: boolean } = {},
+  ): Promise<T> {
     const at = this.now();
     const current = this.entries.get(key);
     if (current?.value !== undefined && at < current.freshUntil) {
@@ -54,7 +73,7 @@ export class BoundedStaleCache<T> {
     if (current?.inFlight && current.value === undefined) return current.inFlight;
     if (current?.value !== undefined && at < current.staleUntil) {
       this.touch(key, current);
-      if (!current.inFlight) {
+      if (!current.inFlight && options.refreshStale !== false) {
         const staleValue = current.value;
         const refresh = load().then((value) => {
           if (this.entries.get(key)?.inFlight === refresh) {

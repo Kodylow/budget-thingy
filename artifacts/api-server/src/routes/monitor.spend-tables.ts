@@ -208,12 +208,16 @@ export function serializeSpendCsv(rows: readonly SpendRow[]): string {
     "qualified_id", "kind", "name", "workspace_id", "workspace",
     "spend_usd", "agent_spend_usd", "other_services_usd",
     "allocation_or_limit_usd", "remaining_usd", "percent_used",
+    "current_cycle_agent_spend_usd", "current_cycle_remaining_usd",
+    "current_cycle_percent_used",
     "status", "limit_state", "limit_observation_status", "shared_pool", "member_count", "owner",
   ];
   const lines = rows.map((row) => [
     row.id, row.kind, row.name, row.workspaceId ?? "", row.workspaceName ?? "",
     row.spendUsd, row.agentSpendUsd, row.otherServicesUsd,
     row.allocationUsd ?? "", row.remainingUsd ?? "", row.percentUsed ?? "",
+    row.currentCycleAgentSpendUsd ?? "", row.currentCycleRemainingUsd ?? "",
+    row.currentCyclePercentUsed ?? "",
     row.status, row.limitState, row.limitObservationStatus,
     row.sharedPool, row.memberCount ?? "", row.ownerName ?? "",
   ].map(escapeCsvCell).join(","));
