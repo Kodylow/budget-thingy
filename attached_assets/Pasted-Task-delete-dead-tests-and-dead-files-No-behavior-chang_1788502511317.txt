@@ -1,0 +1,30 @@
+Task: delete dead tests and dead files. No behavior changes.
+
+Tests to delete (their subject is the legacy usage pipeline being replaced, or a removed UI state):
+
+artifacts/api-server/src/lib/enterprise-incremental.test.mjs
+artifacts/api-server/src/lib/enterprise-queue.test.mjs
+artifacts/api-server/src/lib/enterprise-workloads.test.mjs
+artifacts/api-server/src/lib/enterprise-agent-usage.test.ts
+artifacts/api-server/src/lib/job-claims.test.mjs
+artifacts/api-server/src/lib/comcast-rollup.test.mjs
+artifacts/api-server/src/lib/workspace-rollup.test.mjs
+artifacts/api-server/src/startup-order.test.mjs
+artifacts/api-server/src/routes/monitor.summary.test.mjs
+artifacts/budget-monitor/src/pages/dashboard-sync-status.test.mjs
+artifacts/budget-monitor/src/lib/client-performance.test.mjs and client-performance.ts if nothing else imports it
+After deleting, remove every __*ForTests export from enterprise.ts that no remaining file imports. Keep setEnterpriseFetchForTests.
+Test runner: one runner. Convert the remaining *.test.mjs files to vitest *.test.ts (mechanical: node:test → vitest, assert → expect), set "test": "vitest run", drop --test-concurrency=1. Let files run in parallel; DB-backed files truncate their own tables in beforeAll.
+
+Non-test files to delete from the repo:
+
+db.sql (21 MB legacy dump), replit-raw-api-spend.xlsx, replit-spend-gap.xlsx, project-spend-2026-08-21.csv, Kody-Discrepencies-Report.txt
+attached_assets/ (37 files, 13 MB of pasted prompts and screenshots) and .agents/agent_assets_metadata.toml; add attached_assets/ to .gitignore so the Replit UI can keep dropping files there without committing them
+screenshots/
+artifacts/mockup-sandbox/ and its pnpm-workspace.yaml entry (it's a scaffold clone of the UI kit with no product code)
+scripts/refresh-spend-csv.mjs, scripts/refresh-spend-csv-db.mjs, scripts/src/hello.ts; if scripts/ then holds only post-merge.sh, delete scripts/package.json, scripts/tsconfig.json, its tsbuildinfo, and the workspace entry
+Every *.tsbuildinfo and .tsbuildinfo tracked in git; add them to .gitignore
+.config/ (vscode-server and npm caches) from git; add to .gitignore
+.agents/memory/*.md entries that describe the legacy pipeline: demand-driven-usage-sync.md, canonical-monthly-rollups.md, recurring-job-claims.md, billing-anchor-startup.md, startup-data-backfills.md; update MEMORY.md index accordingly
+lib/db/drizzle/meta/*_snapshot.json for migrations 0000–0018 stay (drizzle needs them); do not touch migrations
+Acceptance: pnpm typecheck green; pnpm --filter @workspace/api-server test passes in under 60 s; git count-objects -vH shows the working tree without attached_assets, db.sql, or xlsx files; report before/after test line count (rg -l . --glob '*.test.*' artifacts lib | xargs cat | wc -l).

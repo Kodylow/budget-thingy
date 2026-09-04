@@ -1,0 +1,55 @@
+Task: repository cleanup — delete dead tests and dead files, one test runner. No behavior changes to application code.
+
+This is a literal list. Every path below gets removed. Do not keep a file because something else would fail without it; fix or delete the dependent instead. Do not replace deletions with script-level workarounds.
+
+1. Revert the test-script change from commit c8acaae. artifacts/api-server/package.json gets exactly:
+
+"test": "NODE_ENV=test LOG_LEVEL=silent vitest run"
+Remove test:node, test:node:pure, test:node:shared, test:vitest.
+
+2. Delete these test files:
+
+artifacts/api-server/src/lib/enterprise-incremental.test.mjs
+artifacts/api-server/src/lib/enterprise-queue.test.mjs
+artifacts/api-server/src/lib/enterprise-workloads.test.mjs
+artifacts/api-server/src/lib/enterprise-agent-usage.test.ts
+artifacts/api-server/src/lib/job-claims.test.mjs
+artifacts/api-server/src/lib/comcast-rollup.test.mjs
+artifacts/api-server/src/lib/workspace-rollup.test.mjs
+artifacts/api-server/src/startup-order.test.mjs
+artifacts/api-server/src/routes/monitor.summary.test.mjs
+artifacts/budget-monitor/src/lib/client-performance.test.mjs (and client-performance.ts if nothing imports it afterwards)
+3. Remove test seams that are now unused. For every export function __*ForTests in artifacts/api-server/src/lib/enterprise.ts, checker.ts, email.ts, team-budgets.ts, replit-budgets.ts: if no remaining test imports it, delete it. Keep setEnterpriseFetchForTests, setSendEmailOverrideForTests, setAuthorizationResolver, and the replit-budgets / team-budgets transport overrides.
+
+4. One runner. Convert every remaining *.test.mjs under artifacts/ to vitest *.test.ts: import test from "node:test" → import { test, expect } from "vitest", assert.equal/deepEqual/ok/rejects → the expect equivalent. Files that touch the database do their own table truncation in beforeAll. Update vitest.config.ts to include src/**/*.test.ts and run files in parallel (default). If a converted test only passes when run alone, fix its isolation; do not add fileParallelism: false.
+
+5. Delete these non-test files and directories from git:
+
+db.sql
+replit-raw-api-spend.xlsx
+replit-spend-gap.xlsx
+project-spend-2026-08-21.csv
+Kody-Discrepencies-Report.txt
+attached_assets/ (entire directory) and .agents/agent_assets_metadata.toml
+screenshots/
+artifacts/mockup-sandbox/ and its entry in pnpm-workspace.yaml
+scripts/refresh-spend-csv.mjs, scripts/refresh-spend-csv-db.mjs, scripts/src/hello.ts, scripts/package.json, scripts/tsconfig.json, scripts/tsconfig.tsbuildinfo, and the scripts workspace entry. scripts/post-merge.sh stays.
+artifacts/api-server/check-export.mjs if nothing references it
+Every tracked *.tsbuildinfo / .tsbuildinfo file
+.config/ from git
+.agents/memory/demand-driven-usage-sync.md, canonical-monthly-rollups.md, recurring-job-claims.md, billing-anchor-startup.md, startup-data-backfills.md; remove their lines from .agents/memory/MEMORY.md
+6. .gitignore additions: attached_assets/, screenshots/, .config/, *.tsbuildinfo, .tsbuildinfo, *.xlsx, db.sql.
+
+7. Do not touch: migrations under lib/db/drizzle/, ingest.ts, any route, any frontend page, checker.test.ts, monitor.authz.test.mjs (convert only), team-budgets.test.ts, email.test.ts.
+
+8. Verify and report:
+
+pnpm typecheck green.
+pnpm --filter @workspace/api-server test passes; paste wall time and pass/fail counts. Target under 60 s.
+rg -l . --glob '*.test.*' artifacts lib | xargs cat | wc -l before and after.
+ls at the repo root, showing none of the deleted files.
+rg -n "__[A-Za-z]+ForTests" artifacts/api-server/src --glob '!*.test.*' | wc -l before and after.
+git ls-files | wc -l before and after.
+9. Commit as one commit titled "Remove legacy tests, dead assets, and second test runner" and push to main. Report the SHA.
+
+Finally, report the state of the separate Step 2 read-path task: not started, in progress (list the files that exist so far), or blocked (with the reason). If uncommitted Step 2 work exists in the workspace, push it as-is to a branch named step-2-read-path without merging.
