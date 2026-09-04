@@ -26,6 +26,8 @@ import {
   type DedupedGroupRollup,
   type DedupedUsageRollup,
 } from "./usage-rollup";
+import { sumAgentUsageMetrics } from "./usage-metrics";
+export { sumAgentUsageMetrics } from "./usage-metrics";
 import { updateJobClaimCursor, withJobClaim } from "./job-claims";
 import {
   resolveUsageWindow,
@@ -515,20 +517,6 @@ interface UsageMetricEntry {
   name: string;
   category: string;
   costUsd: number;
-}
-
-export function sumAgentUsageMetrics(
-  metrics: UsageMetricEntry[] | undefined,
-): number {
-  return (metrics ?? [])
-    .filter((metric) => {
-      const id = metric.id.toLowerCase();
-      const name = metric.name.toLowerCase();
-      return id.includes("ai_agent") ||
-        id.includes("ai-agent") ||
-        (metric.category.toLowerCase() === "ai" && name.includes("agent"));
-    })
-    .reduce((sum, metric) => sum + metric.costUsd, 0);
 }
 
 interface UsageGroupEntry {

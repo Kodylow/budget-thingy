@@ -3,6 +3,9 @@ import { test, expect } from "vitest";
 import {
   computeDedupedMemberCounts,
   computeDedupedUsageRollup,
+  computeHistoricalSnapshotUsageRollups,
+  computeSnapshotUsageRollup,
+  usageSnapshotForDay,
 } from "./usage-rollup.ts";
 
 const groups = [
@@ -131,4 +134,346 @@ test("counts directory members once even when they have no usage", () => {
 
   expect(counts.get("a-group")).toBe(2);
   expect(counts.get("z-group")).toBe(2);
+});
+
+function snapshot(overrides = {}) {
+  return {
+    window: {
+      start: "2026-08-01T00:00:00.000Z",
+      end: "2026-08-02T00:00:00.000Z",
+    },
+    workspaceIds: ["workspace-1", "workspace-2"],
+    includesDailyMembers: false,
+    status: "complete",
+    dataAsOf: "2026-08-02T00:01:00.000Z",
+    isLive: false,
+    coverage: {
+      requestedDays: 1,
+      requestedWorkspaceDays: 2,
+      presentWorkspaceDays: 2,
+      failedWorkspaceDays: [],
+      missingWorkspaceDays: [],
+      presentAccountDays: 1,
+      missingAccountDays: [],
+      ratio: 1,
+    },
+    members: new Map(),
+    projects: new Map(),
+    workspaces: new Map(),
+    daily: new Map(),
+    accountDays: new Set(),
+    accountTotalUsd: 0,
+    ...overrides,
+  };
+}
+
+test("derives snapshot totals with overlap, creator ownership, and residual spend", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      members: new Map([
+        ["workspace-1", new Map([
+          ["shared", { totalCostUsd: 14, aiCostUsd: 10 }],
+          ["unmatched", { totalCostUsd: 5, aiCostUsd: 5 }],
+        ])],
+        ["workspace-2", new Map([
+          ["shared", { totalCostUsd: 7, aiCostUsd: 7 }],
+        ])],
+      ]),
+      projects: new Map([
+        ["workspace-1", new Map([
+          ["project-1", { totalCostUsd: 8, aiCostUsd: 2 }],
+          ["orphan", { totalCostUsd: 3, aiCostUsd: 0 }],
+        ])],
+      ]),
+      workspaces: new Map([
+        ["workspace-1", {
+          totalCostUsd: 30,
+          memberAttributableUsd: 27,
+          memberUnattributableUsd: 3,
+        }],
+        ["workspace-2", {
+          totalCostUsd: 7,
+          memberAttributableUsd: 7,
+          memberUnattributableUsd: 0,
+        }],
+      ]),
+      accountTotalUsd: 40,
+    }),
+    groups: [
+      ...groups,
+      { id: "workspace-2-group", workspaceId: "workspace-2", name: "Alpha" },
+    ],
+    membersByGroup: new Map([
+      ["a-group", ["shared"]],
+      ["z-group", ["shared"]],
+      ["workspace-2-group", ["shared"]],
+    ]),
+    projectInfoByWorkspace: new Map([
+      ["workspace-1", new Map([
+        ["project-1", { creatorId: "shared" }],
+        ["orphan", { creatorId: null }],
+      ])],
+      ["workspace-2", new Map()],
+    ]),
+  });
+
+  expect(result.byGroup.get("a-group")?.spendUsd).toBe(16);
+  expect(result.byGroup.get("z-group")?.spendUsd).toBe(0);
+  expect(result.byGroup.get("workspace-2-group")?.spendUsd).toBe(7);
+  expect(result.byUser.get("shared")).toBe(23);
+  expect(result.aiSpendByUser.get("shared")).toBe(17);
+  expect(result.nonAiSpendByUser.get("shared")).toBe(6);
+  expect(result.projectAttribution.projectToGroup.get("project-1")).toBe("a-group");
+  expect(result.projectAttribution.nonAiSpendByProject.get("project-1")).toBe(6);
+  expect(result.ungroupedByWorkspace.get("workspace-1")?.spendUsd).toBe(14);
+  expect(result.totalSpendUsd).toBe(37);
+  expect(result.accountReconciliationSpendUsd).toBe(3);
+  expect(
+    [...result.byGroup.values()].reduce((sum, group) => sum + group.spendUsd, 0) +
+      [...result.ungroupedByWorkspace.values()].reduce(
+        (sum, group) => sum + group.spendUsd,
+        0,
+      ),
+  ).toBe(result.totalSpendUsd);
+});
+
+test("marks missing creator metadata incomplete only when non-Agent ownership is needed", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["workspace-1"],
+      projects: new Map([["workspace-1", new Map([
+        ["hosting", { totalCostUsd: 9, aiCostUsd: 0 }],
+      ])]]),
+      workspaces: new Map([["workspace-1", {
+        totalCostUsd: 9,
+        memberAttributableUsd: 0,
+        memberUnattributableUsd: 9,
+      }]]),
+    }),
+    groups,
+    membersByGroup: new Map([["a-group", ["creator"]]]),
+    projectInfoByWorkspace: new Map(),
+  });
+  expect(result.isComplete).toBe(false);
+  expect(result.pendingCount).toBe(1);
+  expect(result.ungroupedByWorkspace.get("workspace-1")?.spendUsd).toBe(9);
+});
+
+test("caps observed attribution at workspace authority and reports reconciliation pending", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["workspace-1"],
+      members: new Map([["workspace-1", new Map([
+        ["member", { totalCostUsd: 8, aiCostUsd: 8 }],
+      ])]]),
+      projects: new Map([["workspace-1", new Map([
+        ["project", { totalCostUsd: 7, aiCostUsd: 0 }],
+      ])]]),
+      workspaces: new Map([["workspace-1", {
+        totalCostUsd: 10,
+        memberAttributableUsd: 10,
+        memberUnattributableUsd: 0,
+      }]]),
+      accountTotalUsd: 10,
+    }),
+    groups: [groups[1]],
+    membersByGroup: new Map([["a-group", ["member"]]]),
+    projectInfoByWorkspace: new Map([["workspace-1", new Map([
+      ["project", { creatorId: "member" }],
+    ])]]),
+  });
+  expect(result.byGroup.get("a-group")?.spendUsd).toBe(10);
+  expect(result.totalSpendUsd).toBe(10);
+  expect(result.pendingCount).toBe(1);
+  expect(result.isComplete).toBe(false);
+});
+
+test("counts missing account coverage in pending diagnostics", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: [],
+      status: "partial",
+      coverage: {
+        requestedDays: 1,
+        requestedWorkspaceDays: 0,
+        presentWorkspaceDays: 0,
+        failedWorkspaceDays: [],
+        missingWorkspaceDays: [],
+        presentAccountDays: 0,
+        missingAccountDays: ["2026-08-01"],
+        ratio: 0,
+      },
+    }),
+    groups: [],
+    membersByGroup: new Map(),
+    projectInfoByWorkspace: new Map(),
+  });
+  expect(result.pendingCount).toBe(1);
+  expect(result.isComplete).toBe(false);
+});
+
+test("builds isolated daily snapshots for historical roster rollups", () => {
+  const full = snapshot({
+    includesDailyMembers: true,
+    daily: new Map([["2026-08-01", {
+      accountTotalUsd: 12,
+      workspaceTotalUsd: 10,
+    }]]),
+    accountDays: new Set(["2026-08-01"]),
+    dailyMembers: new Map([["2026-08-01", new Map([
+      ["workspace-1", new Map([["u-1", { totalCostUsd: 6, aiCostUsd: 4 }]])],
+    ])]]),
+    dailyProjects: new Map([["2026-08-01", new Map([
+      ["workspace-1", new Map([["p-1", { totalCostUsd: 6, aiCostUsd: 2 }]])],
+    ])]]),
+    dailyWorkspaces: new Map([["2026-08-01", new Map([
+      ["workspace-1", {
+        totalCostUsd: 10,
+        memberAttributableUsd: 10,
+        memberUnattributableUsd: 0,
+      }],
+    ])]]),
+  });
+  const day = usageSnapshotForDay(full, "2026-08-01");
+  expect(day.accountTotalUsd).toBe(12);
+  expect(day.members.get("workspace-1")?.get("u-1")?.aiCostUsd).toBe(4);
+  expect(day.projects.get("workspace-1")?.get("p-1")?.totalCostUsd).toBe(6);
+  expect(day.workspaces.get("workspace-1")?.totalCostUsd).toBe(10);
+});
+
+test("rolls completed historical days with their roster and uncovered days with live membership", () => {
+  const full = snapshot({
+    window: {
+      start: "2026-08-01T00:00:00.000Z",
+      end: "2026-08-04T00:00:00.000Z",
+    },
+    workspaceIds: ["workspace-1"],
+    includesDailyMembers: true,
+    daily: new Map([
+      ["2026-08-01", { accountTotalUsd: 10, workspaceTotalUsd: 10 }],
+      ["2026-08-02", { accountTotalUsd: 20, workspaceTotalUsd: 20 }],
+      ["2026-08-03", { accountTotalUsd: 30, workspaceTotalUsd: 30 }],
+    ]),
+    accountDays: new Set(["2026-08-01", "2026-08-02", "2026-08-03"]),
+    dailyMembers: new Map([
+      ["2026-08-01", new Map([["workspace-1", new Map([
+        ["old-member", { totalCostUsd: 10, aiCostUsd: 10 }],
+      ])]])],
+      ["2026-08-02", new Map([["workspace-1", new Map([
+        ["new-member", { totalCostUsd: 20, aiCostUsd: 20 }],
+      ])]])],
+      ["2026-08-03", new Map([["workspace-1", new Map([
+        ["new-member", { totalCostUsd: 30, aiCostUsd: 30 }],
+      ])]])],
+    ]),
+    dailyProjects: new Map([
+      ["2026-08-01", new Map()],
+      ["2026-08-02", new Map()],
+      ["2026-08-03", new Map()],
+    ]),
+    dailyWorkspaces: new Map([
+      ["2026-08-01", new Map([["workspace-1", {
+        totalCostUsd: 10,
+        memberAttributableUsd: 10,
+        memberUnattributableUsd: 0,
+      }]])],
+      ["2026-08-02", new Map([["workspace-1", {
+        totalCostUsd: 20,
+        memberAttributableUsd: 20,
+        memberUnattributableUsd: 0,
+      }]])],
+      ["2026-08-03", new Map([["workspace-1", {
+        totalCostUsd: 30,
+        memberAttributableUsd: 30,
+        memberUnattributableUsd: 0,
+      }]])],
+    ]),
+  });
+  const result = computeHistoricalSnapshotUsageRollups({
+    snapshot: full,
+    groups: [groups[1]],
+    currentUtcDay: "2026-08-03",
+    currentMembersByGroup: new Map([["a-group", ["new-member"]]]),
+    completedRosterDays: new Set(["2026-08-01"]),
+    rosterMembersByDate: new Map([
+      ["2026-08-01", new Map([["a-group", ["old-member"]]])],
+    ]),
+    projectInfoByWorkspace: new Map([["workspace-1", new Map()]]),
+  });
+
+  expect(result.get("2026-08-01")?.byGroup.get("a-group")?.spendUsd).toBe(10);
+  expect(result.get("2026-08-02")?.byGroup.get("a-group")?.spendUsd).toBe(20);
+  expect(result.get("2026-08-03")?.byGroup.get("a-group")?.spendUsd).toBe(30);
+  expect(
+    [...result.values()].reduce((sum, day) => sum + day.totalSpendUsd, 0),
+  ).toBe(60);
+});
+
+test("daily slices preserve missing account and failed workspace coverage", () => {
+  const full = snapshot({
+    workspaceIds: ["workspace-1"],
+    includesDailyMembers: true,
+    status: "partial",
+    daily: new Map([["2026-08-01", {
+      accountTotalUsd: 0,
+      workspaceTotalUsd: 0,
+    }]]),
+    accountDays: new Set(),
+    dailyMembers: new Map([["2026-08-01", new Map()]]),
+    dailyProjects: new Map([["2026-08-01", new Map()]]),
+    dailyWorkspaces: new Map([["2026-08-01", new Map()]]),
+    coverage: {
+      requestedDays: 1,
+      requestedWorkspaceDays: 1,
+      presentWorkspaceDays: 0,
+      failedWorkspaceDays: [{
+        workspaceId: "workspace-1",
+        usageDate: "2026-08-01",
+      }],
+      missingWorkspaceDays: [],
+      presentAccountDays: 0,
+      missingAccountDays: ["2026-08-01"],
+      ratio: 0,
+    },
+  });
+  const day = usageSnapshotForDay(full, "2026-08-01");
+  expect(day.status).toBe("partial");
+  expect(day.coverage.failedWorkspaceDays).toEqual([{
+    workspaceId: "workspace-1",
+    usageDate: "2026-08-01",
+  }]);
+  expect(day.coverage.missingAccountDays).toEqual(["2026-08-01"]);
+  expect(day.coverage.presentAccountDays).toBe(0);
+  expect(day.coverage.ratio).toBe(0);
+});
+
+test("over-allocation capping is deterministic across snapshot map order", () => {
+  const make = (entries) => computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["workspace-1"],
+      members: new Map([["workspace-1", new Map(entries)]]),
+      workspaces: new Map([["workspace-1", {
+        totalCostUsd: 6,
+        memberAttributableUsd: 6,
+        memberUnattributableUsd: 0,
+      }]]),
+      accountDays: new Set(["2026-08-01"]),
+      accountTotalUsd: 6,
+    }),
+    groups,
+    membersByGroup: new Map([
+      ["a-group", ["a-user"]],
+      ["z-group", ["z-user"]],
+    ]),
+    projectInfoByWorkspace: new Map(),
+  });
+  const entries = [
+    ["z-user", { totalCostUsd: 5, aiCostUsd: 5 }],
+    ["a-user", { totalCostUsd: 5, aiCostUsd: 5 }],
+  ];
+  const forward = make(entries);
+  const reversed = make([...entries].reverse());
+  expect(forward.byGroup).toEqual(reversed.byGroup);
+  expect(forward.byGroup.get("a-group")?.spendUsd).toBe(5);
+  expect(forward.byGroup.get("z-group")?.spendUsd).toBe(1);
 });

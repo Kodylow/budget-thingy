@@ -7,6 +7,7 @@ const {
   invalidateUsageSnapshotMemo,
   readUsageSnapshot,
 } = await import("./usage-store.ts");
+const { computeSnapshotUsageRollup } = await import("./usage-rollup.ts");
 const {
   resolveUsageWindow,
   UsageWindowError,
@@ -60,7 +61,7 @@ beforeAll(async () => {
     `insert into usage_member_day
        (workspace_id,usage_date,user_id,total_cost_usd,ai_cost_usd,metrics_json,fetched_at)
      values
-       ($1,$3::date,'user-1',8,6,'[]'::jsonb,$5),
+       ($1,$3::date,'user-1',8,2,'[]'::jsonb,$5),
        ($1,$4::date,'user-1',15,10,'[]'::jsonb,$5),
        ($2,$3::date,'user-2',25,20,'[]'::jsonb,$5)`,
     [workspaceA, workspaceB, dayOne, dayTwo, fetchedAt],
@@ -69,7 +70,10 @@ beforeAll(async () => {
     `insert into usage_project_day
        (workspace_id,usage_date,project_id,total_cost_usd,metrics_json,fetched_at)
      values
-       ($1,$3::date,'project-1',10,'[]'::jsonb,$5),
+       ($1,$3::date,'project-1',10,
+        '[{"id":"replit:v0:teams:ai_agent","name":"Agent","category":"ai","costUsd":2},
+          {"id":"model-farm","name":"Model Farm","category":"ai","costUsd":3},
+          {"id":"hosting","name":"Hosting","category":"compute","costUsd":5}]'::jsonb,$5),
        ($1,$4::date,'project-1',20,'[]'::jsonb,$5),
        ($2,$3::date,'project-2',30,'[]'::jsonb,$5)`,
     [workspaceA, workspaceB, dayOne, dayTwo, fetchedAt],
@@ -105,9 +109,10 @@ test("store aggregates exclusive windows, scopes every workspace fact, and loads
   });
   assert.deepEqual(snapshot.members.get(workspaceA)?.get("user-1"), {
     totalCostUsd: 23,
-    aiCostUsd: 16,
+    aiCostUsd: 12,
   });
   assert.equal(snapshot.projects.get(workspaceA)?.get("project-1")?.totalCostUsd, 30);
+  assert.equal(snapshot.projects.get(workspaceA)?.get("project-1")?.aiCostUsd, 2);
   assert.equal(snapshot.daily.get(dayOne)?.workspaceTotalUsd, 10);
   assert.equal(
     snapshot.dailyMembers?.get(dayTwo)?.get(workspaceA)?.get("user-1")?.totalCostUsd,
@@ -124,6 +129,34 @@ test("store aggregates exclusive windows, scopes every workspace fact, and loads
     missingAccountDays: [],
     ratio: 1,
   });
+});
+
+test("mixed AI project metrics send only Agent spend through member attribution", async () => {
+  const store = createUsageStore({
+    now: () => Date.parse("2099-07-01T23:59:00.000Z"),
+  });
+  const loaded = await store.read({
+    window: {
+      start: `${dayOne}T00:00:00.000Z`,
+      end: `${dayTwo}T00:00:00.000Z`,
+    },
+    workspaceIds: [workspaceA],
+  });
+  const result = computeSnapshotUsageRollup({
+    snapshot: loaded,
+    groups: [{ id: "group", workspaceId: workspaceA, name: "Group" }],
+    membersByGroup: new Map([["group", ["user-1"]]]),
+    projectInfoByWorkspace: new Map([
+      [workspaceA, new Map([["project-1", { creatorId: "user-1" }]])],
+    ]),
+  });
+
+  assert.equal(result.aiSpendByUser.get("user-1"), 2);
+  assert.equal(result.nonAiSpendByUser.get("user-1"), 8);
+  assert.equal(result.byGroup.get("group")?.spendUsd, 10);
+  assert.equal(result.projectAttribution.aiSpendByProject.get("project-1"), 2);
+  assert.equal(result.projectAttribution.nonAiSpendByProject.get("project-1"), 8);
+  assert.equal(result.ungroupedByWorkspace.size, 0);
 });
 
 test("failed workspace-days produce partial coverage once while stale live data is classified separately", async () => {

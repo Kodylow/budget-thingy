@@ -74,6 +74,22 @@ export interface TrendComponent {
   rosterDate: string | null;
 }
 
+export function membersForUsageDay(
+  usageDate: string,
+  currentUtcDay: string,
+  currentMembersByGroup: ReadonlyMap<string, readonly string[]>,
+  completedRosterDays: ReadonlySet<string>,
+  rosterMembersByDate: ReadonlyMap<
+    string,
+    ReadonlyMap<string, readonly string[]>
+  >,
+): ReadonlyMap<string, readonly string[]> {
+  if (usageDate < currentUtcDay && completedRosterDays.has(usageDate)) {
+    return rosterMembersByDate.get(usageDate) ?? new Map();
+  }
+  return currentMembersByGroup;
+}
+
 function nextUtcDay(day: string): string {
   const date = new Date(`${day}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + 1);

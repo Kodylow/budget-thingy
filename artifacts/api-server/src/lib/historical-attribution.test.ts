@@ -3,6 +3,7 @@ import { test, expect } from "vitest";
 
 import {
   attributeHistoricalDay,
+  membersForUsageDay,
   mergeHistoricalGroupSpend,
   partitionTrendBucket,
 } from "./historical-attribution.ts";
@@ -40,6 +41,27 @@ test("member additions and removals affect only roster dates after the change", 
   expect(afterRemoval.spendByGroup.get(alpha.id)).toBe(0);
   expect(afterAddition.spendByGroup.get(alpha.id)).toBe(8);
   expect(before.totalSpendUsd, "ungrouped users and no-user spend remain in totals").toBe(23);
+});
+
+test("uses completed historical rosters and falls back only for uncovered or current days", () => {
+  const current = new Map([[alpha.id, ["current-user"]]]);
+  const historical = new Map([
+    ["2026-08-24", new Map([[alpha.id, ["historical-user"]]])],
+  ]);
+  const completed = new Set(["2026-08-24", "2026-08-26"]);
+
+  expect(
+    membersForUsageDay("2026-08-24", "2026-08-26", current, completed, historical),
+  ).toBe(historical.get("2026-08-24"));
+  expect(
+    membersForUsageDay("2026-08-25", "2026-08-26", current, completed, historical),
+  ).toBe(current);
+  expect(
+    membersForUsageDay("2026-08-26", "2026-08-26", current, completed, historical),
+  ).toBe(current);
+  expect(
+    membersForUsageDay("2026-08-23", "2026-08-26", current, completed, historical),
+  ).toBe(current);
 });
 
 test("deleted directory members remain attributable by stable roster user ID", () => {

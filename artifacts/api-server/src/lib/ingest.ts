@@ -8,13 +8,13 @@ import {
   pendingUsageCount,
   queueProjectTitlesFetch,
   refreshDirectoryForIngest,
-  sumAgentUsageMetrics,
   type DirectoryCache,
   withEnterpriseIngestAccess,
 } from "./enterprise";
 import { hasDailyRosterSnapshot, recordDailyRosters } from "./history";
 import { logger } from "./logger";
 import { invalidateUsageSnapshotMemo } from "./usage-store";
+import { sumAgentUsageMetrics } from "./usage-metrics";
 
 const CUTOFF = "2026-05-20";
 const DAY_MS = 86_400_000;

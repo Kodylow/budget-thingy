@@ -1,5 +1,6 @@
 import { pool } from "@workspace/db";
 import type { UsageWindow } from "./usage-window";
+import { sumAgentUsageMetrics } from "./usage-metrics";
 
 const DAY_MS = 86_400_000;
 export const DEFAULT_USAGE_LIVE_STALE_AFTER_MS = 20 * 60_000;
@@ -13,6 +14,7 @@ export interface MemberUsageTotal {
 
 export interface ProjectUsageTotal {
   totalCostUsd: number;
+  aiCostUsd: number;
 }
 
 export interface WorkspaceUsageTotal {
@@ -49,8 +51,11 @@ export interface UsageSnapshot {
   projects: Map<string, Map<string, ProjectUsageTotal>>;
   workspaces: Map<string, WorkspaceUsageTotal>;
   daily: Map<string, DailyUsageTotal>;
+  accountDays: Set<string>;
   accountTotalUsd: number;
   dailyMembers?: Map<string, Map<string, Map<string, MemberUsageTotal>>>;
+  dailyProjects?: Map<string, Map<string, Map<string, ProjectUsageTotal>>>;
+  dailyWorkspaces?: Map<string, Map<string, WorkspaceUsageTotal>>;
 }
 
 export interface UsageSnapshotRequest {
@@ -189,8 +194,15 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       projects: new Map(),
       workspaces: new Map(),
       daily: new Map(),
+      accountDays: new Set(),
       accountTotalUsd: 0,
-      ...(includeDailyMembers ? { dailyMembers: new Map() } : {}),
+      ...(includeDailyMembers
+        ? {
+            dailyMembers: new Map(),
+            dailyProjects: new Map(),
+            dailyWorkspaces: new Map(),
+          }
+        : {}),
     };
   }
 
@@ -236,10 +248,9 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
           values,
         ),
         queryable.query(
-          `select workspace_id,project_id,sum(total_cost_usd)::float8 as total_cost_usd
+          `select workspace_id,project_id,usage_date::text,total_cost_usd,metrics_json
            from usage_project_day
-           where usage_date >= $1::date and usage_date < $2::date${workspaceFilter}
-           group by workspace_id,project_id`,
+           where usage_date >= $1::date and usage_date < $2::date${workspaceFilter}`,
           values,
         ),
         queryable.query(
@@ -263,6 +274,12 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
     const daily = new Map<string, DailyUsageTotal>();
     const dailyMembers = request.includeDailyMembers
       ? new Map<string, Map<string, Map<string, MemberUsageTotal>>>()
+      : undefined;
+    const dailyProjects = request.includeDailyMembers
+      ? new Map<string, Map<string, Map<string, ProjectUsageTotal>>>()
+      : undefined;
+    const dailyWorkspaces = request.includeDailyMembers
+      ? new Map<string, Map<string, WorkspaceUsageTotal>>()
       : undefined;
     const successfulFetchTimes: number[] = [];
 
@@ -289,9 +306,20 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       const workspaceId = String(row["workspace_id"]);
       const projectId = String(row["project_id"]);
       const totals = nested(projects, workspaceId);
-      const current = totals.get(projectId) ?? { totalCostUsd: 0 };
+      const aiCostUsd = sumAgentUsageMetrics(row["metrics_json"]);
+      const current = totals.get(projectId) ?? { totalCostUsd: 0, aiCostUsd: 0 };
       current.totalCostUsd += number(row["total_cost_usd"]);
+      current.aiCostUsd += aiCostUsd;
       totals.set(projectId, current);
+      if (dailyProjects) {
+        const usageDate = dateString(row["usage_date"]);
+        const byWorkspace = nested(dailyProjects, usageDate);
+        const byProject = nested(byWorkspace, workspaceId);
+        const dailyProject = byProject.get(projectId) ?? { totalCostUsd: 0, aiCostUsd: 0 };
+        dailyProject.totalCostUsd += number(row["total_cost_usd"]);
+        dailyProject.aiCostUsd += aiCostUsd;
+        byProject.set(projectId, dailyProject);
+      }
     }
 
     const failedWorkspaceDays: UsageCoverage["failedWorkspaceDays"] = [];
@@ -315,6 +343,13 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       current.memberAttributableUsd += number(row["member_attributable_usd"]);
       current.memberUnattributableUsd += number(row["member_unattributable_usd"]);
       workspaces.set(workspaceId, current);
+      if (dailyWorkspaces && row["status"] !== "failed") {
+        nested(dailyWorkspaces, usageDate).set(workspaceId, {
+          totalCostUsd: number(row["total_cost_usd"]),
+          memberAttributableUsd: number(row["member_attributable_usd"]),
+          memberUnattributableUsd: number(row["member_unattributable_usd"]),
+        });
+      }
       addDaily(daily, usageDate).workspaceTotalUsd += number(row["total_cost_usd"]);
       const fetched = fetchedTime(row["fetched_at"]);
       if (
@@ -401,8 +436,9 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       projects,
       workspaces,
       daily,
+      accountDays: presentAccountDays,
       accountTotalUsd,
-      ...(dailyMembers ? { dailyMembers } : {}),
+      ...(dailyMembers ? { dailyMembers, dailyProjects, dailyWorkspaces } : {}),
     };
   }
 
