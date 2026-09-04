@@ -21,6 +21,7 @@ let _authTokenGetter: AuthTokenGetter | null = null;
 
 let _previewAsGetter: PreviewAsGetter | null = null;
 let _unauthorizedHandler: (() => void) | null = null;
+let _forbiddenHandler: (() => void) | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -60,6 +61,11 @@ export function setPreviewAsGetter(getter: PreviewAsGetter | null): void {
  */
 export function setUnauthorizedHandler(handler: (() => void) | null): void {
   _unauthorizedHandler = handler;
+}
+
+/** Register a web-client callback that revalidates authorization after a 403. */
+export function setForbiddenHandler(handler: (() => void) | null): void {
+  _forbiddenHandler = handler;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -392,6 +398,8 @@ export async function customFetch<T = unknown>(
     const errorData = await parseErrorBody(response, method);
     if (response.status === 401) {
       _unauthorizedHandler?.();
+    } else if (response.status === 403) {
+      _forbiddenHandler?.();
     }
     throw new ApiError(response, errorData, requestInfo);
   }

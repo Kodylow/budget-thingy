@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect } from 'react';
-import { ShieldAlert, LogIn, Loader2, RefreshCw, Wallet, WifiOff } from 'lucide-react';
+import { ShieldAlert, LogIn, Loader2, RefreshCw, Wallet, WifiOff, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthContext } from '@/components/auth-context';
@@ -15,7 +15,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
     logout,
     retryAuthorization,
     isPreviewing,
-    resetPreview
+    resetPreview,
+    availability,
   } = useAuthContext();
 
   useEffect(() => {
@@ -39,6 +40,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
+  if (availability === 'invalid-preview') {
+    return <InvalidPreviewShell onResetPreview={resetPreview} onLogout={logout} />;
+  }
+
   if (!isAuthenticated) {
     return <SignedOutShell onLogin={login} />;
   }
@@ -53,6 +58,38 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return <>{children}</>;
+}
+
+function InvalidPreviewShell({
+  onResetPreview,
+  onLogout,
+}: {
+  onResetPreview: () => void;
+  onLogout: () => void;
+}) {
+  return (
+    <CenteredShell>
+      <Card data-testid="auth-invalid-preview">
+        <CardHeader className="items-center text-center">
+          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10">
+            <TriangleAlert className="h-6 w-6 text-amber-600" />
+          </div>
+          <CardTitle>Preview is no longer available</CardTitle>
+          <CardDescription>
+            That role or scope cannot be previewed. Protected budget data has been cleared.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button className="w-full" onClick={onResetPreview} data-testid="button-reset-invalid-preview">
+            Reset to your real view
+          </Button>
+          <Button variant="outline" className="w-full" onClick={onLogout}>
+            Log out
+          </Button>
+        </CardContent>
+      </Card>
+    </CenteredShell>
+  );
 }
 
 function UnavailableShell({

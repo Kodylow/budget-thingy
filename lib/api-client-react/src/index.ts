@@ -5,6 +5,7 @@ export {
   setBaseUrl,
   setAuthTokenGetter,
   setPreviewAsGetter,
+  setForbiddenHandler,
   setUnauthorizedHandler,
 } from "./custom-fetch";
 export type { AuthTokenGetter, PreviewAsGetter } from "./custom-fetch";

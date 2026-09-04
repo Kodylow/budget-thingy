@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { setPreviewAsGetter } from '@workspace/api-client-react';
 import {
@@ -9,6 +9,7 @@ import {
   type AuthCapabilities,
   type AuthAvailability,
 } from '@workspace/replit-auth-web';
+import { protectedAuthorizationFingerprint } from '@/lib/auth-transition';
 
 export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities };
 
@@ -54,6 +55,8 @@ interface AuthContextValue {
   login: () => void;
   logout: () => void;
   retryAuthorization: () => void;
+  /** Changes whenever protected component/query state must not be retained. */
+  authorizationKey: string;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -77,6 +80,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout,
     retryAuthorization,
   } = useReplitAuth(preview);
+  const authorizationFingerprint = protectedAuthorizationFingerprint({
+    availability,
+    user,
+    preview,
+    auth,
+    capabilities,
+  });
   const realAuthRef = useRef<{ userId: string; auth: AuthAuthorization } | null>(null);
   if (user && !preview && auth && !auth.isPreview) {
     realAuthRef.current = { userId: user.id, auth };
@@ -90,20 +100,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setPreview = useCallback((next: PreviewSelection | null) => {
     if (!canPreviewRbac) return;
-    const transition = ++previewTransitionRef.current;
-    void queryClient.cancelQueries().then(() => {
-      if (transition !== previewTransitionRef.current) return;
-      queryClient.clear();
-      setPreviewState(next);
-    });
+    ++previewTransitionRef.current;
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    setPreviewState(next);
   }, [canPreviewRbac, queryClient]);
   const resetPreview = useCallback(() => {
-    const transition = ++previewTransitionRef.current;
-    void queryClient.cancelQueries().then(() => {
-      if (transition !== previewTransitionRef.current) return;
-      queryClient.clear();
-      setPreviewState(null);
-    });
+    ++previewTransitionRef.current;
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    setPreviewState(null);
   }, [queryClient]);
   const logoutAndClearPreview = useCallback(() => {
     ++previewTransitionRef.current;
@@ -125,13 +131,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     identityRef.current = identity;
   }, [queryClient, user?.id]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (availability === 'authorized') return;
-    void queryClient.cancelQueries().then(() => queryClient.clear());
+    void queryClient.cancelQueries();
+    queryClient.clear();
   }, [availability, queryClient]);
+  const authorizedFingerprintRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (availability !== 'authorized') {
+      authorizedFingerprintRef.current = null;
+      return;
+    }
+    const previous = authorizedFingerprintRef.current;
+    authorizedFingerprintRef.current = authorizationFingerprint;
+    if (previous && previous !== authorizationFingerprint) {
+      void queryClient.cancelQueries();
+      queryClient.clear();
+    }
+  }, [authorizationFingerprint, availability, queryClient]);
   useEffect(() => {
-    if (!isLoading && preview && !canPreviewRbac) resetPreview();
-  }, [canPreviewRbac, isLoading, preview, resetPreview]);
+    if (availability === 'authorized' && preview && !canPreviewRbac) resetPreview();
+  }, [availability, canPreviewRbac, preview, resetPreview]);
 
   const value = useMemo<AuthContextValue>(() => {
     // `auth === null` while signed in means access-denied.
@@ -184,8 +204,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout: logoutAndClearPreview,
       retryAuthorization,
+      authorizationKey: authorizationFingerprint,
     };
-  }, [user, auth, capabilities, isLoading, availability, isUnavailable, isAuthenticated, login, logoutAndClearPreview, retryAuthorization, preview, realRole, canPreviewRbac, setPreview, resetPreview]);
+  }, [user, auth, capabilities, isLoading, availability, isUnavailable, isAuthenticated, login, logoutAndClearPreview, retryAuthorization, preview, realRole, canPreviewRbac, setPreview, resetPreview, authorizationFingerprint]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

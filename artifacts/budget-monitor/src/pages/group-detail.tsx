@@ -17,7 +17,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, DollarSign, Wallet, TrendingUp, AlertTriangle, AlertCircle } from 'lucide-react';
+import { ChevronLeft, DollarSign, Wallet, TrendingUp, AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react';
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
@@ -50,18 +50,19 @@ function useGroupDetailModel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { data, isLoading, isError } = useGetGroupDetail(groupId, queryParams, {
+  const { data, isLoading, isError, isFetching } = useGetGroupDetail(groupId, queryParams, {
     query: {
       queryKey: getGetGroupDetailQueryKey(groupId, queryParams),
     }
   });
 
-  const { data: projectsData } = useGetGroupProjects(groupId, queryParams, {
+  const projectsQuery = useGetGroupProjects(groupId, queryParams, {
     query: {
       queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
       enabled: !!groupId,
     }
   });
+  const projectsData = projectsQuery.data;
   const workspaceId = data?.group.workspaceId;
   const canWriteUserLimits = Boolean(
     workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId),
@@ -101,7 +102,9 @@ function useGroupDetailModel() {
     groupPolicy,
     isError,
     isLoading,
+    isFetching,
     projectsData,
+    projectsQuery,
     workspaceId,
     workspaceMembersMap,
     workspaceMembersQuery,
@@ -155,9 +158,13 @@ function GroupDetailLoading() {
 export default function GroupDetail() {
   const model = useGroupDetailModel();
 
-  if (model.isError || (!model.groupId && !model.isLoading)) return <GroupDetailUnavailable />;
-  if (!model.data) return <GroupDetailLoading />;
+  if ((model.isError && !model.data) || (!model.groupId && !model.isLoading)) return <GroupDetailUnavailable />;
+  if (!model.data || projectsQueryNeedsColdLoad(model.projectsQuery)) return <GroupDetailLoading />;
   return renderGroupDetailContent(model, model.data);
+}
+
+function projectsQueryNeedsColdLoad(query: { isLoading: boolean; data?: unknown }) {
+  return query.isLoading && !query.data;
 }
 
 function renderGroupDetailContent(
@@ -172,6 +179,7 @@ function renderGroupDetailContent(
     workspaceId,
     workspaceMembersMap,
     workspaceMembersQuery,
+    isFetching,
   } = model;
 
   const { group, members, membersSpendUsd, unattributedSpendUsd, rangeLabel } = data;
@@ -239,6 +247,11 @@ function renderGroupDetailContent(
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3">
             {group.name}
             <Badge variant="secondary" className="uppercase text-[10px]">{group.type}</Badge>
+            {isFetching && (
+              <Badge variant="outline" className="text-muted-foreground" data-testid="status-group-detail-updating">
+                <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
+              </Badge>
+            )}
           </h1>
           <p className="text-muted-foreground mt-1 text-sm md:text-base">
             Workspace: {group.workspaceName || '—'} • {group.memberCount} members • {rangeLabel}

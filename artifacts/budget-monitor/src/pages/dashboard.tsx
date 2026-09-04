@@ -13,7 +13,6 @@ import { RangeFilter } from "@/components/range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertTriangle, DollarSign, Wallet, User, Activity, PieChart, RefreshCw } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import { reportDashboardMilestonePainted, markDashboardMilestone, DashboardPerformanceContext } from "@/lib/client-performance";
 import {
   dashboardRequestParams,
@@ -25,9 +24,8 @@ const TrendChart = lazy(() => import("./dashboard-chart"));
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const searchString = useSearch();
-  const { role, isAccountAdmin, preview } = useAuthContext();
+  const { role, isAccountAdmin, authorizationKey } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
-  const { toast } = useToast();
 
   const searchParams = new URLSearchParams(searchString);
   const granularity = searchParams.get('granularity') || undefined;
@@ -45,12 +43,9 @@ export default function Dashboard() {
     });
   }, [rangeType, startDate, endDate, granularity, trendMode, viewScope]);
 
-  const { data, isLoading, isError, isFetching } = useGetDashboard(queryParams);
+  const { data, isLoading, isError, isFetching, refetch } = useGetDashboard(queryParams);
 
-  const identityKey = `${preview ?? 'real'}:${role ?? 'signed-out'}`;
   const querySignature = JSON.stringify(queryParams);
-  const prevIdentity = useRef(identityKey);
-  const prevData = useRef(data);
   const generation = useRef(-1);
   const previousQuerySignature = useRef<string | null>(null);
   const paintedGeneration = useRef<number | null>(null);
@@ -63,13 +58,6 @@ export default function Dashboard() {
     context: DashboardPerformanceContext;
     startMark: string;
   } | null>(null);
-
-  useEffect(() => {
-    if (identityKey !== prevIdentity.current) {
-      prevData.current = undefined;
-      prevIdentity.current = identityKey;
-    }
-  }, [identityKey]);
 
   useEffect(() => {
     generation.current += 1;
@@ -87,7 +75,7 @@ export default function Dashboard() {
     paintedGeneration.current = null;
     backgroundRefreshRef.current = null;
     phaseRef.current = { context, kind, startMark };
-  }, [querySignature, role, viewScope]);
+  }, [authorizationKey, querySignature, role, viewScope]);
 
   useEffect(() => {
     const phase = phaseRef.current;
@@ -130,10 +118,6 @@ export default function Dashboard() {
   }, [data]);
 
   useEffect(() => {
-    if (data) prevData.current = data;
-  }, [data]);
-
-  useEffect(() => {
     const phase = phaseRef.current;
     if (!phase || paintedGeneration.current !== phase.context.generation) return undefined;
     if (isFetching && !backgroundRefreshRef.current) {
@@ -163,17 +147,7 @@ export default function Dashboard() {
     return undefined;
   }, [data, isFetching]);
 
-  useEffect(() => {
-    if (isError) {
-      toast({
-        title: "Error loading dashboard",
-        description: "Failed to load dashboard data. Please try again.",
-        variant: "destructive"
-      });
-    }
-  }, [isError, toast]);
-
-  const displayData = data || prevData.current;
+  const displayData = data;
 
   if (isLoading && !displayData) {
     return <DashboardSkeleton />;
@@ -183,7 +157,10 @@ export default function Dashboard() {
     return (
       <div className="p-8 text-center text-muted-foreground flex flex-col items-center justify-center h-[50vh]">
         <AlertTriangle className="h-10 w-10 text-destructive mb-4" />
-        <p>No dashboard data available.</p>
+        <p className="font-medium text-foreground">Failed to load dashboard data.</p>
+        <button className="mt-3 text-sm text-primary hover:underline" onClick={() => void refetch()}>
+          Retry
+        </button>
       </div>
     );
   }

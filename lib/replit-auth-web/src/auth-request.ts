@@ -50,6 +50,9 @@ export async function loadAuthorization({
       if (response.status === 403) {
         return { availability: "denied", envelope: null };
       }
+      if (response.status === 400 && previewAs) {
+        return { availability: "invalid-preview", envelope: null };
+      }
       if (!response.ok) {
         if (
           (response.status === 429 || response.status >= 500) &&

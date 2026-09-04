@@ -13,7 +13,7 @@ import {
   pollingRetryDelay,
   QUERY_STALE_TIME_MS,
 } from '@/lib/client-performance';
-import { setUnauthorizedHandler } from '@workspace/api-client-react';
+import { setForbiddenHandler, setUnauthorizedHandler } from '@workspace/api-client-react';
 import { clearAuthCache } from '@workspace/replit-auth-web';
 import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
 import { previewScopedQueryHash } from '@/lib/preview-query-cache';
@@ -192,16 +192,35 @@ function Router() {
   );
 }
 
+function AuthorizedRouter() {
+  const { authorizationKey } = useAuthContext();
+  return <Router key={authorizationKey} />;
+}
+
+function AuthorizationFailureBridge() {
+  const { retryAuthorization } = useAuthContext();
+  useEffect(() => {
+    setForbiddenHandler(() => {
+      void queryClient.cancelQueries();
+      queryClient.clear();
+      retryAuthorization();
+    });
+    return () => setForbiddenHandler(null);
+  }, [retryAuthorization]);
+  return null;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ApiErrorToasts />
       <TooltipProvider>
         <AuthProvider>
+          <AuthorizationFailureBridge />
           <RangeProvider>
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
               <AuthGate>
-                <Router />
+                <AuthorizedRouter />
               </AuthGate>
             </WouterRouter>
           </RangeProvider>

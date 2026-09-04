@@ -18,6 +18,7 @@ export type AuthAvailability =
   | 'authorized'
   | 'signed-out'
   | 'denied'
+  | 'invalid-preview'
   | 'unavailable';
 
 interface AuthState {

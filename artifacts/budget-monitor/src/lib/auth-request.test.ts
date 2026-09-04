@@ -85,6 +85,16 @@ describe("authorization request state", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("classifies an invalid selected preview separately", async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 400 }));
+    await expect(loadAuthorization({
+      previewAs: "member:missing",
+      signal: new AbortController().signal,
+      fetcher,
+    })).resolves.toEqual({ availability: "invalid-preview", envelope: null });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("stops a superseded request without publishing a false state", async () => {
     const controller = new AbortController();
     controller.abort();

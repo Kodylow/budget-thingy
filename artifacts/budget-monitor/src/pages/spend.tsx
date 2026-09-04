@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { RangeFilter } from '@/components/range-filter';
-import { Search, Download, ChevronRight, ArrowUpDown, ChevronUp, ChevronDown, ChevronLeft } from 'lucide-react';
+import { Search, Download, ChevronRight, ArrowUpDown, ChevronUp, ChevronDown, ChevronLeft, RefreshCw } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -267,7 +267,13 @@ function SpendTable({
     projectsQuery;
 
   if (query.isLoading) return <TableSkeleton />;
-  if (query.isError || !query.data) return <div className="p-8 text-center text-muted-foreground">Failed to load data.</div>;
+  if (query.isError && !query.data) return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+      <span>Failed to load data.</span>
+      <Button variant="outline" size="sm" onClick={() => void query.refetch()}>Retry</Button>
+    </div>
+  );
+  if (!query.data) return <TableSkeleton />;
 
   const data = query.data;
 
@@ -311,6 +317,11 @@ function SpendTable({
             </Select>
           )}
         </div>
+        {query.isFetching && (
+          <Badge variant="outline" className="text-muted-foreground" data-testid="status-spend-updating">
+            <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
+          </Badge>
+        )}
       </div>
       <div className="flex-1 overflow-auto">
         <GenericSpendTable 

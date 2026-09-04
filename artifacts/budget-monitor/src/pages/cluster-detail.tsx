@@ -22,7 +22,7 @@ import {
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, DollarSign, Users, AlertCircle } from 'lucide-react';
+import { ChevronLeft, DollarSign, Users, AlertCircle, RefreshCw } from 'lucide-react';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import {
@@ -276,13 +276,19 @@ function useClusterQueries(
       },
     }),
   );
-  const { data: clusterHeadline } = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
+  const clusterHeadlineQuery = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
     query: {
       queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
       enabled: groupIds.length > 0,
     },
   });
-  return { clusterHeadline, clusterProjectsData: clusterProjectsQuery.data, results };
+  return {
+    clusterHeadline: clusterHeadlineQuery.data,
+    clusterHeadlineQuery,
+    clusterProjectsData: clusterProjectsQuery.data,
+    clusterProjectsQuery,
+    results,
+  };
 }
 
 function getWorkspaceId(results: readonly GroupDetailResult[]) {
@@ -421,9 +427,18 @@ function useClusterDetailModel() {
   const { rangeType, startDate, endDate } = useRange();
   const clusterKey = groupIds.join(',');
   const queryParams = createClusterQueryParams(rangeType, startDate, endDate, clusterKey);
-  const { clusterHeadline, clusterProjectsData, results } =
+  const {
+    clusterHeadline,
+    clusterHeadlineQuery,
+    clusterProjectsData,
+    clusterProjectsQuery,
+    results,
+  } =
     useClusterQueries(groupIds, clusterKey, queryParams);
-  const allLoaded = results.every((r) => !r.isLoading);
+  const allLoaded =
+    results.every((r) => !r.isLoading) &&
+    !clusterHeadlineQuery.isLoading &&
+    !clusterProjectsQuery.isLoading;
   const detailResults = results as unknown as readonly GroupDetailResult[];
   const groupRoleMap = useMemo(() => buildGroupRoleMap(detailResults), [detailResults]);
   const { mergedMembers, totalMembersSpend, totalUnattributedSpend, rangeLabel } =
@@ -436,16 +451,24 @@ function useClusterDetailModel() {
   const workspaceLimits = useWorkspaceLimitModel(workspaceId, mergedMembers, capabilities);
   const clusterUnavailable =
     groupIds.length === 0 ||
-    results.some((result) => result.isError);
+    results.some((result) => result.isError && !result.data) ||
+    (clusterHeadlineQuery.isError && !clusterHeadlineQuery.data) ||
+    (clusterProjectsQuery.isError && !clusterProjectsQuery.data);
+  const isFetching =
+    results.some((result) => result.isFetching) ||
+    clusterHeadlineQuery.isFetching ||
+    clusterProjectsQuery.isFetching;
 
   return {
     ...presentation,
     ...workspaceLimits,
     allLoaded,
     clusterHeadline,
+    clusterHeadlineQuery,
     clusterProjectsData,
     clusterUnavailable,
     groupIds,
+    isFetching,
     mergedMembers,
     rangeLabel,
     results,
@@ -503,7 +526,7 @@ export default function ClusterDetail() {
   const model = useClusterDetailModel();
 
   if (model.clusterUnavailable) return <ClusterDetailUnavailable />;
-  if (model.results.every((result) => !result.data)) return <ClusterDetailLoading />;
+  if (!model.allLoaded) return <ClusterDetailLoading />;
   return renderClusterDetailContent(model);
 }
 
@@ -526,6 +549,7 @@ function renderClusterDetailContent(model: ReturnType<typeof useClusterDetailMod
     displayedSelectedCount,
     editingDisabledReason,
     groupIds,
+    isFetching,
     handleBulkApplyClick,
     mergedMembers,
     mergedProjects,
@@ -559,6 +583,11 @@ function renderClusterDetailContent(model: ReturnType<typeof useClusterDetailMod
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3 flex-wrap">
              {clusterHeadline?.familyName ?? 'Group Cluster'}
+            {isFetching && (
+              <Badge variant="outline" className="text-muted-foreground" data-testid="status-cluster-detail-updating">
+                <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
+              </Badge>
+            )}
             <div className="flex gap-1.5">
               {sortedRoleLabels.map((r) => (
                 <span
