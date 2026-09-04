@@ -19,10 +19,10 @@ import {
   type SessionData,
 } from '../lib/auth';
 import {
-  canUseEmailTesting,
-  getPersistedEditorRole,
-  maybeBootstrapEditor,
+  isPersistedAppAdmin,
+  maybeBootstrapAppAdmin,
   resolveCurrentAuthorization,
+  resolvePreviewAuthorization,
 } from '../lib/authz';
 import { getDirectory } from '../lib/enterprise';
 
@@ -123,27 +123,42 @@ router.get('/auth/user', async (req: Request, res: Response) => {
     res.json(GetCurrentAuthUserResponse.parse({
       user: null,
       auth: null,
-      capabilities: { emailTesting: false },
+      capabilities: {
+        canManageAccess: false,
+        canEditAllocations: false,
+        canWriteGroupLimits: false,
+        canWriteUserLimitsIn: [],
+      },
     }));
     return;
   }
-  const [auth, emailTesting] = await Promise.all([
-    resolveCurrentAuthorization(req.user.id).catch((err) => {
-      req.log.error({ err }, 'resolveCurrentAuthorization failed');
-      return null;
-    }),
-    canUseEmailTesting(req.user.id).catch((err) => {
-      req.log.error({ err }, 'email-test capability resolution failed');
-      return false;
-    }),
-  ]);
+  const realAuth = await resolveCurrentAuthorization(req.user.id).catch((err) => {
+    req.log.error({ err }, 'resolveCurrentAuthorization failed');
+    return null;
+  });
+  const auth = realAuth
+    ? await resolvePreviewAuthorization(realAuth, req.header('X-Preview-As'))
+    : null;
   res.json(
     GetCurrentAuthUserResponse.parse({
       user: req.user,
       auth: auth
-        ? { role: auth.role, workspaceIds: auth.workspaceIds }
+        ? {
+            role: auth.role,
+            roles: auth.roles,
+            workspaceIds: auth.workspaceIds,
+            teamNames: auth.teamNames,
+            groupIds: auth.groupIds,
+            userIds: auth.userIds,
+            isPreview: auth.isPreview ?? false,
+          }
         : null,
-      capabilities: { emailTesting },
+      capabilities: auth?.capabilities ?? {
+        canManageAccess: false,
+        canEditAllocations: false,
+        canWriteGroupLimits: false,
+        canWriteUserLimitsIn: [],
+      },
     }),
   );
 });
@@ -227,8 +242,8 @@ router.get('/callback', async (req: Request, res: Response) => {
   // Bootstrap the designated account-wide editor from their verified Replit
   // identity. This is a no-op unless the claims present a verified, exactly
   // matching email; the row is keyed by the stable `sub` claim.
-  await maybeBootstrapEditor(claimsRecord).catch((err) => {
-    req.log.error({ err }, 'editor bootstrap failed');
+  await maybeBootstrapAppAdmin(claimsRecord).catch((err) => {
+    req.log.error({ err }, 'app admin bootstrap failed');
   });
 
   const sessionData: SessionData = {
@@ -264,9 +279,9 @@ router.get('/auth/me/debug', async (req: Request, res: Response) => {
 
   const userId = req.user.id;
 
-  const [dir, editorRole, authz] = await Promise.all([
+  const [dir, appAdmin, authz] = await Promise.all([
     getDirectory().catch(() => null),
-    getPersistedEditorRole(userId).catch(() => null),
+    isPersistedAppAdmin(userId).catch(() => false),
     resolveCurrentAuthorization(userId).catch(() => null),
   ]);
 
@@ -283,7 +298,7 @@ router.get('/auth/me/debug', async (req: Request, res: Response) => {
           isDisabled: ws.isDisabled,
         }))
       : [],
-    editorAllowlistRole: editorRole ?? null,
+    appAdmin,
     authzRole: authz?.role ?? null,
   });
 });
@@ -339,8 +354,8 @@ router.post(
 
       const claimsRecord = claims as unknown as Record<string, unknown>;
       const dbUser = await upsertUser(claimsRecord);
-      await maybeBootstrapEditor(claimsRecord).catch((err) => {
-        req.log.error({ err }, 'editor bootstrap failed');
+      await maybeBootstrapAppAdmin(claimsRecord).catch((err) => {
+        req.log.error({ err }, 'app admin bootstrap failed');
       });
 
       const sessionData: SessionData = {

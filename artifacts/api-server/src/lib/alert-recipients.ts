@@ -1,6 +1,6 @@
 import { db, adminEmailsTable } from "@workspace/db";
 
-import { BOOTSTRAP_EDITOR_EMAIL, isAdminRole, normalizeEmail } from "./authz";
+import { isAdminRole, normalizeEmail } from "./authz";
 import { getDirectory } from "./enterprise";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -35,7 +35,7 @@ export function collectAlertRecipients(
 
   // The verified bootstrap identity is a mandatory recipient even before its
   // directory record is available.
-  addEmail(recipients, BOOTSTRAP_EDITOR_EMAIL);
+  addEmail(recipients, process.env.BOOTSTRAP_ADMIN_EMAIL);
 
   for (const member of dir.members.values()) {
     if (member.isAccountAdmin) {

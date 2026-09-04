@@ -28,6 +28,7 @@ describe("isEmailConfigured", () => {
     clearSenderInboxCacheForTests();
     setSendEmailOverrideForTests(null);
     process.env.NODE_ENV = "test";
+    process.env.BOOTSTRAP_ADMIN_EMAIL = "bootstrap-admin@example.com";
     delete process.env.APP_BASE_URL;
   });
 
@@ -47,10 +48,10 @@ describe("isEmailConfigured", () => {
       "Budget threshold",
       "<p>Alert</p>",
     );
-    expect(result.deliveredTo).toEqual(["kody.low@repl.it"]);
+    expect(result.deliveredTo).toEqual(["bootstrap-admin@example.com"]);
     const sendRequest = connectorMocks.proxy.mock.calls[1]![2] as RequestInit;
     expect(JSON.parse(String(sendRequest.body))).toMatchObject({
-      to: ["kody.low@repl.it"],
+      to: ["bootstrap-admin@example.com"],
       subject: "[DEV] Budget threshold",
     });
   });
@@ -193,7 +194,7 @@ describe("isEmailConfigured", () => {
     }));
 
     const result = await sendTestEmail("[TEST] Alert", "<p>Test</p>");
-    expect(result.deliveredTo).toEqual(["kody.low@repl.it"]);
+    expect(result.deliveredTo).toEqual(["bootstrap-admin@example.com"]);
     expect(result.messageId).toBe("[TEST] Alert");
   });
 

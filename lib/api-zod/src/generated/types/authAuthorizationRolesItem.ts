@@ -6,13 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-/**
- * Highest role held by the effective identity.
- */
-export type AuthAuthorizationRole = typeof AuthAuthorizationRole[keyof typeof AuthAuthorizationRole];
+export type AuthAuthorizationRolesItem = typeof AuthAuthorizationRolesItem[keyof typeof AuthAuthorizationRolesItem];
 
 
-export const AuthAuthorizationRole = {
+export const AuthAuthorizationRolesItem = {
   account: 'account',
   workspace_admin: 'workspace_admin',
   team_admin: 'team_admin',

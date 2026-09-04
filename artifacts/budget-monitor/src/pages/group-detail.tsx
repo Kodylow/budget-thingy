@@ -21,7 +21,7 @@ import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GroupUserExport } from '@/components/group-user-export';
-import { useCanWrite } from '@/components/auth-context';
+import { useAuthContext } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
 import { indexMemberBudgets } from '@/lib/member-budgets';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
@@ -34,7 +34,7 @@ export default function GroupDetail() {
   const queryParams = { rangeType, ...(rangeType === 'custom' ? { startDate, endDate } : {}) };
 
   const queryClient = useQueryClient();
-  const canWrite = useCanWrite();
+  const { capabilities } = useAuthContext();
 
   // Keep the last dashboard snapshot visible when navigating back while
   // marking it stale so React Query refreshes it in the background.
@@ -64,6 +64,9 @@ export default function GroupDetail() {
     }
   });
   const workspaceId = data?.group.workspaceId;
+  const canWriteUserLimits = Boolean(
+    workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId),
+  );
   const workspaceMembersQuery = useListVisibleWorkspaceMembers(workspaceId as string, {
     query: {
       enabled: !!workspaceId,
@@ -177,7 +180,7 @@ export default function GroupDetail() {
     connector?.status === 'unavailable' ||
     connector?.status === 'error';
   const mutationUnavailable =
-    canWrite && connector?.status === 'available' && !connector.canWrite;
+    canWriteUserLimits && connector?.status === 'available' && !connector.canWrite;
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
@@ -309,7 +312,7 @@ export default function GroupDetail() {
                           workspaceId={workspaceId}
                           userId={member.userId}
                           currentBudget={budget?.budgetUsd ?? null}
-                          canWrite={canWrite && connector.canWrite}
+                           canWrite={canWriteUserLimits && connector.canWrite}
                         />
                       ) : <span className="text-sm text-muted-foreground">—</span>}
                     </td>

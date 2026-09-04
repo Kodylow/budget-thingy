@@ -30,7 +30,7 @@ import {
   ROLE_PRIORITY,
 } from '@/lib/group-clusters';
 import { GroupUserExport } from '@/components/group-user-export';
-import { useAuthContext, useCanWrite } from '@/components/auth-context';
+import { useAuthContext } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
 import {
   chunkMemberIds,
@@ -78,8 +78,7 @@ export default function ClusterDetail() {
   const clusterName = params.get('name') ?? 'Group Cluster';
   const groupIds = rawIds ? rawIds.split(',').filter(Boolean) : [];
 
-  const canWrite = useCanWrite();
-  const { realRole } = useAuthContext();
+  const { role, capabilities } = useAuthContext();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const bulkSetLimits = useBulkSetWorkspaceMemberBudgets();
@@ -239,7 +238,7 @@ export default function ClusterDetail() {
     },
   });
   const workspaceMembersData = workspaceMembersQuery.data;
-  const canReviewUsageLimitHistory = realRole === 'account_admin';
+  const canReviewUsageLimitHistory = capabilities.canManageAccess;
   const usageLimitAuditsQuery = useListWorkspaceUsageLimitAudits(workspaceId as string, {
     query: {
       enabled: Boolean(workspaceId && canReviewUsageLimitHistory),
@@ -259,11 +258,12 @@ export default function ClusterDetail() {
     workspaceMembersData?.connector.status === 'unavailable' ||
     workspaceMembersData?.connector.status === 'error';
   const mutationUnavailable =
-    canWrite &&
+    Boolean(workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId)) &&
     workspaceMembersData?.connector.status === 'available' &&
     !workspaceMembersData.connector.canWrite;
   const canEditLimits = Boolean(
-    canWrite &&
+    workspaceId &&
+    capabilities.canWriteUserLimitsIn.includes(workspaceId) &&
     workspaceId &&
     workspaceMembersData?.connector.status === 'available' &&
     workspaceMembersData.connector.canWrite,
@@ -468,7 +468,7 @@ export default function ClusterDetail() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {canWrite && (
+          {canEditLimits && (
             <div className="mb-4 flex flex-col gap-2 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center">
               <div className="text-sm font-medium min-w-fit">
                 {displayedSelectedCount} selected
@@ -500,7 +500,7 @@ export default function ClusterDetail() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
-                  {canWrite && (
+                  {canEditLimits && (
                     <th className="w-10 py-3 pl-4">
                       <Checkbox
                         checked={allDisplayedSelected ? true : someDisplayedSelected ? 'indeterminate' : false}
@@ -529,7 +529,7 @@ export default function ClusterDetail() {
                       key={member.userId}
                       className="border-b border-border/50 hover:bg-muted/30 transition-colors"
                     >
-                      {canWrite && (
+                      {canEditLimits && (
                         <td className="py-3 pl-4 align-middle">
                           <Checkbox
                             checked={selectedMemberIds.has(member.userId)}
@@ -582,7 +582,7 @@ export default function ClusterDetail() {
                             workspaceId={workspaceId}
                             userId={member.userId}
                             currentBudget={wsm?.budgetUsd ?? null}
-                            canWrite={canWrite && workspaceMembersData.connector.canWrite}
+                             canWrite={canEditLimits && workspaceMembersData.connector.canWrite}
                             disabledReason={editingDisabledReason}
                           />
                         ) : (

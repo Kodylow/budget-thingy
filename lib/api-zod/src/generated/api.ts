@@ -12,8 +12,12 @@ import * as zod from 'zod';
  * Returns the signed-in identity together with the resolved Enterprise authorization (role and workspace scope). `auth` is null when the request is unauthenticated.
  * @summary Get the currently authenticated user
  */
+export const getCurrentAuthUserHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
 export const GetCurrentAuthUserHeader = zod.object({
-  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.'),
+  "X-Preview-As": zod.string().regex(getCurrentAuthUserHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
 })
 
 export const GetCurrentAuthUserResponse = zod.object({
@@ -25,11 +29,19 @@ export const GetCurrentAuthUserResponse = zod.object({
   "profileImageUrl": zod.string().nullable()
 }),zod.null()]),
   "auth": zod.union([zod.object({
-  "role": zod.enum(['account_admin', 'account_delegate', 'account_editor', 'workspace_admin']).describe('Effective role resolved from the Enterprise directory and managed editor allowlist.'),
-  "workspaceIds": zod.array(zod.string()).describe('Workspace IDs the user may view. Empty and ignored for account_admin, account_delegate, and account_editor; the union of admin workspaces for workspace_admin.\n')
-}).describe('Resolved authorization for the signed-in user. account_admin, account_delegate, and account_editor see the whole account; workspace_admin sees only the listed workspaces. account_admin and account_delegate can manage editor access and settings.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied).\n'),
+  "role": zod.enum(['account', 'workspace_admin', 'team_admin', 'member']).describe('Highest role held by the effective identity.'),
+  "roles": zod.array(zod.enum(['account', 'workspace_admin', 'team_admin', 'member'])),
+  "workspaceIds": zod.array(zod.string()),
+  "teamNames": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "userIds": zod.array(zod.string()),
+  "isPreview": zod.boolean()
+}).describe('Resolved roles and the union of their server-derived scopes.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is not an active Enterprise directory member (access denied).\n'),
   "capabilities": zod.object({
-  "emailTesting": zod.boolean().describe('Server-derived capability for the persisted designated email-test identity.')
+  "canManageAccess": zod.boolean(),
+  "canEditAllocations": zod.boolean(),
+  "canWriteGroupLimits": zod.boolean(),
+  "canWriteUserLimitsIn": zod.array(zod.string())
 })
 })
 
@@ -126,6 +138,13 @@ export const ListGroupsQueryParams = zod.object({
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
+export const listGroupsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const ListGroupsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(listGroupsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
 export const listGroupsResponseUsageHealthCoverageRatioMin = 0;
 export const listGroupsResponseUsageHealthCoverageRatioMax = 1;
 
@@ -203,6 +222,13 @@ export const GetGroupDetailQueryParams = zod.object({
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
   "scopeGroupIds": zod.coerce.string().optional().describe('Optional comma-separated group IDs that define a team-cluster deduplication scope.')
+})
+
+export const getGroupDetailHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetGroupDetailHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getGroupDetailHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
 })
 
 export const getGroupDetailResponseUsageHealthCoverageRatioMin = 0;
@@ -295,6 +321,13 @@ export const GetGroupProjectsQueryParams = zod.object({
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
+export const getGroupProjectsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetGroupProjectsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getGroupProjectsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
 export const getGroupProjectsResponseUsageHealthCoverageRatioMin = 0;
 export const getGroupProjectsResponseUsageHealthCoverageRatioMax = 1;
 
@@ -357,6 +390,13 @@ export const GetClusterProjectsQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const getClusterProjectsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetClusterProjectsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getClusterProjectsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
 })
 
 export const getClusterProjectsResponseUsageHealthCoverageRatioMin = 0;
@@ -423,6 +463,13 @@ export const GetCanonicalClusterHeadlineQueryParams = zod.object({
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
+export const getCanonicalClusterHeadlineHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetCanonicalClusterHeadlineHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getCanonicalClusterHeadlineHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
 export const getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMin = 0;
 export const getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMax = 1;
 
@@ -462,6 +509,13 @@ export const GetSummaryQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const getSummaryHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetSummaryHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getSummaryHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
 })
 
 export const getSummaryResponseUsageHealthCoverageRatioMin = 0;
@@ -525,6 +579,13 @@ export const GetTrendsQueryParams = zod.object({
   "groupIds": zod.array(zod.coerce.string()).optional()
 })
 
+export const getTrendsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetTrendsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getTrendsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
 export const getTrendsResponseUsageHealthCoverageRatioMin = 0;
 export const getTrendsResponseUsageHealthCoverageRatioMax = 1;
 
@@ -575,6 +636,13 @@ export const GetUserActivityQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const getUserActivityHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetUserActivityHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getUserActivityHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
 })
 
 export const getUserActivityResponseUsageHealthCoverageRatioMin = 0;
@@ -632,6 +700,13 @@ export const ExportUsersCsvQueryParams = zod.object({
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
 })
 
+export const exportUsersCsvHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const ExportUsersCsvHeader = zod.object({
+  "X-Preview-As": zod.string().regex(exportUsersCsvHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
 export const ExportUsersCsvResponse = zod.unknown()
 
 
@@ -659,6 +734,25 @@ export const GetAccountUsageObservationExportResponse = zod.object({
   "fetchedAt": zod.string(),
   "sourceStatus": zod.enum(['complete', 'failed'])
 })
+
+
+/**
+ * @summary Export scoped project activity as CSV
+ */
+export const ExportProjectsCsvQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
+export const exportProjectsCsvHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const ExportProjectsCsvHeader = zod.object({
+  "X-Preview-As": zod.string().regex(exportProjectsCsvHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
+export const ExportProjectsCsvResponse = zod.unknown()
 
 
 /**
@@ -709,6 +803,13 @@ export const DeleteGroupBudgetResponse = zod.object({
 /**
  * @summary List all team budgets
  */
+export const getTeamsBudgetsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetTeamsBudgetsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getTeamsBudgetsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
 export const GetTeamsBudgetsResponse = zod.object({
   "budgets": zod.array(zod.object({
   "teamName": zod.string(),
@@ -1125,29 +1226,29 @@ export const DeleteAdminResponse = zod.object({
 
 /**
  * Available only to Enterprise account administrators and the designated account delegate.
- * @summary List account-wide app editors
+ * @summary List account-wide app admins
  */
-export const ListEditorsResponseItem = zod.object({
+export const ListAppAdminsResponseItem = zod.object({
   "userId": zod.string(),
   "email": zod.string().nullable(),
   "createdAt": zod.string(),
   "createdBy": zod.string().nullish()
 })
-export const ListEditorsResponse = zod.array(ListEditorsResponseItem)
+export const ListAppAdminsResponse = zod.array(ListAppAdminsResponseItem)
 
 
 /**
  * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
- * @summary Add an account-wide app editor
+ * @summary Add an account-wide app admin
  */
 
 
 
-export const AddEditorBody = zod.object({
+export const AddAppAdminBody = zod.object({
   "userId": zod.string().min(1)
 })
 
-export const AddEditorResponse = zod.object({
+export const AddAppAdminResponse = zod.object({
   "userId": zod.string(),
   "email": zod.string().nullable(),
   "createdAt": zod.string(),
@@ -1157,13 +1258,13 @@ export const AddEditorResponse = zod.object({
 
 /**
  * Available only to Enterprise account administrators and the designated account delegate.
- * @summary Remove an account-wide app editor
+ * @summary Remove an account-wide app admin
  */
-export const DeleteEditorParams = zod.object({
+export const DeleteAppAdminParams = zod.object({
   "userId": zod.coerce.string()
 })
 
-export const DeleteEditorResponse = zod.object({
+export const DeleteAppAdminResponse = zod.object({
   "ok": zod.boolean()
 })
 
@@ -1404,6 +1505,13 @@ export const ListAlertsQueryParams = zod.object({
   "limit": zod.coerce.number().min(1).max(listAlertsQueryLimitMax).optional()
 })
 
+export const listAlertsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const ListAlertsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(listAlertsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+})
+
 export const ListAlertsResponseItem = zod.object({
   "id": zod.number(),
   "entityType": zod.enum(['group', 'team']),
@@ -1468,7 +1576,7 @@ export const SendTestAlertParams = zod.object({
 
 export const SendTestAlertResponse = zod.object({
   "ok": zod.boolean(),
-  "recipient": zod.enum(['kody.low@repl.it']),
+  "recipient": zod.string(),
   "subject": zod.string(),
   "error": zod.string().nullable(),
   "messageId": zod.string().nullable(),
@@ -1486,7 +1594,7 @@ export const SendEmailTestExampleBody = zod.object({
 
 export const SendEmailTestExampleResponse = zod.object({
   "ok": zod.boolean(),
-  "recipient": zod.enum(['kody.low@repl.it']),
+  "recipient": zod.string(),
   "subject": zod.string(),
   "error": zod.string().nullable(),
   "messageId": zod.string().nullable(),

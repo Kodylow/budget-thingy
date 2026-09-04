@@ -35,13 +35,13 @@ export type UpsertUser = typeof usersTable.$inferInsert;
 export type User = typeof usersTable.$inferSelect;
 
 /**
- * Managed allowlist of account-wide editors, keyed by the *stable Replit user
- * ID* (the OIDC `sub` claim) so an editor keeps access even if their email or
+ * Managed allowlist of account-wide application admins, keyed by the stable
+ * Replit user ID (the OIDC `sub` claim) so access survives email or
  * display name changes. `email` is a human-readable snapshot captured when the
  * row is created; `createdBy` records the stable user ID of the account admin
  * who granted access (nullable for system-bootstrapped rows).
  */
-export const editorAllowlistTable = pgTable('editor_allowlist', {
+export const appAdminsTable = pgTable('app_admins', {
   userId: varchar('user_id').primaryKey(),
   email: varchar('email').notNull(),
   createdBy: varchar('created_by'),
@@ -50,22 +50,6 @@ export const editorAllowlistTable = pgTable('editor_allowlist', {
     .defaultNow(),
 });
 
-export type EditorAllowlistEntry = typeof editorAllowlistTable.$inferSelect;
-export type InsertEditorAllowlistEntry =
-  typeof editorAllowlistTable.$inferInsert;
+export type AppAdminEntry = typeof appAdminsTable.$inferSelect;
 
-/**
- * Durable record that the one-time designated-editor bootstrap has been
- * consumed for a stable Replit identity. This row intentionally survives
- * removal from the active allowlist so a later login cannot undo an account
- * admin's revocation.
- */
-export const editorBootstrapStateTable = pgTable('editor_bootstrap_state', {
-  userId: varchar('user_id').primaryKey(),
-  email: varchar('email').notNull(),
-  completedBy: varchar('completed_by'),
-  completedAt: timestamp('completed_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  revokedAt: timestamp('revoked_at', { withTimezone: true }),
-});
+export type InsertAppAdminEntry = typeof appAdminsTable.$inferInsert;

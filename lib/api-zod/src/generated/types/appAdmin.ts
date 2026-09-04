@@ -6,7 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface AccountEditorInput {
-  /** @minLength 1 */
+export interface AppAdmin {
   userId: string;
+  /** @nullable */
+  email: string | null;
+  createdAt: string;
+  /** @nullable */
+  createdBy?: string | null;
 }

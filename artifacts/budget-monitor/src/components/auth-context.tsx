@@ -1,4 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { setPreviewAsGetter } from '@workspace/api-client-react';
 import {
   useAuth as useReplitAuth,
   type AuthUser,
@@ -6,18 +8,15 @@ import {
   type AuthAuthorizationRole,
   type AuthCapabilities,
 } from '@workspace/replit-auth-web';
-import {
-  canUseRbacPreview,
-  isAccountWideView,
-  sanitizePreview,
-  type PreviewSelection,
-} from '@/lib/rbac-view';
-import { checkIsDenied, checkRealIsAccountAdmin, checkCanTestEmail } from '@/lib/auth-helpers';
 
 export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities };
 
 /** UI-facing role, including the derived `denied` state (auth === null). */
 export type ResolvedRole = AuthAuthorizationRole | 'denied';
+export type PreviewSelection =
+  | `workspace_admin:${string}`
+  | `team_admin:${string}`
+  | `member:${string}`;
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -29,9 +28,9 @@ interface AuthContextValue {
   role: ResolvedRole | null;
   /** The immutable role returned by the server for this session. */
   realRole: ResolvedRole | null;
-  /** Whether the user has true account admin/delegate privileges regardless of preview. */
+  /** Whether the real signed-in identity is an account user. */
   realIsAccountAdmin: boolean;
-  /** Whether the user has the immutable emailTesting capability from the server. */
+  capabilities: AuthCapabilities;
   canTestEmail: boolean;
   preview: PreviewSelection | null;
   canPreviewRbac: boolean;
@@ -41,9 +40,7 @@ interface AuthContextValue {
   isAccountWide: boolean;
   /** Full account-wide access. */
   isAccountAdmin: boolean;
-  /** Managed account-wide operational access without settings/access management. */
-  isAccountEditor: boolean;
-  /** Read-only access scoped to one or more workspaces. */
+  isTeamAdmin: boolean;
   isWorkspaceAdmin: boolean;
   /** Signed in but neither an account admin nor an enabled workspace admin. */
   isDenied: boolean;
@@ -56,64 +53,53 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const PREVIEW_STORAGE_PREFIX = 'budget-monitor:rbac-preview:';
-
-function readStoredPreview(
-  userId: string | undefined,
-  role: AuthAuthorizationRole | undefined,
-): PreviewSelection | null {
-  if (!userId || typeof window === 'undefined') return null;
-  try {
-    const raw = window.sessionStorage.getItem(`${PREVIEW_STORAGE_PREFIX}${userId}`);
-    return sanitizePreview(role, raw ? JSON.parse(raw) as PreviewSelection : null);
-  } catch {
-    return null;
-  }
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { user, auth, capabilities, isLoading, isAuthenticated, login, logout } = useReplitAuth();
-  const [requestedPreview, setRequestedPreview] = useState<{
-    userId: string;
-    value: PreviewSelection | null;
-  } | null>(null);
-  const requestedForCurrentUser =
-    requestedPreview && requestedPreview.userId === user?.id
-      ? requestedPreview.value
-      : readStoredPreview(user?.id, auth?.role);
-  const preview = sanitizePreview(auth?.role, requestedForCurrentUser);
-
-  useEffect(() => {
-    if (!user?.id || canUseRbacPreview(auth?.role)) return;
-    window.sessionStorage.removeItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`);
-  }, [user?.id, auth?.role]);
+  const queryClient = useQueryClient();
+  const [preview, setPreviewState] = useState<PreviewSelection | null>(null);
+  const previewRef = useRef<PreviewSelection | null>(null);
+  const previewTransitionRef = useRef(0);
+  previewRef.current = preview;
+  setPreviewAsGetter(() => previewRef.current);
+  const { user, auth, capabilities, isLoading, isAuthenticated, login, logout } = useReplitAuth(preview);
+  const realAuthRef = useRef<AuthAuthorization | null>(null);
+  if (!preview && auth && !auth.isPreview) realAuthRef.current = auth;
+  const realRole = realAuthRef.current?.role ?? auth?.role ?? null;
+  const canPreviewRbac = realRole === 'account';
 
   const setPreview = useCallback((next: PreviewSelection | null) => {
-    if (!user?.id) return;
-    const safe = sanitizePreview(auth?.role, next);
-    setRequestedPreview({ userId: user.id, value: safe });
-    if (safe) {
-      window.sessionStorage.setItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`, JSON.stringify(safe));
-    } else {
-      window.sessionStorage.removeItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`);
-    }
-  }, [auth?.role, user?.id]);
+    if (!canPreviewRbac) return;
+    const transition = ++previewTransitionRef.current;
+    void queryClient.cancelQueries().then(() => {
+      if (transition !== previewTransitionRef.current) return;
+      queryClient.clear();
+      setPreviewState(next);
+    });
+  }, [canPreviewRbac, queryClient]);
   const resetPreview = useCallback(() => {
-    if (!user?.id) return;
-    setRequestedPreview({ userId: user.id, value: null });
-    window.sessionStorage.removeItem(`${PREVIEW_STORAGE_PREFIX}${user.id}`);
-  }, [user?.id]);
+    const transition = ++previewTransitionRef.current;
+    void queryClient.cancelQueries().then(() => {
+      if (transition !== previewTransitionRef.current) return;
+      queryClient.clear();
+      setPreviewState(null);
+    });
+  }, [queryClient]);
 
   const value = useMemo<AuthContextValue>(() => {
     // `auth === null` while signed in means access-denied.
-    const realRole: ResolvedRole | null = !isAuthenticated ? null : (auth?.role ?? 'denied');
-    const role: ResolvedRole | null = preview?.role ?? realRole;
-    const isAccountAdmin = role === 'account_admin' || role === 'account_delegate';
-    const isAccountEditor = role === 'account_editor';
+    const role: ResolvedRole | null = !isAuthenticated ? null : (auth?.role ?? 'denied');
+    const resolvedRealRole: ResolvedRole | null = !isAuthenticated ? null : (realRole ?? 'denied');
+    const effectiveCapabilities: AuthCapabilities = capabilities ?? {
+      canManageAccess: false,
+      canEditAllocations: false,
+      canWriteGroupLimits: false,
+      canWriteUserLimitsIn: [],
+    };
+    const isAccountAdmin = role === 'account';
     const isWorkspaceAdmin = role === 'workspace_admin';
-    const isDenied = checkIsDenied(isAuthenticated, auth);
-    const realIsAccountAdmin = checkRealIsAccountAdmin(realRole);
-    const canTestEmail = checkCanTestEmail(capabilities);
+    const isTeamAdmin = role === 'team_admin';
+    const isDenied = isAuthenticated && auth == null;
+    const realIsAccountAdmin = resolvedRealRole === 'account';
 
     return {
       user,
@@ -121,27 +107,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       isAuthenticated,
       role,
-      realRole,
+      realRole: resolvedRealRole,
       realIsAccountAdmin,
-      canTestEmail,
+      capabilities: effectiveCapabilities,
+      canTestEmail: effectiveCapabilities.canManageAccess,
       preview,
-      canPreviewRbac: canUseRbacPreview(auth?.role),
+      canPreviewRbac,
       setPreview,
       resetPreview,
       isPreviewing: preview !== null,
-      isAccountWide: isAccountWideView(role),
+      isAccountWide: isAccountAdmin,
       isAccountAdmin,
-      isAccountEditor,
+      isTeamAdmin,
       isWorkspaceAdmin,
       isDenied,
-      // Account editors can operate allocated pools and checks, but only true
-      // account admins can manage settings and editor access.
-      canWrite: isAccountAdmin || isAccountEditor,
+      canWrite: effectiveCapabilities.canEditAllocations,
       workspaceIds: auth?.workspaceIds ?? [],
       login,
       logout,
     };
-  }, [user, auth, capabilities, isLoading, isAuthenticated, login, logout, preview, setPreview, resetPreview]);
+  }, [user, auth, capabilities, isLoading, isAuthenticated, login, logout, preview, realRole, canPreviewRbac, setPreview, resetPreview]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

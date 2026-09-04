@@ -7,6 +7,8 @@
  */
 
 export interface AuthCapabilities {
-  /** Server-derived capability for the persisted designated email-test identity. */
-  emailTesting: boolean;
+  canManageAccess: boolean;
+  canEditAllocations: boolean;
+  canWriteGroupLimits: boolean;
+  canWriteUserLimitsIn: string[];
 }

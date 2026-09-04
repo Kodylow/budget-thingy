@@ -6,13 +6,18 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AuthAuthorizationRole } from './authAuthorizationRole';
+import type { AuthAuthorizationRolesItem } from './authAuthorizationRolesItem';
 
 /**
- * Resolved authorization for the signed-in user. account_admin, account_delegate, and account_editor see the whole account; workspace_admin sees only the listed workspaces. account_admin and account_delegate can manage editor access and settings.
+ * Resolved roles and the union of their server-derived scopes.
  */
 export interface AuthAuthorization {
-  /** Effective role resolved from the Enterprise directory and managed editor allowlist. */
+  /** Highest role held by the effective identity. */
   role: AuthAuthorizationRole;
-  /** Workspace IDs the user may view. Empty and ignored for account_admin, account_delegate, and account_editor; the union of admin workspaces for workspace_admin. */
+  roles: AuthAuthorizationRolesItem[];
   workspaceIds: string[];
+  teamNames: string[];
+  groupIds: string[];
+  userIds: string[];
+  isPreview: boolean;
 }

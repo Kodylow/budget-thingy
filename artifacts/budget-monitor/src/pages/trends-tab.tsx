@@ -128,7 +128,7 @@ function fmtUsd(v: number): string {
 }
 
 function fmtRole(role: string): string {
-  if (role === 'account_admin') return 'Account Admin';
+  if (role === 'account') return 'Account Admin';
   if (role === 'admin') return 'Admin';
   if (role === 'member') return 'Member';
   return role;

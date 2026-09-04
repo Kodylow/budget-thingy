@@ -116,7 +116,7 @@ type Confirmation = {
 export default function TeamBudgets() {
   const queryClient = useQueryClient();
   const { realRole } = useAuthContext();
-  const canManage = realRole === 'account_admin';
+  const canManage = realRole === 'account';
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [allocationDrafts, setAllocationDrafts] = useState<Record<string, string>>({});
   const [optimisticAllocations, setOptimisticAllocations] = useState<Record<string, number>>({});

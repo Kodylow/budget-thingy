@@ -14,19 +14,32 @@ import {
   BookUser,
   WalletCards,
   BookOpen,
+  Check,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuthContext } from '@/components/auth-context';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { getListGroupsQueryKey, useListGroups } from '@workspace/api-client-react';
-import { buildLogicalGroupScopes } from '@/lib/group-clusters';
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  getGetTeamsBudgetsQueryKey,
+  getListDirectoryMembersQueryKey,
+  getListVisibleWorkspacesQueryKey,
+  useGetTeamsBudgets,
+  useListDirectoryMembers,
+  useListVisibleWorkspaces,
+  type DirectoryMember,
+  type TeamBudget,
+  type VisibleWorkspace,
+} from '@workspace/api-client-react';
 
 interface AppShellProps {
   children: ReactNode;
@@ -35,12 +48,25 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const [location] = useLocation();
   const {
-    user, isAccountAdmin, realIsAccountAdmin, canTestEmail, isAccountEditor, isWorkspaceAdmin, isAccountWide, workspaceIds, logout,
+    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, capabilities, auth, workspaceIds, logout,
     preview, canPreviewRbac, setPreview, resetPreview, isPreviewing,
   } = useAuthContext();
-  const { data: previewGroups } = useListGroups({}, {
-    query: { enabled: canPreviewRbac, queryKey: getListGroupsQueryKey({}) },
+  const { data: workspacesData } = useListVisibleWorkspaces({
+    query: { enabled: canPreviewRbac && !isPreviewing, queryKey: getListVisibleWorkspacesQueryKey() },
   });
+  const { data: membersData } = useListDirectoryMembers({}, {
+    query: { enabled: canPreviewRbac && !isPreviewing, queryKey: getListDirectoryMembersQueryKey({}) },
+  });
+  const { data: teamsData } = useGetTeamsBudgets({
+    query: { enabled: canPreviewRbac && !isPreviewing, queryKey: getGetTeamsBudgetsQueryKey() },
+  });
+  const [previewSearch, setPreviewSearch] = useState('');
+  const [previewPickerOpen, setPreviewPickerOpen] = useState(false);
+  const [previewOptions, setPreviewOptions] = useState<{
+    workspaces: VisibleWorkspace[];
+    teams: TeamBudget[];
+    members: DirectoryMember[];
+  }>({ workspaces: [], teams: [], members: [] });
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -64,6 +90,15 @@ export function AppShell({ children }: AppShellProps) {
     };
   }, [isMobileMenuOpen]);
 
+  useEffect(() => {
+    if (isPreviewing) return;
+    setPreviewOptions((current) => ({
+      workspaces: workspacesData ?? current.workspaces,
+      teams: teamsData?.budgets ?? current.teams,
+      members: membersData ?? current.members,
+    }));
+  }, [isPreviewing, workspacesData, teamsData, membersData]);
+
   // Workspace admins get scoped notification history but no account settings.
   const navSections = [
     {
@@ -81,12 +116,12 @@ export function AppShell({ children }: AppShellProps) {
     {
       label: 'Administration',
       items: [
-        { path: '/user-guide', label: 'User Guide', icon: BookOpen, show: isAccountAdmin, testId: 'nav-user-guide' },
-        { path: '/settings', label: 'Settings', icon: Settings, show: isAccountAdmin || realIsAccountAdmin || canTestEmail, testId: 'nav-settings' },
-        { path: '/trends', label: 'Trends', icon: TrendingUp, show: isAccountWide, testId: 'nav-trends' },
-        { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
-        { path: '/workspace-directory', label: 'Workspace Directory', icon: BookUser, show: isAccountAdmin, testId: 'nav-workspace-directory' },
-        { path: '/team-budgets', label: 'Team Budgets', icon: WalletCards, show: isAccountAdmin, testId: 'nav-team-budgets' },
+        { path: '/user-guide', label: 'User Guide', icon: BookOpen, show: capabilities.canManageAccess, testId: 'nav-user-guide' },
+        { path: '/settings', label: 'Settings', icon: Settings, show: capabilities.canManageAccess, testId: 'nav-settings' },
+        { path: '/trends', label: 'Trends', icon: TrendingUp, show: true, testId: 'nav-trends' },
+        { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: capabilities.canManageAccess, testId: 'nav-workspace-admins' },
+        { path: '/workspace-directory', label: 'Workspace Directory', icon: BookUser, show: capabilities.canManageAccess, testId: 'nav-workspace-directory' },
+        { path: '/team-budgets', label: 'Team Budgets', icon: WalletCards, show: capabilities.canEditAllocations, testId: 'nav-team-budgets' },
       ],
     },
   ].map((section) => ({
@@ -102,72 +137,56 @@ export function AppShell({ children }: AppShellProps) {
 
   const roleLabel = isAccountAdmin
     ? 'Account admin'
-    : isAccountEditor
-      ? 'Account editor'
     : isWorkspaceAdmin
       ? 'Workspace admin'
+      : isTeamAdmin
+        ? 'Team admin'
       : 'Member';
 
-  const scopeLabel = preview?.role === 'workspace_admin'
-    ? preview.groupName
-    : isAccountAdmin || isAccountEditor
+  const scopeLabel = isAccountAdmin
       ? 'All workspaces'
+      : auth?.teamNames.length
+        ? auth.teamNames.join(', ')
       : workspaceIds.length > 0
         ? `${workspaceIds.length} workspace${workspaceIds.length === 1 ? '' : 's'}`
         : 'No workspaces';
 
-  const selectableGroups = (previewGroups?.groups ?? []).filter(
-    (group) => !group.groupId.startsWith('synthetic:'),
-  );
-  const previewScopes = buildLogicalGroupScopes(selectableGroups);
-  const selectedScope = preview?.role === 'workspace_admin'
-    ? previewScopes.find(
-        (scope) => scope.scopeId === preview.groupId ||
-          scope.groupIds.some((groupId) => preview.groupIds.includes(groupId)),
-      )
-    : undefined;
-  const previewValue = preview?.role === 'workspace_admin'
-    ? selectedScope ? `group:${selectedScope.scopeId}` : 'real'
-    : preview?.role ?? 'real';
-
-  useEffect(() => {
-    if (preview?.role !== 'workspace_admin' || !previewGroups) return;
-    if (!selectedScope) {
-      resetPreview();
-      return;
-    }
-    const isCurrent =
-      preview.groupId === selectedScope.scopeId &&
-      preview.groupName === selectedScope.displayName &&
-      preview.groupIds.length === selectedScope.groupIds.length &&
-      preview.groupIds.every((groupId, index) => groupId === selectedScope.groupIds[index]);
-    if (!isCurrent) {
-      setPreview({
-        role: 'workspace_admin',
-        groupId: selectedScope.scopeId,
-        groupIds: selectedScope.groupIds,
-        groupName: selectedScope.displayName,
-      });
-    }
-  }, [preview, previewGroups, selectedScope, resetPreview, setPreview]);
-
   const handlePreviewChange = (value: string) => {
     if (value === 'real') {
       resetPreview();
-    } else if (value === 'account_admin' || value === 'account_editor') {
-      setPreview({ role: value, groupId: null, groupName: null });
-    } else if (value.startsWith('group:')) {
-      const scopeId = value.slice('group:'.length);
-      const scope = previewScopes.find((candidate) => candidate.scopeId === scopeId);
-      if (scope) {
-        setPreview({
-          role: 'workspace_admin',
-          groupId: scope.scopeId,
-          groupIds: scope.groupIds,
-          groupName: scope.displayName,
-        });
-      }
+    } else if (
+      value.startsWith('workspace_admin:') ||
+      value.startsWith('team_admin:') ||
+      value.startsWith('member:')
+    ) {
+      setPreview(value as typeof preview);
     }
+  };
+  const normalizedSearch = previewSearch.trim().toLocaleLowerCase();
+  const matchesSearch = (...values: Array<string | null | undefined>) =>
+    !normalizedSearch || values.some((value) => value?.toLocaleLowerCase().includes(normalizedSearch));
+  const selectedPreviewLabel = (() => {
+    if (!preview) return 'My real access';
+    if (preview.startsWith('workspace_admin:')) {
+      const id = preview.slice('workspace_admin:'.length);
+      return `Workspace · ${previewOptions.workspaces.find((item) => item.workspaceId === id)?.workspaceName ?? id}`;
+    }
+    if (preview.startsWith('team_admin:')) {
+      return `Team · ${preview.slice('team_admin:'.length)}`;
+    }
+    const id = preview.slice('member:'.length);
+    const member = previewOptions.members.find((item) => item.userId === id);
+    return `Member · ${member?.name || member?.username || member?.email || 'Selected member'}`;
+  })();
+  const matchingMembers = normalizedSearch.length >= 2
+    ? previewOptions.members
+        .filter((member) => matchesSearch(member.name, member.username, member.email, member.userId))
+        .slice(0, 50)
+    : [];
+  const choosePreview = (value: string) => {
+    handlePreviewChange(value);
+    setPreviewPickerOpen(false);
+    setPreviewSearch('');
   };
 
   return (
@@ -284,7 +303,7 @@ export function AppShell({ children }: AppShellProps) {
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge
-                  variant={isAccountAdmin || isAccountEditor ? 'default' : 'secondary'}
+                  variant={isAccountAdmin ? 'default' : 'secondary'}
                   className="text-[10px]"
                   data-testid="badge-role"
                 >
@@ -317,21 +336,88 @@ export function AppShell({ children }: AppShellProps) {
                       </Badge>
                     )}
                   </div>
-                  <Select value={previewValue} onValueChange={handlePreviewChange}>
-                    <SelectTrigger className="h-8 text-xs" data-testid="select-rbac-preview">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="real">My real access</SelectItem>
-                      <SelectItem value="account_admin">Account admin</SelectItem>
-                      <SelectItem value="account_editor">Account editor</SelectItem>
-                      {previewScopes.map((scope) => (
-                        <SelectItem key={scope.scopeId} value={`group:${scope.scopeId}`}>
-                          Group admin · {scope.displayName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={previewPickerOpen} onOpenChange={setPreviewPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={previewPickerOpen}
+                        className="h-auto min-h-9 w-full justify-between gap-2 px-2.5 py-2 text-left text-xs font-normal"
+                        data-testid="select-rbac-preview"
+                      >
+                        <span className="min-w-0 truncate">{selectedPreviewLabel}</span>
+                        <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      side="top"
+                      className="w-[min(22rem,calc(100vw-2rem))] p-0"
+                    >
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          value={previewSearch}
+                          onValueChange={setPreviewSearch}
+                          placeholder="Search workspace, team, or member…"
+                          data-testid="input-rbac-preview-search"
+                        />
+                        <CommandList className="max-h-64">
+                          <CommandEmpty>No matching access view.</CommandEmpty>
+                          <CommandGroup heading="Your access">
+                            <CommandItem value="real" onSelect={() => choosePreview('real')}>
+                              <Check className={!preview ? 'opacity-100' : 'opacity-0'} />
+                              My real access
+                            </CommandItem>
+                          </CommandGroup>
+                          <CommandGroup heading="Workspaces">
+                            {previewOptions.workspaces
+                              .filter((workspace) => matchesSearch(workspace.workspaceName, workspace.workspaceId))
+                              .map((workspace) => {
+                                const value = `workspace_admin:${workspace.workspaceId}`;
+                                return (
+                                  <CommandItem key={workspace.workspaceId} value={value} onSelect={() => choosePreview(value)}>
+                                    <Building2 />
+                                    <span className="truncate">{workspace.workspaceName}</span>
+                                  </CommandItem>
+                                );
+                              })}
+                          </CommandGroup>
+                          <CommandGroup heading="Teams">
+                            {previewOptions.teams
+                              .filter((team) => matchesSearch(team.teamName))
+                              .map((team) => {
+                                const value = `team_admin:${team.teamName}`;
+                                return (
+                                  <CommandItem key={team.teamName} value={value} onSelect={() => choosePreview(value)}>
+                                    <ShieldCheck />
+                                    <span className="truncate">{team.teamName}</span>
+                                  </CommandItem>
+                                );
+                              })}
+                          </CommandGroup>
+                          <CommandGroup heading="Members">
+                            {normalizedSearch.length < 2 ? (
+                              <div className="px-2 py-3 text-xs text-muted-foreground">
+                                Type at least 2 characters to search members.
+                              </div>
+                            ) : matchingMembers.length ? (
+                              matchingMembers.map((member) => {
+                                const value = `member:${member.userId}`;
+                                return (
+                                  <CommandItem key={member.userId} value={value} onSelect={() => choosePreview(value)}>
+                                    <Users />
+                                    <span className="truncate">{member.name || member.username || member.email}</span>
+                                  </CommandItem>
+                                );
+                              })
+                            ) : (
+                              <div className="px-2 py-3 text-xs text-muted-foreground">No members found.</div>
+                            )}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                   {isPreviewing && (
                     <Button
                       variant="ghost"

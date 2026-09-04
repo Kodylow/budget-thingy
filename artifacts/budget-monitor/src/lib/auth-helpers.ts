@@ -6,11 +6,11 @@ export function checkIsDenied(isAuthenticated: boolean, auth: any | null): boole
 }
 
 export function checkRealIsAccountAdmin(realRole: ResolvedRole | null): boolean {
-  return realRole === 'account_admin' || realRole === 'account_delegate';
+  return realRole === 'account';
 }
 
 export function checkCanTestEmail(capabilities: AuthCapabilities | null | undefined): boolean {
-  return capabilities?.emailTesting === true;
+  return capabilities?.canManageAccess === true;
 }
 
 export function checkCanAccessSettings(

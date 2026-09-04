@@ -53,36 +53,52 @@ export interface AuthUser {
 }
 
 /**
- * Effective role resolved from the Enterprise directory and managed editor allowlist.
+ * Highest role held by the effective identity.
  */
 export type AuthAuthorizationRole = typeof AuthAuthorizationRole[keyof typeof AuthAuthorizationRole];
 
 
 export const AuthAuthorizationRole = {
-  account_admin: 'account_admin',
-  account_delegate: 'account_delegate',
-  account_editor: 'account_editor',
+  account: 'account',
   workspace_admin: 'workspace_admin',
+  team_admin: 'team_admin',
+  member: 'member',
+} as const;
+
+export type AuthAuthorizationRolesItem = typeof AuthAuthorizationRolesItem[keyof typeof AuthAuthorizationRolesItem];
+
+
+export const AuthAuthorizationRolesItem = {
+  account: 'account',
+  workspace_admin: 'workspace_admin',
+  team_admin: 'team_admin',
+  member: 'member',
 } as const;
 
 /**
- * Resolved authorization for the signed-in user. account_admin, account_delegate, and account_editor see the whole account; workspace_admin sees only the listed workspaces. account_admin and account_delegate can manage editor access and settings.
+ * Resolved roles and the union of their server-derived scopes.
  */
 export interface AuthAuthorization {
-  /** Effective role resolved from the Enterprise directory and managed editor allowlist. */
+  /** Highest role held by the effective identity. */
   role: AuthAuthorizationRole;
-  /** Workspace IDs the user may view. Empty and ignored for account_admin, account_delegate, and account_editor; the union of admin workspaces for workspace_admin. */
+  roles: AuthAuthorizationRolesItem[];
   workspaceIds: string[];
+  teamNames: string[];
+  groupIds: string[];
+  userIds: string[];
+  isPreview: boolean;
 }
 
 export interface AuthCapabilities {
-  /** Server-derived capability for the persisted designated email-test identity. */
-  emailTesting: boolean;
+  canManageAccess: boolean;
+  canEditAllocations: boolean;
+  canWriteGroupLimits: boolean;
+  canWriteUserLimitsIn: string[];
 }
 
 export interface AuthUserEnvelope {
   user: AuthUser | null;
-  /** Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied). */
+  /** Resolved authorization, or null when the user is unauthenticated or is not an active Enterprise directory member (access denied). */
   auth: AuthAuthorization | null;
   capabilities: AuthCapabilities;
 }
@@ -972,7 +988,7 @@ export interface GroupAdminsItem {
   admins: GroupAdminMember[];
 }
 
-export interface AccountEditor {
+export interface AppAdmin {
   userId: string;
   /** @nullable */
   email: string | null;
@@ -981,7 +997,7 @@ export interface AccountEditor {
   createdBy?: string | null;
 }
 
-export interface AccountEditorInput {
+export interface AppAdminInput {
   /** @minLength 1 */
   userId: string;
 }
@@ -1052,16 +1068,9 @@ export interface EmailTestSelection {
   threshold: EmailTestSelectionThreshold;
 }
 
-export type EmailTestResultRecipient = typeof EmailTestResultRecipient[keyof typeof EmailTestResultRecipient];
-
-
-export const EmailTestResultRecipient = {
-  'kodylow@replit': 'kody.low@repl.it',
-} as const;
-
 export interface EmailTestResult {
   ok: boolean;
-  recipient: EmailTestResultRecipient;
+  recipient: string;
   subject: string;
   /** @nullable */
   error: string | null;
@@ -1244,6 +1253,11 @@ export type ScopeGroupIdsParameter = string;
  */
 export type AuthorizationSessionHeaderParameter = string;
 
+/**
+ * Account-only synthetic authorization view.
+ */
+export type PreviewAsHeaderParameter = string;
+
 export type BeginBrowserLoginParams = {
 /**
  * Relative path to redirect to after login (must start with `/`). Defaults to `/`.
@@ -1422,6 +1436,21 @@ export type GetAccountUsageObservationExportParams = {
  * @pattern ^\d{4}-\d{2}-\d{2}$
  */
 billingPeriodStart: string;
+};
+
+export type ExportProjectsCsvParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
 };
 
 export type ListDirectoryMembersParams = {

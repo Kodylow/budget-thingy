@@ -1,6 +1,6 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
 import { logger } from "./logger";
-import { BOOTSTRAP_EDITOR_EMAIL, normalizeEmail } from "./authz";
+import { normalizeEmail } from "./authz";
 
 /**
  * Email sending layer backed by the Replit AgentMail connector.
@@ -167,7 +167,9 @@ export async function sendEmail(
   const deliveredTo =
     process.env.NODE_ENV === "production"
       ? intended
-      : [BOOTSTRAP_EDITOR_EMAIL];
+      : process.env.BOOTSTRAP_ADMIN_EMAIL
+        ? [process.env.BOOTSTRAP_ADMIN_EMAIL]
+        : [];
   const deliveredSubject =
     process.env.NODE_ENV === "production" ? subject : `[DEV] ${subject}`;
   if (sendOverride) {
@@ -230,11 +232,13 @@ export async function sendEmail(
   }
 }
 
-export const EMAIL_TEST_RECIPIENT = BOOTSTRAP_EDITOR_EMAIL;
+export function getEmailTestRecipient(): string {
+  return process.env.BOOTSTRAP_ADMIN_EMAIL ?? "";
+}
 
 /** Fixed-recipient test transport; callers cannot supply or override recipients. */
 export function sendTestEmail(subject: string, htmlBody: string): Promise<SendResult> {
-  return sendEmail([EMAIL_TEST_RECIPIENT], subject, htmlBody);
+  return sendEmail([getEmailTestRecipient()], subject, htmlBody);
 }
 
 function escapeHtml(value: string): string {

@@ -1,74 +1,41 @@
-// @ts-nocheck
-import { describe, it, expect } from "vitest";
-
+import { describe, expect, it } from 'vitest';
 import {
+  checkCanAccessSettings,
+  checkCanTestEmail,
   checkIsDenied,
   checkRealIsAccountAdmin,
-  checkCanTestEmail,
-  checkCanAccessSettings,
-} from './auth-helpers.ts';
+} from './auth-helpers';
 
-describe('auth-helpers', () => {
-  describe('checkIsDenied', () => {
-    it('returns true when authenticated but auth is null', () => {
-      expect(checkIsDenied(true, null)).toBe(true);
-    });
+const capabilities = {
+  canManageAccess: true,
+  canEditAllocations: true,
+  canWriteGroupLimits: false,
+  canWriteUserLimitsIn: ['workspace-1'],
+};
 
-    it('returns false when unauthenticated', () => {
-      expect(checkIsDenied(false, null)).toBe(false);
-    });
-
-    it('returns false when authenticated and auth exists', () => {
-      expect(checkIsDenied(true, { role: 'member' })).toBe(false);
-    });
+describe('authorization helpers', () => {
+  it('recognizes only the account role as real account access', () => {
+    expect(checkRealIsAccountAdmin('account')).toBe(true);
+    expect(checkRealIsAccountAdmin('workspace_admin')).toBe(false);
+    expect(checkRealIsAccountAdmin('team_admin')).toBe(false);
+    expect(checkRealIsAccountAdmin('member')).toBe(false);
   });
 
-  describe('checkRealIsAccountAdmin', () => {
-    it('returns true for account_admin', () => {
-      expect(checkRealIsAccountAdmin('account_admin')).toBe(true);
-    });
-
-    it('returns true for account_delegate', () => {
-      expect(checkRealIsAccountAdmin('account_delegate')).toBe(true);
-    });
-
-    it('returns false for others', () => {
-      expect(checkRealIsAccountAdmin('workspace_admin')).toBe(false);
-      expect(checkRealIsAccountAdmin('denied')).toBe(false);
-      expect(checkRealIsAccountAdmin(null)).toBe(false);
-    });
+  it('derives email testing from access-management capability', () => {
+    expect(checkCanTestEmail(capabilities)).toBe(true);
+    expect(checkCanTestEmail({ ...capabilities, canManageAccess: false })).toBe(false);
   });
 
-  describe('checkCanTestEmail', () => {
-    it('returns true when capabilities.emailTesting is true', () => {
-      expect(checkCanTestEmail({ emailTesting: true })).toBe(true);
-    });
-
-    it('returns false when capabilities.emailTesting is false', () => {
-      expect(checkCanTestEmail({ emailTesting: false })).toBe(false);
-    });
-
-    it('returns false when capabilities is null or undefined', () => {
-      expect(checkCanTestEmail(null)).toBe(false);
-      expect(checkCanTestEmail(undefined)).toBe(false);
-    });
+  it('marks only authenticated users without authorization as denied', () => {
+    expect(checkIsDenied(true, null)).toBe(true);
+    expect(checkIsDenied(false, null)).toBe(false);
+    expect(checkIsDenied(true, { role: 'member' })).toBe(false);
   });
 
-  describe('checkCanAccessSettings', () => {
-    it('returns true if isAccountAdmin', () => {
-      expect(checkCanAccessSettings(true, false, false)).toBe(true);
-    });
-
-    it('returns true if realIsAccountAdmin', () => {
-      expect(checkCanAccessSettings(false, true, false)).toBe(true);
-    });
-
-    it('returns true if canTestEmail', () => {
-      expect(checkCanAccessSettings(false, false, true)).toBe(true);
-    });
-
-    it('returns false if none are true', () => {
-      expect(checkCanAccessSettings(false, false, false)).toBe(false);
-    });
+  it('permits settings when any account-access signal is present', () => {
+    expect(checkCanAccessSettings(true, false, false)).toBe(true);
+    expect(checkCanAccessSettings(false, true, false)).toBe(true);
+    expect(checkCanAccessSettings(false, false, true)).toBe(true);
+    expect(checkCanAccessSettings(false, false, false)).toBe(false);
   });
 });

@@ -39,6 +39,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/AuthorizationSessionHeader'
         - $ref: '#/components/parameters/SessionCookie'
+        - $ref: '#/components/parameters/PreviewAsHeader'
       responses:
         '200':
           description: Auth status resolved successfully.
@@ -166,6 +167,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
   /groups:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: listGroups
       tags: [groups]
@@ -197,6 +200,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /groups/{groupId}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getGroupDetail
       tags: [groups]
@@ -236,6 +241,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /groups/{groupId}/projects:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getGroupProjects
       tags: [groups]
@@ -272,6 +279,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /clusters/{clusterKey}/projects:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getClusterProjects
       tags: [groups]
@@ -308,6 +317,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /clusters/{clusterKey}/headline:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getCanonicalClusterHeadline
       tags: [groups]
@@ -338,6 +349,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /summary:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getSummary
       tags: [groups]
@@ -363,6 +376,8 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
   /trends:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getTrends
       tags: [groups]
@@ -423,6 +438,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /users/activity:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getUserActivity
       tags: [groups]
@@ -459,6 +476,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /export/users.csv:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: exportUsersCsv
       tags: [groups]
@@ -555,6 +574,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /projects/export:
+    get:
+      operationId: exportProjectsCsv
+      tags: [groups]
+      summary: Export scoped project activity as CSV
+      parameters:
+        - $ref: '#/components/parameters/PreviewAsHeader'
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Project activity CSV
+          content:
+            text/csv:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /budgets:
     get:
       operationId: listBudgets
@@ -627,6 +667,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
   /teams/budgets:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: getTeamsBudgets
       tags: [teams]
@@ -1054,45 +1096,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-  /editors:
+  /app-admins:
     get:
-      operationId: listEditors
+      operationId: listAppAdmins
       tags: [admins]
-      summary: List account-wide app editors
+      summary: List account-wide app admins
       description: Available only to Enterprise account administrators and the designated account delegate.
       responses:
         "200":
-          description: Editor allowlist
+          description: App admin allowlist
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/AccountEditor"
+                  $ref: "#/components/schemas/AppAdmin"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
-      operationId: addEditor
+      operationId: addAppAdmin
       tags: [admins]
-      summary: Add an account-wide app editor
+      summary: Add an account-wide app admin
       description: Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AccountEditorInput"
+              $ref: "#/components/schemas/AppAdminInput"
       responses:
         "201":
-          description: Editor added
+          description: App admin added
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccountEditor"
+                $ref: "#/components/schemas/AppAdmin"
         "400":
-          description: Invalid or duplicate editor
+          description: Invalid or duplicate app admin
           content:
             application/json:
               schema:
@@ -1107,11 +1149,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-  /editors/{userId}:
+  /app-admins/{userId}:
     delete:
-      operationId: deleteEditor
+      operationId: deleteAppAdmin
       tags: [admins]
-      summary: Remove an account-wide app editor
+      summary: Remove an account-wide app admin
       description: Available only to Enterprise account administrators and the designated account delegate.
       parameters:
         - name: userId
@@ -1121,7 +1163,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Editor removed
+          description: App admin removed
           content:
             application/json:
               schema:
@@ -1435,6 +1477,8 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
   /alerts:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
     get:
       operationId: listAlerts
       tags: [alerts]
@@ -1706,6 +1750,14 @@ components:
       description: Browser session cookie.
       schema:
         type: string
+    PreviewAsHeader:
+      name: X-Preview-As
+      in: header
+      required: false
+      description: Account-only synthetic authorization view.
+      schema:
+        type: string
+        pattern: '^(workspace_admin|team_admin|member):.+$'
   schemas:
     HealthStatus:
       type: object
@@ -1770,24 +1822,37 @@ components:
     AuthAuthorization:
       type: object
       description: >
-        Resolved authorization for the signed-in user. account_admin,
-        account_delegate, and account_editor see the whole account;
-        workspace_admin sees only the listed workspaces. account_admin and
-        account_delegate can manage editor access and settings.
-      required: [role, workspaceIds]
+        Resolved roles and the union of their server-derived scopes.
+      required: [role, roles, workspaceIds, teamNames, groupIds, userIds, isPreview]
       properties:
         role:
           type: string
-          enum: [account_admin, account_delegate, account_editor, workspace_admin]
-          description: Effective role resolved from the Enterprise directory and managed editor allowlist.
-        workspaceIds:
+          enum: [account, workspace_admin, team_admin, member]
+          description: Highest role held by the effective identity.
+        roles:
           type: array
-          description: >
-            Workspace IDs the user may view. Empty and ignored for account_admin,
-            account_delegate, and account_editor; the union of admin workspaces
-            for workspace_admin.
+          uniqueItems: true
           items:
             type: string
+            enum: [account, workspace_admin, team_admin, member]
+        workspaceIds:
+          type: array
+          items:
+            type: string
+        teamNames:
+          type: array
+          items:
+            type: string
+        groupIds:
+          type: array
+          items:
+            type: string
+        userIds:
+          type: array
+          items:
+            type: string
+        isPreview:
+          type: boolean
     AuthUserEnvelope:
       type: object
       required: [user, auth, capabilities]
@@ -1799,7 +1864,7 @@ components:
         auth:
           description: >
             Resolved authorization, or null when the user is unauthenticated or
-            is neither an account admin nor an enabled workspace admin (access denied).
+            is not an active Enterprise directory member (access denied).
           oneOf:
             - $ref: '#/components/schemas/AuthAuthorization'
             - type: 'null'
@@ -1807,11 +1872,18 @@ components:
           $ref: '#/components/schemas/AuthCapabilities'
     AuthCapabilities:
       type: object
-      required: [emailTesting]
+      required: [canManageAccess, canEditAllocations, canWriteGroupLimits, canWriteUserLimitsIn]
       properties:
-        emailTesting:
+        canManageAccess:
           type: boolean
-          description: Server-derived capability for the persisted designated email-test identity.
+        canEditAllocations:
+          type: boolean
+        canWriteGroupLimits:
+          type: boolean
+        canWriteUserLimitsIn:
+          type: array
+          items:
+            type: string
     MobileTokenExchangeRequest:
       type: object
       required: [code, code_verifier, redirect_uri, state]
@@ -2934,7 +3006,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GroupAdminMember"
-    AccountEditor:
+    AppAdmin:
       type: object
       required: [userId, email, createdAt]
       properties:
@@ -2946,7 +3018,7 @@ components:
           type: string
         createdBy:
           type: ["string", "null"]
-    AccountEditorInput:
+    AppAdminInput:
       type: object
       required: [userId]
       properties:
@@ -3020,7 +3092,6 @@ components:
           type: boolean
         recipient:
           type: string
-          enum: [kody.low@repl.it]
         subject:
           type: string
         error:

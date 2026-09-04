@@ -8,8 +8,7 @@ import {
   teamBudgetsTable,
   adminEmailsTable,
   alertsTable,
-  editorAllowlistTable,
-  editorBootstrapStateTable,
+  appAdminsTable,
   usersTable,
   apiDirectoryCacheTable,
   apiProjectMetadataTable,
@@ -41,10 +40,10 @@ import {
   GetCanonicalClusterHeadlineResponse,
   GetTrendsQueryParams,
   GetTrendsResponse,
-  ListEditorsResponse,
-  AddEditorBody,
-  AddEditorResponse,
-  DeleteEditorResponse,
+  ListAppAdminsResponse,
+  AddAppAdminBody,
+  AddAppAdminResponse,
+  DeleteAppAdminResponse,
   ListDirectoryGroupsResponse,
   GetTeamBudgetHistoryResponse,
   GetTeamAllocationAuditResponse,
@@ -101,7 +100,7 @@ import {
   resolveCanonicalMergedGroupBudget,
   type EnterpriseGroup,
 } from "../lib/enterprise";
-import { buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, EMAIL_TEST_RECIPIENT } from "../lib/email";
+import { buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, getEmailTestRecipient } from "../lib/email";
 import { resolveAlertRecipients } from "../lib/alert-recipients";
 import {
   runCheck,
@@ -113,19 +112,17 @@ import {
 } from "../lib/checker";
 import {
   requireAuth,
-  requireAccountAdmin,
-  requireAccountOperator,
-  requireTrueAccountAdmin,
-  requireEmailTester,
+  requireRole,
+  requireCapability,
+  requireUserLimitWorkspace,
 } from "../middlewares/requireAuth";
 import {
   canSeeGroup,
-  isAccountAdmin,
-  isApplicationAdmin,
   isAccountWide,
   isAdminRole,
   scopeGroups,
   type Authorization,
+  scopeFor,
 } from "../lib/authz";
 import { getRosterHistory, projectEndOfPeriod } from "../lib/history";
 import { generateTrendBuckets } from "../lib/trend-buckets";
@@ -181,6 +178,67 @@ router.use(requireAuth);
  */
 function visibleGroups(authz: Authorization, groups: EnterpriseGroup[]): EnterpriseGroup[] {
   return scopeGroups(authz, groups);
+}
+
+function visibleGroupMembers(
+  authz: Authorization,
+  members: ReadonlyMap<string, readonly string[]>,
+): Map<string, string[]> {
+  const scope = scopeFor(authz);
+  if ("kind" in scope) {
+    return new Map([...members].map(([id, userIds]) => [id, [...userIds]]));
+  }
+  return new Map(
+    [...members].map(([id, userIds]) => [
+      id,
+      userIds.filter((userId) => scope.userIds.has(userId)),
+    ]),
+  );
+}
+
+function visibleRosterMembers(
+  authz: Authorization,
+  membersByDate: Map<string, Map<string, string[]>>,
+): Map<string, Map<string, string[]>> {
+  const scope = scopeFor(authz);
+  if ("kind" in scope) return membersByDate;
+  return new Map(
+    [...membersByDate].map(([date, byGroup]) => [
+      date,
+      new Map(
+        [...byGroup].map(([groupId, userIds]) => [
+          groupId,
+          userIds.filter((userId) => scope.userIds.has(userId)),
+        ]),
+      ),
+    ]),
+  );
+}
+
+type AlertScopeEntity = {
+  entityType: string;
+  entityId: string;
+  groupId: string;
+  workspaceIds: string[];
+};
+
+export function canSeeAlertEntity(
+  authz: Authorization,
+  alert: AlertScopeEntity,
+  visibleGroupIds: ReadonlySet<string>,
+  visibleTeamNames: ReadonlySet<string>,
+): boolean {
+  const scope = scopeFor(authz);
+  if ("kind" in scope) return true;
+  if (alert.entityType !== "team") {
+    return visibleGroupIds.has(alert.entityId || alert.groupId);
+  }
+  if (scope.teamNames.has(alert.entityId)) return true;
+  if (authz.roles.includes("workspace_admin")) {
+    return alert.workspaceIds.length > 0 &&
+      alert.workspaceIds.every((workspaceId) => scope.workspaceIds.has(workspaceId));
+  }
+  return visibleTeamNames.has(alert.entityId);
 }
 
 function targetTeamForGroup(
@@ -291,6 +349,7 @@ async function usageForRequest(
   query: Record<string, unknown>,
   includeDailyMembers = false,
 ): Promise<{
+  authz: Authorization;
   selection: UsageWindowSelection;
   groups: EnterpriseGroup[];
   workspaceIds: Set<string>;
@@ -310,6 +369,7 @@ async function usageForRequest(
     readProjectMetadata(workspaceIds),
   ]);
   return {
+    authz,
     selection,
     groups,
     workspaceIds,
@@ -317,7 +377,7 @@ async function usageForRequest(
     rollup: computeSnapshotUsageRollup({
       snapshot,
       groups,
-      membersByGroup: dir.groupMembers,
+      membersByGroup: visibleGroupMembers(authz, dir.groupMembers),
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     }),
     projectMetadata,
@@ -355,9 +415,9 @@ async function dailyUsageRollups(
     snapshot: usage.snapshot,
     groups: usage.groups,
     currentUtcDay: new Date().toISOString().slice(0, 10),
-    currentMembersByGroup: dir.groupMembers,
+    currentMembersByGroup: visibleGroupMembers(usage.authz, dir.groupMembers),
     completedRosterDays: roster.completedDays,
-    rosterMembersByDate: roster.membersByDate,
+    rosterMembersByDate: visibleRosterMembers(usage.authz, roster.membersByDate),
     projectInfoByWorkspace: usage.projectMetadata.byWorkspace,
   });
 }
@@ -504,7 +564,8 @@ router.get("/groups", async (req, res): Promise<void> => {
     const effectiveTeamBudgetMap = new Map(teamSnapshot.teams
       .filter((team) => !team.isHidden)
       .map((team) => [team.teamName, team.effectiveAmountUsd]));
-    const memberCounts = computeDedupedMemberCounts(usage.groups, dir.groupMembers);
+    const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
+    const memberCounts = computeDedupedMemberCounts(usage.groups, scopedMembers);
     const billing = getBillingPeriod();
     const fired = billing.start
       ? await getFiredThresholdsBatch(displayGroups.map((group) => group.id), billing.start)
@@ -516,7 +577,7 @@ router.get("/groups", async (req, res): Promise<void> => {
         (sum, id) => sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0);
       const projectSpendUsd = sourceIds.reduce(
         (sum, id) => sum + (usage.rollup.projectAttribution.spendByGroup.get(id) ?? 0), 0);
-      const memberIds = mergedGroupMemberIds(sourceIds, dir.groupMembers);
+      const memberIds = mergedGroupMemberIds(sourceIds, scopedMembers);
       const budget = effectiveGroupBudget(
         resolveCanonicalMergedGroupBudget(group.id, mergePlan, budgetMap)?.amountUsd);
       const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
@@ -634,7 +695,8 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       return;
     }
     const canonical = usage.rollup;
-    const rollupMemberCounts = computeDedupedMemberCounts(usage.groups, dir.groupMembers);
+    const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
+    const rollupMemberCounts = computeDedupedMemberCounts(usage.groups, scopedMembers);
     const projectAttribution = canonical.projectAttribution;
     const projectSpendUsd = sourceIds.reduce(
       (sum, id) => sum + (projectAttribution.spendByGroup.get(id) ?? 0),
@@ -676,7 +738,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     }));
 
     // Union of directory members across all source groups.
-    const userIds = mergedGroupMemberIds(sourceIds, dir.groupMembers);
+    const requestedUserIds = mergedGroupMemberIds(sourceIds, scopedMembers);
+    const requestScope = scopeFor(req.authz!);
+    const userIds = "kind" in requestScope
+      ? requestedUserIds
+      : requestedUserIds.filter((userId) => requestScope.userIds.has(userId));
 
     const members = userIds.map((userId) => {
       const m = dir.members.get(userId);
@@ -807,6 +873,7 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
       return;
     }
     const usage = await usageForRequest(req.authz!, dir, req.query as Record<string, unknown>);
+    const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
     const workspaceProjects = usage.snapshot.projects.get(group.workspaceId) ?? new Map();
     const projectMetadata = usage.projectMetadata.byWorkspace.get(group.workspaceId) ?? new Map();
     const titlesComplete = usage.projectMetadata.completeWorkspaceIds.has(group.workspaceId);
@@ -832,7 +899,7 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
                 : null,
               creatorIsCurrentMember:
                 creatorId !== null &&
-                (dir.groupMembers.get(group.id) ?? []).includes(creatorId),
+                (scopedMembers.get(group.id) ?? []).includes(creatorId),
               metrics: [],
               workspaceId: group.workspaceId,
               workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
@@ -933,12 +1000,13 @@ router.get("/clusters/:clusterKey/projects", async (req, res): Promise<void> => 
     const groups = requestedGroups;
     const usageContext = await usageForRequest(
       req.authz!, dir, req.query as Record<string, unknown>);
+    const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
     const workspaceIds = new Set(groups.map((group) => group.workspaceId));
 
     // Member set — union of all members across constituent groups
     const memberSet = new Set<string>();
     for (const g of groups) {
-      for (const userId of dir.groupMembers.get(g.id) ?? []) {
+      for (const userId of scopedMembers.get(g.id) ?? []) {
         memberSet.add(userId);
       }
     }
@@ -1102,6 +1170,7 @@ router.get("/summary", async (req, res): Promise<void> => {
 
         // Set of visible groups, used both to scope spend and to filter alerts.
         let visibleGroupIds = new Set<string>();
+        let visibleTeamNames = new Set<string>();
 
         try {
             const dir = await getDirectory();
@@ -1114,6 +1183,7 @@ router.get("/summary", async (req, res): Promise<void> => {
               groupTeams,
               hiddenSummaryTeamNames,
             );
+            visibleTeamNames = new Set(groupTeamMap.values());
             const canonical = usage.rollup;
             const mergePlan = buildCanonicalGroupMergePlan(
               scoped,
@@ -1126,7 +1196,11 @@ router.get("/summary", async (req, res): Promise<void> => {
               (mergePlan.mergeMap.get(group.id) ?? [group.id]).reduce(
                 (sum, id) => sum + (canonical.byGroup.get(id)?.spendUsd ?? 0), 0),
             ]));
-            memberBasedTotalSpendUsd = canonical.totalSpendUsd;
+            const scopedMemberSpendUsd = [...canonical.byUser.values()]
+              .reduce((sum, amount) => sum + amount, 0);
+            memberBasedTotalSpendUsd = isAccount
+              ? canonical.totalSpendUsd
+              : scopedMemberSpendUsd;
             totalGroups = displayGroups.length;
             budgetedGroups = displayGroups.filter(
               (group) =>
@@ -1140,7 +1214,7 @@ router.get("/summary", async (req, res): Promise<void> => {
             // budgets, teams, and alerts. For account-wide viewers, the unfiltered
             // account /usage anchor is the headline total and the difference is an
             // explicit reconciliation row so the visible table sums to gross usage.
-            totalSpendUsd = canonical.totalSpendUsd;
+            totalSpendUsd = memberBasedTotalSpendUsd;
             if (isAccount) {
               if (snapshot) {
                 accountUsageTotalSpendUsd = snapshot.accountTotalUsd;
@@ -1246,11 +1320,7 @@ router.get("/summary", async (req, res): Promise<void> => {
           (a) =>
             a.status === "sent" &&
             (a.entityType !== "team" || !hiddenSummaryTeamNames.has(a.entityId)) &&
-            (isAccount ||
-              (a.entityType === "team"
-                ? a.workspaceIds.length > 0 &&
-                  a.workspaceIds.every((workspaceId) => authz.workspaceIds.includes(workspaceId))
-                : visibleGroupIds.has(a.entityId || a.groupId))) &&
+            canSeeAlertEntity(authz, a, visibleGroupIds, visibleTeamNames) &&
             (!periodStart || a.sentAt >= periodStart),
         ).length;
 
@@ -1331,6 +1401,7 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
       .map((group) => targetTeamForGroup(group, assignments))
       .filter((teamName): teamName is string => teamName != null),
   );
+  for (const teamName of req.authz!.teamNames) visibleTeams.add(teamName);
   const allWorkspaceIdsByTeam = new Map<string, Set<string>>();
   for (const group of dir.groups) {
     const teamName = targetTeamForGroup(group, assignments);
@@ -1390,9 +1461,9 @@ function serializeTeamBudgetHistoryTeam(
   };
 }
 
-router.get("/admin/team-budgets/history", requireAccountAdmin, async (req, res): Promise<void> => {
+router.get("/admin/team-budgets/history", requireRole("account"), async (req, res): Promise<void> => {
   const snapshot = await getEffectiveTeamBudgets();
-  const visible = isAccountAdmin(req.authz)
+  const visible = req.authz!.isTrueAccountAdmin
     ? snapshot.teams
     : snapshot.teams.filter((team) => !team.isHidden);
   res.json(GetTeamBudgetHistoryResponse.parse({
@@ -1538,13 +1609,13 @@ async function buildTeamBudgetSyncStatus() {
   };
 }
 
-router.get("/admin/team-budgets/sync", requireTrueAccountAdmin, async (_req, res): Promise<void> => {
+router.get("/admin/team-budgets/sync", requireCapability("canWriteGroupLimits"), async (_req, res): Promise<void> => {
   res.json(GetTeamBudgetSyncStatusResponse.parse(await buildTeamBudgetSyncStatus()));
 });
 
 router.post(
   "/admin/team-budgets/reconcile",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (_req, res): Promise<void> => {
     queueTeamBudgetUpstreamReconciliation();
     res.json(
@@ -1555,7 +1626,7 @@ router.post(
 
 router.patch(
   "/admin/team-budgets/:teamName/limit",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const params = UpdateTeamBudgetLimitParams.safeParse(req.params);
     const body = UpdateTeamBudgetLimitBody.safeParse(req.body);
@@ -1594,7 +1665,7 @@ router.patch(
 
 router.get(
   "/admin/team-budgets/targets",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (_req, res): Promise<void> => {
     const config = await getTeamLimitTargetConfiguration();
     res.json(GetTeamBudgetTargetsResponse.parse({
@@ -1610,7 +1681,7 @@ router.get(
 
 router.post(
   "/admin/team-budgets/targets",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const body = AssignTeamBudgetTargetBody.safeParse(req.body);
     if (!body.success || Object.keys(req.body ?? {}).length !== 3) {
@@ -1643,7 +1714,7 @@ router.post(
 
 router.patch(
   "/admin/team-budgets/targets/:workspaceId/:groupId",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const params = UpdateTeamBudgetTargetParams.safeParse(req.params);
     const body = UpdateTeamBudgetTargetBody.safeParse(req.body);
@@ -1670,7 +1741,7 @@ router.patch(
 
 router.patch(
   "/admin/team-budgets/legacy-limit",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const body = UpdateLegacyWorkspaceLimitBody.safeParse(req.body);
     if (!body.success || Object.keys(req.body ?? {}).length !== 1) {
@@ -1684,7 +1755,7 @@ router.patch(
 
 router.post(
   "/admin/team-budgets/apply",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const body = ApplyTeamBudgetLimitsBody.safeParse(req.body);
     const keys = req.body && typeof req.body === "object"
@@ -1724,7 +1795,7 @@ router.post(
   },
 );
 
-router.post("/admin/team-budgets/refresh", requireAccountAdmin, async (_req, res): Promise<void> => {
+router.post("/admin/team-budgets/refresh", requireRole("account"), async (_req, res): Promise<void> => {
   const result = await refreshTeamBudgetSnapshot();
   res.status(result.ok ? 200 : 502).json(RefreshTeamBudgetsResponse.parse({
     sourceTable: TEAM_BUDGET_SOURCE_TABLE,
@@ -1759,7 +1830,7 @@ router.get("/budgets", async (req, res): Promise<void> => {
   );
 });
 
-router.put("/groups/:groupId/budget", requireAccountOperator, async (req, res): Promise<void> => {
+router.put("/groups/:groupId/budget", requireCapability("canWriteGroupLimits"), async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const parsed = SetGroupBudgetBody.safeParse(req.body);
   if (!parsed.success) {
@@ -1787,7 +1858,7 @@ router.put("/groups/:groupId/budget", requireAccountOperator, async (req, res): 
   );
 });
 
-router.delete("/groups/:groupId/budget", requireAccountOperator, async (req, res): Promise<void> => {
+router.delete("/groups/:groupId/budget", requireCapability("canWriteGroupLimits"), async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const deleted = await db
     .delete(groupBudgetsTable)
@@ -1800,7 +1871,7 @@ router.delete("/groups/:groupId/budget", requireAccountOperator, async (req, res
   res.json(DeleteGroupBudgetResponse.parse({ ok: true }));
 });
 
-router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<void> => {
+router.get("/workspace-admins", requireRole("account"), async (_req, res): Promise<void> => {
   const [rows, groupTeams] = await Promise.all([
     db.select({ directoryJson: apiDirectoryCacheTable.directoryJson }).from(apiDirectoryCacheTable),
     db.select().from(teamLimitTargetsTable),
@@ -1855,7 +1926,7 @@ router.get("/workspace-admins", requireAccountAdmin, async (_req, res): Promise<
 // ---------------------------------------------------------------------------
 // Project spend CSV export — all groups, one row per project
 // ---------------------------------------------------------------------------
-router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<void> => {
+router.get("/projects/export", async (req, res): Promise<void> => {
   let selection: UsageWindowSelection;
   try {
     selection = windowFromQuery(req.query as Record<string, unknown>);
@@ -1870,6 +1941,7 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
     ]);
 
     const groups = visibleGroups(req.authz!, dir.groups);
+    const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
     const groupTeamMap = buildGroupTeamMap(groups, groupTeams);
     const scopedWorkspaceIds = workspaceScope(req.authz!, dir, groups);
     const [snapshot, projectMetadata] = await Promise.all([
@@ -1880,7 +1952,9 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
       readProjectMetadata(scopedWorkspaceIds),
     ]);
     const rollup = computeSnapshotUsageRollup({
-      snapshot, groups, membersByGroup: dir.groupMembers,
+      snapshot,
+      groups,
+      membersByGroup: scopedMembers,
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     });
 
@@ -1987,7 +2061,7 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
         ? orderedGroups.find(
           (group) =>
             group.workspaceId === workspaceId &&
-            (dir.groupMembers.get(group.id) ?? []).includes(creatorId),
+            (scopedMembers.get(group.id) ?? []).includes(creatorId),
         )
         : undefined;
       const creatorIsCurrentMember = creatorOwner !== undefined;
@@ -2078,7 +2152,7 @@ router.get("/projects/export", requireAccountAdmin, async (req, res): Promise<vo
 
 // Notification recipients are account-only data; workspace admins can neither
 // view nor modify them.
-router.get("/admins", requireAccountAdmin, async (_req, res): Promise<void> => {
+router.get("/admins", requireRole("account"), async (_req, res): Promise<void> => {
   const admins = await db.select().from(adminEmailsTable).orderBy(adminEmailsTable.id);
   res.json(
     ListAdminsResponse.parse(
@@ -2093,7 +2167,7 @@ router.get("/admins", requireAccountAdmin, async (_req, res): Promise<void> => {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-router.post("/admins", requireAccountAdmin, async (req, res): Promise<void> => {
+router.post("/admins", requireRole("account"), async (req, res): Promise<void> => {
   const parsed = AddAdminBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -2126,7 +2200,7 @@ router.post("/admins", requireAccountAdmin, async (req, res): Promise<void> => {
   );
 });
 
-router.delete("/admins/:adminId", requireAccountAdmin, async (req, res): Promise<void> => {
+router.delete("/admins/:adminId", requireRole("account"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params["adminId"])
     ? req.params["adminId"][0]
     : req.params["adminId"];
@@ -2146,13 +2220,13 @@ router.delete("/admins/:adminId", requireAccountAdmin, async (req, res): Promise
   res.json(DeleteAdminResponse.parse({ ok: true }));
 });
 
-router.get("/editors", requireAccountAdmin, async (_req, res): Promise<void> => {
+router.get("/app-admins", requireCapability("canManageAccess"), async (_req, res): Promise<void> => {
   const editors = await db
     .select()
-    .from(editorAllowlistTable)
-    .orderBy(editorAllowlistTable.createdAt);
+    .from(appAdminsTable)
+    .orderBy(appAdminsTable.createdAt);
   res.json(
-    ListEditorsResponse.parse(
+    ListAppAdminsResponse.parse(
       editors.map((editor) => ({
         userId: editor.userId,
         email: editor.email,
@@ -2163,8 +2237,8 @@ router.get("/editors", requireAccountAdmin, async (_req, res): Promise<void> => 
   );
 });
 
-router.post("/editors", requireAccountAdmin, async (req, res): Promise<void> => {
-  const parsed = AddEditorBody.safeParse(req.body);
+router.post("/app-admins", requireCapability("canManageAccess"), async (req, res): Promise<void> => {
+  const parsed = AddAppAdminBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
@@ -2176,20 +2250,20 @@ router.post("/editors", requireAccountAdmin, async (req, res): Promise<void> => 
     return;
   }
   const [row] = await db
-    .insert(editorAllowlistTable)
+    .insert(appAdminsTable)
     .values({
       userId,
       email: user.email ?? "",
       createdBy: req.user!.id,
     })
-    .onConflictDoNothing({ target: editorAllowlistTable.userId })
+    .onConflictDoNothing({ target: appAdminsTable.userId })
     .returning();
   if (!row) {
     res.status(400).json({ error: "This user is already an editor" });
     return;
   }
   res.status(201).json(
-    AddEditorResponse.parse({
+    AddAppAdminResponse.parse({
       userId: row.userId,
       email: row.email,
       createdBy: row.createdBy,
@@ -2198,46 +2272,27 @@ router.post("/editors", requireAccountAdmin, async (req, res): Promise<void> => 
   );
 });
 
-router.delete("/editors/:userId", requireAccountAdmin, async (req, res): Promise<void> => {
+router.delete("/app-admins/:userId", requireCapability("canManageAccess"), async (req, res): Promise<void> => {
   const userId = decodeURIComponent(String(req.params["userId"]));
-  const deleted = await db.transaction(async (tx) => {
-    const removed = await tx
-      .delete(editorAllowlistTable)
-      .where(eq(editorAllowlistTable.userId, userId))
-      .returning();
-    const row = removed[0];
-    if (row) {
-      await tx
-        .insert(editorBootstrapStateTable)
-        .values({
-          userId: row.userId,
-          email: row.email,
-          completedBy: req.user!.id,
-          revokedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: editorBootstrapStateTable.userId,
-          set: {
-            revokedAt: new Date(),
-          },
-        });
-    }
-    return removed;
-  });
+  const deleted = await db
+    .delete(appAdminsTable)
+    .where(eq(appAdminsTable.userId, userId))
+    .returning();
   if (deleted.length === 0) {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.json(DeleteEditorResponse.parse({ ok: true }));
+  res.json(DeleteAppAdminResponse.parse({ ok: true }));
 });
 
 router.get("/alerts", async (req, res): Promise<void> => {
   const authz = req.authz!;
   const accountWide = isAccountWide(authz);
-  const canSeeRecipients = isApplicationAdmin(authz);
+  const canSeeRecipients = authz.capabilities.canManageAccess;
   const parsed = ListAlertsQueryParams.safeParse(req.query);
   const limit = parsed.success && parsed.data.limit ? parsed.data.limit : 100;
   let allowedIds = new Set<string>();
+  let visibleAlertTeamNames = new Set<string>();
   let currentByEntity = new Map<string, CurrentAlertUsage>();
   let hiddenAlertTeamNames = new Set<string>();
   try {
@@ -2257,6 +2312,7 @@ router.get("/alerts", async (req, res): Promise<void> => {
       groupTeams,
       hiddenAlertTeamNames,
     );
+    visibleAlertTeamNames = new Set(teamByGroupName.values());
     const groupBudgetById = new Map(groupBudgets.map((row) => [row.groupId, row.amountUsd]));
     const teamBudgetByName = effectiveAlertTeamBudgets;
     const usage = await usageForRequest(authz, dir, { rangeType: "billing" });
@@ -2307,14 +2363,11 @@ router.get("/alerts", async (req, res): Promise<void> => {
     .select()
     .from(alertsTable)
     .orderBy(desc(alertsTable.sentAt));
-  const allowedWorkspaceIds = new Set(authz.workspaceIds);
   const scoped = allAlerts
-    .filter((a) => (a.entityType !== "team" || !hiddenAlertTeamNames.has(a.entityId)) && (accountWide || (
-      a.entityType === "team"
-        ? a.workspaceIds.length > 0 &&
-          a.workspaceIds.every((workspaceId) => allowedWorkspaceIds.has(workspaceId))
-        : allowedIds.has(a.entityId || a.groupId)
-    )))
+    .filter((a) =>
+      (a.entityType !== "team" || !hiddenAlertTeamNames.has(a.entityId)) &&
+      canSeeAlertEntity(authz, a, allowedIds, visibleAlertTeamNames)
+    )
     .slice(0, limit)
     .map((a) => {
       const entityId = a.entityId || a.groupId;
@@ -2324,7 +2377,7 @@ router.get("/alerts", async (req, res): Promise<void> => {
   res.json(ListAlertsResponse.parse(scoped));
 });
 
-router.post("/alerts/check", requireAccountOperator, async (req, res): Promise<void> => {
+router.post("/alerts/check", requireRole("account"), async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
@@ -2351,7 +2404,7 @@ router.post("/alerts/check", requireAccountOperator, async (req, res): Promise<v
 
 router.post(
   "/alerts/:alertId/test",
-  requireEmailTester,
+  requireCapability("canManageAccess"),
   async (req, res): Promise<void> => {
     const alertId = Number(req.params["alertId"]);
     if (!Number.isInteger(alertId) || alertId <= 0) {
@@ -2388,7 +2441,7 @@ router.post(
     );
     res.json(SendTestAlertResponse.parse({
       ok: result.ok,
-      recipient: EMAIL_TEST_RECIPIENT,
+       recipient: getEmailTestRecipient(),
       subject: testSubject,
       error: result.error ?? null,
       messageId: result.messageId ?? null,
@@ -2399,7 +2452,7 @@ router.post(
 
 router.post(
   "/alerts/test-email",
-  requireEmailTester,
+  requireCapability("canManageAccess"),
   async (req, res): Promise<void> => {
     const selection = SendEmailTestExampleBody.safeParse(req.body);
     const allowedKeys = new Set(["entityType", "threshold"]);
@@ -2436,7 +2489,7 @@ router.post(
     );
     res.json(SendEmailTestExampleResponse.parse({
       ok: result.ok,
-      recipient: EMAIL_TEST_RECIPIENT,
+       recipient: getEmailTestRecipient(),
       subject: testSubject,
       error: result.error ?? null,
       messageId: result.messageId ?? null,
@@ -2446,7 +2499,7 @@ router.post(
 );
 
 // System status is account-only configuration; not exposed to workspace admins.
-router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
+router.get("/status", requireRole("account"), async (_req, res): Promise<void> => {
   const health = getApiHealth();
   const emailConfigured = await isEmailConfigured();
   const billingPeriod = getBillingPeriodMetadata();
@@ -2532,7 +2585,7 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
 
 router.get(
   "/usage/account-observation/export",
-  requireAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const parsed = GetAccountUsageObservationExportQueryParams.safeParse(req.query);
     if (!parsed.success) {
@@ -2573,7 +2626,7 @@ router.get(
 
 router.post(
   "/admin/usage/ingest/cycle",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     try {
       res.json(await runCycle());
@@ -2586,7 +2639,7 @@ router.post(
 
 router.get(
   "/admin/usage/ingest/runs/recent",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const rawLimit = Number(req.query["limit"] ?? 20);
     const limit = Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
@@ -2659,6 +2712,7 @@ router.get("/trends", async (req, res): Promise<void> => {
       buckets[0]!.startDate,
       buckets.at(-1)!.endDate,
     );
+    const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
     const currentUtcDay = new Date().toISOString().slice(0, 10);
     const [snapshot, projectMetadata] = await Promise.all([
       readUsageSnapshot({
@@ -2670,13 +2724,13 @@ router.get("/trends", async (req, res): Promise<void> => {
     ]);
     const dailyRollups = computeHistoricalSnapshotUsageRollups({
       snapshot, groups: visible, currentUtcDay,
-      currentMembersByGroup: dir.groupMembers,
+      currentMembersByGroup: scopedMembers,
       completedRosterDays: rosterHistory.completedDays,
-      rosterMembersByDate: rosterHistory.membersByDate,
+      rosterMembersByDate: visibleRosterMembers(req.authz!, rosterHistory.membersByDate),
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     });
     const fullRollup = computeSnapshotUsageRollup({
-      snapshot, groups: visible, membersByGroup: dir.groupMembers,
+      snapshot, groups: visible, membersByGroup: scopedMembers,
       projectInfoByWorkspace: projectMetadata.byWorkspace,
     });
 
@@ -2743,7 +2797,6 @@ router.get("/trends", async (req, res): Promise<void> => {
       }));
 
     const totals = bucketResults.map((result) => {
-      if (!requestedTeams && !requestedGroups) return result.totalSpendUsd;
       return groups.reduce(
         (sum, group) => sum + (result.spendByPrimaryGroup.get(group.id) ?? 0),
         0,
@@ -2838,8 +2891,9 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
     }),
     readProjectMetadata(scopedWorkspaceIds),
   ]);
+  const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
   const canonical = computeSnapshotUsageRollup({
-    snapshot, groups: visible, membersByGroup: dir.groupMembers,
+    snapshot, groups: visible, membersByGroup: scopedMembers,
     projectInfoByWorkspace: projectMetadata.byWorkspace,
   });
 
@@ -2850,12 +2904,12 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
       a.id.localeCompare(b.id),
   );
   const requestedMemberIds = new Set(
-    sortedGroupsForCsv.flatMap((group) => dir.groupMembers.get(group.id) ?? []),
+    sortedGroupsForCsv.flatMap((group) => scopedMembers.get(group.id) ?? []),
   );
   const userGroupAttr = canonicalUserAttribution(
     canonical,
     sortedGroupsForCsv,
-    dir.groupMembers,
+    scopedMembers,
     teamNameMap,
   );
   const rows: { email: string; name: string; username: string; group: string; team: string; workspaces: string; aiSpendUsd: number; nonAiSpendUsd: number; spendUsd: number }[] = [];
@@ -2864,7 +2918,7 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
     if (!member) continue;
     const attr = userGroupAttr.get(userId);
     const memberGroups = sortedGroupsForCsv.filter((group) =>
-      (dir.groupMembers.get(group.id) ?? []).includes(userId),
+      (scopedMembers.get(group.id) ?? []).includes(userId),
     );
     const workspaceNames = [...new Set(
       memberGroups.map((group) => dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId),
@@ -2955,12 +3009,10 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   const scopedWorkspaceIds = callerIsAccountAdmin
     ? new Set([...dir.workspaces.keys(), ...groupedWorkspaceIds])
     : new Set([...req.authz!.workspaceIds, ...groupedWorkspaceIds]);
-  const visibleUserIds = new Set<string>();
-  for (const group of orderedGroups) {
-    for (const userId of dir.groupMembers.get(group.id) ?? []) {
-      visibleUserIds.add(userId);
-    }
-  }
+  const activityScope = scopeFor(req.authz!);
+  const visibleUserIds = "kind" in activityScope
+    ? new Set(dir.members.keys())
+    : activityScope.userIds;
 
   const [snapshot, projectMetadata] = await Promise.all([
     readUsageSnapshot({
@@ -2969,14 +3021,17 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     }),
     readProjectMetadata(scopedWorkspaceIds),
   ]);
+  const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
   const canonical = computeSnapshotUsageRollup({
-    snapshot, groups: orderedGroups, membersByGroup: dir.groupMembers,
+    snapshot,
+    groups: orderedGroups,
+    membersByGroup: scopedMembers,
     projectInfoByWorkspace: projectMetadata.byWorkspace,
   });
   const userGroupAttr = canonicalUserAttribution(
     canonical,
     orderedGroups,
-    dir.groupMembers,
+    scopedMembers,
     teamNameMap,
   );
 
@@ -3070,7 +3125,20 @@ router.get(
       const workspaceId = String(req.params["workspaceId"]);
       const dir = await getDirectory();
       const workspace = dir.workspaces.get(workspaceId);
-      if (!workspace || (!isAccountWide(req.authz) && !req.authz!.workspaceIds.includes(workspaceId))) {
+      const authzScope = scopeFor(req.authz!);
+      const hasScopedGroupInWorkspace =
+        !("kind" in authzScope) &&
+        dir.groups.some(
+          (group) =>
+            group.workspaceId === workspaceId &&
+            authzScope.groupIds.has(group.id),
+        );
+      if (
+        !workspace ||
+        (!("kind" in authzScope) &&
+          !authzScope.workspaceIds.has(workspaceId) &&
+          !hasScopedGroupInWorkspace)
+      ) {
         res.status(404).json({ error: "Workspace not found" });
         return;
       }
@@ -3088,7 +3156,12 @@ router.get(
           const membership = member.workspaces.get(workspaceId);
           // Defensive identity deduplication protects against replayed/duplicate
           // memberships in upstream directory snapshots.
-          if (!membership || seen.has(member.userId)) return [];
+          if (
+            !membership ||
+            seen.has(member.userId) ||
+            (!("kind" in authzScope) &&
+              !authzScope.userIds.has(member.userId))
+          ) return [];
           seen.add(member.userId);
           const budget = snapshot.budgets.get(member.userId);
           const budgetUsd = budget?.budgetUsd ?? null;
@@ -3190,7 +3263,7 @@ function sendBudgetConnectorError(
 
 router.put(
   "/directory/workspaces/:workspaceId/members/budget",
-  requireAccountOperator,
+  requireUserLimitWorkspace,
   async (req, res): Promise<void> => {
     const parsed = BulkSetWorkspaceMemberBudgetsBody.safeParse(req.body);
     if (!parsed.success) {
@@ -3262,7 +3335,7 @@ router.put(
 
 router.put(
   "/directory/workspaces/:workspaceId/members/:userId/budget",
-  requireAccountOperator,
+  requireUserLimitWorkspace,
   async (req, res): Promise<void> => {
     const parsed = SetWorkspaceMemberBudgetBody.safeParse(req.body);
     if (!parsed.success) {
@@ -3314,7 +3387,7 @@ router.put(
 
 router.delete(
   "/directory/workspaces/:workspaceId/members/:userId/budget",
-  requireAccountOperator,
+  requireUserLimitWorkspace,
   async (req, res): Promise<void> => {
     const workspaceId = String(req.params["workspaceId"]);
     const userId = String(req.params["userId"]);
@@ -3361,7 +3434,7 @@ router.delete(
 
 router.get(
   "/directory/workspaces/:workspaceId/usage-limit-audits",
-  requireTrueAccountAdmin,
+  requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const workspaceId = String(req.params["workspaceId"]);
     const dir = await getDirectory();
@@ -3379,7 +3452,7 @@ router.get(
   },
 );
 
-router.get("/directory/groups", requireAccountAdmin, async (req, res): Promise<void> => {
+router.get("/directory/groups", requireRole("account"), async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
@@ -3411,7 +3484,7 @@ router.get("/directory/groups", requireAccountAdmin, async (req, res): Promise<v
   }
 });
 
-router.get("/directory/members", requireAccountAdmin, async (req, res): Promise<void> => {
+router.get("/directory/members", requireRole("account"), async (req, res): Promise<void> => {
   try {
     const dir = await getDirectory();
     if (!dir) {

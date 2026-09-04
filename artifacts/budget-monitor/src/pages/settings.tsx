@@ -6,10 +6,10 @@ import { Badge } from '@/components/ui/badge';
 import { AlertCircle, CheckCircle, Trash2, Plus, XCircle, Send, ShieldAlert } from 'lucide-react';
 import {
   useGetStatus,
-  useListEditors,
-  useAddEditor,
-  useDeleteEditor,
-  getListEditorsQueryKey,
+  useListAppAdmins,
+  useAddAppAdmin,
+  useDeleteAppAdmin,
+  getListAppAdminsQueryKey,
   useSendEmailTestExample,
   type EmailTestResult,
 } from '@workspace/api-client-react';
@@ -17,7 +17,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuthContext } from '@/components/auth-context';
-import { checkCanAccessSettings } from '@/lib/auth-helpers';
 import {
   formatTestEmailSpend,
   formatTestEmailLabel,
@@ -44,9 +43,9 @@ import {
 export default function Settings() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { isAccountAdmin, realIsAccountAdmin, canTestEmail } = useAuthContext();
-  const canAccessSettings = checkCanAccessSettings(isAccountAdmin, realIsAccountAdmin, canTestEmail);
-  const showAdminControls = isAccountAdmin;
+  const { capabilities } = useAuthContext();
+  const canAccessSettings = capabilities.canManageAccess;
+  const showAdminControls = capabilities.canManageAccess;
 
   const [newEditorUserId, setNewEditorUserId] = useState('');
 
@@ -56,9 +55,9 @@ export default function Settings() {
   const [testResult, setTestResult] = useState<EmailTestResult | null>(null);
 
   const { data: status, isLoading: statusLoading, isError: statusError } = useGetStatus();
-  const { data: editors, isLoading: editorsLoading, isError: editorsError } = useListEditors();
-  const addEditor = useAddEditor();
-  const deleteEditor = useDeleteEditor();
+  const { data: editors, isLoading: editorsLoading, isError: editorsError } = useListAppAdmins();
+  const addEditor = useAddAppAdmin();
+  const deleteEditor = useDeleteAppAdmin();
   const sendEmailTest = useSendEmailTestExample();
   const enterpriseApi = status
     ? getEnterpriseApiStatusPresentation(status)
@@ -71,7 +70,7 @@ export default function Settings() {
       { data: { userId } },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListEditorsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getListAppAdminsQueryKey() });
           setNewEditorUserId('');
           toast({ title: 'Editor added', description: 'Account-wide pool access is now enabled.' });
         },
@@ -84,7 +83,7 @@ export default function Settings() {
       { userId },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListEditorsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getListAppAdminsQueryKey() });
           toast({ title: 'Editor removed' });
         },
       },
@@ -98,6 +97,16 @@ export default function Settings() {
       {
         onSuccess: (result) => {
           setTestResult(result);
+        },
+        onError: (error: any) => {
+          setTestResult({
+            ok: false,
+            recipient: '',
+            subject: '',
+            error: error?.data?.error || 'Failed to send test email.',
+            messageId: null,
+            senderEmail: null,
+          });
         },
       }
     );
@@ -202,7 +211,7 @@ export default function Settings() {
                   <Badge className="w-fit" variant={status.emailConfigured ? 'default' : 'secondary'}>
                     {status.emailConfigured ? 'OK' : 'Not Set'}
                   </Badge>
-                  {canTestEmail && (
+                  {capabilities.canManageAccess && (
                     <Dialog open={testModalOpen} onOpenChange={handleModalOpenChange}>
                       <DialogTrigger asChild>
                         <Button variant="outline" size="sm" className="ml-2" data-testid="button-test-email-modal">
@@ -215,7 +224,7 @@ export default function Settings() {
                           <DialogTitle>Send Test Email</DialogTitle>
                           <DialogDescription>
                             Generate a predefined threshold alert example to verify delivery and formatting.
-                            This is routed only to kody.low@repl.it.
+                            Delivery uses the server-configured test recipient.
                           </DialogDescription>
                         </DialogHeader>
                         <div className="space-y-4 py-2">
@@ -415,9 +424,9 @@ export default function Settings() {
         <>
       <Card>
         <CardHeader>
-          <CardTitle>Account-wide Editors</CardTitle>
+          <CardTitle>Application Administrators</CardTitle>
           <CardDescription>
-            Replit users who can edit allocated pools and run checks without managing settings or access.
+            Replit users with account-level access to this application.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -465,7 +474,7 @@ export default function Settings() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No managed editors configured.</p>
+            <p className="text-sm text-muted-foreground">No application administrators configured.</p>
           )}
         </CardContent>
       </Card>

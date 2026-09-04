@@ -9,16 +9,15 @@ import Dashboard from '@/pages/dashboard';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
-import { Redirect, useRoute, useSearch } from 'wouter';
-import { canOpenGroupInView } from '@/lib/rbac-view';
 import {
   pollingRetryDelay,
   QUERY_STALE_TIME_MS,
 } from '@/lib/client-performance';
-import { checkCanAccessSettings } from '@/lib/auth-helpers';
 import { setUnauthorizedHandler } from '@workspace/api-client-react';
 import { clearAuthCache } from '@workspace/replit-auth-web';
 import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
+import { Redirect } from 'wouter';
+import { previewScopedQueryHash } from '@/lib/preview-query-cache';
 
 const Settings = lazy(() => import('@/pages/settings'));
 const Trends = lazy(() => import('@/pages/trends'));
@@ -41,6 +40,7 @@ const queryClient = new QueryClient({
     mutations: {
       retry: shouldRetryRequest,
       retryDelay: pollingRetryDelay,
+      queryKeyHashFn: previewScopedQueryHash,
     },
   },
 });
@@ -86,33 +86,24 @@ function RouteLoading() {
 }
 
 function Router() {
-  // Account-only routes (settings) are removed for workspace admins so a
-  // direct URL cannot render the account-admin surface. The server still
-  // enforces authorization on the underlying data.
-  const { isAccountAdmin, realIsAccountAdmin, canTestEmail, isAccountWide, role, preview } = useAuthContext();
-
-  const canAccessSettings = checkCanAccessSettings(isAccountAdmin, realIsAccountAdmin, canTestEmail);
-
-  function ScopedGroupRoute() {
-    const [, params] = useRoute('/groups/:groupId');
-    return canOpenGroupInView(params?.groupId ?? '', role, preview)
-      ? <GroupDetail />
-      : <Redirect to="/" />;
-  }
-
-  function ScopedClusterRoute() {
-    const search = useSearch();
-    const groupIds = new URLSearchParams(search)
-      .get('ids')
-      ?.split(',')
-      .filter(Boolean) ?? [];
-    const canOpen = groupIds.length > 0 &&
-      groupIds.every((groupId) => canOpenGroupInView(groupId, role, preview));
-    return canOpen ? <ClusterDetail /> : <Redirect to="/" />;
-  }
+  const { capabilities } = useAuthContext();
 
   function AccountAdminGuideRoute() {
-    return isAccountAdmin ? <UserGuide /> : <Redirect to="/" />;
+    return capabilities.canManageAccess ? <UserGuide /> : <Redirect to="/" />;
+  }
+
+  function SettingsRoute() {
+    if (capabilities.canManageAccess) return <Settings />;
+    return (
+      <div className="p-4 md:p-8" data-testid="settings-forbidden">
+        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
+          403 · Access denied
+        </h1>
+        <p className="mt-2 text-muted-foreground">
+          Settings are only available to account administrators.
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -122,13 +113,13 @@ function Router() {
           <Route path="/" component={Dashboard} />
           <Route path="/user-guide" component={AccountAdminGuideRoute} />
           <Route path="/alerts" component={Alerts} />
-          {isAccountWide && <Route path="/trends" component={Trends} />}
-          {canAccessSettings && <Route path="/settings" component={Settings} />}
-          {isAccountAdmin && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
-          {isAccountAdmin && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
-          {isAccountAdmin && <Route path="/team-budgets" component={TeamBudgets} />}
-          <Route path="/groups/:groupId" component={ScopedGroupRoute} />
-          <Route path="/clusters" component={ScopedClusterRoute} />
+          <Route path="/trends" component={Trends} />
+          <Route path="/settings" component={SettingsRoute} />
+          {capabilities.canManageAccess && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
+          {capabilities.canManageAccess && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
+          {capabilities.canEditAllocations && <Route path="/team-budgets" component={TeamBudgets} />}
+          <Route path="/groups/:groupId" component={GroupDetail} />
+          <Route path="/clusters" component={ClusterDetail} />
           <Route component={NotFound} />
         </Switch>
       </Suspense>

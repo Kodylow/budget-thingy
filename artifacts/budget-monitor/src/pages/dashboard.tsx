@@ -88,11 +88,11 @@ import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
-import { filterGroupsForView } from '@/lib/rbac-view';
 import { compareTeamNames, formatTeamName } from '@/lib/team-names';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 import { dashboardPollInterval } from '@/lib/client-performance';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 
 interface TeamSection {
   teamName: string;
@@ -110,7 +110,7 @@ interface TeamSection {
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const canWrite = useCanWrite();
-  const { isAccountWide, role, preview, isPreviewing } = useAuthContext();
+  const { isAccountWide, role, user, capabilities } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
   const [coverageOpen, setCoverageOpen] = useState(false);
@@ -155,11 +155,19 @@ export default function Dashboard() {
   const { data: teamBudgetsData, isLoading: teamBudgetsLoading } = useGetTeamsBudgets({
     query: { queryKey: getGetTeamsBudgetsQueryKey() },
   });
+  const { data: memberCycleActivity } = useGetUserActivity(
+    { rangeType: 'billing' },
+    { query: { enabled: role === 'member', queryKey: getGetUserActivityQueryKey({ rangeType: 'billing' }) } },
+  );
+  const { data: memberTermActivity } = useGetUserActivity(
+    { rangeType: 'full-term' },
+    { query: { enabled: role === 'member', queryKey: getGetUserActivityQueryKey({ rangeType: 'full-term' }) } },
+  );
 
   const usageAvailable = groupsData?.usageHealth.status !== 'empty';
   const groups = useMemo(
     () =>
-      filterGroupsForView(groupsData?.groups ?? [], role, preview).map((group) => {
+      (groupsData?.groups ?? []).map((group) => {
         return {
           ...group,
           spendUsd: group.rollupSpendUsd,
@@ -167,8 +175,19 @@ export default function Dashboard() {
           paceSpendLoaded: usageAvailable,
         };
       }),
-    [groupsData?.groups, role, preview, usageAvailable],
+    [groupsData?.groups, usageAvailable],
   );
+  const memberWorkspaceIds = [...new Set(groups.map((group) => group.workspaceId))];
+  const memberLimitQueries = useQueries({
+    queries: memberWorkspaceIds.map((workspaceId) =>
+      getListVisibleWorkspaceMembersQueryOptions(workspaceId, {
+        query: {
+          enabled: role === 'member',
+          queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId),
+        },
+      }),
+    ),
+  });
 
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
@@ -200,12 +219,8 @@ export default function Dashboard() {
       // Financial values remain server-owned. Provisional server values stay
       // visible while canonical data refreshes in the background.
       const serverTeamSpend = groupsData?.teamRawSpend?.[teamName];
-      const spendUsd = isPreviewing
-        ? teamGroups.reduce((sum, group) => sum + (group.spendUsd ?? 0), 0)
-        : (serverTeamSpend?.spendUsd ?? 0);
-      const spendLoaded = isPreviewing
-        ? teamGroups.every((group) => group.spendLoaded)
-        : usageAvailable;
+      const spendUsd = serverTeamSpend?.spendUsd ?? 0;
+      const spendLoaded = usageAvailable;
       const paceSpendLoaded = teamGroups.every((group) => group.paceSpendLoaded);
       const paceSpendUsd = teamGroups.reduce(
         (sum, group) => sum + (group.paceSpendUsd ?? 0),
@@ -232,7 +247,7 @@ export default function Dashboard() {
 
     // Canonical budgets may exist before any Replit group is assigned. Keep
     // those teams visible with zero spend so dashboard totals reconcile.
-    if (isAccountWide && !isPreviewing) {
+    if (isAccountWide) {
       for (const [teamName, budgetUsd] of teamBudgetMap) {
         if (teamMap.has(teamName)) continue;
         teamSections.push({
@@ -255,104 +270,7 @@ export default function Dashboard() {
     unassigned.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
     return { teamSections, unassigned };
-  }, [groups, teamBudgetMap, groupsData, isPreviewing, isAccountWide]);
-
-  // Financial summary cards and the table footer must reconcile to the same
-  // visible top-level rows: each team pool once, plus each unassigned group.
-  // Nested group budgets are not added on top of their team's pool.
-  const tableTotals = useMemo(() => {
-    let totalSpendUsd = 0;
-    let totalBudgetUsd = 0;
-    let budgetedSpendUsd = 0;
-    let budgetedPaceSpendUsd = 0;
-    let paceSpendLoaded = true;
-    let budgetedPools = 0;
-
-    const addRow = (
-      spendUsd: number,
-      budgetUsd: number | null,
-      spendLoaded: boolean,
-      paceSpendUsd: number,
-      rowPaceSpendLoaded: boolean,
-    ) => {
-      totalSpendUsd += spendUsd;
-      if (budgetUsd === null || budgetUsd <= 0) return;
-      totalBudgetUsd += budgetUsd;
-      budgetedPools += 1;
-      budgetedSpendUsd += spendUsd;
-      if (!rowPaceSpendLoaded) {
-        paceSpendLoaded = false;
-        return;
-      }
-      budgetedPaceSpendUsd += paceSpendUsd;
-    };
-
-    for (const team of teamSections) {
-      addRow(
-        team.spendUsd,
-        team.budgetUsd,
-        team.spendLoaded,
-        team.paceSpendUsd,
-        team.paceSpendLoaded,
-      );
-    }
-    for (const group of unassigned) {
-      addRow(
-        group.spendUsd ?? 0,
-        group.budgetUsd ?? null,
-        group.spendLoaded,
-        group.paceSpendUsd ?? 0,
-        group.paceSpendLoaded,
-      );
-    }
-    return {
-      totalSpendUsd,
-      totalBudgetUsd,
-      budgetedSpendUsd,
-      budgetedPaceSpendUsd,
-      paceSpendLoaded,
-      totalRemainingUsd: totalBudgetUsd - budgetedSpendUsd,
-      budgetedPools,
-    };
-  }, [teamSections, unassigned]);
-
-  const assignedGroupsSubtotal = useMemo(() => {
-    const memberCount = teamSections.reduce((sum, team) => sum + team.memberCount, 0);
-    const spendUsd = teamSections.reduce((sum, team) => sum + team.spendUsd, 0);
-    const spendLoaded = teamSections.every((team) => team.spendLoaded);
-    const totalBudgetUsd = teamSections.reduce(
-      (sum, team) => sum + (team.budgetUsd != null && team.budgetUsd > 0 ? team.budgetUsd : 0),
-      0,
-    );
-    const budgetedSpendUsd = teamSections.reduce(
-      (sum, team) =>
-        sum + (team.budgetUsd != null && team.budgetUsd > 0 ? team.spendUsd : 0),
-      0,
-    );
-    const budgetedPaceSpendUsd = teamSections.reduce(
-      (sum, team) =>
-        sum + (
-          team.paceSpendLoaded && team.budgetUsd != null && team.budgetUsd > 0
-            ? team.paceSpendUsd
-            : 0
-        ),
-      0,
-    );
-    const paceSpendLoaded = teamSections
-      .filter((team) => team.budgetUsd != null && team.budgetUsd > 0)
-      .every((team) => team.paceSpendLoaded);
-
-    return {
-      memberCount,
-      spendUsd,
-      spendLoaded,
-      totalBudgetUsd,
-      budgetedSpendUsd,
-      budgetedPaceSpendUsd,
-      paceSpendLoaded,
-      totalRemainingUsd: totalBudgetUsd - budgetedSpendUsd,
-    };
-  }, [teamSections]);
+  }, [groups, teamBudgetMap, groupsData, usageAvailable, isAccountWide]);
 
   const toggleTeam = (teamName: string) => {
     setExpandedTeams((prev) => {
@@ -366,37 +284,27 @@ export default function Dashboard() {
   const statCards = [
     {
       title: 'Total Spend',
-      value: role === 'workspace_admin' && isPreviewing
-        ? `$${tableTotals.totalSpendUsd.toFixed(2)}`
-        : `$${(summary?.totalSpendUsd ?? tableTotals.totalSpendUsd).toFixed(2)}`,
+      value: summary ? `$${summary.totalSpendUsd.toFixed(2)}` : '—',
       description: summary?.billingPeriodLabel ?? groupsData?.billingPeriodLabel ?? 'Current period',
       icon: DollarSign,
     },
     {
       title: 'Total Budget',
-      value: `$${tableTotals.totalBudgetUsd.toFixed(2)}`,
-      description: `${tableTotals.budgetedPools} visible pools budgeted`,
+      value: summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : '—',
+      description: `${summary?.budgetedGroups ?? 0} visible groups budgeted`,
       icon: TrendingUp,
     },
     {
       title: 'Remaining',
-      value: role === 'workspace_admin' && isPreviewing
-        ? `$${tableTotals.totalRemainingUsd.toFixed(2)}`
-        : `$${(summary?.totalRemainingUsd ?? tableTotals.totalRemainingUsd).toFixed(2)}`,
+      value: summary?.totalRemainingUsd != null ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—',
       description: 'Across visible budgeted pools',
       icon: Wallet,
-      valueClassName: (role === 'workspace_admin' && isPreviewing
-        ? tableTotals.totalRemainingUsd
-        : (summary?.totalRemainingUsd ?? 0)) < 0 ? 'text-destructive' : '',
+      valueClassName: (summary?.totalRemainingUsd ?? 0) < 0 ? 'text-destructive' : '',
     },
     {
       title: 'Over Threshold',
-      value: role === 'workspace_admin' && isPreviewing
-        ? groups.filter((group) => (group.percentUsed ?? 0) >= 75).length.toString()
-        : summary ? summary.groupsOver75.toString() : '—',
-      description: role === 'workspace_admin' && isPreviewing
-        ? `${groups.filter((group) => (group.percentUsed ?? 0) >= 100).length} over budget`
-        : `${summary?.groupsOver100 ?? 0} over budget`,
+      value: summary ? summary.groupsOver75.toString() : '—',
+      description: `${summary?.groupsOver100 ?? 0} over budget`,
       icon: AlertTriangle,
     },
     {
@@ -467,7 +375,7 @@ export default function Dashboard() {
       </td>
       <td className="py-3 px-4 text-right">
         <div className="flex flex-col items-end gap-1">
-          {canWrite ? (
+          {capabilities.canWriteGroupLimits ? (
             <BudgetInput groupId={group.groupId} currentBudget={group.budgetUsd ?? null} />
           ) : (
             <span className="text-sm font-mono tabular-nums" data-testid={`text-budget-${group.groupId}`}>
@@ -744,70 +652,70 @@ export default function Dashboard() {
     );
   };
 
-  const renderAssignedGroupsSubtotal = () => (
-    <tr
-      className="border-y-2 border-border bg-muted/40 font-semibold"
-      data-testid="row-assigned-groups-subtotal"
-    >
-      <td className="py-3 px-4 text-sm">Assigned groups subtotal</td>
-      <td className="py-3 px-4" />
-      <td className="py-3 px-4 text-right">
-        <span className="text-sm font-mono tabular-nums">
-          {assignedGroupsSubtotal.memberCount}
-        </span>
-      </td>
-      <td className="py-3 px-4 text-right">
-        <span className={`text-sm font-mono tabular-nums${!assignedGroupsSubtotal.spendLoaded ? ' text-muted-foreground' : ''}`}>
-          ${assignedGroupsSubtotal.spendUsd.toFixed(2)}
-        </span>
-      </td>
-      <td className="py-3 px-4 text-right">
-        <span className="text-sm font-mono tabular-nums">
-          ${assignedGroupsSubtotal.totalBudgetUsd.toFixed(2)}
-        </span>
-      </td>
-      <td className="py-3 px-4 text-right">
-        <span className={`text-sm font-mono tabular-nums ${assignedGroupsSubtotal.totalRemainingUsd < 0 ? 'text-destructive' : ''}${!assignedGroupsSubtotal.spendLoaded ? ' text-muted-foreground' : ''}`}>
-          ${assignedGroupsSubtotal.totalRemainingUsd.toFixed(2)}
-        </span>
-      </td>
-      <td className="py-3 px-4 text-right">
-        {assignedGroupsSubtotal.totalBudgetUsd > 0 ? (
-          <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-            <span className={`text-xs font-mono tabular-nums ${assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd >= 1 ? 'text-destructive' : ''}`}>
-              {((assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd) * 100).toFixed(1)}%
-            </span>
-            <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
-              <div
-                className={`h-full transition-all duration-500 ${assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd >= 1 ? 'bg-destructive' : 'bg-primary'}`}
-                style={{ width: `${Math.min((assignedGroupsSubtotal.budgetedSpendUsd / assignedGroupsSubtotal.totalBudgetUsd) * 100, 100)}%` }}
-              />
-            </div>
-          </div>
-        ) : (
-          <span className="text-sm text-muted-foreground">—</span>
-        )}
-      </td>
-      <td className="py-3 px-4 text-right">
-        {assignedGroupsSubtotal.paceSpendLoaded && assignedGroupsSubtotal.totalBudgetUsd > 0 ? (
-          <PaceCell
-            spendUsd={assignedGroupsSubtotal.budgetedPaceSpendUsd}
-            budgetUsd={assignedGroupsSubtotal.totalBudgetUsd}
-            spendLoaded={assignedGroupsSubtotal.paceSpendLoaded}
-            semibold
-            periodStart={summary?.pacePeriodStart ?? ''}
-            periodEnd={summary?.pacePeriodEnd ?? ''}
-            periodLabel={summary?.pacePeriodLabel ?? ''}
-            isFallback={summary?.pacePeriodIsFallback ?? true}
-          />
-        ) : (
-          <span className="text-sm text-muted-foreground">—</span>
-        )}
-      </td>
-    </tr>
-  );
-
   const hasTeams = teamSections.length > 0;
+
+  if (role === 'member') {
+    const cycleUser = memberCycleActivity?.users[0];
+    const termUser = memberTermActivity?.users[0];
+    const effectiveUserId = cycleUser?.userId ?? termUser?.userId ?? user?.id;
+    const limits = memberLimitQueries
+      .map((query) => query.data)
+      .filter((response) => response)
+      .map((response) => ({
+        workspaceName: response!.workspaceName,
+        budget: response!.members.find((member) => member.userId === effectiveUserId)?.budgetUsd ?? null,
+      }));
+
+    return (
+      <div className="p-4 md:p-8">
+        <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
+          <CardHeader>
+            <CardTitle>My Agent usage</CardTitle>
+            <CardDescription>Your server-scoped usage, limits, and group memberships.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Current cycle Agent spend</p>
+                <p className="text-2xl font-bold font-mono tabular-nums" data-testid="text-member-cycle-spend">
+                  {cycleUser ? `$${cycleUser.aiSpendUsd.toFixed(2)}` : '—'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Contract-to-date spend</p>
+                <p className="text-2xl font-bold font-mono tabular-nums" data-testid="text-member-contract-spend">
+                  {termUser ? `$${termUser.spendUsd.toFixed(2)}` : '—'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Per-user limit</p>
+                <div className="space-y-1" data-testid="text-member-limits">
+                  {limits.length ? limits.map((limit) => (
+                    <p key={limit.workspaceName} className="text-sm">
+                      <span className="font-mono font-semibold">
+                        {limit.budget == null ? '—' : `$${limit.budget.toFixed(2)}`}
+                      </span>
+                      {limits.length > 1 && <span className="ml-1 text-muted-foreground">· {limit.workspaceName}</span>}
+                    </p>
+                  )) : <p className="text-2xl font-bold">—</p>}
+                </div>
+              </div>
+            </div>
+            <div className="border-t pt-4">
+              <h2 className="text-sm font-semibold">My groups</h2>
+              <div className="mt-2 flex flex-wrap gap-2" data-testid="list-member-groups">
+                {groups.length ? groups.map((group) => (
+                  <Badge key={group.groupId} variant="secondary">
+                    {group.name}{group.workspaceName ? ` · ${group.workspaceName}` : ''}
+                  </Badge>
+                )) : <span className="text-sm text-muted-foreground">No groups found.</span>}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
@@ -821,7 +729,7 @@ export default function Dashboard() {
           </p>
           <p className="text-[10px] md:text-xs text-muted-foreground mt-1" data-testid="text-reconciliation-scope">
             {role === 'workspace_admin'
-              ? `${preview?.groupName ? `Group admin preview · ${preview.groupName}` : 'Your authorized group scope'} · Custom dates use inclusive UTC days`
+              ? 'Your authorized workspace scope · Custom dates use inclusive UTC days'
               : 'All workspaces you can access · Custom dates use inclusive UTC days'}
           </p>
         </div>
@@ -969,7 +877,6 @@ export default function Dashboard() {
                       ))}
                       {unassigned.length > 0 && (
                         <React.Fragment key="team-section-unassigned">
-                           {renderAssignedGroupsSubtotal()}
                           {renderUnassignedHeader()}
                           {expandedTeams.has('__unassigned__') &&
                             unassigned.map((g) => renderGroupRow(g))}
@@ -981,7 +888,7 @@ export default function Dashboard() {
                       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
                       .map((group) => renderGroupRow(group))
                   )}
-                  {!isPreviewing && summary &&
+                  {summary &&
                     (isAccountWide || summary.usageHealth.accountWorkspaceUnreconciledUsd > 0) && (
                     <tr
                       className="border-b border-border bg-muted/10"
@@ -1029,29 +936,29 @@ export default function Dashboard() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
-                          ${(isPreviewing ? tableTotals.totalSpendUsd : (summary?.totalSpendUsd ?? tableTotals.totalSpendUsd)).toFixed(2)}
+                           {summary ? `$${summary.totalSpendUsd.toFixed(2)}` : '—'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className="text-sm font-mono tabular-nums">
-                          ${tableTotals.totalBudgetUsd.toFixed(2)}
+                           {summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : '—'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <span className={`text-sm font-mono tabular-nums ${tableTotals.totalRemainingUsd < 0 ? 'text-destructive' : ''}`}>
-                          ${tableTotals.totalRemainingUsd.toFixed(2)}
+                         <span className={`text-sm font-mono tabular-nums ${(summary?.totalRemainingUsd ?? 0) < 0 ? 'text-destructive' : ''}`}>
+                           {summary?.totalRemainingUsd != null ? `$${summary.totalRemainingUsd.toFixed(2)}` : '—'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {tableTotals.totalBudgetUsd > 0 ? (
+                         {summary && summary.totalBudgetUsd > 0 ? (
                           <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-                            <span className={`text-xs font-mono tabular-nums ${(tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100 >= 100 ? 'text-destructive' : ''}`}>
-                              {((tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100).toFixed(1)}%
+                             <span className={`text-xs font-mono tabular-nums ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? 'text-destructive' : ''}`}>
+                               {((summary.totalSpendUsd / summary.totalBudgetUsd) * 100).toFixed(1)}%
                             </span>
                             <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
                               <div
-                                className={`h-full transition-all duration-500 ${(tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100 >= 100 ? 'bg-destructive' : 'bg-primary'}`}
-                                style={{ width: `${Math.min((tableTotals.budgetedSpendUsd / tableTotals.totalBudgetUsd) * 100, 100)}%` }}
+                                 className={`h-full transition-all duration-500 ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? 'bg-destructive' : 'bg-primary'}`}
+                                 style={{ width: `${Math.min((summary.totalSpendUsd / summary.totalBudgetUsd) * 100, 100)}%` }}
                               />
                             </div>
                           </div>
@@ -1060,20 +967,7 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {tableTotals.totalBudgetUsd > 0 ? (
-                          <PaceCell
-                            spendUsd={tableTotals.budgetedPaceSpendUsd}
-                            budgetUsd={tableTotals.totalBudgetUsd}
-                            spendLoaded={tableTotals.paceSpendLoaded}
-                            semibold
-                            periodStart={summary?.pacePeriodStart ?? ''}
-                            periodEnd={summary?.pacePeriodEnd ?? ''}
-                            periodLabel={summary?.pacePeriodLabel ?? ''}
-                            isFallback={summary?.pacePeriodIsFallback ?? true}
-                          />
-                        ) : (
-                          <span className="text-sm text-muted-foreground">—</span>
-                        )}
+                         <span className="text-sm text-muted-foreground">—</span>
                       </td>
                     </tr>
                   </tfoot>

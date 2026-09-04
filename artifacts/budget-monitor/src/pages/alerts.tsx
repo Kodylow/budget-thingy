@@ -14,18 +14,16 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuthContext, useCanWrite } from '@/components/auth-context';
 import { NotificationRecipients } from '@/components/notification-recipients';
-import { filterAlertsForView } from '@/lib/rbac-view';
 
 export default function Alerts() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const canWrite = useCanWrite();
-  const { canTestEmail, preview } = useAuthContext();
+  const { canTestEmail } = useAuthContext();
   const [runningCheck, setRunningCheck] = useState(false);
   const [testingAlertId, setTestingAlertId] = useState<number | null>(null);
 
   const { data: alerts, isLoading, isError } = useListAlerts({ limit: 100 });
-  const visibleAlerts = filterAlertsForView(alerts ?? [], preview);
   const runCheck = useRunAlertCheck();
   const sendTest = useSendTestAlert();
 
@@ -103,7 +101,7 @@ export default function Alerts() {
           <CardTitle>Email Activity</CardTitle>
           <CardDescription>
             Delivery history for threshold notifications, including recipients and failures.
-            Test sends reuse the selected alert without changing threshold state. All test sends are routed only to kody.low@repl.it in every environment.
+            Test sends reuse the selected alert without changing threshold state.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -117,9 +115,9 @@ export default function Alerts() {
             <div className="py-12 text-center text-sm text-muted-foreground">
               Email activity is unavailable.
             </div>
-          ) : visibleAlerts.length > 0 ? (
+          ) : (alerts ?? []).length > 0 ? (
             <div className="space-y-3">
-              {visibleAlerts.map((alert) => (
+              {(alerts ?? []).map((alert) => (
                 <div
                   key={alert.id}
                   className="flex flex-wrap sm:flex-nowrap items-start gap-3 md:gap-4 p-3 md:p-4 rounded-lg border border-border hover:bg-muted/50 transition-colors"

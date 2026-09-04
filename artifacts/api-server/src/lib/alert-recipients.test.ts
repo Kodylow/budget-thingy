@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { collectAlertRecipients } from "./alert-recipients";
 
@@ -18,6 +18,9 @@ function member(
 }
 
 describe("collectAlertRecipients", () => {
+  beforeEach(() => {
+    process.env.BOOTSTRAP_ADMIN_EMAIL = "bootstrap-admin@example.com";
+  });
   it("unions account admins, Kody, configured extras, and relevant enabled workspace admins", () => {
     const dir = {
       groups: [],
@@ -52,8 +55,8 @@ describe("collectAlertRecipients", () => {
       ),
     ).toEqual([
       "account@example.com",
+      "bootstrap-admin@example.com",
       "extra@example.com",
-      "kody.low@repl.it",
       "ws1@example.com",
       "ws2@example.com",
     ]);
@@ -74,7 +77,7 @@ describe("collectAlertRecipients", () => {
       ]),
     } as never;
     expect(collectAlertRecipients(dir, [], ["ws-1"])).toEqual([
-      "kody.low@repl.it",
+      "bootstrap-admin@example.com",
       "ws1@example.com",
     ]);
   });

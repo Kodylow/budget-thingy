@@ -20,13 +20,13 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
-  AccountEditor,
-  AccountEditorInput,
   AccountUsageObservationExport,
   AdminEmail,
   AdminEmailInput,
   Alert,
   ApiError,
+  AppAdmin,
+  AppAdminInput,
   AuthUserEnvelope,
   BeginBrowserLoginParams,
   CheckResult,
@@ -36,6 +36,7 @@ import type {
   EmailTestResult,
   EmailTestSelection,
   ErrorEnvelope,
+  ExportProjectsCsvParams,
   ExportUsersCsvParams,
   ForbiddenResponse,
   GetAccountUsageObservationExportParams,
@@ -1549,6 +1550,90 @@ export function useGetAccountUsageObservationExport<TData = Awaited<ReturnType<t
 
 
 
+export const getExportProjectsCsvUrl = (params?: ExportProjectsCsvParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/projects/export?${stringifiedParams}` : `/api/projects/export`
+}
+
+/**
+ * @summary Export scoped project activity as CSV
+ */
+export const exportProjectsCsv = async (params?: ExportProjectsCsvParams, options?: RequestInit): Promise<string> => {
+
+  return customFetch<string>(getExportProjectsCsvUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportProjectsCsvQueryKey = (params?: ExportProjectsCsvParams,) => {
+    return [
+    `/api/projects/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportProjectsCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportProjectsCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ExportProjectsCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportProjectsCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportProjectsCsvQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportProjectsCsv>>> = ({ signal }) => exportProjectsCsv(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportProjectsCsv>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportProjectsCsvQueryResult = NonNullable<Awaited<ReturnType<typeof exportProjectsCsv>>>
+export type ExportProjectsCsvQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Export scoped project activity as CSV
+ */
+
+export function useExportProjectsCsv<TData = Awaited<ReturnType<typeof exportProjectsCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ExportProjectsCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportProjectsCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportProjectsCsvQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getListBudgetsUrl = () => {
 
 
@@ -3027,21 +3112,21 @@ export const useDeleteAdmin = <TError = ErrorType<UnauthorizedResponse | Forbidd
       return useMutation(getDeleteAdminMutationOptions(options));
     }
 
-export const getListEditorsUrl = () => {
+export const getListAppAdminsUrl = () => {
 
 
 
 
-  return `/api/editors`
+  return `/api/app-admins`
 }
 
 /**
  * Available only to Enterprise account administrators and the designated account delegate.
- * @summary List account-wide app editors
+ * @summary List account-wide app admins
  */
-export const listEditors = async ( options?: RequestInit): Promise<AccountEditor[]> => {
+export const listAppAdmins = async ( options?: RequestInit): Promise<AppAdmin[]> => {
 
-  return customFetch<AccountEditor[]>(getListEditorsUrl(),
+  return customFetch<AppAdmin[]>(getListAppAdminsUrl(),
   {
     ...options,
     method: 'GET'
@@ -3054,45 +3139,45 @@ export const listEditors = async ( options?: RequestInit): Promise<AccountEditor
 
 
 
-export const getListEditorsQueryKey = () => {
+export const getListAppAdminsQueryKey = () => {
     return [
-    `/api/editors`
+    `/api/app-admins`
     ] as const;
     }
 
 
-export const getListEditorsQueryOptions = <TData = Awaited<ReturnType<typeof listEditors>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEditors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListAppAdminsQueryOptions = <TData = Awaited<ReturnType<typeof listAppAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAppAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListEditorsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListAppAdminsQueryKey();
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEditors>>> = ({ signal }) => listEditors({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAppAdmins>>> = ({ signal }) => listAppAdmins({ signal, ...requestOptions });
 
 
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEditors>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAppAdmins>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type ListEditorsQueryResult = NonNullable<Awaited<ReturnType<typeof listEditors>>>
-export type ListEditorsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+export type ListAppAdminsQueryResult = NonNullable<Awaited<ReturnType<typeof listAppAdmins>>>
+export type ListAppAdminsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
 
 
 /**
- * @summary List account-wide app editors
+ * @summary List account-wide app admins
  */
 
-export function useListEditors<TData = Awaited<ReturnType<typeof listEditors>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEditors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export function useListAppAdmins<TData = Awaited<ReturnType<typeof listAppAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAppAdmins>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListEditorsQueryOptions(options)
+  const queryOptions = getListAppAdminsQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -3105,26 +3190,26 @@ export function useListEditors<TData = Awaited<ReturnType<typeof listEditors>>, 
 
 
 
-export const getAddEditorUrl = () => {
+export const getAddAppAdminUrl = () => {
 
 
 
 
-  return `/api/editors`
+  return `/api/app-admins`
 }
 
 /**
  * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
- * @summary Add an account-wide app editor
+ * @summary Add an account-wide app admin
  */
-export const addEditor = async (accountEditorInput: AccountEditorInput, options?: RequestInit): Promise<AccountEditor> => {
+export const addAppAdmin = async (appAdminInput: AppAdminInput, options?: RequestInit): Promise<AppAdmin> => {
 
-  return customFetch<AccountEditor>(getAddEditorUrl(),
+  return customFetch<AppAdmin>(getAddAppAdminUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(accountEditorInput)
+    body: JSON.stringify(appAdminInput)
   }
 );}
 
@@ -3132,11 +3217,11 @@ export const addEditor = async (accountEditorInput: AccountEditorInput, options?
 
 
 
-export const getAddEditorMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addEditor>>, TError,{data: BodyType<AccountEditorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof addEditor>>, TError,{data: BodyType<AccountEditorInput>}, TContext> => {
+export const getAddAppAdminMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAppAdmin>>, TError,{data: BodyType<AppAdminInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addAppAdmin>>, TError,{data: BodyType<AppAdminInput>}, TContext> => {
 
-const mutationKey = ['addEditor'];
+const mutationKey = ['addAppAdmin'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -3146,10 +3231,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addEditor>>, {data: BodyType<AccountEditorInput>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addAppAdmin>>, {data: BodyType<AppAdminInput>}> = (props) => {
           const {data} = props ?? {};
 
-          return  addEditor(data,requestOptions)
+          return  addAppAdmin(data,requestOptions)
         }
 
 
@@ -3159,39 +3244,39 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type AddEditorMutationResult = NonNullable<Awaited<ReturnType<typeof addEditor>>>
-    export type AddEditorMutationBody = BodyType<AccountEditorInput>
-    export type AddEditorMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+    export type AddAppAdminMutationResult = NonNullable<Awaited<ReturnType<typeof addAppAdmin>>>
+    export type AddAppAdminMutationBody = BodyType<AppAdminInput>
+    export type AddAppAdminMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
 
     /**
- * @summary Add an account-wide app editor
+ * @summary Add an account-wide app admin
  */
-export const useAddEditor = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addEditor>>, TError,{data: BodyType<AccountEditorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useAddAppAdmin = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAppAdmin>>, TError,{data: BodyType<AppAdminInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof addEditor>>,
+        Awaited<ReturnType<typeof addAppAdmin>>,
         TError,
-        {data: BodyType<AccountEditorInput>},
+        {data: BodyType<AppAdminInput>},
         TContext
       > => {
-      return useMutation(getAddEditorMutationOptions(options));
+      return useMutation(getAddAppAdminMutationOptions(options));
     }
 
-export const getDeleteEditorUrl = (userId: string,) => {
+export const getDeleteAppAdminUrl = (userId: string,) => {
 
 
 
 
-  return `/api/editors/${encodeURIComponent(String(userId))}`
+  return `/api/app-admins/${encodeURIComponent(String(userId))}`
 }
 
 /**
  * Available only to Enterprise account administrators and the designated account delegate.
- * @summary Remove an account-wide app editor
+ * @summary Remove an account-wide app admin
  */
-export const deleteEditor = async (userId: string, options?: RequestInit): Promise<OkResponse> => {
+export const deleteAppAdmin = async (userId: string, options?: RequestInit): Promise<OkResponse> => {
 
-  return customFetch<OkResponse>(getDeleteEditorUrl(userId),
+  return customFetch<OkResponse>(getDeleteAppAdminUrl(userId),
   {
     ...options,
     method: 'DELETE'
@@ -3204,11 +3289,11 @@ export const deleteEditor = async (userId: string, options?: RequestInit): Promi
 
 
 
-export const getDeleteEditorMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEditor>>, TError,{userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof deleteEditor>>, TError,{userId: string}, TContext> => {
+export const getDeleteAppAdminMutationOptions = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAppAdmin>>, TError,{userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAppAdmin>>, TError,{userId: string}, TContext> => {
 
-const mutationKey = ['deleteEditor'];
+const mutationKey = ['deleteAppAdmin'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -3218,10 +3303,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteEditor>>, {userId: string}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAppAdmin>>, {userId: string}> = (props) => {
           const {userId} = props ?? {};
 
-          return  deleteEditor(userId,requestOptions)
+          return  deleteAppAdmin(userId,requestOptions)
         }
 
 
@@ -3231,22 +3316,22 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type DeleteEditorMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEditor>>>
+    export type DeleteAppAdminMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAppAdmin>>>
 
-    export type DeleteEditorMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+    export type DeleteAppAdminMutationError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
 
     /**
- * @summary Remove an account-wide app editor
+ * @summary Remove an account-wide app admin
  */
-export const useDeleteEditor = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEditor>>, TError,{userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useDeleteAppAdmin = <TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAppAdmin>>, TError,{userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof deleteEditor>>,
+        Awaited<ReturnType<typeof deleteAppAdmin>>,
         TError,
         {userId: string},
         TContext
       > => {
-      return useMutation(getDeleteEditorMutationOptions(options));
+      return useMutation(getDeleteAppAdminMutationOptions(options));
     }
 
 export const getListDirectoryMembersUrl = (params?: ListDirectoryMembersParams,) => {

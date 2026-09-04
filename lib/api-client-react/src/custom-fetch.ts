@@ -8,6 +8,7 @@ export type BodyType<T> = T;
 
 export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
+export type PreviewAsGetter = () => string | null;
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
@@ -17,6 +18,8 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+
+let _previewAsGetter: PreviewAsGetter | null = null;
 let _unauthorizedHandler: (() => void) | null = null;
 
 /**
@@ -43,6 +46,11 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/** Register the current account-admin preview identity for generated requests. */
+export function setPreviewAsGetter(getter: PreviewAsGetter | null): void {
+  _previewAsGetter = getter;
 }
 
 /**
@@ -368,6 +376,14 @@ export async function customFetch<T = unknown>(
     }
   }
 
+  // Headers#set deliberately replaces any caller-provided value, ensuring each
+  // request has at most one preview header.
+  if (_previewAsGetter) {
+    const previewAs = getPreviewAs();
+    if (previewAs) headers.set("x-preview-as", previewAs);
+    else headers.delete("x-preview-as");
+  }
+
   const requestInfo = { method, url: resolveUrl(input) };
 
   const response = await fetch(input, { ...init, method, headers });
@@ -381,4 +397,9 @@ export async function customFetch<T = unknown>(
   }
 
   return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+}
+
+/** Read the preview identity currently applied to generated requests. */
+export function getPreviewAs(): string | null {
+  return _previewAsGetter?.() ?? null;
 }

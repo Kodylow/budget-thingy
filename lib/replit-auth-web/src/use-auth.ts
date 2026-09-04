@@ -38,16 +38,20 @@ function getBasePath() {
   return import.meta.env.BASE_URL.replace(/\/+$/, '') || '/';
 }
 
-export function useAuth(): AuthState {
+export function useAuth(previewAs: string | null = null): AuthState {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [auth, setAuth] = useState<AuthAuthorization | null>(null);
   const [capabilities, setCapabilities] = useState<AuthCapabilities | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadedPreviewAs, setLoadedPreviewAs] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setIsLoading(true);
 
-    fetch('/api/auth/user', { credentials: 'include' })
+    const headers = new Headers();
+    if (previewAs) headers.set('X-Preview-As', previewAs);
+    fetch('/api/auth/user', { credentials: 'include', headers })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<AuthUserEnvelope>;
@@ -57,6 +61,7 @@ export function useAuth(): AuthState {
           setUser(data.user ?? null);
           setAuth(data.auth ?? null);
           setCapabilities(data.capabilities ?? null);
+          setLoadedPreviewAs(previewAs);
           setIsLoading(false);
         }
       })
@@ -65,6 +70,7 @@ export function useAuth(): AuthState {
           setUser(null);
           setAuth(null);
           setCapabilities(null);
+          setLoadedPreviewAs(previewAs);
           setIsLoading(false);
         }
       });
@@ -72,7 +78,7 @@ export function useAuth(): AuthState {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [previewAs]);
 
   useEffect(() => {
     const clear = () => {
@@ -101,7 +107,7 @@ export function useAuth(): AuthState {
     user,
     auth,
     capabilities,
-    isLoading,
+    isLoading: isLoading || loadedPreviewAs !== previewAs,
     isAuthenticated: !!user,
     login,
     logout,

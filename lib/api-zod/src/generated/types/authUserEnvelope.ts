@@ -11,7 +11,7 @@ import type { AuthUser } from './authUser';
 
 export interface AuthUserEnvelope {
   user: AuthUser | null;
-  /** Resolved authorization, or null when the user is unauthenticated or is neither an account admin nor an enabled workspace admin (access denied). */
+  /** Resolved authorization, or null when the user is unauthenticated or is not an active Enterprise directory member (access denied). */
   auth: AuthAuthorization | null;
   capabilities: AuthCapabilities;
 }
