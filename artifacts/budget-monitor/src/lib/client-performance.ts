@@ -40,17 +40,27 @@ export function dashboardPollInterval(
 export function reportDashboardNumbersPainted(): () => void {
   const fetchCompleteMark = 'dashboard-final-fetch-complete';
   const numbersPaintedMark = 'dashboard-numbers-painted';
-  const measurement = 'dashboard-fetch-complete-to-numbers-painted';
+  const fetchToPaintMeasurement = 'dashboard-fetch-complete-to-numbers-painted';
+  const navigationToPaintMeasurement = 'dashboard-navigation-to-numbers-painted';
 
   performance.mark(fetchCompleteMark);
   let paintedFrame = 0;
   const committedFrame = requestAnimationFrame(() => {
     paintedFrame = requestAnimationFrame(() => {
       performance.mark(numbersPaintedMark);
-      performance.measure(measurement, fetchCompleteMark, numbersPaintedMark);
-      const duration = performance.getEntriesByName(measurement).at(-1)?.duration;
-      if (duration !== undefined) {
-        console.info(`[performance] ${measurement}: ${duration.toFixed(1)}ms`);
+      performance.measure(fetchToPaintMeasurement, fetchCompleteMark, numbersPaintedMark);
+      const paintedAt = performance.getEntriesByName(numbersPaintedMark).at(-1)?.startTime;
+      if (paintedAt !== undefined) {
+        performance.measure(navigationToPaintMeasurement, {
+          start: 0,
+          duration: paintedAt,
+        });
+      }
+      for (const measurement of [fetchToPaintMeasurement, navigationToPaintMeasurement]) {
+        const duration = performance.getEntriesByName(measurement).at(-1)?.duration;
+        if (duration !== undefined) {
+          console.info(`[performance] ${measurement}: ${duration.toFixed(1)}ms`);
+        }
       }
     });
   });

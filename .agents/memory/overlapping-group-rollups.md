@@ -17,10 +17,6 @@ Correct per-user total = **max spend per (user, workspaceId)** summed across dis
 - Plus extra-workspace spend (account-wide, only shown to account admins).
 - The displayed group/team is the one with the HIGHEST single-group spend for that user.
 
-Implementation lives in monitor.ts Pass 1.5 (two copies — `/users/activity` and `/export/users.csv`):
-- `userWorkspaceMaxSpend` / `csvWorkspaceMaxSpend`: `Map<userId, Map<workspaceId, maxSpend>>`
-- After the group loop, set `attr.spendUsd = [...wsMap.values()].reduce((sum, s) => sum + s, 0)`
-
 **Why this matters:** An enterprise user in N groups within the same workspace would otherwise show N× their real spend. The max-per-workspace / sum-across-workspaces pattern is the correct aggregation and is validated by the test suite in `monitor.users-activity.test.mjs`.
 
 For parent workspaces that contain several Comcast team families, match the full normalized workspace name as a bounded prefix only when no exact team-name match exists, then use explicit Comcast group membership to select the child team. That child-team ownership outranks incidental local groups such as PREPROD.

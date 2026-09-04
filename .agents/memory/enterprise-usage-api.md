@@ -3,9 +3,9 @@ name: Replit Enterprise usage API
 description: Rate-limit and query semantics of api.replit.com/v1 usage/groups endpoints
 ---
 
-- Enterprise API traffic uses interactive, scheduled, and backfill workers sharing one live header-driven request budget. Interactive capacity is reserved; background classes are capped and fixed sleeps are forbidden.
-- **Why:** one serial queue made user work wait behind long synchronizations, while unconstrained workers trip 429s. Per-request admission preserves responsiveness without overspending.
-- **How to apply:** classify queued work explicitly, keep all Enterprise requests behind shared admission, and honor the strictest reset/Retry-After boundary across out-of-order responses.
+- Enterprise API traffic uses interactive, scheduled, and backfill workers sharing one live header-driven request budget. Interactive capacity is reserved; background classes are capped, and scheduled workspace-day ingestion may run concurrently only within that admission budget.
+- **Why:** a global serial queue makes user work wait behind long synchronizations, while unconstrained workers trip 429s. Per-request admission preserves responsiveness without overspending.
+- **How to apply:** classify work explicitly, keep Enterprise traffic behind shared admission, and honor the strictest reset/Retry-After boundary across out-of-order responses. Do not reintroduce a global serial queue.
 - `groupId` filter on `/usage` requires `workspaceId`; `billingPeriod=current|previous` resolves the account's real billing interval (use the returned `interval.startTime` as the period key).
 - Orval + zod v3: avoid `format: email` because it generates unsupported `zod.email()`. Avoid `format: date`/`date-time` when handlers need ISO strings because generated schemas convert them to `Date`.
 - **Why:** query validation rejected valid ISO date strings, while response parsing silently changed date-only values into timestamps.

@@ -15,9 +15,10 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     }
     const usage = await usageForRequest(
       req.authz!, dir, req.query as Record<string, unknown>, true);
-    const cycleUsage = await usageForRequest(
-      req.authz!, dir, { rangeType: "billing" }, true);
-    const dailyRollups = await dailyUsageRollups(dir, usage);
+    const [dailyRollups, cycleUsage] = await Promise.all([
+      dailyUsageRollups(dir, usage),
+      usageForRequest(req.authz!, dir, { rangeType: "billing" }, true),
+    ]);
     const mergePlan = buildCanonicalGroupMergePlan(usage.groups, dir.workspaces);
     if (mergePlan.hiddenGroupIds.has(group.id)) {
       res.status(404).json({ error: "Group not found" });
@@ -69,6 +70,16 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const mergedBudget = resolveCanonicalMergedGroupBudget(group.id, mergePlan, budgetMap);
     const budget = effectiveGroupBudget(mergedBudget?.amountUsd);
     const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
+    const monthlyAgentLimitUsd =
+      dir.budgets.groupLimits.get(group.workspaceId)?.get(group.id) ?? null;
+    const cycleAgentSpendUsd = sourceIds.reduce(
+      (sum, id) =>
+        sum + [...(cycleUsage.rollup.aiSpendByGroup.get(id)?.values() ?? [])]
+          .reduce((subtotal, amount) => subtotal + amount, 0),
+      0,
+    );
+    const cycleAgentSpendLoaded = cycleUsage.rollup.isComplete;
+    const hasAgentLimit = monthlyAgentLimitUsd != null && monthlyAgentLimitUsd > 0;
     const billingPeriodStart = getBillingPeriod().start;
     const fired =
       billingPeriodStart && budget.amountUsd != null
@@ -161,16 +172,6 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       (sum, id) => sum + (rollupMemberCounts.get(id) ?? 0),
       0,
     );
-    const monthlyAgentLimitUsd =
-      dir.budgets.groupLimits.get(group.workspaceId)?.get(group.id) ?? null;
-    const cycleAgentSpendUsd = sourceIds.reduce(
-      (sum, id) =>
-        sum + [...(cycleUsage.rollup.aiSpendByGroup.get(id)?.values() ?? [])]
-          .reduce((subtotal, amount) => subtotal + amount, 0),
-      0,
-    );
-    const hasAgentLimit =
-      monthlyAgentLimitUsd != null && monthlyAgentLimitUsd > 0;
 
     res.json(
       GetGroupDetailResponse.parse({
@@ -201,15 +202,16 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           remainingUsd: combinedLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
           percentUsed: combinedLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
           monthlyAgentLimitUsd,
-          cycleAgentSpendUsd,
-          agentRemainingUsd: hasAgentLimit
+          cycleAgentSpendUsd: cycleAgentSpendLoaded ? cycleAgentSpendUsd : null,
+          agentRemainingUsd: cycleAgentSpendLoaded && hasAgentLimit
             ? monthlyAgentLimitUsd! - cycleAgentSpendUsd
             : null,
-          agentPercentUsed: hasAgentLimit
+          agentPercentUsed: cycleAgentSpendLoaded && hasAgentLimit
             ? (cycleAgentSpendUsd / monthlyAgentLimitUsd!) * 100
             : null,
-          agentBlocked:
-            hasAgentLimit && cycleAgentSpendUsd >= monthlyAgentLimitUsd!,
+          agentBlocked: cycleAgentSpendLoaded
+            ? hasAgentLimit && cycleAgentSpendUsd >= monthlyAgentLimitUsd!
+            : null,
           thresholdsFired: fired,
           history: detailHistoryArr,
           projectedSpendUsd: combinedLoaded

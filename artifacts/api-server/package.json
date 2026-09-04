@@ -8,6 +8,7 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "ingest:once": "tsx ./src/ingest-once.ts",
+    "benchmark:warm": "NODE_ENV=development tsx ./src/benchmark-warm.ts",
     "test": "NODE_ENV=test LOG_LEVEL=silent vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

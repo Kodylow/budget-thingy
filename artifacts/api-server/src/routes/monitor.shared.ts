@@ -428,27 +428,53 @@ export function usageHealth(
   };
 }
 
+const dailyRollupMemo = new WeakMap<
+  UsageSnapshot,
+  Map<string, Promise<Map<string, SnapshotUsageRollup>>>
+>();
+
 export async function dailyUsageRollups(
   dir: Awaited<ReturnType<typeof getDirectory>>,
   usage: Awaited<ReturnType<typeof usageForRequest>>,
 ): Promise<Map<string, SnapshotUsageRollup>> {
+  const currentUtcDay = new Date().toISOString().slice(0, 10);
+  const key = JSON.stringify([
+    usage.authz.userId,
+    usage.authz.role,
+    usage.authz.workspaceIds,
+    usage.authz.teamNames,
+    usage.authz.groupIds,
+    usage.authz.userIds,
+    usage.groups.map((group) => group.id),
+    getDirectoryFreshness().dataAsOf,
+    currentUtcDay,
+  ]);
+  const byScope = dailyRollupMemo.get(usage.snapshot) ?? new Map();
+  dailyRollupMemo.set(usage.snapshot, byScope);
+  const current = byScope.get(key);
+  if (current) return current;
+
   const startDate = usage.selection.window.start.slice(0, 10);
   const endDate = new Date(Date.parse(usage.selection.window.end) - 1)
     .toISOString().slice(0, 10);
-  const roster = await getRosterHistory(
+  const computed = getRosterHistory(
     usage.groups.map((group) => group.id),
     startDate,
     endDate,
-  );
-  return computeHistoricalSnapshotUsageRollups({
-    snapshot: usage.snapshot,
-    groups: usage.groups,
-    currentUtcDay: new Date().toISOString().slice(0, 10),
-    currentMembersByGroup: visibleGroupMembers(usage.authz, dir.groupMembers),
-    completedRosterDays: roster.completedDays,
-    rosterMembersByDate: visibleRosterMembers(usage.authz, roster.membersByDate),
-    projectInfoByWorkspace: usage.projectMetadata.byWorkspace,
+  ).then((roster) => computeHistoricalSnapshotUsageRollups({
+      snapshot: usage.snapshot,
+      groups: usage.groups,
+      currentUtcDay,
+      currentMembersByGroup: visibleGroupMembers(usage.authz, dir.groupMembers),
+      completedRosterDays: roster.completedDays,
+      rosterMembersByDate: visibleRosterMembers(usage.authz, roster.membersByDate),
+      projectInfoByWorkspace: usage.projectMetadata.byWorkspace,
+    }));
+  byScope.set(key, computed);
+  void computed.catch(() => {
+    if (byScope.get(key) === computed) byScope.delete(key);
   });
+  return computed;
 }
 
 export interface EffectiveBudget {

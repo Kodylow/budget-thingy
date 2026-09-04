@@ -21,6 +21,7 @@ const sections = [
   { id: 'blocking', label: 'Blocking' },
   { id: 'roles', label: 'Roles' },
   { id: 'freshness', label: 'Freshness' },
+  { id: 'notifications', label: 'Notifications' },
 ] as const;
 
 function GuideSection({
@@ -144,9 +145,10 @@ export default function UserGuide() {
           <RuleList>
             <li><strong className="text-foreground">Workspace</strong> is the Replit workspace that owns the directory membership and usage.</li>
             <li><strong className="text-foreground">Team</strong> is the business planning level used for annual allocations and reporting.</li>
-            <li><strong className="text-foreground">Family</strong> combines matching Admin, Member, and Viewer role groups within a workspace.</li>
-            <li><strong className="text-foreground">Role group</strong> is the actual Replit group whose membership determines access and limit targets.</li>
-            <li>A person shown in several role groups is deduplicated in family and team totals; spend stays with the workspace where it occurred.</li>
+            <li><strong className="text-foreground">Family</strong> combines matching role groups within one workspace for display and reporting.</li>
+            <li><strong className="text-foreground">Role group</strong> is the actual Replit group whose membership contributes to scoped access and reporting.</li>
+            <li>Overlapping membership is deduplicated with stable workspace-qualified ownership. Usage that cannot be assigned remains visible in that workspace’s <strong className="text-foreground">No group</strong> row.</li>
+            <li>Project attribution explains usage but does not replace canonical member accounting for allocations, totals, or alerts.</li>
           </RuleList>
           <Callout label="Example">
             <span className="inline-flex flex-wrap items-center gap-1 text-foreground">
@@ -167,8 +169,10 @@ export default function UserGuide() {
             <li>An <strong className="text-foreground">annual allocation</strong> is the team’s planning total: its admin-managed baseline plus approved adjustments.</li>
             <li>Changing an annual allocation does not write a Replit usage limit.</li>
             <li>A <strong className="text-foreground">monthly Agent limit</strong> resets on the billing cycle day and is the amount sent to Replit for enforcement.</li>
-            <li>The default team monthly limit is the annual allocation divided by 12; account administrators may set a manual monthly value.</li>
-            <li>Target overrides divide or redirect the team limit across specific workspace member groups. A target total difference is informational and does not prevent an apply.</li>
+            <li>The effective annual allocation is the saved baseline plus approved adjustments. Its monthly value is derived by dividing by 12 unless an authorized administrator saves a manual monthly value.</li>
+            <li>Saving or reconciling a desired monthly value is read-only with respect to Replit enforcement; only a separate authorized apply writes upstream.</li>
+            <li>Only explicitly assigned, enabled, non-legacy Member/Members groups can receive team group limits. Target overrides divide or redirect the amount, and a target-total difference is informational.</li>
+            <li>A member limit is one workspace/user value even when that person appears in several role groups. Remaining uses complete current-cycle Agent usage and is unknown when that evidence is incomplete.</li>
           </RuleList>
         </GuideSection>
 
@@ -179,7 +183,7 @@ export default function UserGuide() {
           description="Dashboard allocations and alert thresholds inform operators; Replit limits enforce usage."
         >
           <RuleList>
-            <li>Reaching an applied monthly Agent group or member limit blocks paid services covered by that Replit limit.</li>
+            <li>Reaching an applied monthly Agent group or member limit blocks paid services covered by that Replit limit until its billing-cycle reset or an authorized limit change.</li>
             <li>Annual allocations, dashboard percentages, and email thresholds do not block usage by themselves.</li>
             <li>Saving a desired monthly limit in Budget Monitor does not change enforcement until an authorized account administrator applies it upstream.</li>
             <li>Legacy copies shown for reference are not member-group limit targets.</li>
@@ -196,10 +200,11 @@ export default function UserGuide() {
           description="What you can see and change follows your highest applicable account, workspace, or team role."
         >
           <RuleList>
-            <li><strong className="text-foreground">Enterprise account administrators</strong> see the full account and manage access, allocations, recipients, visibility, and upstream limits.</li>
-            <li><strong className="text-foreground">Managed account editors</strong> can work with account-wide allocations and reporting, but cannot manage the editor allowlist as true account administrators do.</li>
-            <li><strong className="text-foreground">Workspace administrators</strong> see their authorized workspace scope and can manage supported member limits there.</li>
-            <li><strong className="text-foreground">Team administrators</strong> see the families they administer across the team’s represented workspaces.</li>
+            <li>Every response is limited to the union of your account, workspace, team, group, and member scopes. Controls appear only when you also hold the required capability.</li>
+            <li><strong className="text-foreground">True Enterprise account administrators</strong> see the full account, manage access and notification settings, and can apply upstream group limits.</li>
+            <li><strong className="text-foreground">Managed account editors</strong> can use account-wide reporting and allocation tools, but cannot manage access/settings or apply group limits reserved for true administrators.</li>
+            <li><strong className="text-foreground">Workspace administrators</strong> see their authorized workspaces and can manage supported member limits only in those workspaces.</li>
+            <li><strong className="text-foreground">Team administrators</strong> see only the canonical families and workspaces in their team scope.</li>
             <li><strong className="text-foreground">Members</strong> see their own usage, limits, and group memberships.</li>
           </RuleList>
         </GuideSection>
@@ -212,10 +217,26 @@ export default function UserGuide() {
         >
           <RuleList>
             <li><strong className="text-foreground">Data as of</strong> is the newest usage timestamp included in the displayed figures, not the time the page was opened.</li>
-            <li>Data views check for updated server results every 60 seconds. This does not change the backend ingestion cadence.</li>
+            <li>The server’s single scheduled ingest cycle runs at startup and every 10 minutes; the page checks for updated server results every 60 seconds.</li>
             <li>Available numeric values remain visible during refreshes; they are not replaced by loading placeholders.</li>
+            <li>If a refresh is running or fails, the latest successful durable snapshot remains readable while freshness and coverage are reported separately.</li>
             <li>Partial, stale, and request failures appear once as transient notifications. Repeated polling failures do not stack notices.</li>
             <li>When fresh data returns, the active notification clears without a success banner.</li>
+          </RuleList>
+        </GuideSection>
+
+        <GuideSection
+          id="notifications"
+          icon={Info}
+          title="Notifications and automated email"
+          description="Email reports threshold crossings; it does not enforce usage."
+        >
+          <RuleList>
+            <li>Automated email is controlled by an account-admin setting and is disabled by default.</li>
+            <li>When the kill switch is off, or delivery/recipients are unavailable, thresholds are not marked as sent and can be evaluated again after delivery is restored.</li>
+            <li>Each check sends at most the highest newly crossed allocation threshold for an entity, preventing a burst of 50/75/90/100% messages.</li>
+            <li>Alert history records the spend and allocation at send time. Scoped viewers cannot see account-wide shared-team alerts that include workspaces outside their authorization.</li>
+            <li>Manual test emails are delivery checks only; they do not change threshold history or enforcement.</li>
           </RuleList>
         </GuideSection>
       </div>

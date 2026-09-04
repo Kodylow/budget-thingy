@@ -2150,14 +2150,15 @@ components:
           type: ["number", "null"]
           description: Current upstream Replit Agent group limit.
         cycleAgentSpendUsd:
-          type: number
-          description: Agent spend in the current Replit billing cycle.
+          type: ["number", "null"]
+          description: Agent spend in the current Replit billing cycle, null when cycle coverage is incomplete.
         agentPercentUsed:
           type: ["number", "null"]
         agentRemainingUsd:
           type: ["number", "null"]
         agentBlocked:
-          type: boolean
+          type: ["boolean", "null"]
+          description: Whether the applied Agent limit is reached, null when cycle coverage is incomplete.
         thresholdsFired:
           type: array
           description: Thresholds (50, 75, 90, 100) already alerted this billing period

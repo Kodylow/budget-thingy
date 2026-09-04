@@ -54,6 +54,7 @@ router.get("/groups", async (req, res): Promise<void> => {
             .reduce((subtotal, amount) => subtotal + amount, 0),
         0,
       );
+      const cycleAgentSpendLoaded = cycleUsage.rollup.isComplete;
       const hasAgentLimit = monthlyAgentLimitUsd != null && monthlyAgentLimitUsd > 0;
       const canonicalGroup = dir.account.roleGroupsById.get(group.id)!;
       return {
@@ -78,14 +79,16 @@ router.get("/groups", async (req, res): Promise<void> => {
         remainingUsd: hasBudget ? budget.amountUsd! - spendUsd : null,
         percentUsed: hasBudget ? (spendUsd / budget.amountUsd!) * 100 : null,
         monthlyAgentLimitUsd,
-        cycleAgentSpendUsd,
-        agentRemainingUsd: hasAgentLimit
+        cycleAgentSpendUsd: cycleAgentSpendLoaded ? cycleAgentSpendUsd : null,
+        agentRemainingUsd: cycleAgentSpendLoaded && hasAgentLimit
           ? monthlyAgentLimitUsd! - cycleAgentSpendUsd
           : null,
-        agentPercentUsed: hasAgentLimit
+        agentPercentUsed: cycleAgentSpendLoaded && hasAgentLimit
           ? (cycleAgentSpendUsd / monthlyAgentLimitUsd!) * 100
           : null,
-        agentBlocked: hasAgentLimit && cycleAgentSpendUsd >= monthlyAgentLimitUsd!,
+        agentBlocked: cycleAgentSpendLoaded
+          ? hasAgentLimit && cycleAgentSpendUsd >= monthlyAgentLimitUsd!
+          : null,
         thresholdsFired: fired.get(group.id) ?? [],
         history: [...dailyRollups].map(([date, daily]) => ({
           date,
@@ -112,7 +115,7 @@ router.get("/groups", async (req, res): Promise<void> => {
         rawMemberSpendUsd: 0, rawMemberSpendLoaded: false,
         spendUpdatedAt: usage.snapshot.dataAsOf, budgetUsd: null, budgetSource: null,
         remainingUsd: null, percentUsed: null, thresholdsFired: [], history: [],
-        monthlyAgentLimitUsd: null, cycleAgentSpendUsd: 0,
+        monthlyAgentLimitUsd: null, cycleAgentSpendUsd: null,
         agentRemainingUsd: null, agentPercentUsed: null, agentBlocked: false,
         projectedSpendUsd: null,
       });

@@ -224,13 +224,20 @@ export interface Group {
      * @nullable
      */
   monthlyAgentLimitUsd: number | null;
-  /** Agent spend in the current Replit billing cycle. */
-  cycleAgentSpendUsd: number;
+  /**
+     * Agent spend in the current Replit billing cycle, null when cycle coverage is incomplete.
+     * @nullable
+     */
+  cycleAgentSpendUsd: number | null;
   /** @nullable */
   agentPercentUsed: number | null;
   /** @nullable */
   agentRemainingUsd: number | null;
-  agentBlocked: boolean;
+  /**
+     * Whether the applied Agent limit is reached, null when cycle coverage is incomplete.
+     * @nullable
+     */
+  agentBlocked: boolean | null;
   /** Thresholds (50, 75, 90, 100) already alerted this billing period */
   thresholdsFired: number[];
   /** Daily spend snapshots for the current billing period, oldest first */

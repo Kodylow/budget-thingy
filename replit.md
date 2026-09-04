@@ -25,28 +25,34 @@ Monitors spending by group and team across the Comcast Replit Enterprise account
 ## Where things live
 
 - `lib/api-spec/openapi.yaml` — API contract (source of truth); codegen → `lib/api-client-react` (hooks) and `lib/api-zod` (validation)
-- `lib/db/src/schema/` — DB tables for pools, notification recipients/history, editor access, teams, auth, and durable usage caches
-- `artifacts/api-server/src/lib/enterprise.ts` — Replit Enterprise API client, serial rate-limited usage queue, directory + spend caches
-- `artifacts/api-server/src/lib/checker.ts` — background threshold checker (every 10 min) + manual check
-- `artifacts/api-server/src/lib/email.ts` — AgentMail sending layer with a success-only 10-minute sender-inbox lookup cache
-- `artifacts/api-server/src/routes/monitor.ts` — all budget-monitor routes
+- `lib/db/src/schema/` — DB tables for allocations, notifications, access, canonical team settings, auth, and durable daily usage facts
+- `artifacts/api-server/src/lib/ingest.ts` — the single scheduled ingest owner: directory refresh, daily usage replacement/backfill, reconciliation, threshold checks, and limit-policy work
+- `artifacts/api-server/src/lib/usage-store.ts` — memoized, DB-first reads over durable member/project/workspace/account daily facts, including coverage and freshness classification
+- `artifacts/api-server/src/lib/enterprise.ts` and `enterprise-directory-merge.ts` — Enterprise API admission plus canonical workspace → team → family → role-group directory construction
+- `artifacts/api-server/src/lib/checker.ts`, `notification-settings.ts`, and `email.ts` — threshold evaluation, the durable automated-email kill switch, recipient resolution, and AgentMail delivery
+- `artifacts/api-server/src/routes/monitor.ts` — authenticated route composition; concrete owners are the `monitor.groups-*`, `monitor.summary`, `monitor.teams`, `monitor.limits`, `monitor.alerts`, `monitor.admin`, `monitor.directory`, and export route modules
 - `artifacts/budget-monitor/` — web frontend (dashboard `/`, alerts `/alerts`, settings `/settings`); theme in `src/index.css`
+- `docs/warm-store-benchmark.md` — reproducible authenticated API and browser warm-store benchmark procedure and latest results
 
 ## Architecture decisions
 
-- Enterprise `/usage` is rate-limited (~100 req/min): every usage call goes through ONE serial priority queue (`enterprise.ts`) with pacing, Retry-After backoff, and X-RateLimit awareness. Never call `/usage` outside the queue.
-- Data views refetch on a flat 60-second interval. Numeric values from successful responses stay visible during refreshes; partial, stale, and request failures use deduplicated transient toasts that clear silently on recovery.
-- Spend cache TTL 10 min; directory (workspaces/groups/members) TTL 15 min; both in-memory, warmed on server start.
-- Dashboard group lists include custom/SCIM groups only. Team and org spend rollups deduplicate overlapping members by deterministic first-group attribution (workspace, group name, then group ID); group rows, drill-downs, and alerts keep raw per-group spend.
+- Enterprise traffic uses shared, header-driven rate-budget admission for interactive, scheduled, and backfill work. Every caller honors Retry-After and rate-limit reset boundaries; scheduled ingestion may fetch several independent workspace-days concurrently within that shared budget.
+- One advisory-locked ingest cycle runs at startup and every 10 minutes. It refreshes the canonical directory when needed, atomically replaces each workspace-day's member/project facts in one transaction, upserts aggregate daily facts, performs bounded backfill, and only then runs dependent reconciliation/check work.
+- Usage reads are durable-store first. A successful Postgres snapshot remains readable while refresh runs or fails; responses separately report missing/failed coverage, partial state, data age, and staleness. In-process memoization is invalidated after committed ingestion.
+- Directory data is refreshed on a 15-minute freshness boundary, persisted, and returned stale-first so request authorization and views do not inherit Enterprise API latency.
+- Data views poll every 60 seconds independently of the ingest cadence. Numeric values from successful responses stay visible during refreshes; partial, stale, and request failures use deduplicated transient toasts that clear silently on recovery.
+- Canonical accounting is workspace-qualified. Stable group ownership deduplicates overlapping members, unmatched member/workspace charges remain visible in synthetic `No group` rows, and project attribution is explanatory rather than the source for allocations or alerts.
 - Billing period = the `interval.startTime` the Enterprise API resolves for `billingPeriod=current`; threshold fire state is keyed by (groupId, periodStart, threshold) in `fired_thresholds` so each threshold emails at most once per period and resets automatically on a new period.
-- If email isn't connected or no admin emails exist, crossed thresholds are NOT marked fired — they retry once email is configured.
+- Automated alert delivery is disabled by default and controlled by the persisted `automated_email_enabled` kill switch. When it is off, or email/recipients are unavailable, thresholds are not marked fired and can be evaluated again after operators restore delivery.
 - One email per check per group (highest due threshold) to avoid alert storms when a budget is first set on an already-over group.
 - Real production alerts use RBAC-derived recipients. Every manual test path is independently authorized to the persisted Kody identity and fixes delivery to `kody.low@repl.it` without writing Email Activity, fired-threshold, or delivery-claim state.
 - Non-production sends are redirected to `kody.low@repl.it` and subjects receive a `[DEV]` prefix. Test sends also retain their `[TEST]` prefix.
 - Set `APP_BASE_URL` to the deployed app origin/base path to add safe group/team links to alert email; leave it unset to omit links.
 - Managed account editors are keyed by stable Replit user ID. The designated bootstrap editor is added once from an exact, verified OIDC email; a durable consumed marker prevents later logins from undoing admin revocation. Only true Enterprise account admins can manage the allowlist.
-- Team alerts use the same member-deduplicated, cross-workspace attribution as dashboard team totals. Checks defer when required member or extra-workspace data is incomplete.
+- Team alerts use the same canonical, workspace-qualified rollup as dashboard team totals. Checks defer when required workspace facts are incomplete.
 - Workspace admins see read-only pools and rollups for teams represented in their scope. Account-wide alerts for teams spanning additional workspaces are omitted from their history to avoid exposing cross-workspace spend.
+- Authorization is scope plus capability, not a page-wide role shortcut: account, workspace-admin, team-admin, and member scopes are unions; true account admins retain access/settings and upstream group-limit authority, while managed editors receive only their explicit operational capabilities.
+- Annual team allocations are durable planning baselines plus approved adjustments. Derived or manual monthly Agent limits are a separate enforcement model; reconciliation is read-only and only an explicit authorized upstream apply can change a Replit hard-blocking limit.
 
 ## Product
 
