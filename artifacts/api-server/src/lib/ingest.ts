@@ -26,9 +26,11 @@ const DAY_MS = 86_400_000;
 const DIRECTORY_TTL_MS = 15 * 60_000;
 const METADATA_WAIT_TIMEOUT_MS = 60_000;
 const METADATA_WAIT_POLL_MS = 25;
-const WORKERS = 4;
+const WORKERS = 3;
 const UNIT_ATTEMPTS = 3;
 const BATCH_SIZE = 500;
+
+const LOCAL_USAGE_REQUESTS_PER_MINUTE = 150;
 export const BACKGROUND_CYCLE_INTERVAL_MINUTES = 10;
 
 type Metrics = Array<{ id: string; name: string; category: string; costUsd: number }>;
@@ -63,6 +65,7 @@ export type ReconciliationDelta = {
   upstreamUsd: number;
   storedUsd: number;
   deltaUsd: number;
+  mismatchCount: number;
 };
 export type CycleSummary = {
   acquired: boolean;
@@ -124,6 +127,37 @@ let requestCountsByMinute = new Map<number, number>();
 let peakRequestsPerMinute = 0;
 let lowestRateLimitRemaining: number | null = null;
 
+export class LocalUsageRateLimiter {
+  private readonly requestTimes: number[] = [];
+  private gate: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly limit = LOCAL_USAGE_REQUESTS_PER_MINUTE,
+    private readonly intervalMs = 60_000,
+    private readonly now: () => number = Date.now,
+    private readonly sleep: (delayMs: number) => Promise<void> =
+      (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  ) {}
+
+  acquire(): Promise<void> {
+    const acquisition = this.gate.then(async () => {
+      for (;;) {
+        const current = this.now();
+        const cutoff = current - this.intervalMs;
+        while (this.requestTimes.length > 0 && this.requestTimes[0]! <= cutoff) {
+          this.requestTimes.shift();
+        }
+        if (this.requestTimes.length < this.limit) {
+          this.requestTimes.push(current);
+          return;
+        }
+        await this.sleep(Math.max(1, this.requestTimes[0]! + this.intervalMs - current));
+      }
+    });
+    this.gate = acquisition.catch(() => undefined);
+    return acquisition;
+  }
+}
 function day(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -197,6 +231,7 @@ async function requestUsage(
   params: Record<string, string | undefined>,
   stats: { calls: number },
 ): Promise<{ data: UsagePayload; headers: Headers }> {
+  await usageRequestRateLimiter.acquire();
   const response = await fetchEnterpriseForIngest("/usage", params);
   stats.calls++;
   noteRequest(response.headers);
@@ -561,6 +596,13 @@ async function failedWorkspaceUnits(): Promise<QueueUnit[]> {
   }));
 }
 
+export function nextReconciliationMismatchCount(
+  previousCount: number,
+  deltaUsd: number,
+  toleranceUsd = RECONCILIATION_TOLERANCE_USD,
+): number {
+  return Math.abs(deltaUsd) > toleranceUsd ? previousCount + 1 : 0;
+}
 async function fetchTotal(
   startTime: string,
   endTime: string,
@@ -656,53 +698,33 @@ async function reconcile(
       [effectiveStart, effectiveEnd],
     );
     const accountStored = Number(accountStoredResult.rows[0]?.total ?? 0);
-    reconciliations.push({
+    const accountDelta = accountUpstream.totalCostUsd - accountStored;
+    const previousAccount = await pool.query(
+      `select mismatch_count from ingest_reconciliation
+       where month_start=$1::date and scope='account' and scope_id='enterprise'`,
+      [monthStart],
+    );
+    const accountResult: ReconciliationDelta = {
       monthStart, scope: "account", scopeId: "enterprise",
       upstreamUsd: accountUpstream.totalCostUsd, storedUsd: accountStored,
-      deltaUsd: accountUpstream.totalCostUsd - accountStored,
-    });
+      deltaUsd: accountDelta,
+      mismatchCount: nextReconciliationMismatchCount(
+        Number(previousAccount.rows[0]?.mismatch_count ?? 0),
+        accountDelta,
+      ),
+    };
+    await saveReconciliation(accountResult);
+    reconciliations.push(accountResult);
     for (const workspaceId of workspaceIds) {
       const upstream = await fetchTotal(startTime, endTime, workspaceId, stats);
-      const storedResult = await pool.query(
-        `select coalesce(sum(total_cost_usd),0)::float8 as total
-         from usage_workspace_day
-         where workspace_id=$1 and usage_date >= $2::date and usage_date < $3::date
-           and status='complete'`,
-        [workspaceId, effectiveStart, effectiveEnd],
-      );
-      const stored = Number(storedResult.rows[0]?.total ?? 0);
-      const delta = upstream.totalCostUsd - stored;
-      reconciliations.push({
-        monthStart, scope: "workspace", scopeId: workspaceId,
-        upstreamUsd: upstream.totalCostUsd, storedUsd: stored, deltaUsd: delta,
-      });
-      if (Math.abs(delta) > 0.01) {
-        await pool.query(
-          `update usage_workspace_day set status='failed',
-             error='monthly reconciliation delta exceeded $0.01'
-           where workspace_id=$1 and usage_date >= $2::date and usage_date < $3::date`,
-          [workspaceId, effectiveStart, effectiveEnd],
-        );
-        invalidateUsageSnapshotMemo();
-      }
+      reconciliations.push(await reconcileWorkspaceTotal({
+        monthStart,
+        effectiveStart,
+        effectiveEnd,
+        workspaceId,
+        upstreamUsd: upstream.totalCostUsd,
+      }));
     }
-  }
-  if (reconciliations.length > 0) {
-    const values: unknown[] = [];
-    const placeholders = reconciliations.map((row) => {
-      const base = values.length;
-      values.push(row.monthStart, row.scope, row.scopeId, row.upstreamUsd, row.storedUsd, row.deltaUsd);
-      return `($${base + 1}::date,$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},now())`;
-    });
-    await pool.query(
-      `insert into ingest_reconciliation
-       (month_start,scope,scope_id,upstream_usd,stored_usd,delta_usd,checked_at)
-       values ${placeholders.join(",")}
-       on conflict (month_start,scope,scope_id) do update set
-         upstream_usd=excluded.upstream_usd,stored_usd=excluded.stored_usd,
-         delta_usd=excluded.delta_usd,checked_at=excluded.checked_at`,
-      values,
-    );
   }
   return { calls: stats.calls, reconciliations };
 }
@@ -830,3 +852,80 @@ export function __stopUsageIngestSchedulerForTests(): void {
   if (interval) clearInterval(interval);
   interval = null;
 }
+
+async function saveReconciliation(row: ReconciliationDelta): Promise<void> {
+  await pool.query(
+    `insert into ingest_reconciliation
+       (month_start,scope,scope_id,upstream_usd,stored_usd,delta_usd,
+        mismatch_count,checked_at)
+     values ($1::date,$2,$3,$4,$5,$6,$7,now())
+     on conflict (month_start,scope,scope_id) do update set
+       upstream_usd=excluded.upstream_usd,
+       stored_usd=excluded.stored_usd,
+       delta_usd=excluded.delta_usd,
+       mismatch_count=excluded.mismatch_count,
+       checked_at=excluded.checked_at`,
+    [
+      row.monthStart,
+      row.scope,
+      row.scopeId,
+      row.upstreamUsd,
+      row.storedUsd,
+      row.deltaUsd,
+      row.mismatchCount,
+    ],
+  );
+}
+
+export async function reconcileWorkspaceTotal(input: {
+  monthStart: string;
+  effectiveStart: string;
+  effectiveEnd: string;
+  workspaceId: string;
+  upstreamUsd: number;
+}): Promise<ReconciliationDelta> {
+  const [storedResult, previousResult] = await Promise.all([
+    pool.query(
+      `select coalesce(sum(total_cost_usd),0)::float8 as total
+       from usage_workspace_day
+       where workspace_id=$1 and usage_date >= $2::date and usage_date < $3::date`,
+      [input.workspaceId, input.effectiveStart, input.effectiveEnd],
+    ),
+    pool.query(
+      `select mismatch_count from ingest_reconciliation
+       where month_start=$1::date and scope='workspace' and scope_id=$2`,
+      [input.monthStart, input.workspaceId],
+    ),
+  ]);
+  const storedUsd = Number(storedResult.rows[0]?.total ?? 0);
+  const deltaUsd = input.upstreamUsd - storedUsd;
+  const mismatchCount = nextReconciliationMismatchCount(
+    Number(previousResult.rows[0]?.mismatch_count ?? 0),
+    deltaUsd,
+  );
+  const result: ReconciliationDelta = {
+    monthStart: input.monthStart,
+    scope: "workspace",
+    scopeId: input.workspaceId,
+    upstreamUsd: input.upstreamUsd,
+    storedUsd,
+    deltaUsd,
+    mismatchCount,
+  };
+  await saveReconciliation(result);
+  if (mismatchCount >= 2) {
+    await pool.query(
+      `update usage_workspace_day set status='stale',
+         error='monthly reconciliation delta exceeded $1 twice'
+       where workspace_id=$1 and usage_date >= $2::date and usage_date < $3::date
+         and status='complete'`,
+      [input.workspaceId, input.effectiveStart, input.effectiveEnd],
+    );
+    invalidateUsageSnapshotMemo();
+  }
+  return result;
+}
+
+const RECONCILIATION_TOLERANCE_USD = 1;
+
+const usageRequestRateLimiter = new LocalUsageRateLimiter();

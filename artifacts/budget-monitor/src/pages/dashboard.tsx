@@ -155,6 +155,13 @@ export default function Dashboard() {
       },
     },
   });
+  const usageDataAsOf = groupsData?.usageHealth.dataAsOf
+    ? new Date(groupsData.usageHealth.dataAsOf).toLocaleString('en-US', {
+        timeZone: 'UTC',
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+      })
+    : null;
 
   const { data: teamBudgetsData, isLoading: teamBudgetsLoading } = useGetTeamsBudgets({
     query: { queryKey: getGetTeamsBudgetsQueryKey() },
@@ -736,31 +743,37 @@ export default function Dashboard() {
               ? 'Your authorized workspace scope · Custom dates use inclusive UTC days'
               : 'All workspaces you can access · Custom dates use inclusive UTC days'}
           </p>
+          {groupsData?.usageHealth.status !== 'empty' && (
+            <p className="text-[10px] md:text-xs text-muted-foreground mt-1" data-testid="text-usage-data-as-of">
+              Data as of {usageDataAsOf ? `${usageDataAsOf} UTC` : 'unavailable'}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <RangeFilter />
           {(groupsData?.usageHealth.status === 'partial' ||
-            groupsData?.usageHealth.status === 'stale' ||
-            groupsData?.usageHealth.status === 'empty') && (
-            <Popover open={coverageOpen} onOpenChange={setCoverageOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  onMouseEnter={() => setCoverageOpen(true)}
-                  data-testid="button-usage-coverage"
-                >
-                  <Badge
-                    variant="outline"
-                    className="flex items-center gap-2 border-yellow-500/50 text-yellow-700 dark:text-yellow-300"
-                    data-testid="badge-usage-health"
+            groupsData?.usageHealth.status === 'stale') && (
+            <div
+              className="flex items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-800 dark:text-yellow-200"
+              role="status"
+              data-testid="notice-usage-health"
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>
+                {groupsData.usageHealth.status === 'partial'
+                  ? 'Some usage data is still updating.'
+                  : 'Usage data may be out of date.'}
+              </span>
+              <Popover open={coverageOpen} onOpenChange={setCoverageOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="font-medium underline underline-offset-2"
+                    data-testid="button-usage-coverage"
                   >
-                    <AlertTriangle className="h-3 w-3" />
-                    <span className="hidden sm:inline">
-                      Usage data {groupsData.usageHealth.status}
-                    </span>
-                  </Badge>
-                </button>
-              </PopoverTrigger>
+                    Details
+                  </button>
+                </PopoverTrigger>
               <PopoverContent align="end" className="w-80">
                 <p className="font-medium">
                   Usage coverage {Math.round(groupsData.usageHealth.coverage.ratio * 100)}%
@@ -777,14 +790,33 @@ export default function Dashboard() {
                 ) : (
                   <p className="mt-2 text-xs text-muted-foreground">None reported.</p>
                 )}
+                {groupsData.usageHealth.coverage.missingWorkspaceDays.length > 0 && (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Missing workspace-days: {groupsData.usageHealth.coverage.missingWorkspaceDays.length}
+                  </p>
+                )}
+                {groupsData.usageHealth.coverage.missingAccountDays.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Missing account-days: {groupsData.usageHealth.coverage.missingAccountDays.length}
+                  </p>
+                )}
               </PopoverContent>
-            </Popover>
+              </Popover>
+            </div>
           )}
         </div>
       </div>
       {(groupsRequestFailed || summaryRequestFailed) && !groupsData && !summary && (
         <p className="text-sm text-muted-foreground" data-testid="empty-dashboard-failed">
           Dashboard data is unavailable.
+        </p>
+      )}
+      {groupsData?.usageHealth.status === 'empty' && (
+        <p
+          className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
+          data-testid="empty-usage-data"
+        >
+          No usage data is available for this period.
         </p>
       )}
       {summary && (

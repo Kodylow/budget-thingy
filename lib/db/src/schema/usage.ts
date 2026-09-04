@@ -62,7 +62,7 @@ export const usageWorkspaceDayTable = pgTable(
     primaryKey({ columns: [t.workspaceId, t.usageDate] }),
     check(
       "usage_workspace_day_status_check",
-      sql`${t.status} in ('complete', 'failed')`,
+      sql`${t.status} in ('complete', 'stale', 'failed')`,
     ),
   ],
 );
@@ -121,6 +121,7 @@ export const ingestReconciliationTable = pgTable(
     upstreamUsd: doublePrecision("upstream_usd").notNull(),
     storedUsd: doublePrecision("stored_usd").notNull(),
     deltaUsd: doublePrecision("delta_usd").notNull(),
+    mismatchCount: integer("mismatch_count").notNull().default(0),
     checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.monthStart, t.scope, t.scopeId] })],

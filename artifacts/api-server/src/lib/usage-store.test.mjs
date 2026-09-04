@@ -259,6 +259,174 @@ test("a warm live memo becomes stale as time advances without repeating database
   assert.equal(queryCount, 4);
 });
 
+test("time-derived stale memo becomes complete after its live window closes", async () => {
+  let currentTime = Date.parse("2099-07-02T23:57:00.000Z");
+  const queryable = {
+    async query(text) {
+      if (text.includes("usage_member_day") || text.includes("usage_project_day")) {
+        return { rows: [] };
+      }
+      if (text.includes("usage_workspace_day")) {
+        return {
+          rows: [{
+            workspace_id: workspaceA,
+            usage_date: dayTwo,
+            total_cost_usd: 20,
+            member_attributable_usd: 15,
+            member_unattributable_usd: 5,
+            fetched_at: fetchedAt,
+            status: "complete",
+          }],
+        };
+      }
+      return {
+        rows: [{
+          usage_date: dayTwo,
+          total_cost_usd: 20,
+          fetched_at: fetchedAt,
+        }],
+      };
+    },
+  };
+  const store = createUsageStore({
+    queryable,
+    now: () => currentTime,
+    staleAfterMs: 60_000,
+  });
+  const oneDayWindow = {
+    start: `${dayTwo}T00:00:00.000Z`,
+    end: window.end,
+  };
+  assert.equal(
+    (await store.read({ window: oneDayWindow, workspaceIds: [workspaceA] })).status,
+    "stale",
+  );
+  currentTime = Date.parse("2099-07-05T00:00:00.000Z");
+  assert.equal(
+    (await store.read({ window: oneDayWindow, workspaceIds: [workspaceA] })).status,
+    "complete",
+  );
+});
+
+test("live-day freshness ignores old closed-day backfill timestamps", async () => {
+  const oldFetch = new Date("2099-06-01T00:00:00.000Z");
+  const liveFetch = new Date("2099-07-02T23:58:30.000Z");
+  const mixedWindow = {
+    start: "2099-06-29T00:00:00.000Z",
+    end: "2099-07-03T00:00:00.000Z",
+  };
+  const mixedDays = ["2099-06-29", "2099-06-30", dayOne, dayTwo];
+  const queryable = {
+    async query(text) {
+      if (text.includes("usage_member_day") || text.includes("usage_project_day")) {
+        return { rows: [] };
+      }
+      if (text.includes("usage_workspace_day")) {
+        return {
+          rows: mixedDays.map((usageDate, index) => ({
+              workspace_id: workspaceA,
+              usage_date: usageDate,
+              total_cost_usd: 10 + index,
+              member_attributable_usd: 15,
+              member_unattributable_usd: 5,
+              fetched_at: index === 0 ? oldFetch : liveFetch,
+              status: "complete",
+          })),
+        };
+      }
+      return {
+        rows: mixedDays.map((usageDate, index) => ({
+          usage_date: usageDate,
+          total_cost_usd: 10 + index,
+          fetched_at: index === 0 ? oldFetch : liveFetch,
+        })),
+      };
+    },
+  };
+  const store = createUsageStore({
+    queryable,
+    now: () => Date.parse("2099-07-02T23:59:00.000Z"),
+    staleAfterMs: 60_000,
+  });
+  const snapshot = await store.read({
+    window: mixedWindow,
+    workspaceIds: [workspaceA],
+  });
+  assert.equal(snapshot.status, "complete");
+  assert.equal(snapshot.dataAsOf, liveFetch.toISOString());
+});
+
+test("workspace and account full-term totals accept a tie-out within one dollar", async () => {
+  const store = createUsageStore({
+    now: () => Date.parse("2099-07-02T23:59:00.000Z"),
+  });
+  const loaded = await store.read({ window, workspaceIds: [workspaceA] });
+  const rollup = computeSnapshotUsageRollup({
+    snapshot: { ...loaded, accountTotalUsd: 30.75 },
+    groups: [{ id: "group", workspaceId: workspaceA, name: "Group" }],
+    membersByGroup: new Map([["group", ["user-1"]]]),
+    projectInfoByWorkspace: new Map([
+      [workspaceA, new Map([["project-1", { creatorId: "user-1" }]])],
+    ]),
+  });
+  assert.ok(Math.abs(rollup.accountReconciliationSpendUsd) <= 1);
+});
+
+test("stale and failed workspace rows keep their stored daily totals", async () => {
+  const queryable = {
+    async query(text) {
+      if (text.includes("usage_member_day") || text.includes("usage_project_day")) {
+        return { rows: [] };
+      }
+      if (text.includes("usage_workspace_day")) {
+        return {
+          rows: [
+            {
+              workspace_id: workspaceA,
+              usage_date: dayOne,
+              total_cost_usd: 10,
+              member_attributable_usd: 8,
+              member_unattributable_usd: 2,
+              fetched_at: fetchedAt,
+              status: "stale",
+            },
+            {
+              workspace_id: workspaceA,
+              usage_date: dayTwo,
+              total_cost_usd: 20,
+              member_attributable_usd: 15,
+              member_unattributable_usd: 5,
+              fetched_at: fetchedAt,
+              status: "failed",
+            },
+          ],
+        };
+      }
+      return {
+        rows: [
+          { usage_date: dayOne, total_cost_usd: 10, fetched_at: fetchedAt },
+          { usage_date: dayTwo, total_cost_usd: 20, fetched_at: fetchedAt },
+        ],
+      };
+    },
+  };
+  const store = createUsageStore({
+    queryable,
+    now: () => Date.parse("2099-07-02T23:59:00.000Z"),
+  });
+  const snapshot = await store.read({
+    window,
+    workspaceIds: [workspaceA],
+    includeDailyMembers: true,
+  });
+  assert.equal(snapshot.status, "partial");
+  assert.equal(snapshot.workspaces.get(workspaceA)?.totalCostUsd, 30);
+  assert.equal(snapshot.daily.get(dayOne)?.workspaceTotalUsd, 10);
+  assert.equal(snapshot.daily.get(dayTwo)?.workspaceTotalUsd, 20);
+  assert.equal(snapshot.dailyWorkspaces?.get(dayOne)?.get(workspaceA)?.totalCostUsd, 10);
+  assert.equal(snapshot.dailyWorkspaces?.get(dayTwo)?.get(workspaceA)?.totalCostUsd, 20);
+});
+
 test("successful account ingest invalidates the default memo", async () => {
   invalidateUsageSnapshotMemo();
   await readUsageSnapshot({ window, workspaceIds: [workspaceA] });

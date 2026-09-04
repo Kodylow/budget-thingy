@@ -46,6 +46,7 @@ export interface UsageSnapshot {
   status: UsageSnapshotStatus;
   dataAsOf: string | null;
   isLive: boolean;
+  hasPersistentlyStaleRows: boolean;
   coverage: UsageCoverage;
   members: Map<string, Map<string, MemberUsageTotal>>;
   projects: Map<string, Map<string, ProjectUsageTotal>>;
@@ -180,6 +181,7 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       status: "empty",
       dataAsOf: null,
       isLive: Date.parse(resolved.window.end) > todayStart,
+      hasPersistentlyStaleRows: false,
       coverage: {
         requestedDays: dayCount,
         requestedWorkspaceDays: 0,
@@ -209,12 +211,15 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
   function refreshTimeClassification(snapshot: UsageSnapshot): UsageSnapshot {
     if (snapshot.status === "partial" || snapshot.status === "empty") return snapshot;
     const todayStart = Math.floor(now() / DAY_MS) * DAY_MS;
-    const isLive = Date.parse(snapshot.window.end) > todayStart;
+    const liveStart = todayStart - 2 * DAY_MS;
+    const isLive =
+      Date.parse(snapshot.window.end) > liveStart &&
+      Date.parse(snapshot.window.start) < todayStart + DAY_MS;
     const dataAsOfMs = snapshot.dataAsOf === null
       ? null
       : Date.parse(snapshot.dataAsOf);
-    const status: UsageSnapshotStatus = isLive &&
-        (dataAsOfMs === null || now() - dataAsOfMs > staleAfterMs)
+    const status: UsageSnapshotStatus = snapshot.hasPersistentlyStaleRows ||
+        (isLive && (dataAsOfMs === null || now() - dataAsOfMs > staleAfterMs))
       ? "stale"
       : "complete";
     return status === snapshot.status && isLive === snapshot.isLive
@@ -281,7 +286,8 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
     const dailyWorkspaces = request.includeDailyMembers
       ? new Map<string, Map<string, WorkspaceUsageTotal>>()
       : undefined;
-    const successfulFetchTimes: number[] = [];
+    const successfulFetchTimes: Array<{ usageDate: string; fetchedAt: number }> = [];
+    let hasStaleWorkspaceRows = false;
 
     for (const row of memberResult.rows) {
       const workspaceId = String(row["workspace_id"]);
@@ -334,6 +340,7 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       } else {
         presentWorkspaceKeys.add(`${workspaceId}|${usageDate}`);
       }
+      if (row["status"] === "stale") hasStaleWorkspaceRows = true;
       const current = workspaces.get(workspaceId) ?? {
         totalCostUsd: 0,
         memberAttributableUsd: 0,
@@ -343,7 +350,7 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       current.memberAttributableUsd += number(row["member_attributable_usd"]);
       current.memberUnattributableUsd += number(row["member_unattributable_usd"]);
       workspaces.set(workspaceId, current);
-      if (dailyWorkspaces && row["status"] !== "failed") {
+      if (dailyWorkspaces) {
         nested(dailyWorkspaces, usageDate).set(workspaceId, {
           totalCostUsd: number(row["total_cost_usd"]),
           memberAttributableUsd: number(row["member_attributable_usd"]),
@@ -356,7 +363,7 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
         fetched !== null &&
         (row["status"] !== "failed" || number(row["total_cost_usd"]) !== 0)
       ) {
-        successfulFetchTimes.push(fetched);
+        successfulFetchTimes.push({ usageDate, fetchedAt: fetched });
       }
     }
 
@@ -368,7 +375,9 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       accountTotalUsd += number(row["total_cost_usd"]);
       addDaily(daily, usageDate).accountTotalUsd += number(row["total_cost_usd"]);
       const fetched = fetchedTime(row["fetched_at"]);
-      if (fetched !== null) successfulFetchTimes.push(fetched);
+      if (fetched !== null) {
+        successfulFetchTimes.push({ usageDate, fetchedAt: fetched });
+      }
     }
 
     const requestedDates = dates(resolved.startDay, resolved.dayCount);
@@ -401,12 +410,21 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       missingAccountDays,
       ratio: totalExpected === 0 ? 1 : totalPresent / totalExpected,
     };
-    const dataAsOfMs = successfulFetchTimes.length > 0
-      ? Math.min(...successfulFetchTimes)
+    const todayStart = Math.floor(now() / DAY_MS) * DAY_MS;
+    const liveStart = todayStart - 2 * DAY_MS;
+    const windowStart = Date.parse(resolved.window.start);
+    const windowEnd = Date.parse(resolved.window.end);
+    const containsLiveDays =
+      windowEnd > liveStart && windowStart < todayStart + DAY_MS;
+    const liveStartDay = new Date(liveStart).toISOString().slice(0, 10);
+    const freshnessCandidates = containsLiveDays
+      ? successfulFetchTimes.filter(({ usageDate }) => usageDate >= liveStartDay)
+      : successfulFetchTimes;
+    const dataAsOfMs = freshnessCandidates.length > 0
+      ? Math.min(...freshnessCandidates.map(({ fetchedAt }) => fetchedAt))
       : null;
     const dataAsOf = dataAsOfMs === null ? null : new Date(dataAsOfMs).toISOString();
-    const todayStart = Math.floor(now() / DAY_MS) * DAY_MS;
-    const isLive = Date.parse(resolved.window.end) > todayStart;
+    const isLive = containsLiveDays;
     const hasData = presentWorkspaceKeys.size > 0 ||
       presentAccountDays.size > 0 ||
       memberResult.rows.length > 0 ||
@@ -420,7 +438,8 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       ? "empty"
       : hasCoverageGap
       ? "partial"
-      : isLive && (dataAsOfMs === null || now() - dataAsOfMs > staleAfterMs)
+       : hasStaleWorkspaceRows ||
+           (isLive && (dataAsOfMs === null || now() - dataAsOfMs > staleAfterMs))
       ? "stale"
       : "complete";
 
@@ -431,6 +450,7 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
       status,
       dataAsOf,
       isLive,
+      hasPersistentlyStaleRows: hasStaleWorkspaceRows,
       coverage,
       members,
       projects,

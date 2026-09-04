@@ -4,10 +4,37 @@ import { test, expect, vi } from "vitest";
 
 import {
   initializeUsageIngestScheduler,
+  LocalUsageRateLimiter,
+  nextReconciliationMismatchCount,
   reconciliationBounds,
   runBackgroundCycleOperations,
   waitForLegacyMetadata,
 } from "./ingest.ts";
+
+test("reconciliation requires consecutive mismatches beyond the one-dollar tolerance", () => {
+  expect(nextReconciliationMismatchCount(0, 1)).toBe(0);
+  expect(nextReconciliationMismatchCount(0, 1.01)).toBe(1);
+  expect(nextReconciliationMismatchCount(1, 1.01)).toBe(2);
+  expect(nextReconciliationMismatchCount(2, 0.5)).toBe(0);
+});
+
+test("local usage limiter never admits more than its cap in a rolling minute", async () => {
+  let clock = 0;
+  const admittedAt: number[] = [];
+  const limiter = new LocalUsageRateLimiter(
+    3,
+    60_000,
+    () => clock,
+    async (delayMs) => {
+      clock += delayMs;
+    },
+  );
+  for (let index = 0; index < 7; index++) {
+    await limiter.acquire();
+    admittedAt.push(clock);
+  }
+  expect(admittedAt).toEqual([0, 0, 0, 60_000, 60_000, 60_000, 120_000]);
+});
 
 test("current-month reconciliation includes only finalized days", () => {
   expect(reconciliationBounds("2026-09-01", "2026-09-04")).toEqual({

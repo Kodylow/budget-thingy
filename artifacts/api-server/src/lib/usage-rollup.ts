@@ -365,7 +365,10 @@ export function usageSnapshotForDay(
   const hasAccountDay = snapshot.accountDays.has(usageDate);
   const missingAccountDays = hasAccountDay ? [] : [usageDate];
   const totalExpected = workspaceIds.length + 1;
-  const totalPresent = workspaces.size + (hasAccountDay ? 1 : 0);
+  const presentWorkspaceDays = [...workspaces.keys()].filter(
+    (workspaceId) => !failedWorkspaceIds.has(workspaceId),
+  ).length;
+  const totalPresent = presentWorkspaceDays + (hasAccountDay ? 1 : 0);
   const isPartial =
     failedWorkspaceDays.length > 0 ||
     missingWorkspaceDays.length > 0 ||
@@ -389,7 +392,7 @@ export function usageSnapshotForDay(
     coverage: {
       requestedDays: 1,
       requestedWorkspaceDays: workspaceIds.length,
-      presentWorkspaceDays: workspaces.size,
+      presentWorkspaceDays,
       failedWorkspaceDays,
       missingWorkspaceDays,
       presentAccountDays: hasAccountDay ? 1 : 0,
