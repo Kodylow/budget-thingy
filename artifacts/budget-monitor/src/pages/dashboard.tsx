@@ -128,7 +128,6 @@ import {
   type GroupCluster,
 } from "@/lib/group-clusters";
 import { compareTeamNames, formatTeamName } from "@/lib/team-names";
-import { VirtualizedTableRows } from "@/components/virtualized-table-rows";
 import {
   DATA_REFRESH_INTERVAL_MS,
   reportDashboardNumbersPainted,
@@ -1270,7 +1269,7 @@ export default function Dashboard() {
         <TabsContent value="groups">
           <Card>
             <CardContent>
-              <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
+              <div className="overflow-x-auto">
                 <table className="w-full" data-testid="table-groups">
                   <thead>
                     <tr className="border-b border-border">
@@ -1302,7 +1301,7 @@ export default function Dashboard() {
                       </th>
                     </tr>
                   </thead>
-                  <VirtualizedTableRows columnCount={8}>
+                  <tbody>
                     {hasTeams ? (
                       <>
                         {workspaceSections.map((workspace) => (
@@ -1407,7 +1406,7 @@ export default function Dashboard() {
                           </td>
                         </tr>
                       )}
-                  </VirtualizedTableRows>
+                  </tbody>
                   {groups.length > 0 && (
                     <tfoot>
                       <tr className="border-t-2 border-border bg-muted/40 font-semibold">
