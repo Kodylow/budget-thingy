@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   buildRosterSnapshotRows,
-  millisecondsUntilNextSnapshot,
   recordDailyRosters,
 } from "./history.ts";
 import {
@@ -78,17 +77,6 @@ test("a missed prior job is not guessed and the next reliable UTC day is capture
   );
   assert.equal(store.days.has("2026-08-25"), false);
   assert.equal(store.days.has("2026-08-26"), true);
-});
-
-test("successful passes align the next capture to 00:05 UTC", () => {
-  assert.equal(
-    millisecondsUntilNextSnapshot(Date.parse("2026-08-26T23:50:00Z")),
-    15 * 60 * 1000,
-  );
-  assert.equal(
-    millisecondsUntilNextSnapshot(Date.parse("2026-08-26T00:10:00Z")),
-    (23 * 60 + 55) * 60 * 1000,
-  );
 });
 
 test("an incomplete group-members refresh is rejected instead of freezing an empty roster", () => {

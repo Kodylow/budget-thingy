@@ -3,7 +3,6 @@ import { logger } from "./lib/logger";
 import { startChecker } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
 import { startUsageIngestScheduler } from "./lib/ingest";
-import { startSnapshotJob } from "./lib/history";
 import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
 import { startTeamBudgetSyncJob } from "./lib/team-budgets";
 
@@ -31,7 +30,6 @@ const server = app.listen(port, (err) => {
   // None of these tasks may delay the listening socket. In particular, cache
   // hydration is database-only and completes before Enterprise work is started.
   startChecker();
-  startSnapshotJob();
   startTeamBudgetSyncJob();
   void Promise.all([
     initCache({ revalidateOnStartup: false }),

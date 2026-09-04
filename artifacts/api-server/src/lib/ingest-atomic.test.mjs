@@ -90,7 +90,9 @@ test("terminal grouped-fetch failure preserves the previous complete workspace d
     });
   });
 
-  const result = await ingestWorkspaceDay(workspaceId, usageDate);
+  const result = await enterprise.withEnterpriseIngestAccess(
+    () => ingestWorkspaceDay(workspaceId, usageDate),
+  );
   assert.equal(result.ok, false);
   assert.equal(memberRequests, 3);
   assert.equal(projectRequests, 3);

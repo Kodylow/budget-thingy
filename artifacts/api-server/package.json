@@ -10,7 +10,7 @@
     "ingest:once": "tsx ./src/ingest-once.ts",
     "test": "NODE_ENV=test LOG_LEVEL=silent sh -c 'pnpm run test:node; node_status=$?; pnpm run test:vitest; vitest_status=$?; test $node_status -eq 0 && test $vitest_status -eq 0'",
     "test:node": "NODE_ENV=test LOG_LEVEL=silent sh -c 'pnpm run test:node:pure & pure_pid=$!; pnpm run test:node:shared; shared_status=$?; wait $pure_pid; pure_status=$?; test $shared_status -eq 0 && test $pure_status -eq 0'",
-    "test:node:pure": "node --import tsx --test --test-concurrency=4 src/lib/authz.test.mjs src/lib/comcast-rollup.test.mjs src/lib/enterprise-queue.test.mjs src/lib/enterprise-workloads.test.mjs src/lib/historical-attribution.test.mjs src/lib/history-rosters.test.mjs src/lib/trend-buckets.test.mjs src/lib/usage-rollup.test.mjs src/lib/workspace-rollup.test.mjs src/startup-order.test.mjs",
+    "test:node:pure": "node --import tsx --test --test-concurrency=4 src/lib/authz.test.mjs src/lib/comcast-rollup.test.mjs src/lib/enterprise-queue.test.mjs src/lib/enterprise-workloads.test.mjs src/lib/historical-attribution.test.mjs src/lib/history-rosters.test.mjs src/lib/ingest-coordination.test.mjs src/lib/trend-buckets.test.mjs src/lib/usage-rollup.test.mjs src/lib/workspace-rollup.test.mjs src/startup-order.test.mjs",
     "test:node:shared": "node --import tsx --test --test-concurrency=1 src/lib/authz-bootstrap.test.mjs src/lib/enterprise-incremental.test.mjs src/lib/ingest-atomic.test.mjs src/lib/job-claims.test.mjs src/routes/monitor.authz.test.mjs src/routes/monitor.summary.test.mjs src/routes/monitor.users-activity.test.mjs src/routes/team-budgets.routes.test.mjs",
     "test:vitest": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"

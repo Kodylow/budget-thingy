@@ -7,18 +7,9 @@ import {
 } from "@workspace/db";
 import { logger } from "./logger";
 import {
-  isConfigured,
-  getCompleteDirectoryForRosterSnapshot,
-  getSpend,
-  queueGroupSpendFetch,
-  resolveRange,
   type GroupSpend,
   type EnterpriseGroup,
 } from "./enterprise";
-import { withJobClaim } from "./job-claims";
-
-const SNAPSHOT_RETRY_MS = 15 * 60 * 1000;
-const SNAPSHOT_UTC_OFFSET_MS = 5 * 60 * 1000;
 
 function utcDay(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10);
@@ -33,6 +24,15 @@ export interface RosterSnapshotRow {
 
 export interface RosterSnapshotStore {
   capture(snapshotDate: string, rows: RosterSnapshotRow[]): Promise<boolean>;
+}
+
+export async function hasDailyRosterSnapshot(now = Date.now()): Promise<boolean> {
+  const [existing] = await db
+    .select({ snapshotDate: groupRosterSnapshotDaysTable.snapshotDate })
+    .from(groupRosterSnapshotDaysTable)
+    .where(eq(groupRosterSnapshotDaysTable.snapshotDate, utcDay(now)))
+    .limit(1);
+  return !!existing;
 }
 
 const databaseRosterStore: RosterSnapshotStore = {
@@ -116,73 +116,6 @@ export async function recordSnapshot(
   } catch (err) {
     logger.error({ err, groupId }, "Failed to record spend snapshot");
   }
-}
-
-/**
- * Snapshot every group's current spend. Fresh cached values are recorded
- * directly; stale/missing ones are queued through the serial usage queue
- * (background priority) and recorded as each fetch lands.
- */
-export async function snapshotAllGroups(now = Date.now()): Promise<void> {
-  if (!isConfigured()) return;
-  const dir = await getCompleteDirectoryForRosterSnapshot();
-  await recordDailyRosters(dir.groups, dir.groupMembers, now);
-  const range = resolveRange("billing");
-  for (const g of dir.groups) {
-    const result = queueGroupSpendFetch(g, 1, false, (spend) => {
-      void recordSnapshot(g.id, spend);
-    }, range);
-    if (result === "fresh_cache") {
-      // Cache is fresh — record the cached value now. For "queued" and
-      // "duplicate_queued" the callback fires when the in-flight fetch lands,
-      // so we never persist a stale value.
-      const spend = getSpend(g.id, range.key);
-      if (spend) void recordSnapshot(g.id, spend);
-    }
-  }
-  logger.info({ groups: dir.groups.length }, "Daily snapshot pass queued");
-}
-
-export function millisecondsUntilNextSnapshot(now = Date.now()): number {
-  const current = new Date(now);
-  const next = Date.UTC(
-    current.getUTCFullYear(),
-    current.getUTCMonth(),
-    current.getUTCDate() + 1,
-  ) + SNAPSHOT_UTC_OFFSET_MS;
-  return Math.max(1, next - now);
-}
-
-/**
- * Start shortly after boot, then align successful passes to 00:05 UTC. A
- * failed/partial directory refresh retries during the same day instead of
- * permanently leaving that UTC date without a reliable roster.
- */
-export function startSnapshotJob(): void {
-  const schedule = (delayMs: number): void => {
-    const timer = setTimeout(() => {
-      void withJobClaim(
-        `enterprise:snapshot:${utcDay(Date.now())}`,
-        24 * 60 * 60 * 1000,
-        10 * 60 * 1000,
-        async (claim) => {
-          claim.signal?.throwIfAborted();
-          await snapshotAllGroups();
-          claim.signal?.throwIfAborted();
-        },
-        SNAPSHOT_RETRY_MS,
-      )
-        .then((result) => schedule(
-          result.acquired ? millisecondsUntilNextSnapshot() : SNAPSHOT_RETRY_MS,
-        ))
-        .catch((err) => {
-          logger.error({ err }, "Snapshot pass failed; retrying");
-          schedule(SNAPSHOT_RETRY_MS);
-        });
-    }, delayMs);
-    timer.unref();
-  };
-  schedule(30 * 1000);
 }
 
 export interface RosterHistory {

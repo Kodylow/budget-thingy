@@ -17,6 +17,18 @@ test("startup leaves both legacy Enterprise usage producers disabled", async () 
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /startDailyFactJob/);
   assert.doesNotMatch(source, /startUsageCoordinator/);
+  assert.doesNotMatch(source, /startSnapshotJob/);
+});
+
+test("roster capture belongs to the ingestion cycle, not a standalone transport", async () => {
+  const [ingestSource, historySource] = await Promise.all([
+    readFile(new URL("./lib/ingest.ts", import.meta.url), "utf8"),
+    readFile(new URL("./lib/history.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(ingestSource, /recordDailyRosters\(/);
+  assert.match(ingestSource, /hasDailyRosterSnapshot\(/);
+  assert.doesNotMatch(historySource, /getCompleteDirectoryForRosterSnapshot/);
+  assert.doesNotMatch(historySource, /startSnapshotJob/);
 });
 
 test("the scheduled checker has no Enterprise usage queue entry point", async () => {
@@ -37,6 +49,23 @@ test("application start does not push the database schema", async () => {
   );
   assert.equal(pkg.scripts.prestart, undefined);
   assert.doesNotMatch(pkg.scripts.start, /drizzle|push/i);
+});
+
+test("deployment and post-merge setup use VM migrations", async () => {
+  const [replitConfig, postMerge, dbPackage] = await Promise.all([
+    readFile(new URL("../../../.replit", import.meta.url), "utf8"),
+    readFile(new URL("../../../scripts/post-merge.sh", import.meta.url), "utf8"),
+    readFile(new URL("../../../lib/db/package.json", import.meta.url), "utf8"),
+  ]);
+  assert.match(replitConfig, /deploymentTarget\s*=\s*"vm"/);
+  assert.match(postMerge, /node scripts\/baseline-drizzle\.mjs/);
+  assert.match(postMerge, /@workspace\/db run migrate/);
+  assert.ok(
+    postMerge.indexOf("baseline-drizzle.mjs") <
+      postMerge.indexOf("@workspace/db run migrate"),
+  );
+  assert.doesNotMatch(postMerge, /push(?:-force)?/);
+  assert.match(JSON.parse(dbPackage).scripts.migrate, /drizzle-kit migrate/);
 });
 
 test("startup cache initialization only names persisted metadata tables", async () => {

@@ -1,4 +1,5 @@
 #!/bin/bash
 set -e
 pnpm install --no-frozen-lockfile
-pnpm --filter @workspace/db run push-force
+node scripts/baseline-drizzle.mjs
+pnpm --filter @workspace/db run migrate

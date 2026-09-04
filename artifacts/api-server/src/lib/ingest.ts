@@ -1,5 +1,6 @@
 import { pool } from "@workspace/db";
 import {
+  assertCompleteRosterDirectory,
   fetchEnterpriseForIngest,
   getCachedDirectory,
   getDirectory,
@@ -11,11 +12,14 @@ import {
   type DirectoryCache,
   withEnterpriseIngestAccess,
 } from "./enterprise";
+import { hasDailyRosterSnapshot, recordDailyRosters } from "./history";
 import { logger } from "./logger";
 
 const CUTOFF = "2026-05-20";
 const DAY_MS = 86_400_000;
 const DIRECTORY_TTL_MS = 15 * 60_000;
+const METADATA_WAIT_TIMEOUT_MS = 60_000;
+const METADATA_WAIT_POLL_MS = 25;
 const WORKERS = 4;
 const UNIT_ATTEMPTS = 3;
 const BATCH_SIZE = 500;
@@ -95,6 +99,21 @@ function monthStarts(endDay: string): string[] {
     current = day(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)));
   }
   return out;
+}
+
+export function reconciliationBounds(
+  monthStart: string,
+  today: string,
+): { effectiveStart: string; effectiveEnd: string } | null {
+  const effectiveStart = monthStart < CUTOFF ? CUTOFF : monthStart;
+  const nextMonth = monthStarts(addDays(monthStart, 35))
+    .find((candidate) => candidate > monthStart);
+  const monthEnd = nextMonth ?? addDays(today, 1);
+  const currentMonth = today.slice(0, 7) + "-01";
+  const effectiveEnd = monthStart === currentMonth
+    ? addDays(today, -2)
+    : monthEnd;
+  return effectiveEnd > effectiveStart ? { effectiveStart, effectiveEnd } : null;
 }
 
 function mergeMetrics(target: Metrics, incoming: Metrics | undefined): void {
@@ -365,20 +384,59 @@ async function runQueue(units: QueueUnit[]): Promise<{
   return totals;
 }
 
-async function refreshMetadata(): Promise<DirectoryCache> {
+export async function waitForLegacyMetadata(
+  options: {
+    timeoutMs?: number;
+    pollMs?: number;
+    pending?: () => number;
+    sleep?: (delayMs: number) => Promise<void>;
+    now?: () => number;
+  } = {},
+): Promise<{ timedOut: boolean; pendingCount: number; waitedMs: number }> {
+  const timeoutMs = options.timeoutMs ?? METADATA_WAIT_TIMEOUT_MS;
+  const pollMs = options.pollMs ?? METADATA_WAIT_POLL_MS;
+  const pending = options.pending ?? pendingUsageCount;
+  const sleep = options.sleep ??
+    ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const now = options.now ?? Date.now;
+  const started = now();
+  let pendingCount = pending();
+  while (pendingCount > 0 && now() - started < timeoutMs) {
+    await sleep(Math.min(pollMs, Math.max(0, timeoutMs - (now() - started))));
+    pendingCount = pending();
+  }
+  return {
+    timedOut: pendingCount > 0,
+    pendingCount,
+    waitedMs: now() - started,
+  };
+}
+
+async function refreshMetadata(now = Date.now()): Promise<DirectoryCache> {
   const freshness = getDirectoryFreshness();
+  const rosterMissing = !(await hasDailyRosterSnapshot(now));
   let directory: DirectoryCache;
-  if (!freshness.dataAsOf ||
+  if (rosterMissing ||
+      !freshness.dataAsOf ||
       Date.now() - Date.parse(freshness.dataAsOf) >= DIRECTORY_TTL_MS) {
     directory = await refreshDirectoryForIngest();
   } else {
     directory = await getCachedDirectory();
   }
+  assertCompleteRosterDirectory(directory);
+  await recordDailyRosters(directory.groups, directory.groupMembers, now);
   for (const workspaceId of directory.workspaces.keys()) {
     queueProjectTitlesFetch(workspaceId, 1, false, false);
   }
-  while (pendingUsageCount() > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
+  const metadataWait = await waitForLegacyMetadata();
+  if (metadataWait.timedOut) {
+    logger.warn({
+      event: "usage_ingest_metadata_wait_timeout",
+      timeoutMs: METADATA_WAIT_TIMEOUT_MS,
+      pendingCount: metadataWait.pendingCount,
+      waitedMs: metadataWait.waitedMs,
+      workspaceCount: directory.workspaces.size,
+    }, "Legacy project metadata queue did not drain; continuing usage ingestion");
   }
   return directory;
 }
@@ -476,10 +534,9 @@ async function reconcile(
   const stats = { calls: 0 };
   const reconciliations: ReconciliationDelta[] = [];
   for (const monthStart of monthStarts(today)) {
-    const effectiveStart = monthStart < CUTOFF ? CUTOFF : monthStart;
-    const monthEnd = monthStarts(addDays(monthStart, 35))
-      .find((candidate) => candidate > monthStart) ?? addDays(today, 1);
-    const effectiveEnd = monthEnd > addDays(today, 1) ? addDays(today, 1) : monthEnd;
+    const bounds = reconciliationBounds(monthStart, today);
+    if (!bounds) continue;
+    const { effectiveStart, effectiveEnd } = bounds;
     const startTime = `${effectiveStart}T00:00:00.000Z`;
     const endTime = `${effectiveEnd}T00:00:00.000Z`;
     const accountUpstream = await fetchTotal(startTime, endTime, undefined, stats);
@@ -559,7 +616,7 @@ async function runAuthorizedCycle(now = new Date()): Promise<CycleSummary> {
       return { ...empty, durationMs: Date.now() - started };
     }
     empty.acquired = true;
-    const directory = await refreshMetadata();
+    const directory = await refreshMetadata(now.getTime());
     const workspaceIds = [...directory.workspaces.keys()].sort();
     const today = day(now);
     const liveDays = [today, addDays(today, -1), addDays(today, -2)];
