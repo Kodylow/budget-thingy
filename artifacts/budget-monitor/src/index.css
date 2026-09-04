@@ -286,6 +286,22 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+
+  /*
+   * Keep data-heavy tables compact and scannable across both shared table
+   * components and page-local table markup. Colspan rows are usually empty
+   * states or explanatory sections, so they retain their intentional spacing.
+   */
+  table thead th:not([colspan]),
+  table tbody td:not([colspan]),
+  table tbody td[colspan='1'] {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+
+  table thead th:not([colspan]) {
+    height: 2.25rem !important;
+  }
 }
 
 @layer utilities {
