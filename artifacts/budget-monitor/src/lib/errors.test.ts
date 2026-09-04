@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 
 vi.mock('../components/ui/toast', () => ({ ToastAction: () => null }));
@@ -12,6 +12,10 @@ import {
   subscribeApiErrorToasts,
   updateNoticeState,
 } from './errors';
+
+beforeEach(() => {
+  vi.mocked(toast).mockReset();
+});
 
 describe('describeError', () => {
   it('classifies authorization errors without exposing server messages', () => {
@@ -95,6 +99,64 @@ describe('subscribeApiErrorToasts', () => {
       usageHealth: { status: 'complete', coverage: { ratio: 1 } },
     });
     expect(dismiss).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it('shows one partial-data warning across simultaneous queries and waits for full recovery', () => {
+    const dismiss = vi.fn();
+    vi.mocked(toast).mockReturnValue({
+      id: 'usage-health',
+      dismiss,
+      update: vi.fn(),
+    });
+    const queryClient = new QueryClient();
+    const unsubscribe = subscribeApiErrorToasts(queryClient);
+
+    queryClient.setQueryData(['dashboard', 'groups'], {
+      usageHealth: { status: 'partial', coverage: { ratio: 0.8 } },
+    });
+    queryClient.setQueryData(['dashboard', 'summary'], {
+      usageHealth: { status: 'stale', coverage: { ratio: 1 } },
+    });
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Some usage data is still updating',
+    }));
+
+    queryClient.setQueryData(['dashboard', 'groups'], {
+      usageHealth: { status: 'complete', coverage: { ratio: 1 } },
+    });
+    expect(dismiss).not.toHaveBeenCalled();
+
+    queryClient.setQueryData(['dashboard', 'summary'], {
+      usageHealth: { status: 'complete', coverage: { ratio: 1 } },
+    });
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it('keeps request failures destructive and retryable', async () => {
+    vi.mocked(toast).mockReturnValue({
+      id: 'request-error',
+      dismiss: vi.fn(),
+      update: vi.fn(),
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const unsubscribe = subscribeApiErrorToasts(queryClient);
+
+    await expect(queryClient.fetchQuery({
+      queryKey: ['/api/toast-only-regression'],
+      queryFn: () => Promise.reject({ status: 503 }),
+    })).rejects.toEqual({ status: 503 });
+
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Service unavailable',
+      variant: 'destructive',
+      action: expect.anything(),
+    }));
     unsubscribe();
   });
 });
