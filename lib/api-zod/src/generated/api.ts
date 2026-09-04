@@ -748,7 +748,9 @@ export const GetDashboardResponse = zod.object({
   "internalExcludedUsd": zod.number(),
   "unbudgetedUsd": zod.number(),
   "unattributedUsd": zod.number(),
-  "reconciliationUsd": zod.number()
+  "reconciliationUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number()
 }),
   "metadata": zod.object({
   "generationId": zod.string(),
@@ -763,7 +765,12 @@ export const GetDashboardResponse = zod.object({
   "missingDays": zod.array(zod.string()),
   "failedWorkspaceDays": zod.array(zod.string())
 }),
-  "qualifications": zod.array(zod.string())
+  "qualifications": zod.array(zod.string()),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "observedAt": zod.number().nullable(),
+  "error": zod.string().nullable()
+})
 })
 })
 
@@ -879,7 +886,12 @@ export const ListSpendPoolsResponse = zod.object({
   "missingDays": zod.array(zod.string()),
   "failedWorkspaceDays": zod.array(zod.string())
 }),
-  "qualifications": zod.array(zod.string())
+  "qualifications": zod.array(zod.string()),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "observedAt": zod.number().nullable(),
+  "error": zod.string().nullable()
+})
 })
 })
 
@@ -995,7 +1007,12 @@ export const ListSpendGroupsResponse = zod.object({
   "missingDays": zod.array(zod.string()),
   "failedWorkspaceDays": zod.array(zod.string())
 }),
-  "qualifications": zod.array(zod.string())
+  "qualifications": zod.array(zod.string()),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "observedAt": zod.number().nullable(),
+  "error": zod.string().nullable()
+})
 })
 })
 
@@ -1111,7 +1128,12 @@ export const ListSpendPeopleResponse = zod.object({
   "missingDays": zod.array(zod.string()),
   "failedWorkspaceDays": zod.array(zod.string())
 }),
-  "qualifications": zod.array(zod.string())
+  "qualifications": zod.array(zod.string()),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "observedAt": zod.number().nullable(),
+  "error": zod.string().nullable()
+})
 })
 })
 
@@ -1227,7 +1249,12 @@ export const ListSpendProjectsResponse = zod.object({
   "missingDays": zod.array(zod.string()),
   "failedWorkspaceDays": zod.array(zod.string())
 }),
-  "qualifications": zod.array(zod.string())
+  "qualifications": zod.array(zod.string()),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable']),
+  "observedAt": zod.number().nullable(),
+  "error": zod.string().nullable()
+})
 })
 })
 

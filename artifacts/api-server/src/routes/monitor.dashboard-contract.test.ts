@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import {
   GetDashboardResponse,
@@ -7,6 +8,10 @@ import {
   ListSpendProjectsResponse,
 } from "@workspace/api-zod";
 import monitorRouter from "./monitor";
+import {
+  dashboardDrillThrough,
+  dashboardQueryError,
+} from "./monitor.dashboard";
 
 type RouterLayer = {
   route?: { path?: string };
@@ -38,12 +43,98 @@ describe("dashboard and spend endpoint contracts", () => {
     ]));
   });
 
-  test("generated response validators accept truthful integration shapes only", () => {
+  test("generated response validators preserve the complete dashboard generation", () => {
     expect(GetDashboardResponse).toBeDefined();
     expect(ListSpendPoolsResponse).toBeDefined();
     expect(ListSpendGroupsResponse).toBeDefined();
     expect(ListSpendPeopleResponse).toBeDefined();
     expect(ListSpendProjectsResponse).toBeDefined();
+    const dashboard = GetDashboardResponse.parse({
+      scope: {
+        viewScope: "managed",
+        label: "Managed scope",
+        workspaceIds: ["w1"],
+        groupIds: ["g1"],
+        isPersonal: false,
+      },
+      period: {
+        start: "2026-09-01T00:00:00.000Z",
+        endExclusive: "2026-09-03T00:00:00.000Z",
+        timezone: "UTC",
+        label: "Custom",
+      },
+      cardVariant: "usage_analysis",
+      cards: [
+        { key: "spend", label: "Spend", value: 9, unit: "usd", qualification: null },
+        { key: "agent_spend", label: "Agent", value: 6, unit: "usd", qualification: null },
+        { key: "other_services", label: "Other", value: 3, unit: "usd", qualification: null },
+        { key: "members_with_spend", label: "Members", value: 1, unit: "count", qualification: null },
+      ],
+      trend: {
+        granularity: "day",
+        mode: "period",
+        buckets: [{
+          start: "2026-09-01T00:00:00.000Z",
+          endExclusive: "2026-09-02T00:00:00.000Z",
+          spendUsd: 9,
+          valueUsd: 9,
+          isPartial: false,
+          isMissing: false,
+        }],
+      },
+      breakdown: [{
+        id: "group:w1:g1",
+        label: "Group",
+        spendUsd: 9,
+        kind: "group",
+        drillThrough: "/spend?view=groups",
+      }],
+      accounting: {
+        eligibleSpendUsd: 9,
+        grossSpendUsd: 10,
+        internalExcludedUsd: 1,
+        unbudgetedUsd: 0,
+        unattributedUsd: 0,
+        reconciliationUsd: 0,
+        agentSpendUsd: 6,
+        otherServicesUsd: 3,
+      },
+      metadata: {
+        generationId: "fixture-generation",
+        costBasis: "allocation_eligible_committed",
+        status: "partial",
+        dataAsOf: "2026-09-02T00:00:00.000Z",
+        directoryDataAsOf: "2026-09-02T00:00:00.000Z",
+        stale: true,
+        coverage: {
+          ratio: 0.5,
+          requestedDays: 2,
+          missingDays: ["2026-09-02"],
+          failedWorkspaceDays: [],
+        },
+        qualifications: ["Partial usage coverage; missing facts are not zero."],
+        limitObservation: {
+          status: "unavailable",
+          observedAt: null,
+          error: null,
+        },
+      },
+    });
+    expect(dashboard.accounting).toMatchObject({
+      agentSpendUsd: 6,
+      otherServicesUsd: 3,
+    });
+    expect(dashboard.metadata).toMatchObject({
+      generationId: "fixture-generation",
+      status: "partial",
+      stale: true,
+      limitObservation: { status: "unavailable" },
+    });
+    expect(() => GetDashboardResponse.parse({
+      ...dashboard,
+      period: { ...dashboard.period, timezone: "local" },
+    })).toThrow();
+
     expect(() => ListSpendPoolsResponse.parse({
       view: "pools",
       scope: {
@@ -117,5 +208,61 @@ describe("dashboard and spend endpoint contracts", () => {
         },
       },
     })).not.toThrow();
+  });
+
+  test("invalid custom queries are distinct from unavailable stored accounting", () => {
+    expect(dashboardQueryError({ rangeType: "custom" }))
+      .toBe("Custom ranges require startDate and endDate");
+    expect(dashboardQueryError({
+      rangeType: "custom",
+      startDate: "2026-09-03",
+      endDate: "2026-09-01",
+    })).toBe("Custom range startDate must not be after endDate");
+    expect(dashboardQueryError({
+      rangeType: "custom",
+      startDate: "2026-02-31",
+      endDate: "2026-03-01",
+    })).toContain("valid UTC dates");
+    expect(dashboardQueryError({
+      rangeType: "custom",
+      startDate: "2026-09-01",
+      endDate: "2026-09-03",
+    })).toBeNull();
+  });
+
+  test("every drill-through can preserve the resolved scope and UTC window", () => {
+    const href = dashboardDrillThrough(
+      "all_authorized",
+      "2026-09-01T00:00:00.000Z",
+      "2026-09-04T00:00:00.000Z",
+      "R&D / Platform",
+    );
+    const url = new URL(href, "https://example.test");
+    expect(url.pathname).toBe("/spend");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      view: "groups",
+      viewScope: "all_authorized",
+      rangeType: "custom",
+      startDate: "2026-09-01",
+      endDate: "2026-09-03",
+      search: "R&D / Platform",
+    });
+  });
+
+  test("ordinary dashboard generation is wired only to persisted readers", () => {
+    const route = readFileSync(
+      new URL("./monitor.dashboard.ts", import.meta.url),
+      "utf8",
+    );
+    const accounting = readFileSync(
+      new URL("../services/scoped-accounting.ts", import.meta.url),
+      "utf8",
+    );
+    expect(route).toContain("buildScopedAccounting");
+    expect(route).not.toMatch(/getSummary|GetSummary|getTrends|GetTrends/);
+    expect(accounting).toContain("getCachedDirectory");
+    expect(accounting).not.toMatch(
+      /listReplitMemberBudgets|fetchFreshLimitDirectory|getFreshDirectoryForLimitValidation/,
+    );
   });
 });

@@ -2215,7 +2215,7 @@ components:
         label: { type: string }
     AccountingMetadata:
       type: object
-      required: [generationId, costBasis, status, dataAsOf, directoryDataAsOf, stale, coverage, qualifications]
+      required: [generationId, costBasis, status, dataAsOf, directoryDataAsOf, stale, coverage, qualifications, limitObservation]
       properties:
         generationId: { type: string }
         costBasis:
@@ -2242,6 +2242,15 @@ components:
         qualifications:
           type: array
           items: { type: string }
+        limitObservation:
+          type: object
+          required: [status, observedAt, error]
+          properties:
+            status:
+              type: string
+              enum: [complete, failed, unavailable]
+            observedAt: { type: [integer, "null"] }
+            error: { type: [string, "null"] }
     DashboardScope:
       type: object
       required: [viewScope, label, workspaceIds, groupIds, isPersonal]
@@ -2293,7 +2302,7 @@ components:
         drillThrough: { type: [string, "null"] }
     DashboardAccounting:
       type: object
-      required: [eligibleSpendUsd, grossSpendUsd, internalExcludedUsd, unbudgetedUsd, unattributedUsd, reconciliationUsd]
+      required: [eligibleSpendUsd, grossSpendUsd, internalExcludedUsd, unbudgetedUsd, unattributedUsd, reconciliationUsd, agentSpendUsd, otherServicesUsd]
       properties:
         eligibleSpendUsd: { type: number }
         grossSpendUsd: { type: number }
@@ -2301,6 +2310,8 @@ components:
         unbudgetedUsd: { type: number }
         unattributedUsd: { type: number }
         reconciliationUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
     DashboardResponse:
       type: object
       required: [scope, period, cardVariant, cards, trend, breakdown, accounting, metadata]

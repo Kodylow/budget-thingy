@@ -47,18 +47,23 @@ export function buildDashboardBuckets(
     grouped.set(startDay, current);
   }
   let cumulative = 0;
+  let cumulativeHasGap = false;
   return [...grouped.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .slice(-62)
     .map(([startDay, value]) => {
-      cumulative += value.spendUsd;
+      if (value.partial) {
+        cumulativeHasGap = true;
+      } else if (!cumulativeHasGap) {
+        cumulative += value.spendUsd;
+      }
       return {
         start: `${startDay}T00:00:00.000Z`,
         endExclusive: value.endExclusive,
         spendUsd: value.partial ? null : value.spendUsd,
-        valueUsd: value.partial
-          ? null
-          : mode === "cumulative" ? cumulative : value.spendUsd,
+        valueUsd: mode === "cumulative"
+          ? cumulativeHasGap ? null : cumulative
+          : value.partial ? null : value.spendUsd,
         isPartial: value.partial,
         isMissing: value.partial,
       };

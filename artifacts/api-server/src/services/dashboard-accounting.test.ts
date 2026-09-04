@@ -240,6 +240,16 @@ describe("compact dashboard accounting", () => {
     });
   });
 
+  test("cumulative trend remains unknown after the first coverage gap", () => {
+    const buckets = buildDashboardBuckets([
+      { day: "2026-09-01", spendUsd: 4, complete: true },
+      { day: "2026-09-02", spendUsd: 3, complete: false },
+      { day: "2026-09-03", spendUsd: 5, complete: true },
+    ], "day", "cumulative");
+    expect(buckets.map((bucket) => bucket.valueUsd)).toEqual([4, null, null]);
+    expect(buckets.map((bucket) => bucket.spendUsd)).toEqual([4, null, 5]);
+  });
+
   test("weekly buckets remain UTC across the Los Angeles DST boundary", () => {
     const original = process.env.TZ;
     process.env.TZ = "America/Los_Angeles";

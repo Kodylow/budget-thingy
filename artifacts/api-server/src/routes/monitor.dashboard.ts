@@ -8,9 +8,55 @@ import {
   buildScopedAccounting,
 } from "../services/scoped-accounting";
 import { buildDashboardBuckets } from "../services/dashboard-buckets";
+import { UsageWindowError } from "../lib/usage-window";
 
 const router: IRouter = Router();
 const DAY_MS = 86_400_000;
+const UTC_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function isUtcDay(value: string): boolean {
+  if (!UTC_DAY.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value;
+}
+
+export function dashboardQueryError(query: {
+  rangeType?: string;
+  startDate?: string;
+  endDate?: string;
+}): string | null {
+  if (query.rangeType !== "custom") return null;
+  if (!query.startDate || !query.endDate) {
+    return "Custom ranges require startDate and endDate";
+  }
+  if (!isUtcDay(query.startDate) || !isUtcDay(query.endDate)) {
+    return "Custom range dates must be valid UTC dates in YYYY-MM-DD format";
+  }
+  const start = Date.parse(`${query.startDate}T00:00:00.000Z`);
+  const end = Date.parse(`${query.endDate}T00:00:00.000Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+    return "Custom range startDate must not be after endDate";
+  }
+  return null;
+}
+
+export function dashboardDrillThrough(
+  viewScope: string,
+  start: string,
+  endExclusive: string,
+  search?: string,
+): string {
+  const params = new URLSearchParams({
+    view: "groups",
+    viewScope,
+    rangeType: "custom",
+    startDate: start.slice(0, 10),
+    endDate: new Date(Date.parse(endExclusive) - DAY_MS).toISOString().slice(0, 10),
+  });
+  if (search) params.set("search", search);
+  return `/spend?${params.toString()}`;
+}
 
 function defaultGranularity(start: string, end: string): "day" | "week" | "month" {
   const days = (Date.parse(end) - Date.parse(start)) / DAY_MS;
@@ -21,6 +67,11 @@ router.get("/dashboard", async (req, res): Promise<void> => {
   const parsed = GetDashboardQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const queryError = dashboardQueryError(parsed.data);
+  if (queryError) {
+    res.status(400).json({ error: queryError });
     return;
   }
   try {
@@ -66,7 +117,9 @@ router.get("/dashboard", async (req, res): Promise<void> => {
         ? "The stored limit observation failed."
         : observation === "unavailable"
           ? "No completed stored limit observation is available."
-          : oneWorkspace ? null : "Limits are workspace-specific and are not summed.";
+          : !oneWorkspace
+            ? "Limits are workspace-specific and are not summed."
+            : limit === null ? "No Agent limit is configured for this workspace." : null;
       cardVariant = "personal_limit";
       cards = [
         { key: "your_agent_spend", label: "Your Agent spend", value: result.accounting.agentSpendUsd, unit: "usd", qualification: null },
@@ -108,12 +161,21 @@ router.get("/dashboard", async (req, res): Promise<void> => {
     const top = breakdownSource.slice(0, 5).map((row) => ({
       id: row.id, label: row.name, spendUsd: row.spendUsd,
       kind: row.kind === "unattributed" ? "unattributed" as const : "group" as const,
-      drillThrough: `/spend?view=groups&viewScope=${result.scope.viewScope}&rangeType=custom&startDate=${result.period.start.slice(0, 10)}&endDate=${new Date(Date.parse(result.period.endExclusive) - DAY_MS).toISOString().slice(0, 10)}&search=${encodeURIComponent(row.name)}`,
+      drillThrough: dashboardDrillThrough(
+        result.scope.viewScope,
+        result.period.start,
+        result.period.endExclusive,
+        row.name,
+      ),
     }));
     const otherSpend = breakdownSource.slice(5).reduce((sum, row) => sum + row.spendUsd, 0);
     const breakdown = otherSpend === 0 ? top : [...top, {
       id: "other", label: "Other", spendUsd: otherSpend, kind: "other" as const,
-      drillThrough: `/spend?view=groups&viewScope=${result.scope.viewScope}`,
+      drillThrough: dashboardDrillThrough(
+        result.scope.viewScope,
+        result.period.start,
+        result.period.endExclusive,
+      ),
     }];
     res.json(GetDashboardResponse.parse({
       scope: result.scope, period: result.period, cardVariant, cards,
@@ -121,6 +183,10 @@ router.get("/dashboard", async (req, res): Promise<void> => {
       accounting: result.accounting, metadata: result.metadata,
     }));
   } catch (error) {
+    if (error instanceof UsageWindowError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     req.log.error({ err: error }, "dashboard stored accounting failed");
     res.status(503).json({ error: "Dashboard accounting unavailable" });
   }

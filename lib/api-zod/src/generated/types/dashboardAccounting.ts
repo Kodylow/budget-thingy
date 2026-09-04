@@ -13,4 +13,6 @@ export interface DashboardAccounting {
   unbudgetedUsd: number;
   unattributedUsd: number;
   reconciliationUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
 }

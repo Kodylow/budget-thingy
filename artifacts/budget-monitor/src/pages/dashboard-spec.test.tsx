@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { getNavSections } from '../components/app-shell';
 import type { AuthCapabilities } from '@workspace/replit-auth-web';
+import {
+  dashboardRequestParams,
+  dashboardSpendHref,
+} from '../lib/dashboard-request';
 
 const mockCapabilities = (overrides: Partial<AuthCapabilities> = {}): AuthCapabilities => ({
   canManageAccess: false,
@@ -16,6 +21,45 @@ const mockCapabilities = (overrides: Partial<AuthCapabilities> = {}): AuthCapabi
 });
 
 describe('Dashboard and Spend Spec Behaviors', () => {
+  it('sends one generated dashboard request with URL-owned reporting controls', () => {
+    expect(dashboardRequestParams({
+      rangeType: 'custom',
+      startDate: '2026-09-01',
+      endDate: '2026-09-03',
+      granularity: 'day',
+      trendMode: 'cumulative',
+      viewScope: 'all_authorized',
+    })).toEqual({
+      rangeType: 'custom',
+      startDate: '2026-09-01',
+      endDate: '2026-09-03',
+      granularity: 'day',
+      trendMode: 'cumulative',
+      viewScope: 'all_authorized',
+    });
+    const source = readFileSync(new URL('./dashboard.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('useGetDashboard(queryParams)');
+    expect(source).not.toMatch(/useGetSummary|useGetTrends|useListGroups/);
+  });
+
+  it('preserves dashboard range, trend, and scope when opening Spend', () => {
+    const href = dashboardSpendHref(
+      '?rangeType=custom&startDate=2026-09-01&endDate=2026-09-03&viewScope=managed&granularity=week&trendMode=period',
+      { view: 'groups', search: 'Platform' },
+    );
+    const url = new URL(href, 'https://example.test');
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      rangeType: 'custom',
+      startDate: '2026-09-01',
+      endDate: '2026-09-03',
+      viewScope: 'managed',
+      granularity: 'week',
+      trendMode: 'period',
+      view: 'groups',
+      search: 'Platform',
+    });
+  });
+
   it('gates settings visibility using canManageSystem/canManageNotifications, not canManageAccess', () => {
     const sectionsAccessOnly = getNavSections(mockCapabilities({ canManageAccess: true }), false, 'account');
     expect(sectionsAccessOnly.find(s => s.label === 'Administration')?.items.find(i => i.path === '/settings')).toBeUndefined();

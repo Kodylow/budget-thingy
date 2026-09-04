@@ -343,18 +343,48 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
     expect(dashboardResponse.status).toBe(200);
     const dashboard = await dashboardResponse.json() as {
       accounting: { eligibleSpendUsd: number };
-      cards: Array<{ value: number | null }>;
-      breakdown: Array<{ drillThrough: string }>;
+      cards: Array<{ key: string; value: number | null }>;
+      trend: { buckets: Array<{ spendUsd: number | null }> };
+      breakdown: Array<{ spendUsd: number; drillThrough: string }>;
+      metadata: { generationId: string; status: string };
+      period: { start: string; endExclusive: string };
+      scope: { viewScope: string };
     };
     expect(dashboard.accounting.eligibleSpendUsd).toBe(5);
     expect(dashboard.cards.every((card: { value: number | null }) =>
       card.value !== 1_000 && card.value !== 500)).toBe(true);
     expect(dashboard.breakdown.reduce((sum, item) =>
-      sum + Number((item as { spendUsd?: number }).spendUsd ?? 0), 0)).toBe(5);
+      sum + item.spendUsd, 0)).toBe(5);
+    if (dashboard.metadata.status === "complete") {
+      expect(dashboard.trend.buckets.reduce((sum, bucket) =>
+        sum + (bucket.spendUsd ?? 0), 0)).toBe(5);
+    } else {
+      expect(dashboard.trend.buckets).toEqual(expect.arrayContaining([
+        expect.objectContaining({ spendUsd: null }),
+      ]));
+    }
+    expect(dashboard.metadata.generationId).toHaveLength(24);
     for (const item of dashboard.breakdown) {
-      if (item.drillThrough.includes("startDate=")) {
-        expect(item.drillThrough).toContain("rangeType=custom");
-      }
+      const drill = new URL(item.drillThrough, baseUrl);
+      expect(drill.searchParams.get("viewScope")).toBe(dashboard.scope.viewScope);
+      expect(drill.searchParams.get("rangeType")).toBe("custom");
+      expect(drill.searchParams.get("startDate"))
+        .toBe(dashboard.period.start.slice(0, 10));
+      expect(drill.searchParams.get("endDate")).toBe(TODAY);
+    }
+  });
+
+  test("invalid dashboard query receives 400 without becoming accounting unavailable", async () => {
+    for (const query of [
+      "/dashboard?rangeType=custom&startDate=not-a-day",
+      "/dashboard?rangeType=custom&startDate=2026-02-31&endDate=2026-03-01",
+      "/dashboard?rangeType=custom&startDate=2020-01-01&endDate=2020-01-02",
+    ]) {
+      const response = await get(query, SHARED_ADMIN);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: expect.any(String),
+      });
     }
   });
 

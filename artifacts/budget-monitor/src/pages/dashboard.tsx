@@ -1,12 +1,9 @@
-import React from "react";
 import { useMemo, useEffect, lazy, Suspense, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
 import {
   useGetDashboard,
   DashboardCard,
-  DashboardTrendBucket,
   DashboardBreakdownItem,
-  DashboardResponseTrend
 } from "@workspace/api-client-react";
 import { useAuthContext } from "@/components/auth-context";
 import { useRange } from "@/components/range-context";
@@ -18,6 +15,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertTriangle, DollarSign, Wallet, User, Activity, PieChart, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { reportDashboardMilestonePainted, markDashboardMilestone, DashboardPerformanceContext } from "@/lib/client-performance";
+import {
+  dashboardRequestParams,
+  dashboardSpendHref,
+} from "@/lib/dashboard-request";
 
 const TrendChart = lazy(() => import("./dashboard-chart"));
 
@@ -34,18 +35,17 @@ export default function Dashboard() {
   const viewScope = searchParams.get('viewScope') || undefined;
 
   const queryParams = useMemo(() => {
-    const params: any = { rangeType };
-    if (rangeType === "custom") {
-      params.startDate = startDate;
-      params.endDate = endDate;
-    }
-    if (granularity) params.granularity = granularity;
-    if (trendMode) params.trendMode = trendMode;
-    if (viewScope) params.viewScope = viewScope;
-    return params;
+    return dashboardRequestParams({
+      rangeType,
+      startDate,
+      endDate,
+      granularity: granularity as Parameters<typeof dashboardRequestParams>[0]["granularity"],
+      trendMode: trendMode as Parameters<typeof dashboardRequestParams>[0]["trendMode"],
+      viewScope: viewScope as Parameters<typeof dashboardRequestParams>[0]["viewScope"],
+    });
   }, [rangeType, startDate, endDate, granularity, trendMode, viewScope]);
 
-  const { data, isLoading, isError, error, isFetching } = useGetDashboard(queryParams);
+  const { data, isLoading, isError, isFetching } = useGetDashboard(queryParams);
 
   const identityKey = `${preview ?? 'real'}:${role ?? 'signed-out'}`;
   const querySignature = JSON.stringify(queryParams);
@@ -191,11 +191,7 @@ export default function Dashboard() {
   const { scope, period, cards, trend, breakdown, accounting, metadata } = displayData;
 
   const navigateToSpend = (filter?: Record<string, string>) => {
-    const params = new URLSearchParams(searchString);
-    if (filter) {
-      Object.entries(filter).forEach(([k, v]) => params.set(k, v));
-    }
-    setLocation(`/spend?${params.toString()}`);
+    setLocation(dashboardSpendHref(searchString, filter));
   };
 
   const updateUrlParam = (key: string, value: string) => {
@@ -210,26 +206,26 @@ export default function Dashboard() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight" data-testid="text-dashboard-scope">
               {scope.label || 'Dashboard'}
             </h1>
             {isFetching && displayData && (
-              <Badge variant="outline" className="border-muted text-muted-foreground bg-muted/20 animate-pulse">
+              <Badge variant="outline" className="border-muted text-muted-foreground bg-muted/20 animate-pulse" data-testid="status-dashboard-updating">
                 <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Updating
               </Badge>
             )}
             {metadata.status === 'partial' && (
-              <Badge variant="outline" className="border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/30" title="Data for this period is incomplete">
+              <Badge variant="outline" className="border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/30" title="Data for this period is incomplete" data-testid="status-dashboard-partial">
                 Partial Data
               </Badge>
             )}
             {metadata.stale && (
-              <Badge variant="outline" className="border-blue-500 text-blue-600 bg-blue-50 dark:bg-blue-950/30" title="Using cached snapshot">
+              <Badge variant="outline" className="border-blue-500 text-blue-600 bg-blue-50 dark:bg-blue-950/30" title="Using cached snapshot" data-testid="status-dashboard-stale">
                 Stale
               </Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
+          <p className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap" data-testid="text-dashboard-period">
             <span>{period.label}</span>
             <span className="text-muted-foreground/50">•</span>
             <span>Yours · {scope.viewScope.replace('_', ' ')}</span>
@@ -266,7 +262,7 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-2">
                 <Select value={trend.granularity} onValueChange={(val) => updateUrlParam('granularity', val)}>
-                  <SelectTrigger className="h-8 w-[100px] text-xs">
+                  <SelectTrigger className="h-8 w-[100px] text-xs" data-testid="select-dashboard-granularity">
                     <SelectValue placeholder="Daily" />
                   </SelectTrigger>
                   <SelectContent>
@@ -276,7 +272,7 @@ export default function Dashboard() {
                   </SelectContent>
                 </Select>
                 <Select value={trend.mode} onValueChange={(val) => updateUrlParam('trendMode', val)}>
-                  <SelectTrigger className="h-8 w-[130px] text-xs">
+                  <SelectTrigger className="h-8 w-[130px] text-xs" data-testid="select-dashboard-trend-mode">
                     <SelectValue placeholder="Period spend" />
                   </SelectTrigger>
                   <SelectContent>
@@ -348,6 +344,7 @@ function DashboardMetricCard({ card, onClick }: { card: DashboardCard, onClick: 
     <Card
       className={`shadow-sm transition-all hover:shadow-md hover:border-primary/30 cursor-pointer group ${isWarning ? 'border-amber-500/50 bg-amber-50/10' : ''}`}
       onClick={onClick}
+      data-testid={`card-dashboard-${card.key}`}
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2 md:p-6 md:pb-2">
         <CardTitle className={`text-sm font-medium ${isWarning ? 'text-amber-700 dark:text-amber-400' : ''}`}>
@@ -384,6 +381,7 @@ function BreakdownList({ breakdown, onClick }: { breakdown: DashboardBreakdownIt
             key={item.id + i}
             className="group cursor-pointer flex flex-col gap-1.5"
             onClick={() => onClick(item)}
+            data-testid={`link-dashboard-breakdown-${item.id}`}
           >
             <div className="flex justify-between items-end text-sm">
               <span className={`font-medium truncate pr-4 ${isOther ? 'text-muted-foreground italic' : ''}`}>

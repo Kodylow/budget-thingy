@@ -41,6 +41,23 @@ export type AccountingMetadataCoverage = {
   failedWorkspaceDays: string[];
 };
 
+export type AccountingMetadataLimitObservationStatus = typeof AccountingMetadataLimitObservationStatus[keyof typeof AccountingMetadataLimitObservationStatus];
+
+
+export const AccountingMetadataLimitObservationStatus = {
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+} as const;
+
+export type AccountingMetadataLimitObservation = {
+  status: AccountingMetadataLimitObservationStatus;
+  /** @nullable */
+  observedAt: number | null;
+  /** @nullable */
+  error: string | null;
+};
+
 export interface AccountingMetadata {
   generationId: string;
   costBasis: AccountingMetadataCostBasis;
@@ -52,6 +69,7 @@ export interface AccountingMetadata {
   stale: boolean;
   coverage: AccountingMetadataCoverage;
   qualifications: string[];
+  limitObservation: AccountingMetadataLimitObservation;
 }
 
 export type DashboardScopeViewScope = typeof DashboardScopeViewScope[keyof typeof DashboardScopeViewScope];
@@ -144,6 +162,8 @@ export interface DashboardAccounting {
   unbudgetedUsd: number;
   unattributedUsd: number;
   reconciliationUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
 }
 
 export type DashboardResponseCardVariant = typeof DashboardResponseCardVariant[keyof typeof DashboardResponseCardVariant];

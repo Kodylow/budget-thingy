@@ -7,6 +7,7 @@
  */
 import type { AccountingMetadataCostBasis } from './accountingMetadataCostBasis';
 import type { AccountingMetadataCoverage } from './accountingMetadataCoverage';
+import type { AccountingMetadataLimitObservation } from './accountingMetadataLimitObservation';
 import type { AccountingMetadataStatus } from './accountingMetadataStatus';
 
 export interface AccountingMetadata {
@@ -20,4 +21,5 @@ export interface AccountingMetadata {
   stale: boolean;
   coverage: AccountingMetadataCoverage;
   qualifications: string[];
+  limitObservation: AccountingMetadataLimitObservation;
 }
