@@ -1,9 +1,11 @@
 import { db, sessionsTable } from "@workspace/db";
 import { desc, gt } from "drizzle-orm";
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { spawn } from "node:child_process";
 
 const sampleCount = 20;
 const warmupCount = 2;
+const concurrentCount = 8;
 const benchmarkPort = process.env.BENCHMARK_PORT ?? "80";
 
 function resolveBaseUrl(): string {
@@ -39,13 +41,14 @@ interface RequestMeasurement {
   contentLengthBytes: number | null;
   contentEncoding: string | null;
   serverTiming: string | null;
+  cacheControl: string | null;
 }
 
 async function timedRequest(path: string, sid: string): Promise<RequestMeasurement> {
   const startedAt = performance.now();
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
-      Accept: "application/json",
+      Accept: path.includes(".csv") ? "text/csv" : "application/json",
       "Accept-Encoding": "gzip, br",
       Authorization: `Bearer ${sid}`,
     },
@@ -66,17 +69,15 @@ async function timedRequest(path: string, sid: string): Promise<RequestMeasureme
     contentLengthBytes: Number.isFinite(contentLength) ? contentLength : null,
     contentEncoding: response.headers.get("content-encoding"),
     serverTiming: response.headers.get("server-timing"),
+    cacheControl: response.headers.get("cache-control"),
   };
 }
 
-async function benchmark(path: string, sid: string) {
-  for (let index = 0; index < warmupCount; index += 1) {
-    await timedRequest(path, sid);
-  }
-  const measurements: RequestMeasurement[] = [];
-  for (let index = 0; index < sampleCount; index += 1) {
-    measurements.push(await timedRequest(path, sid));
-  }
+function summarize(
+  path: string,
+  profile: string,
+  measurements: RequestMeasurement[],
+) {
   const timings = measurements.map(({ durationMs }) => durationMs);
   const sorted = [...timings].sort((a, b) => a - b);
   const decodedBodyBytes = measurements.map(({ decodedBodyBytes }) => decodedBodyBytes);
@@ -85,7 +86,8 @@ async function benchmark(path: string, sid: string) {
     .filter((value): value is number => value !== null);
   return {
     path,
-    sampleCount,
+    profile,
+    requestCount: measurements.length,
     p50Ms: Number(percentile(sorted, 0.5).toFixed(1)),
     p95Ms: Number(percentile(sorted, 0.95).toFixed(1)),
     minMs: Number(sorted[0]!.toFixed(1)),
@@ -101,7 +103,56 @@ async function benchmark(path: string, sid: string) {
       contentEncoding ?? "identity"))],
     serverTiming: [...new Set(measurements.flatMap(({ serverTiming }) =>
       serverTiming ? [serverTiming] : []))],
+    cacheControls: [...new Set(measurements.map(({ cacheControl }) =>
+      cacheControl ?? "missing"))],
   };
+}
+
+async function benchmark(path: string, sid: string) {
+  const cold = [await timedRequest(path, sid)];
+  for (let index = 0; index < warmupCount; index += 1) {
+    await timedRequest(path, sid);
+  }
+  const warm: RequestMeasurement[] = [];
+  for (let index = 0; index < sampleCount; index += 1) {
+    warm.push(await timedRequest(path, sid));
+  }
+  const concurrent = await Promise.all(
+    Array.from({ length: concurrentCount }, () => timedRequest(path, sid)),
+  );
+  return [
+    summarize(path, "cold-first-request", cold),
+    summarize(path, "warm-sequential", warm),
+    summarize(path, `concurrent-${concurrentCount}`, concurrent),
+  ];
+}
+
+async function runIngestionActive(
+  paths: readonly string[],
+  sid: string,
+): Promise<ReturnType<typeof summarize>[]> {
+  if (process.env["BENCHMARK_WITH_INGEST"] !== "1") return [];
+  const child = spawn(
+    "pnpm",
+    ["--filter", "@workspace/api-server", "run", "ingest:once"],
+    { stdio: "ignore", env: process.env },
+  );
+  const results: ReturnType<typeof summarize>[] = [];
+  try {
+    for (const path of paths) {
+      const measurements = await Promise.all(
+        Array.from({ length: concurrentCount }, () => timedRequest(path, sid)),
+      );
+      results.push(summarize(
+        path,
+        `ingestion-active-concurrent-${concurrentCount}`,
+        measurements,
+      ));
+    }
+  } finally {
+    if (child.exitCode === null) child.kill("SIGTERM");
+  }
+  return results;
 }
 
 async function selectRepresentativeGroup(
@@ -179,25 +230,36 @@ async function main(): Promise<void> {
 
   const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
   eventLoopDelay.enable();
+  const commonQuery = "rangeType=full-term&viewScope=all_authorized";
   const benchmarkPaths = [
-    "/groups?rangeType=full-term",
-    "/summary?rangeType=full-term",
-    "/summary?rangeType=billing",
-    "/teams/budgets",
+    `/dashboard?${commonQuery}`,
+    `/spend/pools?${commonQuery}`,
+    `/spend/groups?${commonQuery}`,
+    `/spend/people?${commonQuery}`,
+    `/spend/projects?${commonQuery}`,
+    `/spend/pools.csv?${commonQuery}`,
+    `/spend/groups.csv?${commonQuery}`,
+    `/spend/people.csv?${commonQuery}`,
+    `/spend/projects.csv?${commonQuery}`,
     `/groups/${encodeURIComponent(group.groupId)}?rangeType=full-term`,
-    `/directory/workspaces/${encodeURIComponent(group.workspaceId)}/members`,
+    `/groups/${encodeURIComponent(group.groupId)}?rangeType=billing`,
+    `/groups/${encodeURIComponent(group.groupId)}/projects?rangeType=full-term`,
   ];
   const results = [];
   for (const path of benchmarkPaths) {
-    results.push(await benchmark(path, session.sid));
+    results.push(...await benchmark(path, session.sid));
   }
+  results.push(...await runIngestionActive(benchmarkPaths, session.sid));
   eventLoopDelay.disable();
   console.log(JSON.stringify({
     measuredAt: new Date().toISOString(),
-    environment: "Replit development workflow, authenticated durable warm store",
+    environment: "Replit development workflow, authenticated durable persisted store",
     baseUrl,
     warmupRequestsPerEndpoint: warmupCount,
     sequentialRequestsPerEndpoint: sampleCount,
+    concurrentRequestsPerEndpoint: concurrentCount,
+    ingestionActiveProfile:
+      process.env["BENCHMARK_WITH_INGEST"] === "1" ? "enabled" : "disabled",
     representativeGroupId: group.groupId,
     representativeWorkspaceId: group.workspaceId,
     eventLoopDelayMs: {

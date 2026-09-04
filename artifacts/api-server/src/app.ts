@@ -52,6 +52,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requireSameOriginForCookieMutations);
 app.use(authMiddleware);
+app.use((_req, res, next) => {
+  // Authenticated JSON and CSV must never be shared by browsers or proxies.
+  // The in-process Spend cache remains authorization- and generation-scoped.
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Vary", "Authorization, Cookie, Accept-Encoding");
+  next();
+});
 
 app.use("/api", router);
 

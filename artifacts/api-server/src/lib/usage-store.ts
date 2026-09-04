@@ -523,6 +523,7 @@ export function createUsageStore(options: UsageStoreOptions = {}): {
 }
 
 const usageStore = createUsageStore();
+let usageSnapshotGeneration = 0;
 
 export function readUsageSnapshot(
   request: UsageSnapshotRequest,
@@ -532,6 +533,11 @@ export function readUsageSnapshot(
 
 export function invalidateUsageSnapshotMemo(): void {
   usageStore.invalidate();
+  usageSnapshotGeneration += 1;
+}
+
+export function getUsageSnapshotGeneration(): number {
+  return usageSnapshotGeneration;
 }
 
 export function __getUsageSnapshotMemoSizeForTests(): number {

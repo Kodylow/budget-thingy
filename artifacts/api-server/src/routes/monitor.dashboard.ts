@@ -64,6 +64,7 @@ function defaultGranularity(start: string, end: string): "day" | "week" | "month
 }
 
 router.get("/dashboard", async (req, res): Promise<void> => {
+  const startedAt = performance.now();
   const parsed = GetDashboardQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -189,6 +190,7 @@ router.get("/dashboard", async (req, res): Promise<void> => {
         result.period.endExclusive,
       ),
     }];
+    res.setHeader("Server-Timing", `accounting;dur=${(performance.now() - startedAt).toFixed(1)}`);
     res.json(GetDashboardResponse.parse({
       scope: result.scope, period: result.period, cardVariant, cards,
       trend: { granularity, mode, buckets }, breakdown,

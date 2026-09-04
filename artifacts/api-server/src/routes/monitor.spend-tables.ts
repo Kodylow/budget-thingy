@@ -15,24 +15,31 @@ import {
 } from "@workspace/api-zod";
 import {
   buildScopedAccounting,
+  prepareScopedAccounting,
   rowsForView,
   type SpendRow,
   type TableView,
 } from "../services/scoped-accounting";
 import type { Authorization } from "../lib/authz";
 import { escapeCsvCell } from "./monitor.shared";
+import { BoundedStaleCache } from "../lib/bounded-stale-cache";
 
 const router: IRouter = Router();
-const cacheByView = new Map<TableView, Map<string, {
-  expiresAt: number;
-  promise: Promise<unknown>;
-}>>([
-  ["pools", new Map()],
-  ["groups", new Map()],
-  ["people", new Map()],
-  ["projects", new Map()],
-]);
 const CACHE_MS = 30_000;
+const STALE_MS = 2 * 60_000;
+const spendCache = new BoundedStaleCache<
+  Awaited<ReturnType<typeof buildSpendTablePayload>>
+>({ maxEntries: 256, freshMs: CACHE_MS, staleMs: STALE_MS });
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => [key, canonicalValue(item)]));
+  }
+  return value;
+}
 
 function compareRows(sort: string, a: SpendRow, b: SpendRow): number {
   if (sort === "spend_asc") return a.spendUsd - b.spendUsd || a.name.localeCompare(b.name);
@@ -96,8 +103,9 @@ export async function buildSpendTablePayload(
   authz: Authorization,
   view: TableView,
   query: Record<string, unknown>,
+  prepared?: Awaited<ReturnType<typeof prepareScopedAccounting>>,
 ) {
-  const result = await buildScopedAccounting(authz, query, view);
+  const result = await buildScopedAccounting(authz, query, view, prepared);
   const allRows = rowsForView(result, view);
   const filtered = filterAndSortSpendRows(allRows, query);
   const page = Number(query["page"] ?? 1);
@@ -142,6 +150,30 @@ export async function buildSpendTablePayload(
   };
 }
 
+async function cachedSpendTablePayload(
+  authz: Authorization,
+  view: TableView,
+  query: Record<string, unknown>,
+) {
+  // Directory, effective authorization, reporting window, and persisted usage
+  // generation are resolved before cache lookup. The same prepared context is
+  // then reused by a miss, avoiding a second shared-directory read.
+  const prepared = await prepareScopedAccounting(authz, query);
+  const key = JSON.stringify([
+    view,
+    prepared.cacheIdentity,
+    canonicalValue(query),
+  ]);
+  return spendCache.getOrLoad(
+    key,
+    () => buildSpendTablePayload(authz, view, query, prepared),
+  );
+}
+
+export function __getSpendCacheSizeForTests(): number {
+  return spendCache.size;
+}
+
 function mount(
   path: string,
   view: TableView,
@@ -149,6 +181,7 @@ function mount(
   responseSchema: { parse(value: unknown): unknown },
 ): void {
   router.get(path, async (req, res): Promise<void> => {
+    const startedAt = performance.now();
     if (!authorizeSpendView(req.authz!, view)) {
       res.status(403).json({ error: `The ${view} view is outside your authorized scope` });
       return;
@@ -160,22 +193,9 @@ function mount(
     }
     try {
       const query = parsed.data as Record<string, unknown>;
-      const key = JSON.stringify([
-        req.authz!.userId, req.authz!.roles, req.authz!.workspaceIds,
-        req.authz!.groupIds, req.authz!.managedGroupIds,
-        req.authz!.groupUserIds, req.authz!.userIds, req.authz!.isPreview, query,
-      ]);
-      const viewCache = cacheByView.get(view)!;
-      const cached = viewCache.get(key);
-      let promise: Promise<unknown>;
-      if (cached && cached.expiresAt > Date.now()) {
-        promise = cached.promise;
-      } else {
-        promise = buildSpendTablePayload(req.authz!, view, query);
-        viewCache.set(key, { expiresAt: Date.now() + CACHE_MS, promise });
-        void promise.catch(() => viewCache.delete(key));
-      }
-      res.json(responseSchema.parse(await promise));
+      const payload = await cachedSpendTablePayload(req.authz!, view, query);
+      res.setHeader("Server-Timing", `spend;dur=${(performance.now() - startedAt).toFixed(1)}`);
+      res.json(responseSchema.parse(payload));
     } catch (error) {
       req.log.error({ err: error, view }, "spend table stored accounting failed");
       res.status(503).json({ error: "Spend details unavailable" });
@@ -206,6 +226,7 @@ function mountCsv(
   querySchema: { safeParse(value: unknown): { success: boolean; data?: unknown; error?: { message: string } } },
 ): void {
   router.get(path, async (req, res): Promise<void> => {
+    const startedAt = performance.now();
     if (!authorizeSpendView(req.authz!, view)) {
       res.status(403).json({ error: `The ${view} export is outside your authorized scope` });
       return;
@@ -216,7 +237,7 @@ function mountCsv(
       return;
     }
     try {
-      const payload = await buildSpendTablePayload(
+      const payload = await cachedSpendTablePayload(
         req.authz!,
         view,
         parsed.data as Record<string, unknown>,
@@ -230,6 +251,7 @@ function mountCsv(
         "X-Usage-Range",
         `${payload.period.start}/${payload.period.endExclusive}`,
       );
+      res.setHeader("Server-Timing", `spend;dur=${(performance.now() - startedAt).toFixed(1)}`);
       res.send(serializeSpendCsv(payload.filteredAllRows));
     } catch (error) {
       req.log.error({ err: error, view }, "spend CSV stored accounting failed");

@@ -21,7 +21,9 @@ import {
   groupTeamKey,
   usageForRequest,
   visibleGroupMembers,
+  windowFromQuery,
 } from "../routes/monitor.shared";
+import { getUsageSnapshotGeneration } from "../lib/usage-store";
 
 export type ViewScope = "managed" | "my" | "all_authorized";
 export type TableView = "pools" | "groups" | "people" | "projects";
@@ -305,22 +307,75 @@ export function resolveStoredMemberLimit(
   return { amount: null, state: "no_limit" };
 }
 
+export interface ScopedAccountingContext {
+  dir: Awaited<ReturnType<typeof getCachedDirectory>>;
+  viewScope: ViewScope;
+  effectiveAuth: Authorization;
+  cacheIdentity: string;
+}
+
+function sortedAuthorization(authz: Authorization): unknown {
+  return {
+    userId: authz.userId,
+    role: authz.role,
+    roles: [...authz.roles].sort(),
+    workspaceIds: [...authz.workspaceIds].sort(),
+    teamNames: [...authz.teamNames].sort(),
+    groupIds: [...authz.groupIds].sort(),
+    managedGroupIds: [...(authz.managedGroupIds ?? [])].sort(),
+    groupUserIds: Object.fromEntries(Object.entries(authz.groupUserIds ?? {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([groupId, userIds]) => [groupId, [...userIds].sort()])),
+    userIds: [...authz.userIds].sort(),
+    isTrueAccountAdmin: authz.isTrueAccountAdmin,
+    isPreview: !!authz.isPreview,
+    capabilities: {
+      ...authz.capabilities,
+      canWriteUserLimitsIn: [...authz.capabilities.canWriteUserLimitsIn].sort(),
+    },
+  };
+}
+
+export async function prepareScopedAccounting(
+  authz: Authorization,
+  query: Record<string, unknown>,
+): Promise<ScopedAccountingContext> {
+  const dir = await getCachedDirectory();
+  const viewScope = requestedViewScope(authz, query["viewScope"]);
+  const effectiveAuth = resolveAuthorizationForView(authz, viewScope, dir.groupMembers);
+  const window = windowFromQuery(query).window;
+  return {
+    dir,
+    viewScope,
+    effectiveAuth,
+    cacheIdentity: committedGenerationId({
+      usageDataAsOf: String(getUsageSnapshotGeneration()),
+      directoryDataAsOf: new Date(dir.fetchedAt).toISOString(),
+      usageStatus: "persisted",
+      coverage: dir.budgets.observation,
+      limitObservation: dir.budgets.observation.generation,
+      period: window,
+      scope: sortedAuthorization(effectiveAuth),
+    }),
+  };
+}
+
 export async function buildScopedAccounting(
   authz: Authorization,
   query: Record<string, unknown>,
   detailView?: TableView,
+  prepared?: ScopedAccountingContext,
 ) {
-  const dir = await getCachedDirectory();
-  const viewScope = requestedViewScope(authz, query["viewScope"]);
-  const effectiveAuth = resolveAuthorizationForView(authz, viewScope, dir.groupMembers);
-  const usage = await usageForRequest(effectiveAuth, dir, query, true);
-  const [daily, budgets, assignments, teamBudgetSnapshot, teamRows] = await Promise.all([
-    dailyUsageRollups(dir, usage),
+  const context = prepared ?? await prepareScopedAccounting(authz, query);
+  const { dir, viewScope, effectiveAuth } = context;
+  const [usage, budgets, assignments, teamBudgetSnapshot, teamRows] = await Promise.all([
+    usageForRequest(effectiveAuth, dir, query, true),
     db.select().from(groupBudgetsTable),
     db.select().from(teamLimitTargetsTable),
     getEffectiveTeamBudgets(),
     db.select().from(teamBudgetsTable),
   ]);
+  const daily = await dailyUsageRollups(dir, usage);
   const hiddenTeams = new Set(teamRows.filter((row) => row.isHidden).map((row) => row.teamName));
   const fullTeamByGroup = buildGroupTeamMap(dir.groups, dir.account, hiddenTeams, assignments);
   const fullMergePlan = buildCanonicalGroupMergePlan(
@@ -343,6 +398,20 @@ export async function buildScopedAccounting(
     .map((team) => [team.teamName, team.effectiveAmountUsd]));
   const scopedMembers = visibleGroupMembers(effectiveAuth, dir.groupMembers);
 
+  const rawSpendByGroup = new Map<string, number>();
+  const rawAgentByGroup = new Map<string, number>();
+  for (const rollup of daily.values()) {
+    for (const group of usage.groups) {
+      const agent = qualifiedGroupComponent(
+        rollup.aiSpendByGroup.get(group.id), effectiveAuth, group);
+      const other = qualifiedGroupComponent(
+        rollup.nonAiSpendByGroup.get(group.id), effectiveAuth, group);
+      rawAgentByGroup.set(
+        group.id, (rawAgentByGroup.get(group.id) ?? 0) + agent);
+      rawSpendByGroup.set(
+        group.id, (rawSpendByGroup.get(group.id) ?? 0) + agent + other);
+    }
+  }
   const spendByGroup = new Map<string, number>();
   const agentByGroup = new Map<string, number>();
   for (const group of displayGroups) {
@@ -350,18 +419,9 @@ export async function buildScopedAccounting(
     const sourceIds = (visibleByCanonical.get(canonicalId) ?? [group])
       .map((item) => item.id);
     spendByGroup.set(group.id, sourceIds.reduce(
-      (sum, id) => sum + [...daily.values()].reduce(
-        (dailySum, rollup) => {
-          const source = usage.groups.find((item) => item.id === id)!;
-          return dailySum +
-            qualifiedGroupComponent(rollup.aiSpendByGroup.get(id), effectiveAuth, source) +
-            qualifiedGroupComponent(rollup.nonAiSpendByGroup.get(id), effectiveAuth, source);
-        }, 0), 0));
+      (sum, id) => sum + (rawSpendByGroup.get(id) ?? 0), 0));
     agentByGroup.set(group.id, sourceIds.reduce(
-      (sum, id) => sum + [...daily.values()].reduce(
-        (dailySum, rollup) => dailySum + qualifiedGroupComponent(
-          rollup.aiSpendByGroup.get(id), effectiveAuth,
-          usage.groups.find((item) => item.id === id)!), 0), 0));
+      (sum, id) => sum + (rawAgentByGroup.get(id) ?? 0), 0));
   }
   const ungroupedByWorkspace = new Map<string, { spendUsd: number; memberCount: number }>();
   for (const rollup of daily.values()) {

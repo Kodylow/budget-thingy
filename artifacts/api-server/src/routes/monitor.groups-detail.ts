@@ -29,6 +29,7 @@ function qualifiedGroupUsageHealth(
 }
 
 router.get("/groups/:groupId", async (req, res): Promise<void> => {
+  const startedAt = performance.now();
   try {
     const groupId = String(req.params["groupId"]);
     const dir = await getDirectory();
@@ -40,9 +41,19 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     }
     const usage = await usageForRequest(
       req.authz!, dir, req.query as Record<string, unknown>, true);
-    const cycleUsage = await usageForRequest(
-      req.authz!, dir, { rangeType: "billing" }, true);
-    const dailyRollups = await dailyUsageRollups(dir, usage);
+    const billingWindow = windowFromQuery({ rangeType: "billing" }).window;
+    const selectedIsBilling =
+      usage.selection.window.start === billingWindow.start &&
+      usage.selection.window.end === billingWindow.end;
+    const cycleUsagePromise = selectedIsBilling
+      ? Promise.resolve(usage)
+      : usageForRequest(req.authz!, dir, { rangeType: "billing" }, true);
+    const [cycleUsage, dailyRollups, budgets, groupTeamsRows] = await Promise.all([
+      cycleUsagePromise,
+      dailyUsageRollups(dir, usage),
+      db.select().from(groupBudgetsTable),
+      db.select().from(teamLimitTargetsTable),
+    ]);
     const mergePlan = buildCanonicalGroupMergePlan(usage.groups, dir.workspaces);
     if (mergePlan.hiddenGroupIds.has(group.id)) {
       res.status(404).json({ error: "Group not found" });
@@ -90,10 +101,6 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       })(),
     };
 
-    const [budgets, groupTeamsRows] = await Promise.all([
-      db.select().from(groupBudgetsTable),
-      db.select().from(teamLimitTargetsTable),
-    ]);
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
     const fullMergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
     const fullPrimaryId = fullMergePlan.primaryByGroupId.get(group.id) ?? group.id;
@@ -225,6 +232,7 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       cycleUsage.rollup, req.authz!, sourceGroups).agentSpendUsd;
     const hasAgentLimit = monthlyAgentLimitUsd != null && monthlyAgentLimitUsd > 0;
 
+    res.setHeader("Server-Timing", `group;dur=${(performance.now() - startedAt).toFixed(1)}`);
     res.json(
       GetGroupDetailResponse.parse({
         group: {
