@@ -599,12 +599,13 @@ function DashboardStatCards({
       >
         Yours · {scopeLabel}
       </p>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+      <div className="flex flex-wrap gap-3 md:gap-4">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
             <Card
               key={stat.title}
+              className="min-w-0 flex-[1_1_calc(50%-0.75rem)] md:flex-[1_1_calc(33.333%-1rem)] lg:flex-[1_1_calc(20%-1rem)]"
               data-testid={`card-stat-${stat.title.toLowerCase().replace(/\s+/g, "-")}`}
             >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2 md:p-6 md:pb-2">
