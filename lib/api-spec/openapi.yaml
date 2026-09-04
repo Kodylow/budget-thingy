@@ -428,6 +428,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
         - $ref: "#/components/parameters/SpendPage"
         - $ref: "#/components/parameters/SpendPageSize"
@@ -454,6 +455,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
         - $ref: "#/components/parameters/SpendPage"
         - $ref: "#/components/parameters/SpendPageSize"
@@ -480,6 +482,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
         - $ref: "#/components/parameters/SpendPage"
         - $ref: "#/components/parameters/SpendPageSize"
@@ -506,6 +509,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
         - $ref: "#/components/parameters/SpendPage"
         - $ref: "#/components/parameters/SpendPageSize"
@@ -532,6 +536,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
       responses:
         "200":
@@ -552,6 +557,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
       responses:
         "200":
@@ -572,6 +578,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
       responses:
         "200":
@@ -592,6 +599,7 @@ paths:
         - $ref: "#/components/parameters/ViewScope"
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/SpendSort"
       responses:
         "200":
@@ -2137,6 +2145,14 @@ components:
       schema:
         type: string
         enum: [all, over, attention, budgeted, unbudgeted, no_allocation, shared, explicit, inherited, no_limit, unavailable]
+    SpendWorkspace:
+      name: workspaceId
+      in: query
+      required: false
+      description: Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+      schema:
+        type: string
+        maxLength: 200
     SpendSort:
       name: sort
       in: query

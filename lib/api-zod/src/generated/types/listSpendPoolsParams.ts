@@ -12,6 +12,7 @@ import type { SpendPageSizeParameter } from './spendPageSizeParameter';
 import type { SpendSearchParameter } from './spendSearchParameter';
 import type { SpendSortParameter } from './spendSortParameter';
 import type { SpendStatusParameter } from './spendStatusParameter';
+import type { SpendWorkspaceParameter } from './spendWorkspaceParameter';
 import type { StartDateParameter } from './startDateParameter';
 import type { ViewScopeParameter } from './viewScopeParameter';
 
@@ -37,6 +38,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 /**
  * @minimum 1

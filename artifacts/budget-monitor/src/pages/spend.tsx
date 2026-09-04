@@ -29,6 +29,7 @@ import { Search, Download, ChevronRight, ArrowUpDown, ChevronUp, ChevronDown, Ch
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
@@ -92,13 +93,13 @@ export default function Spend() {
         if (params.has(key)) {
           params.delete(key);
           changed = true;
-          if (['search', 'tab', 'pageSize', 'sort', 'status'].includes(key)) shouldResetPage = true;
+          if (['search', 'tab', 'pageSize', 'sort', 'status', 'workspaceId', 'viewScope'].includes(key)) shouldResetPage = true;
         }
       } else {
         if (params.get(key) !== value) {
           params.set(key, value);
           changed = true;
-          if (['search', 'tab', 'pageSize', 'sort', 'status'].includes(key)) shouldResetPage = true;
+          if (['search', 'tab', 'pageSize', 'sort', 'status', 'workspaceId', 'viewScope'].includes(key)) shouldResetPage = true;
         }
       }
     }
@@ -127,8 +128,10 @@ export default function Spend() {
       if (viewScopeFromUrl) params.viewScope = viewScopeFromUrl;
       const sort = searchParams.get('sort');
       const status = searchParams.get('status');
+      const workspaceId = searchParams.get('workspaceId');
       if (sort) params.sort = sort;
       if (status && status !== 'all') params.status = status;
+      if (workspaceId) params.workspaceId = workspaceId;
 
       let url = '';
       if (activeTab === 'pools') url = getExportSpendPoolsCsvUrl(params);
@@ -246,8 +249,9 @@ function SpendTable({
   const pageSize = parseInt(searchParams.get('pageSize') || '25', 10);
   const sort = searchParams.get('sort') as SpendSortParameter | undefined;
   const status = searchParams.get('status') as SpendStatusParameter | undefined;
+  const workspaceId = searchParams.get('workspaceId') || undefined;
   
-  const queryParams: any = { rangeType, search: search || undefined, viewScope, page, pageSize };
+  const queryParams: any = { rangeType, search: search || undefined, viewScope, workspaceId, page, pageSize };
   if (sort) queryParams.sort = sort;
   if (status && status !== 'all') queryParams.status = status;
   if (rangeType === "custom") {
@@ -266,6 +270,13 @@ function SpendTable({
     type === 'people' ? peopleQuery : 
     projectsQuery;
 
+  const queryTotalPages = Math.max(1, Math.ceil((query.data?.filteredRows ?? 0) / pageSize));
+  useEffect(() => {
+    if (query.data && page > queryTotalPages) {
+      updateUrlParams({ page: String(queryTotalPages) });
+    }
+  }, [page, query.data, queryTotalPages, updateUrlParams]);
+
   if (query.isLoading) return <TableSkeleton />;
   if (query.isError && !query.data) return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
@@ -280,7 +291,7 @@ function SpendTable({
   let columns: string[] = [];
   if (type === 'pools') columns = ['name', 'spendUsd', 'allocationUsd', 'remainingUsd', 'percentUsed', 'status'];
   else if (type === 'groups') columns = ['name', 'memberCount', 'spendUsd', 'agentSpendUsd', 'otherServicesUsd', 'allocationUsd'];
-  else if (type === 'people') columns = ['name', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'limitState'];
+  else if (type === 'people') columns = ['name', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'allocationUsd', 'remainingUsd', 'limitState', 'limitObservationStatus'];
   else columns = ['name', 'ownerName', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'otherServicesUsd'];
 
   const totalPages = Math.max(1, Math.ceil(data.filteredRows / pageSize));
@@ -288,6 +299,7 @@ function SpendTable({
   const hasPrev = page > 1;
 
   const statuses = data.facets?.statuses || {};
+  const workspaces = data.facets?.workspaces || [];
   const statusOptions = ['all', ...Object.keys(statuses)];
 
   const startRow = data.filteredRows === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -301,7 +313,7 @@ function SpendTable({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between p-2 border-b shrink-0 bg-muted/10">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {Object.keys(statuses).length > 0 && (
             <Select value={status || 'all'} onValueChange={(val) => updateUrlParams({ status: val === 'all' ? null : val })}>
               <SelectTrigger className="w-[160px] h-8 text-xs">
@@ -316,6 +328,21 @@ function SpendTable({
               </SelectContent>
             </Select>
           )}
+          {workspaces.length > 1 && (
+            <Select value={workspaceId || 'all'} onValueChange={(val) => updateUrlParams({ workspaceId: val === 'all' ? null : val })}>
+              <SelectTrigger className="w-[180px] h-8 text-xs" aria-label="Workspace">
+                <SelectValue placeholder="Workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All workspaces</SelectItem>
+                {workspaces.map((workspace) => (
+                  <SelectItem key={workspace.id} value={workspace.id}>
+                    {workspace.name} ({workspace.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
         {query.isFetching && (
           <Badge variant="outline" className="text-muted-foreground" data-testid="status-spend-updating">
@@ -323,9 +350,11 @@ function SpendTable({
           </Badge>
         )}
       </div>
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto" data-virtual-scroll>
         <GenericSpendTable 
           rows={data.rows} 
+          logicalRowCount={data.filteredRows}
+          logicalRowIndexOffset={(page - 1) * pageSize}
           columns={columns} 
           density={density} 
           sort={sort}
@@ -364,7 +393,7 @@ function SpendTable({
         </div>
         <div className="flex items-center gap-6">
           <div className="font-mono tabular-nums font-medium text-foreground">
-            Filtered Total: ${data.totals.spendUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            Total: ${data.totals.spendUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs">Page {page} of {totalPages}</span>
@@ -389,18 +418,25 @@ function SpendTable({
           </div>
         </div>
       </div>
+      <p className="sr-only">
+        Generated from {data.period.label}, generation {data.metadata.generationId}.
+      </p>
     </div>
   );
 }
 
 function GenericSpendTable({ 
   rows, 
+  logicalRowCount,
+  logicalRowIndexOffset,
   columns, 
   density, 
   sort,
   onSort
 }: { 
   rows: SpendTableRow[], 
+  logicalRowCount: number,
+  logicalRowIndexOffset: number,
   columns: string[], 
   density: string,
   sort: string | undefined,
@@ -454,7 +490,7 @@ function GenericSpendTable({
   };
 
   return (
-    <table className="w-full min-w-max text-sm text-left">
+      <table className="w-full min-w-max text-sm text-left" aria-rowcount={logicalRowCount + 1}>
       <thead className="sticky top-0 bg-background z-10 text-xs uppercase text-muted-foreground border-b shadow-sm">
         <tr>
           {columns.map((col, i) => {
@@ -475,7 +511,12 @@ function GenericSpendTable({
           <th className="px-4 py-3 w-10"></th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-border">
+      <VirtualizedTableRows
+        className="divide-y divide-border"
+        columnCount={columns.length + 1}
+        estimatedRowHeight={density === 'compact' ? 48 : 56}
+        logicalRowIndexOffset={logicalRowIndexOffset}
+      >
         {rows.map((row) => (
           <tr key={row.id} className={`hover:bg-muted/30 transition-colors group ${rowClass}`}>
             {columns.map((col, i) => {
@@ -483,14 +524,25 @@ function GenericSpendTable({
               const isNumeric = col.includes('Usd') || col === 'percentUsed' || col === 'memberCount';
               
               let displayVal: React.ReactNode = val;
-              if (col.includes('Usd')) displayVal = formatCurrency(val);
-              if (col === 'percentUsed') displayVal = val !== null ? `${val.toFixed(1)}%` : '—';
+               if (col.includes('Usd')) {
+                 if (val !== null) displayVal = formatCurrency(val);
+                 else if (col === 'allocationUsd') {
+                   displayVal = row.limitState === 'unavailable' ? 'Unavailable'
+                     : row.kind === 'person' ? 'No limit' : 'No allocation';
+                 } else if (col === 'remainingUsd') {
+                   displayVal = row.limitState === 'unavailable' ? 'Unavailable'
+                     : row.kind === 'person' ? 'No limit' : 'Not applicable';
+                 }
+               }
+               if (col === 'percentUsed') displayVal = val !== null ? `${val.toFixed(1)}%` : 'Not applicable';
+               if (col === 'workspaceName' && val === null) displayVal = 'Not applicable';
+               if (col === 'ownerName' && val === null) displayVal = 'Unavailable';
+               if (col === 'memberCount' && val === null) displayVal = 'Not applicable';
               
               if (col === 'name') {
                  let href = '';
                  if (row.kind === 'group') {
-                   const parts = row.id.split(':');
-                   href = `/groups/${parts[parts.length - 1]}`;
+                    href = groupDetailHref(row.id);
                  }
                  const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
                  
@@ -514,7 +566,7 @@ function GenericSpendTable({
                 <td key={col} className={`px-4 ${isNumeric ? 'text-right font-mono tabular-nums' : ''} ${col === 'name' ? 'sticky left-0 bg-background group-hover:bg-muted/30' : ''}`}>
                   {col === 'status' ? (
                     <Badge variant="outline" className="text-[10px] uppercase font-semibold">{val || '—'}</Badge>
-                  ) : col === 'limitState' ? (
+              ) : col === 'limitState' || col === 'limitObservationStatus' ? (
                     <span className="text-muted-foreground text-xs">{getLimitStateLabel(val)}</span>
                   ) : displayVal}
                 </td>
@@ -522,7 +574,7 @@ function GenericSpendTable({
             })}
             <td className="px-4 text-right">
               {['group'].includes(row.kind) && (
-                 <Link href={`/groups/${row.id.split(':').pop()}?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}>
+                 <Link href={`${groupDetailHref(row.id)}?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}>
                    <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
                      <ChevronRight className="h-4 w-4" />
                    </Button>
@@ -531,7 +583,12 @@ function GenericSpendTable({
             </td>
           </tr>
         ))}
-      </tbody>
+      </VirtualizedTableRows>
     </table>
   );
+}
+
+export function groupDetailHref(qualifiedId: string): string {
+  const [, , ...groupIdParts] = qualifiedId.split(':');
+  return `/groups/${encodeURIComponent(groupIdParts.join(':'))}`;
 }

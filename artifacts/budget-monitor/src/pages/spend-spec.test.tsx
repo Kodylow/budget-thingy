@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import Spend from './spend';
+import Spend, { groupDetailHref } from './spend';
 import * as api from '@workspace/api-client-react';
 
 const mockCapabilities = {
@@ -83,7 +83,13 @@ const mockQueryReturn = (rows: any[], filteredRows: number, totalRows: number): 
     totalRows,
     totals: { spendUsd: 1000 },
     facets: { statuses: { over: 5, budgeted: 20 } },
-    metadata: {}
+    period: {
+      start: '2026-09-01T00:00:00.000Z',
+      endExclusive: '2026-09-04T00:00:00.000Z',
+      timezone: 'UTC',
+      label: 'Sep 1–3, 2026',
+    },
+    metadata: { generationId: 'generation-1' }
   },
   isLoading: false,
   isError: false,
@@ -189,5 +195,12 @@ describe('Spend Behaviors', () => {
     // Verify it renders the correct UI state for page 2
     expect(html).toContain('Page 2 of 2');
     expect(html).toContain('Showing 26–50 of 50 results');
+    expect(html).toContain('aria-rowcount="51"');
+    expect(html).toContain('aria-rowindex="27"');
+  });
+
+  it('retains the complete qualified group identity in drill-through URLs', () => {
+    expect(groupDetailHref('group:workspace-1:group:with:colons'))
+      .toBe('/groups/group%3Awith%3Acolons');
   });
 });

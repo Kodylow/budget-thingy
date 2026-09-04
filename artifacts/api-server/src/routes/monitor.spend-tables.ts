@@ -57,10 +57,14 @@ export function matchesSpendStatus(row: SpendRow, status: string): boolean {
 }
 
 export function authorizeSpendView(authz: Authorization, view: TableView): boolean {
-  return !(
-    (view === "pools" || view === "groups") &&
-    authz.roles.every((role) => role === "member")
-  );
+  if (view === "people" || view === "projects") {
+    return true;
+  }
+  const isManager = authz.roles.some((role) =>
+    role === "account" || role === "workspace_admin" || role === "team_admin");
+  return view === "pools"
+    ? isManager || authz.capabilities.canEditAllocations
+    : isManager;
 }
 
 export function filterAndSortSpendRows(
@@ -69,13 +73,23 @@ export function filterAndSortSpendRows(
 ): SpendRow[] {
   const search = String(query["search"] ?? "").trim().toLocaleLowerCase();
   const status = String(query["status"] ?? "all");
+  const workspaceId = String(query["workspaceId"] ?? "");
   const filtered = allRows.filter((row) =>
     (!search || [
       row.name, row.workspaceName ?? "", row.ownerName ?? "",
     ].some((value) => value.toLocaleLowerCase().includes(search))) &&
+    (!workspaceId || row.workspaceId === workspaceId) &&
     matchesSpendStatus(row, status));
   filtered.sort((a, b) => compareRows(String(query["sort"] ?? "status"), a, b));
   return filtered;
+}
+
+export function pageSpendRows(
+  rows: readonly SpendRow[],
+  page: number,
+  pageSize: number,
+): SpendRow[] {
+  return rows.slice((page - 1) * pageSize, page * pageSize);
 }
 
 export async function buildSpendTablePayload(
@@ -88,7 +102,7 @@ export async function buildSpendTablePayload(
   const filtered = filterAndSortSpendRows(allRows, query);
   const page = Number(query["page"] ?? 1);
   const pageSize = Number(query["pageSize"] ?? 25);
-  const rows = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const rows = pageSpendRows(filtered, page, pageSize);
   const statuses: Record<string, number> = {};
   const workspaces = new Map<string, { id: string; name: string; count: number }>();
   for (const row of allRows) {

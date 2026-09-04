@@ -6,6 +6,7 @@ import { resolveAuthorizationForView } from "../services/scoped-accounting";
 import {
   authorizeSpendView,
   filterAndSortSpendRows,
+  pageSpendRows,
   serializeSpendCsv,
 } from "./monitor.spend-tables";
 
@@ -77,11 +78,13 @@ describe("Spend details CSV parity and authorization", () => {
     const rows = [
       row("person:w1:1", "Alice", 3, "inherited"),
       row("person:w1:2", "Alina", 7, "inherited"),
-      row("person:w1:3", "Bob", 20, "no_limit"),
+      { ...row("person:w2:3", "Alison", 20, "inherited"), workspaceId: "w2" },
+      row("person:w1:4", "Bob", 20, "no_limit"),
     ];
     const selected = filterAndSortSpendRows(rows, {
       search: "ali",
       status: "inherited",
+      workspaceId: "w1",
       sort: "spend_desc",
     });
     const jsonTotal = selected.reduce((sum, item) => sum + item.spendUsd, 0);
@@ -95,7 +98,18 @@ describe("Spend details CSV parity and authorization", () => {
     expect(csv).toContain('"limit_observation_status"');
     expect(csv).toContain('"person:w1:2"');
     expect(csv).toContain('"person:w1:1"');
-    expect(csv).not.toContain('"person:w1:3"');
+    expect(csv).not.toContain('"person:w2:3"');
+    expect(csv).not.toContain('"person:w1:4"');
     expect(csv.trim().split("\r\n")).toHaveLength(selected.length + 1);
+  });
+
+  test("paging is stable after server sorting and never changes the filtered total", () => {
+    const selected = filterAndSortSpendRows([
+      row("person:w1:1", "Charlie", 30, "no_limit"),
+      row("person:w1:2", "Alice", 10, "no_limit"),
+      row("person:w1:3", "Bob", 20, "no_limit"),
+    ], { sort: "name_asc" });
+    expect(pageSpendRows(selected, 2, 1).map((item) => item.name)).toEqual(["Bob"]);
+    expect(selected.reduce((sum, item) => sum + item.spendUsd, 0)).toBe(60);
   });
 });

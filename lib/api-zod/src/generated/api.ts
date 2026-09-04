@@ -786,6 +786,8 @@ export const GetDashboardResponse = zod.object({
  */
 export const listSpendPoolsQuerySearchMax = 200;
 
+export const listSpendPoolsQueryWorkspaceIdMax = 200;
+
 export const listSpendPoolsQueryPageDefault = 1;
 
 export const listSpendPoolsQueryPageSizeDefault = 25;
@@ -800,6 +802,7 @@ export const ListSpendPoolsQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(listSpendPoolsQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(listSpendPoolsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
   "page": zod.coerce.number().min(1).default(listSpendPoolsQueryPageDefault),
   "pageSize": zod.coerce.number().min(1).max(listSpendPoolsQueryPageSizeMax).default(listSpendPoolsQueryPageSizeDefault)
@@ -911,6 +914,8 @@ export const ListSpendPoolsResponse = zod.object({
  */
 export const listSpendGroupsQuerySearchMax = 200;
 
+export const listSpendGroupsQueryWorkspaceIdMax = 200;
+
 export const listSpendGroupsQueryPageDefault = 1;
 
 export const listSpendGroupsQueryPageSizeDefault = 25;
@@ -925,6 +930,7 @@ export const ListSpendGroupsQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(listSpendGroupsQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(listSpendGroupsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
   "page": zod.coerce.number().min(1).default(listSpendGroupsQueryPageDefault),
   "pageSize": zod.coerce.number().min(1).max(listSpendGroupsQueryPageSizeMax).default(listSpendGroupsQueryPageSizeDefault)
@@ -1036,6 +1042,8 @@ export const ListSpendGroupsResponse = zod.object({
  */
 export const listSpendPeopleQuerySearchMax = 200;
 
+export const listSpendPeopleQueryWorkspaceIdMax = 200;
+
 export const listSpendPeopleQueryPageDefault = 1;
 
 export const listSpendPeopleQueryPageSizeDefault = 25;
@@ -1050,6 +1058,7 @@ export const ListSpendPeopleQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(listSpendPeopleQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(listSpendPeopleQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
   "page": zod.coerce.number().min(1).default(listSpendPeopleQueryPageDefault),
   "pageSize": zod.coerce.number().min(1).max(listSpendPeopleQueryPageSizeMax).default(listSpendPeopleQueryPageSizeDefault)
@@ -1161,6 +1170,8 @@ export const ListSpendPeopleResponse = zod.object({
  */
 export const listSpendProjectsQuerySearchMax = 200;
 
+export const listSpendProjectsQueryWorkspaceIdMax = 200;
+
 export const listSpendProjectsQueryPageDefault = 1;
 
 export const listSpendProjectsQueryPageSizeDefault = 25;
@@ -1175,6 +1186,7 @@ export const ListSpendProjectsQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(listSpendProjectsQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(listSpendProjectsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
   "page": zod.coerce.number().min(1).default(listSpendProjectsQueryPageDefault),
   "pageSize": zod.coerce.number().min(1).max(listSpendProjectsQueryPageSizeMax).default(listSpendProjectsQueryPageSizeDefault)
@@ -1286,6 +1298,8 @@ export const ListSpendProjectsResponse = zod.object({
  */
 export const exportSpendPoolsCsvQuerySearchMax = 200;
 
+export const exportSpendPoolsCsvQueryWorkspaceIdMax = 200;
+
 
 
 export const ExportSpendPoolsCsvQueryParams = zod.object({
@@ -1295,6 +1309,7 @@ export const ExportSpendPoolsCsvQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(exportSpendPoolsCsvQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(exportSpendPoolsCsvQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
 })
 
@@ -1306,6 +1321,8 @@ export const ExportSpendPoolsCsvResponse = zod.unknown()
  */
 export const exportSpendGroupsCsvQuerySearchMax = 200;
 
+export const exportSpendGroupsCsvQueryWorkspaceIdMax = 200;
+
 
 
 export const ExportSpendGroupsCsvQueryParams = zod.object({
@@ -1315,6 +1332,7 @@ export const ExportSpendGroupsCsvQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(exportSpendGroupsCsvQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(exportSpendGroupsCsvQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
 })
 
@@ -1326,6 +1344,8 @@ export const ExportSpendGroupsCsvResponse = zod.unknown()
  */
 export const exportSpendPeopleCsvQuerySearchMax = 200;
 
+export const exportSpendPeopleCsvQueryWorkspaceIdMax = 200;
+
 
 
 export const ExportSpendPeopleCsvQueryParams = zod.object({
@@ -1335,6 +1355,7 @@ export const ExportSpendPeopleCsvQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(exportSpendPeopleCsvQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(exportSpendPeopleCsvQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
 })
 
@@ -1346,6 +1367,8 @@ export const ExportSpendPeopleCsvResponse = zod.unknown()
  */
 export const exportSpendProjectsTableCsvQuerySearchMax = 200;
 
+export const exportSpendProjectsTableCsvQueryWorkspaceIdMax = 200;
+
 
 
 export const ExportSpendProjectsTableCsvQueryParams = zod.object({
@@ -1355,6 +1378,7 @@ export const ExportSpendProjectsTableCsvQueryParams = zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
   "search": zod.coerce.string().max(exportSpendProjectsTableCsvQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "workspaceId": zod.coerce.string().max(exportSpendProjectsTableCsvQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
 })
 

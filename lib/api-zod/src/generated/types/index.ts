@@ -149,6 +149,7 @@ export * from './spendTableRow';
 export * from './spendTableRowKind';
 export * from './spendTableRowLimitObservationStatus';
 export * from './spendTableRowLimitState';
+export * from './spendWorkspaceParameter';
 export * from './startDateParameter';
 export * from './summary';
 export * from './systemStatus';

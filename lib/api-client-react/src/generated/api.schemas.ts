@@ -1976,6 +1976,11 @@ export const SpendStatusParameter = {
   unavailable: 'unavailable',
 } as const;
 
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ */
+export type SpendWorkspaceParameter = string;
+
 export type SpendSortParameter = typeof SpendSortParameter[keyof typeof SpendSortParameter];
 
 
@@ -2170,6 +2175,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 /**
  * @minimum 1
@@ -2204,6 +2214,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 /**
  * @minimum 1
@@ -2238,6 +2253,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 /**
  * @minimum 1
@@ -2272,6 +2292,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 /**
  * @minimum 1
@@ -2306,6 +2331,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 };
 
@@ -2331,6 +2361,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 };
 
@@ -2356,6 +2391,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 };
 
@@ -2381,6 +2421,11 @@ viewScope?: ViewScopeParameter;
  */
 search?: SpendSearchParameter;
 status?: SpendStatusParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 };
 
