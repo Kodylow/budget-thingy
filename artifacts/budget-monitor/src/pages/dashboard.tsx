@@ -161,7 +161,7 @@ interface TeamSection {
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const canWrite = useCanWrite();
-  const { isAccountWide, role, user, capabilities } = useAuthContext();
+  const { auth, isAccountWide, role, user, capabilities } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(
     () => new Set(),
@@ -198,14 +198,6 @@ export default function Dashboard() {
       },
     },
   );
-  const usageDataAsOf = groupsData?.usageHealth.dataAsOf
-    ? new Date(groupsData.usageHealth.dataAsOf).toLocaleString("en-US", {
-        timeZone: "UTC",
-        dateStyle: "medium",
-        timeStyle: "medium",
-      })
-    : null;
-
   const { data: teamBudgetsData, isLoading: teamBudgetsLoading } =
     useGetTeamsBudgets({
       query: {
@@ -1070,6 +1062,52 @@ export default function Dashboard() {
   };
 
   const hasTeams = workspaceSections.length > 0;
+  const scopedWorkspaceNames = [
+    ...new Set(
+      groups
+        .map((group) => group.workspaceName?.trim())
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+  const scopedTeamNames = [
+    ...new Set(
+      (auth?.teamNames.length
+        ? auth.teamNames
+        : groups.map((group) => group.teamName)
+      )
+        .map((name) => name?.trim())
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+  const accountUserName =
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
+    user?.email?.split("@")[0] ||
+    "";
+  const scopedMemberName =
+    memberCycleActivity?.users[0]?.username ||
+    memberTermActivity?.users[0]?.username ||
+    "";
+  const memberName = auth?.isPreview
+    ? scopedMemberName
+    : accountUserName || scopedMemberName;
+  const dashboardTitle =
+    role === "workspace_admin"
+      ? scopedWorkspaceNames.length === 1
+        ? `${scopedWorkspaceNames[0]} Workspace Dashboard`
+        : scopedWorkspaceNames.length > 1
+          ? `${scopedWorkspaceNames.length} Workspaces Dashboard`
+          : "Workspace Dashboard"
+      : role === "team_admin"
+        ? scopedTeamNames.length === 1
+          ? `${formatTeamName(scopedTeamNames[0])} Group Dashboard`
+          : scopedTeamNames.length > 1
+            ? `${scopedTeamNames.length} Groups Dashboard`
+            : "Group Dashboard"
+        : role === "member"
+          ? memberName
+            ? `${memberName}${memberName.endsWith("s") ? "'" : "'s"} Dashboard`
+            : "My Dashboard"
+          : "Comcast Account Dashboard";
 
   if (role === "member") {
     const cycleUser = memberCycleActivity?.users[0];
@@ -1089,7 +1127,9 @@ export default function Dashboard() {
       <div className="p-4 md:p-8">
         <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
           <CardHeader>
-            <CardTitle>My Agent usage</CardTitle>
+            <CardTitle data-testid="text-dashboard-title">
+              {dashboardTitle}
+            </CardTitle>
             <CardDescription>
               Your server-scoped usage, limits, and group memberships.
             </CardDescription>
@@ -1176,7 +1216,7 @@ export default function Dashboard() {
             className="text-2xl md:text-3xl font-bold tracking-tight"
             data-testid="text-dashboard-title"
           >
-            Dashboard
+            {dashboardTitle}
           </h1>
           <p
             className="text-muted-foreground mt-1"
@@ -1186,23 +1226,6 @@ export default function Dashboard() {
               summary?.billingPeriodLabel ??
               "Current period"}
           </p>
-          <p
-            className="text-[10px] md:text-xs text-muted-foreground mt-1"
-            data-testid="text-reconciliation-scope"
-          >
-            {role === "workspace_admin"
-              ? "Your authorized workspace scope · Custom dates use inclusive UTC days"
-              : "All workspaces you can access · Custom dates use inclusive UTC days"}
-          </p>
-          {groupsData?.usageHealth.status !== "empty" && (
-            <p
-              className="text-[10px] md:text-xs text-muted-foreground mt-1"
-              data-testid="text-usage-data-as-of"
-            >
-              Data as of{" "}
-              {usageDataAsOf ? `${usageDataAsOf} UTC` : "unavailable"}
-            </p>
-          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <RangeFilter />
