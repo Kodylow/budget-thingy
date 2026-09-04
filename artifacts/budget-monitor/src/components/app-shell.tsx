@@ -119,7 +119,7 @@ export function AppShell({ children }: AppShellProps) {
         { path: '/user-guide', label: 'User Guide', icon: BookOpen, show: capabilities.canManageAccess, testId: 'nav-user-guide' },
         { path: '/settings', label: 'Settings', icon: Settings, show: capabilities.canManageAccess, testId: 'nav-settings' },
         { path: '/trends', label: 'Trends', icon: TrendingUp, show: true, testId: 'nav-trends' },
-        { path: '/workspace-admins', label: 'Workspace Admins', icon: Users, show: capabilities.canManageAccess, testId: 'nav-workspace-admins' },
+        { path: '/workspace-admins', label: 'Team Admins', icon: Users, show: capabilities.canManageAccess, testId: 'nav-workspace-admins' },
         { path: '/workspace-directory', label: 'Workspace Directory', icon: BookUser, show: capabilities.canManageAccess, testId: 'nav-workspace-directory' },
         { path: '/team-budgets', label: 'Team Budgets', icon: WalletCards, show: capabilities.canEditAllocations, testId: 'nav-team-budgets' },
       ],

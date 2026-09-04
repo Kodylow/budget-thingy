@@ -16,6 +16,7 @@ import {
   getDirectory,
   getBillingPeriod,
   buildCanonicalGroupMergePlan,
+  buildCanonicalEffectiveTeams,
   resolveCanonicalMergedGroupBudget,
   type EnterpriseGroup,
 } from "./enterprise";
@@ -35,36 +36,19 @@ type CheckerDirectory = Awaited<ReturnType<typeof getDirectory>>;
 
 type TeamTarget = Pick<
   typeof teamLimitTargetsTable.$inferSelect,
-  "workspaceId" | "groupId" | "groupName" | "teamName"
+  "workspaceId" | "groupId" | "teamName" | "assignmentSource"
 >;
 
-function targetTeamForGroup(
-  group: EnterpriseGroup,
-  targets: readonly TeamTarget[],
-): string | undefined {
-  const exact = targets.find((target) =>
-    target.workspaceId === group.workspaceId && target.groupId === group.id
-  );
-  if (exact) return exact.teamName;
-  if (group.workspaceId !== "1awqan") return undefined;
-  const teams = new Set(
-    targets
-      .filter((target) =>
-        target.workspaceId !== "1awqan" && target.groupName === group.name
-      )
-      .map((target) => target.teamName),
-  );
-  return teams.size === 1 ? [...teams][0] : undefined;
-}
-
 function teamMap(
+  dir: CheckerDirectory,
   groups: readonly EnterpriseGroup[],
   targets: readonly TeamTarget[],
   hidden: ReadonlySet<string>,
 ): Map<string, string> {
   const result = new Map<string, string>();
+  const effectiveTeams = buildCanonicalEffectiveTeams(dir.account, targets);
   for (const group of groups) {
-    const team = targetTeamForGroup(group, targets);
+    const team = effectiveTeams.byRoleGroupId.get(group.id);
     if (team && !hidden.has(team)) {
       result.set(`${group.workspaceId}\0${group.id}`, team);
     }
@@ -441,6 +425,7 @@ async function buildTeamSpecs(
 
   const hiddenCheckerTeamNames = new Set(allCheckerTeamBudgetRows.filter((tb) => tb.isHidden).map((tb) => tb.teamName));
   const teamByGroupName = teamMap(
+    dir,
     dir.groups,
     groupTargets,
     hiddenCheckerTeamNames,

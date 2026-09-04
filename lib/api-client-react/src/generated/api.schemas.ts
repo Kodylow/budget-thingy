@@ -145,17 +145,32 @@ export const GroupSyntheticKind = {
   no_group: 'no_group',
 } as const;
 
+export type DirectoryRole = typeof DirectoryRole[keyof typeof DirectoryRole];
+
+
+export const DirectoryRole = {
+  admin: 'admin',
+  member: 'member',
+  viewer: 'viewer',
+  guest: 'guest',
+  unsuffixed: 'unsuffixed',
+} as const;
+
 export interface Group {
   groupId: string;
   workspaceId: string;
   /** @nullable */
-  workspaceName?: string | null;
+  workspaceName: string | null;
   name: string;
+  familyKey: string;
+  familyName: string;
+  role: DirectoryRole;
+  isLegacy: boolean;
   /**
      * Team this group belongs to, null if unassigned
      * @nullable
      */
-  teamName?: string | null;
+  teamName: string | null;
   /** True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target. */
   isLegacyDisplayOnly?: boolean;
   /** Group type (custom, admin, member, guest) */
@@ -267,6 +282,13 @@ export interface UsageHealth {
   accountWorkspaceUnreconciledUsd: number;
 }
 
+export interface WorkspaceTeamSpend {
+  workspaceId: string;
+  teamName: string;
+  /** Member-deduped rollup spend attributed to this team within this workspace. */
+  spendUsd: number;
+}
+
 export interface GroupsResponse {
   groups: Group[];
   usageHealth: UsageHealth;
@@ -276,6 +298,8 @@ export interface GroupsResponse {
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */
   teamRawSpend: GroupsResponseTeamRawSpend;
+  /** Workspace-qualified team spend for rendering workspace/team sections without merging same-named teams across workspaces. */
+  workspaceTeamRawSpend: WorkspaceTeamSpend[];
   /** Effective visible team budgets, including budget-only teams for account-wide callers. */
   teamBudgets: GroupsResponseTeamBudgets;
 }
@@ -976,6 +1000,12 @@ export interface DirectoryGroup {
   groupName: string;
   workspaceId: string;
   workspaceName: string;
+  familyKey: string;
+  familyName: string;
+  role: DirectoryRole;
+  isLegacy: boolean;
+  /** @nullable */
+  teamName: string | null;
 }
 
 export interface GroupAdminsItem {
@@ -984,7 +1014,10 @@ export interface GroupAdminsItem {
   workspaceId: string;
   workspaceName: string;
   /** @nullable */
-  teamName?: string | null;
+  teamName: string | null;
+  familyKey: string;
+  familyName: string;
+  isLegacy: boolean;
   admins: GroupAdminMember[];
 }
 
@@ -1483,3 +1516,4 @@ export type ListRecentUsageIngestRunsParams = {
  */
 limit?: number;
 };
+

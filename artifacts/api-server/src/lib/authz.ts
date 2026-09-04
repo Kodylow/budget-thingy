@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 
 import {
   getDirectory,
-  isCustomGroup,
+  buildCanonicalEffectiveTeams,
   type EnterpriseGroup,
 } from "./enterprise";
 import { logger } from "./logger";
@@ -77,15 +77,9 @@ async function lookupAppAdmin(userId: string): Promise<boolean> {
 }
 
 const ADMIN_ROLES = new Set(["admin", "owner", "account_admin"]);
-const TEAM_ADMIN_SUFFIX = /\s*-\s*admins?\s*$/i;
-const TEAM_MEMBER_SUFFIX = /\s*-\s*members?\s*$/i;
 
 export function isAdminRole(role: string): boolean {
   return ADMIN_ROLES.has(role.trim().toLowerCase());
-}
-
-function familyName(name: string): string {
-  return name.replace(TEAM_ADMIN_SUFFIX, "").replace(TEAM_MEMBER_SUFFIX, "").trim();
 }
 
 function unique(values: Iterable<string>): string[] {
@@ -144,10 +138,25 @@ async function resolveFromDirectory(
   if (!member && !forceRole) return null;
 
   const targets = await db.select().from(teamLimitTargetsTable);
+  const families = [...dir.account.familiesById.values()];
+  const effectiveTeams = buildCanonicalEffectiveTeams(dir.account, targets);
+  const forcedTeamFamilies = forceRole === "team_admin"
+    ? families.filter((family) =>
+        !family.isLegacy &&
+        effectiveTeams.byFamilyId.get(family.id) === forceValue &&
+        (family.name.toLowerCase() === forceValue!.toLowerCase() ||
+          family.key === forceValue!.toLowerCase())
+      )
+    : [];
+  if (forceRole === "team_admin" && forcedTeamFamilies.length === 0) {
+    const sameTeam = families.filter((family) =>
+      !family.isLegacy && effectiveTeams.byFamilyId.get(family.id) === forceValue
+    );
+    if (sameTeam.length === 1) forcedTeamFamilies.push(sameTeam[0]!);
+  }
   if (
     (forceRole === "workspace_admin" && !dir.workspaces.has(forceValue!)) ||
-    (forceRole === "team_admin" &&
-      !targets.some((target) => target.teamName === forceValue)) ||
+    (forceRole === "team_admin" && forcedTeamFamilies.length !== 1) ||
     (forceRole === "member" &&
       (!member ||
         ![...member.workspaces.values()].some((membership) => !membership.isDisabled)))
@@ -181,26 +190,46 @@ async function resolveFromDirectory(
     if (workspaceIds.size) roles.push("workspace_admin");
   }
 
-  const adminFamilies = new Set<string>();
-  if (forceRole === "team_admin") {
-    teamNames.add(forceValue!);
-    roles.push("team_admin");
-  } else if (!forceRole && member) {
-    for (const group of dir.groups) {
+  const adminFamilyIds = new Set<string>();
+  const includeLegacySibling = (familyId: string): void => {
+    const family = dir.account.familiesById.get(familyId);
+    if (!family || family.isLegacy) return;
+    const siblingTeams = new Set(
+      families
+        .filter((candidate) => !candidate.isLegacy && candidate.key === family.key)
+        .flatMap((candidate) => {
+          const team = effectiveTeams.byFamilyId.get(candidate.id);
+          return team ? [team] : [];
+        }),
+    );
+    if (siblingTeams.size !== 1) return;
+    const team = effectiveTeams.byFamilyId.get(family.id);
+    for (const legacy of families) {
       if (
-        isCustomGroup(group) &&
-        TEAM_ADMIN_SUFFIX.test(group.name) &&
-        (dir.groupMembers.get(group.id) ?? []).includes(userId)
+        legacy.isLegacy &&
+        legacy.key === family.key &&
+        effectiveTeams.byFamilyId.get(legacy.id) === team
       ) {
-        adminFamilies.add(familyName(group.name).toLowerCase());
+        adminFamilyIds.add(legacy.id);
       }
     }
-    for (const target of targets) {
-      if (
-        adminFamilies.has(target.teamName.toLowerCase()) ||
-        adminFamilies.has(familyName(target.groupName).toLowerCase())
-      ) {
-        teamNames.add(target.teamName);
+  };
+  if (forceRole === "team_admin") {
+    for (const family of forcedTeamFamilies) {
+      const effectiveTeam = effectiveTeams.byFamilyId.get(family.id)!;
+      adminFamilyIds.add(family.id);
+      includeLegacySibling(family.id);
+      teamNames.add(effectiveTeam);
+    }
+    roles.push("team_admin");
+  } else if (!forceRole && member) {
+    for (const family of families) {
+      const admins = family.roleGroups.get("admin");
+      const effectiveTeam = effectiveTeams.byFamilyId.get(family.id);
+      if (effectiveTeam && admins?.members.has(userId)) {
+        adminFamilyIds.add(family.id);
+        includeLegacySibling(family.id);
+        teamNames.add(effectiveTeam);
       }
     }
     if (teamNames.size) roles.push("team_admin");
@@ -214,16 +243,9 @@ async function resolveFromDirectory(
   }
 
   for (const group of dir.groups) {
-    const targetTeams = targets
-      .filter((target) =>
-        (target.workspaceId === group.workspaceId && target.groupId === group.id) ||
-        (familyName(target.groupName).toLowerCase() === familyName(group.name).toLowerCase())
-      )
-      .map((target) => target.teamName);
+    const roleGroup = dir.account.roleGroupsById.get(group.id);
     const teamVisible =
-      targetTeams.some((team) => teamNames.has(team)) &&
-      (TEAM_MEMBER_SUFFIX.test(group.name) ||
-        targets.some((target) => target.groupId === group.id));
+      !!roleGroup && adminFamilyIds.has(roleGroup.familyId);
     const selfVisible =
       (!forceRole || forceRole === "member") &&
       (dir.groupMembers.get(group.id) ?? []).includes(userId);

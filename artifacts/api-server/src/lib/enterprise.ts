@@ -14,10 +14,18 @@ import {
   usageFactMonthsTable,
   canonicalMonthlyGroupUserRollupsTable,
   canonicalMonthlyRollupStateTable,
+  teamLimitTargetsTable,
+  teamBudgetsTable,
   type UsageSyncChunk,
   type UsageDailyFact,
   type CanonicalMonthlyGroupUserRollup,
 } from "@workspace/db/schema";
+import {
+  applyFamilyMappingBackfill,
+  collisionSafeFamilyTeamName,
+  FAMILY_TEAM_OVERRIDES,
+  type DiscoveredFamilyMapping,
+} from "@workspace/db/seed-teams";
 import { and, eq, gt, gte, inArray, like, lt, lte, or, sql } from "drizzle-orm";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
@@ -2502,6 +2510,348 @@ export interface EnterpriseGroup {
   type: string;
 }
 
+export type DirectoryRole = "admin" | "member" | "viewer" | "guest" | "unsuffixed";
+
+export interface CanonicalRoleGroup {
+  id: string;
+  name: string;
+  workspaceId: string;
+  familyId: string;
+  familyKey: string;
+  familyName: string;
+  role: DirectoryRole;
+  isLegacy: boolean;
+  teamName: string | null;
+  members: Map<string, EnterpriseMember>;
+}
+
+export interface CanonicalFamily {
+  id: string;
+  key: string;
+  name: string;
+  workspaceId: string;
+  isLegacy: boolean;
+  teamName: string | null;
+  roleGroups: Map<DirectoryRole, CanonicalRoleGroup>;
+}
+
+export interface CanonicalWorkspace {
+  id: string;
+  name: string;
+  workspace: EnterpriseWorkspace | null;
+  families: Map<string, CanonicalFamily>;
+}
+
+export interface CanonicalAccountDirectory {
+  workspaces: Map<string, CanonicalWorkspace>;
+  familiesById: Map<string, CanonicalFamily>;
+  roleGroupsById: Map<string, CanonicalRoleGroup>;
+}
+
+export interface CanonicalTeamTarget {
+  workspaceId: string;
+  groupId: string;
+  teamName: string;
+  assignmentSource: "unconfirmed" | "automatic" | "manual";
+}
+
+export interface CanonicalEffectiveTeams {
+  byFamilyId: Map<string, string | null>;
+  byRoleGroupId: Map<string, string | null>;
+}
+
+/**
+ * Resolves financial team ownership without treating a normalized family key
+ * as a global identity. Exact targets affect only their workspace-qualified
+ * family. A legacy family may inherit only one unambiguous resolved team from
+ * its nonlegacy same-key siblings.
+ */
+export function buildCanonicalEffectiveTeams(
+  account: CanonicalAccountDirectory,
+  targets: readonly CanonicalTeamTarget[],
+): CanonicalEffectiveTeams {
+  const targetedTeamsByFamilyId = new Map<string, Set<string>>();
+  const nonlegacyFamilyCountByKey = new Map<string, number>();
+  for (const family of account.familiesById.values()) {
+    if (family.isLegacy) continue;
+    nonlegacyFamilyCountByKey.set(
+      family.key,
+      (nonlegacyFamilyCountByKey.get(family.key) ?? 0) + 1,
+    );
+  }
+  for (const target of targets) {
+    const roleGroup = account.roleGroupsById.get(target.groupId);
+    if (!roleGroup || roleGroup.workspaceId !== target.workspaceId) continue;
+    const family = account.familiesById.get(roleGroup.familyId);
+    if (!family || target.assignmentSource === "automatic") continue;
+    if (
+      target.assignmentSource === "unconfirmed" &&
+      (nonlegacyFamilyCountByKey.get(family.key) ?? 0) > 1 &&
+      !FAMILY_TEAM_OVERRIDES.has(family.key) &&
+      normalizeFamilyKey(target.teamName) === family.key
+    ) {
+      continue;
+    }
+    const teams = targetedTeamsByFamilyId.get(roleGroup.familyId) ?? new Set<string>();
+    teams.add(target.teamName);
+    targetedTeamsByFamilyId.set(roleGroup.familyId, teams);
+  }
+
+  const byFamilyId = new Map<string, string | null>();
+  for (const family of account.familiesById.values()) {
+    if (family.isLegacy) continue;
+    const targetedTeams = targetedTeamsByFamilyId.get(family.id);
+    byFamilyId.set(
+      family.id,
+      targetedTeams?.size === 1 ? [...targetedTeams][0]! : family.teamName,
+    );
+  }
+  for (const family of account.familiesById.values()) {
+    if (!family.isLegacy) continue;
+    const targetedTeams = targetedTeamsByFamilyId.get(family.id);
+    if (targetedTeams?.size === 1) {
+      byFamilyId.set(family.id, [...targetedTeams][0]!);
+      continue;
+    }
+    const siblingTeams = new Set(
+      [...account.familiesById.values()]
+        .filter((candidate) => !candidate.isLegacy && candidate.key === family.key)
+        .flatMap((candidate) => {
+          const teamName = byFamilyId.get(candidate.id);
+          return teamName ? [teamName] : [];
+        }),
+    );
+    byFamilyId.set(
+      family.id,
+      siblingTeams.size === 1
+        ? [...siblingTeams][0]!
+        : FAMILY_TEAM_OVERRIDES.get(family.key) ?? null,
+    );
+  }
+
+  const byRoleGroupId = new Map<string, string | null>();
+  for (const roleGroup of account.roleGroupsById.values()) {
+    byRoleGroupId.set(
+      roleGroup.id,
+      byFamilyId.has(roleGroup.familyId)
+        ? byFamilyId.get(roleGroup.familyId)!
+        : roleGroup.teamName,
+    );
+  }
+  return { byFamilyId, byRoleGroupId };
+}
+
+const FAMILY_ROLE_SUFFIX = /\s*-\s*(admins?|members?|viewers?|guests?)\s*$/i;
+const DIRECTORY_PREFIX = "az-replit";
+export const LEGACY_WORKSPACE_ID = "1awqan";
+
+export function normalizeFamilyKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function parseDirectoryGroupName(name: string): {
+  familyKey: string;
+  familyName: string;
+  role: DirectoryRole;
+} {
+  let value = name.trim();
+  const normalizedPrefix = value.slice(0, DIRECTORY_PREFIX.length).toLowerCase();
+  if (normalizedPrefix === DIRECTORY_PREFIX) {
+    value = value.slice(DIRECTORY_PREFIX.length).trim();
+    if (value.startsWith("-")) value = value.slice(1).trim();
+  }
+  const match = value.match(FAMILY_ROLE_SUFFIX);
+  let role: DirectoryRole = "unsuffixed";
+  if (match) {
+    const rawRole = match[1]!.toLowerCase();
+    role = rawRole.startsWith("admin")
+      ? "admin"
+      : rawRole.startsWith("member")
+        ? "member"
+        : rawRole.startsWith("viewer")
+          ? "viewer"
+          : "guest";
+    value = value.slice(0, match.index).trim();
+  }
+  const familyName = value.replace(/\s+/g, " ").trim();
+  return { familyKey: normalizeFamilyKey(familyName), familyName, role };
+}
+
+type FamilyMapping = {
+  workspaceId: string;
+  familyKey: string;
+  familyName: string;
+  teamName: string | null;
+  isLegacy: boolean;
+};
+
+export function buildCanonicalAccountDirectory(input: {
+  workspaces: ReadonlyMap<string, EnterpriseWorkspace>;
+  groups: readonly EnterpriseGroup[];
+  groupMembers: ReadonlyMap<string, readonly string[]>;
+  members: ReadonlyMap<string, EnterpriseMember>;
+  mappings?: readonly FamilyMapping[];
+}): CanonicalAccountDirectory {
+  const mappingByIdentity = new Map(
+    (input.mappings ?? []).map((row) => [`${row.workspaceId}\0${row.familyKey}`, row]),
+  );
+  const resolvedNonlegacyByIdentity = new Map<string, {
+    familyKey: string;
+    teamName: string;
+  }>();
+  const nonlegacyIdentitiesByKey = new Map<string, Set<string>>();
+  for (const group of input.groups) {
+    if (group.workspaceId === LEGACY_WORKSPACE_ID) continue;
+    const parsed = parseDirectoryGroupName(group.name);
+    const identities = nonlegacyIdentitiesByKey.get(parsed.familyKey) ?? new Set<string>();
+    identities.add(`${group.workspaceId}\0${parsed.familyKey}`);
+    nonlegacyIdentitiesByKey.set(parsed.familyKey, identities);
+  }
+  for (const group of input.groups) {
+    if (group.workspaceId === LEGACY_WORKSPACE_ID) continue;
+    const parsed = parseDirectoryGroupName(group.name);
+    const mapping = mappingByIdentity.get(`${group.workspaceId}\0${parsed.familyKey}`);
+    const hasCollision = (nonlegacyIdentitiesByKey.get(parsed.familyKey)?.size ?? 0) > 1;
+    const mappingIsPlainAutomatic =
+      mapping?.teamName == null ||
+      normalizeFamilyKey(mapping.teamName) === parsed.familyKey;
+    resolvedNonlegacyByIdentity.set(`${group.workspaceId}\0${parsed.familyKey}`, {
+      familyKey: parsed.familyKey,
+      teamName: FAMILY_TEAM_OVERRIDES.get(parsed.familyKey) ??
+        (!mappingIsPlainAutomatic
+          ? mapping!.teamName!
+          : collisionSafeFamilyTeamName(
+              parsed.familyName,
+              group.workspaceId,
+              hasCollision,
+            )),
+    });
+  }
+  const nonlegacyTeamsByKey = new Map<string, Set<string>>();
+  for (const resolved of resolvedNonlegacyByIdentity.values()) {
+    const teams = nonlegacyTeamsByKey.get(resolved.familyKey) ?? new Set<string>();
+    teams.add(resolved.teamName);
+    nonlegacyTeamsByKey.set(resolved.familyKey, teams);
+  }
+
+  const workspaces = new Map<string, CanonicalWorkspace>(
+    [...input.workspaces].map(([id, workspace]) => [
+      id,
+      {
+        id,
+        name: workspace.name,
+        workspace,
+        families: new Map<string, CanonicalFamily>(),
+      },
+    ]),
+  );
+  const familiesById = new Map<string, CanonicalFamily>();
+  const roleGroupsById = new Map<string, CanonicalRoleGroup>();
+  for (const group of input.groups) {
+    const parsed = parseDirectoryGroupName(group.name);
+    const isLegacy = group.workspaceId === LEGACY_WORKSPACE_ID;
+    const mapping = mappingByIdentity.get(`${group.workspaceId}\0${parsed.familyKey}`);
+    const override = FAMILY_TEAM_OVERRIDES.get(parsed.familyKey);
+    const nonlegacyTeams = nonlegacyTeamsByKey.get(parsed.familyKey);
+    const teamName = isLegacy
+      ? override ?? (nonlegacyTeams?.size === 1 ? [...nonlegacyTeams][0]! : null)
+      : resolvedNonlegacyByIdentity
+          .get(`${group.workspaceId}\0${parsed.familyKey}`)!.teamName;
+    let workspace = workspaces.get(group.workspaceId);
+    if (!workspace) {
+      const rawWorkspace = input.workspaces.get(group.workspaceId) ?? null;
+      workspace = {
+        id: group.workspaceId,
+        name: rawWorkspace?.name ?? group.workspaceId,
+        workspace: rawWorkspace,
+        families: new Map(),
+      };
+      workspaces.set(group.workspaceId, workspace);
+    }
+    let family = workspace.families.get(parsed.familyKey);
+    if (!family) {
+      family = {
+        id: `${group.workspaceId}:${parsed.familyKey}`,
+        key: parsed.familyKey,
+        name: mapping?.familyName ?? parsed.familyName,
+        workspaceId: group.workspaceId,
+        isLegacy,
+        teamName,
+        roleGroups: new Map(),
+      };
+      workspace.families.set(parsed.familyKey, family);
+      familiesById.set(family.id, family);
+    }
+    const roleGroup: CanonicalRoleGroup = {
+      id: group.id,
+      name: group.name,
+      workspaceId: group.workspaceId,
+      familyId: family.id,
+      familyKey: family.key,
+      familyName: family.name,
+      role: parsed.role,
+      isLegacy,
+      teamName: family.teamName,
+      members: new Map(
+        (input.groupMembers.get(group.id) ?? [])
+          .flatMap((id) => {
+            const member = input.members.get(id);
+            return member ? [[id, member] as const] : [];
+          }),
+      ),
+    };
+    family.roleGroups.set(parsed.role, roleGroup);
+    roleGroupsById.set(group.id, roleGroup);
+  }
+  return { workspaces, familiesById, roleGroupsById };
+}
+
+export async function persistCanonicalFamilyFinancialRows(
+  account: CanonicalAccountDirectory,
+): Promise<void> {
+  const automaticTargets = await db.select().from(teamLimitTargetsTable)
+    .where(eq(teamLimitTargetsTable.assignmentSource, "automatic"));
+  for (const family of account.familiesById.values()) {
+    if (family.isLegacy || !family.teamName) continue;
+    await db.insert(teamBudgetsTable).values({
+      teamName: family.teamName,
+      originalAmountUsd: 0,
+      amountUsd: 0,
+    }).onConflictDoNothing({ target: teamBudgetsTable.teamName });
+    const memberGroup = family.roleGroups.get("member");
+    if (!memberGroup) continue;
+    const staleFamilyTargets = automaticTargets.filter((target) =>
+      target.workspaceId === family.workspaceId &&
+      target.groupId !== memberGroup.id &&
+      parseDirectoryGroupName(target.groupName).familyKey === family.key
+    );
+    const carriedState = staleFamilyTargets.length === 1 ? staleFamilyTargets[0] : undefined;
+    if (carriedState) {
+      await db.delete(teamLimitTargetsTable).where(and(
+        eq(teamLimitTargetsTable.workspaceId, carriedState.workspaceId),
+        eq(teamLimitTargetsTable.groupId, carriedState.groupId),
+        eq(teamLimitTargetsTable.assignmentSource, "automatic"),
+      ));
+    }
+    await db.insert(teamLimitTargetsTable).values({
+      workspaceId: family.workspaceId,
+      groupId: memberGroup.id,
+      groupName: memberGroup.name,
+      teamName: family.teamName,
+      assignmentSource: "automatic",
+      monthlyLimitUsd: carriedState?.monthlyLimitUsd,
+      isEnabled: carriedState?.isEnabled ?? true,
+    }).onConflictDoUpdate({
+      target: [teamLimitTargetsTable.workspaceId, teamLimitTargetsTable.groupId],
+      set: {
+        groupName: memberGroup.name,
+        teamName: family.teamName,
+      },
+      setWhere: eq(teamLimitTargetsTable.assignmentSource, "automatic"),
+    });
+  }
+}
+
 const BUILT_IN_GROUP_TYPES = new Set(["admin", "member", "guest"]);
 
 export function isCustomGroup(group: EnterpriseGroup): boolean {
@@ -2648,6 +2998,7 @@ interface SerializedDirectory {
     userLimits: Record<string, Record<string, number>>;
     workspaceDefaults: Record<string, number>;
   };
+  familyMappings?: FamilyMapping[];
 }
 
 function serializeDirectory(d: DirectoryCache): SerializedDirectory {
@@ -2677,6 +3028,15 @@ function serializeDirectory(d: DirectoryCache): SerializedDirectory {
   const workspaceDefaults: Record<string, number> = {};
   for (const [wsId, amt] of d.budgets.workspaceDefaults) workspaceDefaults[wsId] = amt;
 
+  const familyMappings = [...d.account.familiesById.values()]
+    .filter((family) => family.teamName !== null)
+    .map((family) => ({
+      workspaceId: family.workspaceId,
+      familyKey: family.key,
+      familyName: family.name,
+      teamName: family.teamName!,
+      isLegacy: family.isLegacy,
+    }));
   return {
     fetchedAt: d.fetchedAt,
     workspaces,
@@ -2685,6 +3045,7 @@ function serializeDirectory(d: DirectoryCache): SerializedDirectory {
     groupMembers,
     members,
     budgets: { groupLimits, userLimits, workspaceDefaults },
+    familyMappings,
   };
 }
 
@@ -2715,6 +3076,13 @@ function deserializeDirectory(s: SerializedDirectory): DirectoryCache {
   const workspaceDefaults = new Map<string, number>(Object.entries(s.budgets.workspaceDefaults));
 
   const allGroups = s.allGroups ?? s.groups;
+  const account = buildCanonicalAccountDirectory({
+    workspaces,
+    groups: allGroups.filter(isCustomGroup),
+    groupMembers,
+    members,
+    mappings: s.familyMappings,
+  });
 
   return {
     fetchedAt: s.fetchedAt,
@@ -2724,20 +3092,20 @@ function deserializeDirectory(s: SerializedDirectory): DirectoryCache {
     groupMembers,
     members,
     budgets: { groupLimits, userLimits, workspaceDefaults },
+    account,
   };
 }
 
 // ---------- DB write-through helpers ----------
 
-function persistDirectoryToDb(d: DirectoryCache): void {
+async function persistDirectoryToDb(d: DirectoryCache): Promise<void> {
   const serialized = serializeDirectory(d);
-  db.insert(apiDirectoryCacheTable)
+  await db.insert(apiDirectoryCacheTable)
     .values({ id: "singleton", directoryJson: serialized, fetchedAt: new Date(d.fetchedAt) })
     .onConflictDoUpdate({
       target: apiDirectoryCacheTable.id,
       set: { directoryJson: serialized, fetchedAt: new Date(d.fetchedAt) },
-    })
-    .catch((err: unknown) => logger.warn({ err }, "Failed to persist directory cache to DB"));
+    });
 }
 
 async function persistSpendToDb(
@@ -2931,6 +3299,7 @@ export interface DirectoryCache {
   groupMembers: Map<string, string[]>; // groupId -> userIds
   members: Map<string, EnterpriseMember>; // userId -> member
   budgets: PlatformBudgets;
+  account: CanonicalAccountDirectory;
 }
 
 export interface DirectoryFreshness {
@@ -3061,6 +3430,7 @@ export function __setDirectoryCacheForTests(
     groupMembers?: Map<string, string[]>;
     members: Map<string, EnterpriseMember>;
     fetchedAt?: number;
+    mappings?: readonly FamilyMapping[];
   } | null,
 ): void {
   if (!fixture) {
@@ -3075,6 +3445,13 @@ export function __setDirectoryCacheForTests(
     groupMembers: fixture.groupMembers ?? new Map(),
     members: fixture.members,
     budgets: { groupLimits: new Map(), userLimits: new Map(), workspaceDefaults: new Map() },
+    account: buildCanonicalAccountDirectory({
+      workspaces: fixture.workspaces ?? new Map(),
+      groups: fixture.groups,
+      groupMembers: fixture.groupMembers ?? new Map(),
+      members: fixture.members,
+      mappings: fixture.mappings,
+    }),
   };
 }
 
@@ -4575,10 +4952,7 @@ export function getDedupedUsageRollup(
     const comcastGroups = ordered.filter((g) => g.workspaceId === comcastWorkspaceId);
     const normalizedTeamNameByGroupId = new Map<string, string>();
     for (const group of comcastGroups) {
-      const body = group.name
-        .replace(/^az[-–\s]+replit[-–\s]+/i, "")
-        .replace(/[-–\s]+(admin|member|creator|viewer|owner|manager)$/i, "")
-        .trim();
+      const body = parseDirectoryGroupName(group.name).familyName;
       normalizedTeamNameByGroupId.set(group.id, normalizeTeamName(body));
     }
     for (const [wsId, ws] of workspaces) {
@@ -4678,12 +5052,7 @@ export function getDedupedUsageRollup(
               const matchingGroups = comcastGroupsByWorkspace.get(workspaceId) ?? [];
               const teamNames = new Set(
                 matchingGroups.map((group) =>
-                  normalizeTeamName(
-                    group.name
-                      .replace(/^az[-–\s]+replit[-–\s]+/i, "")
-                      .replace(/[-–\s]+(admin|member|creator|viewer|owner|manager)$/i, "")
-                      .trim(),
-                  ),
+                  normalizeTeamName(parseDirectoryGroupName(group.name).familyName),
                 ),
               );
               // A no-membership admin fallback is safe only when the workspace
@@ -5906,6 +6275,29 @@ function refreshDirectory(scheduleCanonical = true): Promise<DirectoryCache> {
         }
       }
 
+      const discoveredByIdentity = new Map<string, DiscoveredFamilyMapping>();
+      for (const group of groups) {
+        const parsed = parseDirectoryGroupName(group.name);
+        const identity = `${group.workspaceId}\0${parsed.familyKey}`;
+        const current = discoveredByIdentity.get(identity);
+        const family: DiscoveredFamilyMapping = {
+          workspaceId: group.workspaceId,
+          familyKey: parsed.familyKey,
+          familyName: parsed.familyName,
+          isLegacy: group.workspaceId === LEGACY_WORKSPACE_ID,
+          groupIds: [...(current?.groupIds ?? []), group.id],
+        };
+        discoveredByIdentity.set(identity, family);
+      }
+      const mappings = await applyFamilyMappingBackfill([...discoveredByIdentity.values()]);
+      const account = buildCanonicalAccountDirectory({
+        workspaces: wsMap,
+        groups,
+        groupMembers,
+        members,
+        mappings,
+      });
+
       directoryCache = {
         fetchedAt: Date.now(),
         workspaces: wsMap,
@@ -5914,8 +6306,10 @@ function refreshDirectory(scheduleCanonical = true): Promise<DirectoryCache> {
         groupMembers,
         members,
         budgets,
+        account,
       };
-      persistDirectoryToDb(directoryCache);
+      await persistDirectoryToDb(directoryCache);
+      await persistCanonicalFamilyFinancialRows(account);
       if (scheduleCanonical) {
         for (const monthStart of canonicalCandidateMonths) {
           queueCanonicalMonthRebuild(monthStart);

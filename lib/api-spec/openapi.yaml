@@ -1461,8 +1461,8 @@ paths:
     get:
       operationId: listWorkspaceAdmins
       tags: [admins]
-      summary: List admins per group
-      description: Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
+      summary: List Team admins per family
+      description: Returns every canonical family with its Team admins from the directory. Available only to account administrators.
       responses:
         "200":
           description: Group admin list
@@ -1933,7 +1933,7 @@ components:
           type: number
     Group:
       type: object
-      required: [groupId, workspaceId, name, type, spendUsd, paceSpendUsd, projectSpendUsd, rollupSpendUsd, rollupMemberCount, thresholdsFired, history]
+      required: [groupId, workspaceId, workspaceName, name, familyKey, familyName, role, isLegacy, teamName, type, spendUsd, paceSpendUsd, projectSpendUsd, rollupSpendUsd, rollupMemberCount, thresholdsFired, history]
       properties:
         groupId:
           type: string
@@ -1943,6 +1943,14 @@ components:
           type: ["string", "null"]
         name:
           type: string
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        role:
+          $ref: "#/components/schemas/DirectoryRole"
+        isLegacy:
+          type: boolean
         teamName:
           type: ["string", "null"]
           description: Team this group belongs to, null if unassigned
@@ -2007,7 +2015,7 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, teamBudgets]
+      required: [groups, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, workspaceTeamRawSpend, teamBudgets]
       properties:
         groups:
           type: array
@@ -2031,11 +2039,27 @@ components:
                 type: number
                 description: Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)
           description: Per-team member-deduped rollup spend, with each member counted once across groups
+        workspaceTeamRawSpend:
+          type: array
+          description: Workspace-qualified team spend for rendering workspace/team sections without merging same-named teams across workspaces.
+          items:
+            $ref: "#/components/schemas/WorkspaceTeamSpend"
         teamBudgets:
           type: object
           additionalProperties:
             type: number
           description: Effective visible team budgets, including budget-only teams for account-wide callers.
+    WorkspaceTeamSpend:
+      type: object
+      required: [workspaceId, teamName, spendUsd]
+      properties:
+        workspaceId:
+          type: string
+        teamName:
+          type: string
+        spendUsd:
+          type: number
+          description: Member-deduped rollup spend attributed to this team within this workspace.
     TrendSeries:
       type: object
       required: [name, type, data]
@@ -2978,7 +3002,7 @@ components:
             $ref: "#/components/schemas/DirectoryMemberWorkspace"
     DirectoryGroup:
       type: object
-      required: [groupId, groupName, workspaceId, workspaceName]
+      required: [groupId, groupName, workspaceId, workspaceName, familyKey, familyName, role, isLegacy, teamName]
       properties:
         groupId:
           type: string
@@ -2988,9 +3012,22 @@ components:
           type: string
         workspaceName:
           type: string
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        role:
+          $ref: "#/components/schemas/DirectoryRole"
+        isLegacy:
+          type: boolean
+        teamName:
+          type: ["string", "null"]
+    DirectoryRole:
+      type: string
+      enum: [admin, member, viewer, guest, unsuffixed]
     GroupAdminsItem:
       type: object
-      required: [groupId, groupName, workspaceId, workspaceName, admins]
+      required: [groupId, groupName, workspaceId, workspaceName, familyKey, familyName, isLegacy, teamName, admins]
       properties:
         groupId:
           type: string
@@ -3002,6 +3039,12 @@ components:
           type: string
         teamName:
           type: ["string", "null"]
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        isLegacy:
+          type: boolean
         admins:
           type: array
           items:

@@ -34,3 +34,9 @@ Treat project identity as `(workspace ID, project ID)`, never project ID alone.
 **Why:** Enterprise project IDs are workspace-scoped and may collide across workspaces; a global key silently overwrites attribution.
 
 **How to apply:** Qualify every project attribution, creator, and metric lookup before combining workspace snapshots or filtering project responses.
+
+Treat directory family identity as `(workspace ID, normalized family key)`, never the family key alone. Legacy families may inherit a team only when a named override applies or all matching nonlegacy families resolve to one team; ambiguity must remain unassigned.
+
+**Why:** Same-named families can exist in independent workspaces with different teams. Global family matching can misattribute spend and grant cross-workspace access; arbitrary legacy inheritance turns that accounting bug into an authorization leak.
+
+**How to apply:** Keep target resolution and team-admin scope workspace-qualified. Cross the workspace boundary only for the explicit legacy exception, and fail closed when its nonlegacy team is not unique.

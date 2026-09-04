@@ -91,14 +91,21 @@ import { useLocation } from 'wouter';
 import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { buildGroupClusters, roleBadgeClass, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
+import { buildGroupClusters, roleBadgeClass, roleLabel, sumAttributedRollup, type GroupCluster } from '@/lib/group-clusters';
 import { compareTeamNames, formatTeamName } from '@/lib/team-names';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 import { dashboardPollInterval } from '@/lib/client-performance';
+import {
+  allocateWorkspaceTeamBudgets,
+  indexWorkspaceTeamSpend,
+  workspaceTeamSpendKey,
+} from '@/lib/workspace-team-spend';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
 
 interface TeamSection {
+  workspaceId: string;
+  workspaceName: string;
   teamName: string;
   memberCount: number;
   spendUsd: number;
@@ -106,6 +113,8 @@ interface TeamSection {
   paceSpendUsd: number;
   paceSpendLoaded: boolean;
   budgetUsd: number | null;
+  budgetIsShared: boolean;
+  budgetAllocationMethod: 'full' | 'proportional' | 'equal';
   remainingUsd: number | null;
   percentUsed: number | null;
   groups: ReturnType<typeof useListGroups>['data'] extends { groups: infer G } ? G : never[];
@@ -117,6 +126,7 @@ export default function Dashboard() {
   const { isAccountWide, role, user, capabilities } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set());
+  const [showLegacyGroups, setShowLegacyGroups] = useState(false);
   const [coverageOpen, setCoverageOpen] = useState(false);
 
   const queryParams = useMemo(
@@ -178,7 +188,7 @@ export default function Dashboard() {
   const usageAvailable = groupsData?.usageHealth.status !== 'empty';
   const groups = useMemo(
     () =>
-      (groupsData?.groups ?? []).map((group) => {
+      (groupsData?.groups ?? []).filter((group) => showLegacyGroups || !group.isLegacy).map((group) => {
         return {
           ...group,
           spendUsd: group.rollupSpendUsd,
@@ -186,7 +196,7 @@ export default function Dashboard() {
           paceSpendLoaded: usageAvailable,
         };
       }),
-    [groupsData?.groups, usageAvailable],
+    [groupsData?.groups, usageAvailable, showLegacyGroups],
   );
   const memberWorkspaceIds = [...new Set(groups.map((group) => group.workspaceId))];
   const memberLimitQueries = useQueries({
@@ -208,6 +218,35 @@ export default function Dashboard() {
     }
     return m;
   }, [teamBudgetsData]);
+  const workspaceTeamSpendMap = useMemo(
+    () => indexWorkspaceTeamSpend(groupsData?.workspaceTeamRawSpend ?? []),
+    [groupsData?.workspaceTeamRawSpend],
+  );
+  const visibleNonlegacyWorkspaceTeams = useMemo(() => {
+    const visibleSections = new Map<string, {
+      workspaceId: string;
+      teamName: string;
+      spendUsd: number;
+    }>();
+    for (const group of groupsData?.groups ?? []) {
+      if (group.isLegacy || !group.teamName) continue;
+      const key = workspaceTeamSpendKey(group.workspaceId, group.teamName);
+      visibleSections.set(key, {
+        workspaceId: group.workspaceId,
+        teamName: group.teamName,
+        spendUsd: workspaceTeamSpendMap.get(key) ?? 0,
+      });
+    }
+    return [...visibleSections.values()];
+  }, [groupsData?.groups, workspaceTeamSpendMap]);
+  const workspaceTeamBudgetMap = useMemo(
+    () => allocateWorkspaceTeamBudgets(visibleNonlegacyWorkspaceTeams, teamBudgetMap),
+    [visibleNonlegacyWorkspaceTeams, teamBudgetMap],
+  );
+  const visibleNonlegacyTeamNames = useMemo(
+    () => new Set(visibleNonlegacyWorkspaceTeams.map((section) => section.teamName)),
+    [visibleNonlegacyWorkspaceTeams],
+  );
 
   // Compute team sections
   const { teamSections, unassigned } = useMemo(() => {
@@ -216,33 +255,41 @@ export default function Dashboard() {
 
     for (const g of groups) {
       if (g.teamName) {
-        const existing = teamMap.get(g.teamName) ?? [];
+        const key = `${g.workspaceId}::${g.teamName}`;
+        const existing = teamMap.get(key) ?? [];
         existing.push(g);
-        teamMap.set(g.teamName, existing);
-      } else {
+        teamMap.set(key, existing);
+      } else if (role !== 'team_admin') {
         unassigned.push(g);
       }
     }
 
     const teamSections: TeamSection[] = [];
-    for (const [teamName, teamGroups] of teamMap) {
+    for (const [, teamGroups] of teamMap) {
+      const firstGroup = teamGroups[0]!;
+      const teamName = firstGroup.teamName!;
       const { memberCount } = sumAttributedRollup(teamGroups);
       // Financial values remain server-owned. Provisional server values stay
       // visible while canonical data refreshes in the background.
-      const serverTeamSpend = groupsData?.teamRawSpend?.[teamName];
-      const spendUsd = serverTeamSpend?.spendUsd ?? 0;
+      const spendUsd =
+        workspaceTeamSpendMap.get(workspaceTeamSpendKey(firstGroup.workspaceId, teamName)) ?? 0;
       const spendLoaded = usageAvailable;
       const paceSpendLoaded = teamGroups.every((group) => group.paceSpendLoaded);
       const paceSpendUsd = teamGroups.reduce(
         (sum, group) => sum + (group.paceSpendUsd ?? 0),
         0,
       );
-      const budgetUsd = teamBudgetMap.has(teamName) ? (teamBudgetMap.get(teamName) ?? null) : null;
+      const budgetAllocation = workspaceTeamBudgetMap.get(
+        workspaceTeamSpendKey(firstGroup.workspaceId, teamName),
+      );
+      const budgetUsd = budgetAllocation?.budgetUsd ?? null;
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = hasBudget ? budgetUsd! - spendUsd : null;
       const percentUsed = hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
 
       teamSections.push({
+        workspaceId: firstGroup.workspaceId,
+        workspaceName: firstGroup.workspaceName ?? firstGroup.workspaceId,
         teamName,
         memberCount,
         spendUsd,
@@ -250,6 +297,8 @@ export default function Dashboard() {
         paceSpendUsd,
         paceSpendLoaded,
         budgetUsd: budgetUsd ?? null,
+        budgetIsShared: budgetAllocation?.isShared ?? false,
+        budgetAllocationMethod: budgetAllocation?.method ?? 'full',
         remainingUsd,
         percentUsed,
         groups: teamGroups as any,
@@ -260,8 +309,10 @@ export default function Dashboard() {
     // those teams visible with zero spend so dashboard totals reconcile.
     if (isAccountWide) {
       for (const [teamName, budgetUsd] of teamBudgetMap) {
-        if (teamMap.has(teamName)) continue;
+        if (visibleNonlegacyTeamNames.has(teamName)) continue;
         teamSections.push({
+          workspaceId: '__budget_only__',
+          workspaceName: 'Budget-only teams',
           teamName,
           memberCount: 0,
           spendUsd: 0,
@@ -269,6 +320,8 @@ export default function Dashboard() {
           paceSpendUsd: 0,
           paceSpendLoaded: true,
           budgetUsd,
+          budgetIsShared: false,
+          budgetAllocationMethod: 'full',
           remainingUsd: budgetUsd != null && budgetUsd > 0 ? budgetUsd : null,
           percentUsed: budgetUsd != null && budgetUsd > 0 ? 0 : null,
           groups: [] as any,
@@ -277,17 +330,30 @@ export default function Dashboard() {
     }
 
     // Sort by the names shown in the table, not internal team keys.
-    teamSections.sort((a, b) => compareTeamNames(a.teamName, b.teamName));
+    teamSections.sort((a, b) =>
+      a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: 'base' }) ||
+      compareTeamNames(a.teamName, b.teamName)
+    );
     unassigned.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
     return { teamSections, unassigned };
-  }, [groups, teamBudgetMap, groupsData, usageAvailable, isAccountWide]);
+  }, [
+    groups,
+    teamBudgetMap,
+    groupsData,
+    usageAvailable,
+    isAccountWide,
+    role,
+    workspaceTeamSpendMap,
+    workspaceTeamBudgetMap,
+    visibleNonlegacyTeamNames,
+  ]);
 
-  const toggleTeam = (teamName: string) => {
+  const toggleTeam = (teamKey: string) => {
     setExpandedTeams((prev) => {
       const next = new Set(prev);
-      if (next.has(teamName)) next.delete(teamName);
-      else next.add(teamName);
+      if (next.has(teamKey)) next.delete(teamKey);
+      else next.add(teamKey);
       return next;
     });
   };
@@ -360,8 +426,13 @@ export default function Dashboard() {
           <span className="text-sm font-medium" data-testid={`text-group-name-${group.groupId}`}>
             {group.name}
           </span>
-          <span className="text-xs text-muted-foreground uppercase">
-            {group.type}
+          <span className="flex items-center gap-1">
+            <Badge variant="outline" className={`text-[9px] h-4 px-1 ${roleBadgeClass(group.role)}`}>
+              {roleLabel(group.role)}
+            </Badge>
+            {group.isLegacy && (
+              <Badge variant="outline" className="text-[9px] h-4 px-1">Legacy</Badge>
+            )}
           </span>
         </div>
       </td>
@@ -447,7 +518,7 @@ export default function Dashboard() {
   const renderClusterRow = (cluster: GroupCluster) => {
     const roles = Object.values(cluster.groupRoles);
     const uniqueRoles = [...new Set(roles)].sort(
-      (a, b) => (roleBadgeClass(a) ? 0 : 0) || a.localeCompare(b),
+      (a, b) => a.localeCompare(b),
     );
     const clusterUrl =
       `/clusters?ids=${encodeURIComponent(cluster.groupIds.join(','))}&name=${encodeURIComponent(cluster.baseName)}`;
@@ -466,6 +537,9 @@ export default function Dashboard() {
         <td className="py-3 px-4 pl-10">
           <div className="flex flex-col gap-1">
             <span className="text-sm font-medium">{cluster.baseName}</span>
+            {cluster.isLegacy && (
+              <Badge variant="outline" className="w-fit text-[9px] h-4 px-1">Legacy</Badge>
+            )}
             <div className="flex items-center gap-1">
               <Layers className="h-3 w-3 text-muted-foreground" />
               <div className="flex gap-1">
@@ -474,7 +548,7 @@ export default function Dashboard() {
                     key={r}
                     className={`inline-flex items-center border rounded px-1.5 py-0 text-[9px] font-medium ${roleBadgeClass(r)}`}
                   >
-                    {r}
+                    {roleLabel(r)}
                   </span>
                 ))}
               </div>
@@ -518,34 +592,34 @@ export default function Dashboard() {
 
   const renderTeamGroups = (team: TeamSection) => {
     const clusters = buildGroupClusters(team.groups as any[]);
-    return clusters.map((cluster) =>
-      cluster.isSingleGroup
-        ? renderGroupRow(cluster.singleGroup as any)
-        : renderClusterRow(cluster),
-    );
+    return clusters.flatMap((cluster) => [
+      renderClusterRow(cluster),
+      ...cluster.groups.map((group) => renderGroupRow(group as any)),
+    ]);
   };
 
   const renderTeamHeader = (team: TeamSection) => {
-    const expanded = expandedTeams.has(team.teamName);
+    const teamKey = `${team.workspaceId}::${team.teamName}`;
+    const expanded = expandedTeams.has(teamKey);
     const hasBudget = team.budgetUsd !== null && team.budgetUsd > 0;
     const displayRemaining = hasBudget ? team.budgetUsd! - team.spendUsd : null;
     const displayPercentUsed = hasBudget ? (team.spendUsd / team.budgetUsd!) * 100 : null;
     const clusterCount = buildGroupClusters(team.groups as any[]).length;
     return (
       <tr
-        key={`team-${team.teamName}`}
+        key={`team-${teamKey}`}
         className={`border-b border-border bg-muted/30 transition-colors group select-none ${
           clusterCount > 0 ? 'hover:bg-muted/50 cursor-pointer' : ''
         }`}
         data-testid={`row-team-${team.teamName}`}
         tabIndex={clusterCount > 0 ? 0 : undefined}
         onClick={() => {
-          if (clusterCount > 0) toggleTeam(team.teamName);
+          if (clusterCount > 0) toggleTeam(teamKey);
         }}
         onKeyDown={(e) => {
           if (clusterCount === 0 || (e.key !== 'Enter' && e.key !== ' ')) return;
           e.preventDefault();
-          toggleTeam(team.teamName);
+          toggleTeam(teamKey);
         }}
       >
         <td className="py-3 px-4 font-semibold text-sm" colSpan={1}>
@@ -556,8 +630,21 @@ export default function Dashboard() {
                 : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
             ) : <span className="w-4" aria-hidden="true" />}
             <span>{formatTeamName(team.teamName)}</span>
+            {team.budgetIsShared && (
+              <Badge
+                variant="outline"
+                className="text-[9px] h-4 px-1 ml-1 font-normal"
+                title={
+                  team.budgetAllocationMethod === 'equal'
+                    ? 'Workspace share of a shared team budget, split equally because current visible spend is zero.'
+                    : 'Workspace share of a shared team budget, allocated by current visible spend.'
+                }
+              >
+                Shared budget share
+              </Badge>
+            )}
             <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 font-normal">
-              {clusterCount > 0 ? `${clusterCount} group${clusterCount !== 1 ? 's' : ''}` : 'Budget only'}
+              {clusterCount > 0 ? `${clusterCount} famil${clusterCount !== 1 ? 'ies' : 'y'}` : 'Budget only'}
             </Badge>
           </div>
         </td>
@@ -578,7 +665,15 @@ export default function Dashboard() {
           </span>
         </td>
         <td className="py-3 px-4 text-right">
-          <span className="text-sm font-mono tabular-nums font-semibold" data-testid={`text-team-budget-${team.teamName}`}>
+          <span
+            className="text-sm font-mono tabular-nums font-semibold"
+            data-testid={`text-team-budget-${team.workspaceId}-${team.teamName}`}
+            title={team.budgetIsShared
+              ? team.budgetAllocationMethod === 'equal'
+                ? 'Workspace share of a shared team budget, split equally because current visible spend is zero.'
+                : 'Workspace share of a shared team budget, allocated by current visible spend.'
+              : undefined}
+          >
             {team.budgetUsd !== null && team.budgetUsd !== undefined ? `$${team.budgetUsd.toFixed(2)}` : '—'}
           </span>
         </td>
@@ -632,19 +727,20 @@ export default function Dashboard() {
     );
   };
 
-  const renderUnassignedHeader = () => {
-    const expanded = expandedTeams.has('__unassigned__');
+  const renderUnassignedHeader = (workspaceId: string, workspaceGroups: typeof groups) => {
+    const key = `${workspaceId}::__unassigned__`;
+    const expanded = expandedTeams.has(key);
     return (
       <tr
-        key="team-unassigned"
+        key={`team-unassigned-${workspaceId}`}
         className="border-b border-border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer select-none"
         data-testid="row-team-unassigned"
       tabIndex={0}
-        onClick={() => toggleTeam('__unassigned__')}
+        onClick={() => toggleTeam(key)}
       onKeyDown={(e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         e.preventDefault();
-        toggleTeam('__unassigned__');
+        toggleTeam(key);
       }}
       >
         <td className="py-3 px-4 font-semibold text-sm text-muted-foreground" colSpan={8}>
@@ -655,7 +751,7 @@ export default function Dashboard() {
             }
             <span>Unassigned</span>
             <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 font-normal">
-              {unassigned.length} group{unassigned.length !== 1 ? 's' : ''}
+               {workspaceGroups.length} group{workspaceGroups.length !== 1 ? 's' : ''}
             </Badge>
           </div>
         </td>
@@ -663,7 +759,59 @@ export default function Dashboard() {
     );
   };
 
-  const hasTeams = teamSections.length > 0;
+  const workspaceSections = useMemo(() => {
+    const map = new Map<string, {
+      workspaceId: string;
+      workspaceName: string;
+      teams: TeamSection[];
+      unassigned: typeof groups;
+    }>();
+    const ensure = (workspaceId: string, workspaceName: string) => {
+      const current = map.get(workspaceId) ?? { workspaceId, workspaceName, teams: [], unassigned: [] };
+      map.set(workspaceId, current);
+      return current;
+    };
+    teamSections.forEach((team) => ensure(team.workspaceId, team.workspaceName).teams.push(team));
+    unassigned.forEach((group) =>
+      ensure(group.workspaceId, group.workspaceName ?? group.workspaceId).unassigned.push(group)
+    );
+    return [...map.values()].sort((a, b) =>
+      a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: 'base' }) ||
+      a.workspaceId.localeCompare(b.workspaceId)
+    );
+  }, [teamSections, unassigned]);
+
+  const renderWorkspaceHeader = (workspace: (typeof workspaceSections)[number]) => {
+    const unassignedTotals = sumAttributedRollup(workspace.unassigned);
+    const memberCount = workspace.teams.reduce((sum, team) => sum + team.memberCount, unassignedTotals.memberCount);
+    const spendUsd = workspace.teams.reduce((sum, team) => sum + team.spendUsd, unassignedTotals.spendUsd);
+    const budgetUsd = workspace.teams.reduce((sum, team) => sum + (team.budgetUsd ?? 0), 0) +
+      workspace.unassigned.reduce((sum, group) => sum + (group.budgetUsd ?? 0), 0);
+    return (
+      <tr key={`workspace-${workspace.workspaceId}`} className="border-b border-border bg-muted/60">
+        <th className="py-3 px-4 text-left text-sm font-bold" colSpan={2}>
+          {workspace.workspaceName}
+          <Badge variant="outline" className="ml-2 text-[9px]">
+            Workspace
+          </Badge>
+        </th>
+        <td className="py-3 px-4 text-right text-sm font-mono font-bold">{memberCount}</td>
+        <td className="py-3 px-4 text-right text-sm font-mono font-bold">${spendUsd.toFixed(2)}</td>
+        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
+          {budgetUsd > 0 ? `$${budgetUsd.toFixed(2)}` : '—'}
+        </td>
+        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
+          {budgetUsd > 0 ? `$${(budgetUsd - spendUsd).toFixed(2)}` : '—'}
+        </td>
+        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
+          {budgetUsd > 0 ? `${((spendUsd / budgetUsd) * 100).toFixed(1)}%` : '—'}
+        </td>
+        <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+      </tr>
+    );
+  };
+
+  const hasTeams = workspaceSections.length > 0;
 
   if (role === 'member') {
     const cycleUser = memberCycleActivity?.users[0];
@@ -862,10 +1010,23 @@ export default function Dashboard() {
         <TabsContent value="groups">
       <Card>
         <CardHeader>
-          <CardTitle>Groups</CardTitle>
-          <CardDescription>
-            Monitor spending and set budgets by team
-          </CardDescription>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Groups</CardTitle>
+              <CardDescription>
+                Monitor spending and set budgets by workspace, team, and family
+              </CardDescription>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={showLegacyGroups}
+                onChange={(event) => setShowLegacyGroups(event.target.checked)}
+                data-testid="toggle-dashboard-legacy-groups"
+              />
+              Show legacy groups
+            </label>
+          </div>
           <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
             Current credit pool expires May 17, 2027.
           </p>
@@ -904,20 +1065,30 @@ export default function Dashboard() {
                 <VirtualizedTableRows columnCount={8}>
                   {hasTeams ? (
                     <>
-                      {teamSections.map((team) => (
-                        <React.Fragment key={`team-section-${team.teamName}`}>
-                          {renderTeamHeader(team)}
-                          {expandedTeams.has(team.teamName) &&
-                            renderTeamGroups(team)}
+                      {workspaceSections.map((workspace) => (
+                        <React.Fragment key={`workspace-section-${workspace.workspaceId}`}>
+                          {renderWorkspaceHeader(workspace)}
+                          {workspace.teams.map((team) => {
+                            const teamKey = `${team.workspaceId}::${team.teamName}`;
+                            return (
+                              <React.Fragment key={`team-section-${teamKey}`}>
+                                {renderTeamHeader(team)}
+                                {expandedTeams.has(teamKey) && renderTeamGroups(team)}
+                              </React.Fragment>
+                            );
+                          })}
+                          {workspace.unassigned.length > 0 && (
+                            <React.Fragment key={`team-section-unassigned-${workspace.workspaceId}`}>
+                              {renderUnassignedHeader(workspace.workspaceId, workspace.unassigned)}
+                              {expandedTeams.has(`${workspace.workspaceId}::__unassigned__`) &&
+                                buildGroupClusters(workspace.unassigned as any[]).flatMap((cluster) => [
+                                  renderClusterRow(cluster),
+                                  ...cluster.groups.map((group) => renderGroupRow(group as any)),
+                                ])}
+                            </React.Fragment>
+                          )}
                         </React.Fragment>
                       ))}
-                      {unassigned.length > 0 && (
-                        <React.Fragment key="team-section-unassigned">
-                          {renderUnassignedHeader()}
-                          {expandedTeams.has('__unassigned__') &&
-                            unassigned.map((g) => renderGroupRow(g))}
-                        </React.Fragment>
-                      )}
                     </>
                   ) : (
                     [...groups]

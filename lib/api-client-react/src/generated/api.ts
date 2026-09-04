@@ -193,6 +193,13 @@ export function useGetCurrentAuthUser<TData = Awaited<ReturnType<typeof getCurre
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
 export const getBeginBrowserLoginUrl = (params?: BeginBrowserLoginParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -270,6 +277,13 @@ export function useBeginBrowserLogin<TData = Awaited<ReturnType<typeof beginBrow
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
 export const getHandleBrowserLoginCallbackUrl = (params?: HandleBrowserLoginCallbackParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -3942,8 +3956,8 @@ export const getListWorkspaceAdminsUrl = () => {
 }
 
 /**
- * Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
- * @summary List admins per group
+ * Returns every canonical family with its Team admins from the directory. Available only to account administrators.
+ * @summary List Team admins per family
  */
 export const listWorkspaceAdmins = async ( options?: RequestInit): Promise<GroupAdminsItem[]> => {
 
@@ -3990,7 +4004,7 @@ export type ListWorkspaceAdminsQueryError = ErrorType<UnauthorizedResponse | For
 
 
 /**
- * @summary List admins per group
+ * @summary List Team admins per family
  */
 
 export function useListWorkspaceAdmins<TData = Awaited<ReturnType<typeof listWorkspaceAdmins>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
@@ -4539,4 +4553,10 @@ export function useListRecentUsageIngestRuns<TData = Awaited<ReturnType<typeof l
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
 

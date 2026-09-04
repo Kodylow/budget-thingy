@@ -18,6 +18,9 @@ import {
 } from "./replit-budgets";
 import {
   getFreshDirectoryForLimitValidation,
+  buildCanonicalAccountDirectory,
+  buildCanonicalEffectiveTeams,
+  type CanonicalRoleGroup,
   type DirectoryCache,
   type EnterpriseGroup,
 } from "./enterprise";
@@ -50,7 +53,7 @@ let refreshInFlight: ReturnType<typeof performTeamBudgetSnapshotRefresh> | null 
 let upstreamReconciliationInFlight:
   ReturnType<typeof performTeamBudgetUpstreamReconciliation> | null = null;
 type TeamBudgetDirectoryFetcher = () => Promise<
-  Pick<DirectoryCache, "allGroups">
+  Pick<DirectoryCache, "allGroups"> & Partial<Pick<DirectoryCache, "account">>
 >;
 let directoryFetchOverride: TeamBudgetDirectoryFetcher | null = null;
 
@@ -66,13 +69,24 @@ export function setTeamBudgetDirectoryFetcherForTests(
   directoryFetchOverride = fetcher;
 }
 
-async function fetchFreshLimitDirectory(): Promise<Pick<DirectoryCache, "allGroups">> {
-  return (directoryFetchOverride ?? getFreshDirectoryForLimitValidation)();
+async function fetchFreshLimitDirectory(): Promise<
+  Pick<DirectoryCache, "allGroups" | "account">
+> {
+  const directory = await (directoryFetchOverride ?? getFreshDirectoryForLimitValidation)();
+  return {
+    allGroups: directory.allGroups,
+    account: directory.account ?? buildCanonicalAccountDirectory({
+      workspaces: new Map(),
+      groups: directory.allGroups,
+      groupMembers: new Map(),
+      members: new Map(),
+    }),
+  };
 }
 
 function validateConfiguredTarget(
   target: Pick<typeof teamLimitTargetsTable.$inferSelect, "workspaceId" | "groupId">,
-  directory: Pick<DirectoryCache, "allGroups">,
+  directory: Pick<DirectoryCache, "allGroups" | "account">,
 ): { group: EnterpriseGroup | null; reason: string | null } {
   const group = directory.allGroups.find((candidate) =>
     candidate.workspaceId === target.workspaceId && candidate.id === target.groupId
@@ -83,7 +97,8 @@ function validateConfiguredTarget(
       reason: `Group ${target.groupId} is missing from workspace ${target.workspaceId}`,
     };
   }
-  if (!isAssignableTeamLimitGroup(group)) {
+  const roleGroup = directory.account.roleGroupsById.get(group.id);
+  if (!roleGroup || !isAssignableTeamLimitGroup(roleGroup)) {
     return {
       group,
       reason: `Group ${target.groupId} in workspace ${target.workspaceId} is no longer an eligible nonlegacy member target`,
@@ -542,10 +557,18 @@ export async function assignTeamLimitTarget(input: {
   groupId: string;
   groupName: string;
 }) {
-  const [row] = await db.insert(teamLimitTargetsTable).values(input)
+  const [row] = await db.insert(teamLimitTargetsTable).values({
+    ...input,
+    assignmentSource: "manual",
+  })
     .onConflictDoUpdate({
       target: [teamLimitTargetsTable.workspaceId, teamLimitTargetsTable.groupId],
-      set: { teamName: input.teamName, groupName: input.groupName, isEnabled: true },
+      set: {
+        teamName: input.teamName,
+        groupName: input.groupName,
+        assignmentSource: "manual",
+        isEnabled: true,
+      },
     }).returning();
   return row!;
 }
@@ -573,12 +596,17 @@ export async function updateLegacyWorkspaceLimit(monthlyLimitUsd: number | null)
 }
 
 export async function getTeamLimitTargetConfiguration() {
-  const [snapshot, targets, legacy, directory] = await Promise.all([
+  const [snapshot, storedTargets, legacy, directory] = await Promise.all([
     getEffectiveTeamBudgets(),
     db.select().from(teamLimitTargetsTable),
     db.select().from(workspaceDefaultLimitTargetsTable),
     fetchFreshLimitDirectory(),
   ]);
+  const effectiveTeams = buildCanonicalEffectiveTeams(directory.account, storedTargets);
+  const targets = storedTargets.map((target) => ({
+    ...target,
+    teamName: effectiveTeams.byRoleGroupId.get(target.groupId) ?? target.teamName,
+  }));
   const teamLimits = new Map(snapshot.teams.map((team) => [team.teamName, team.monthlyLimitUsd]));
   const validationByIdentity = new Map(targets.map((target) => [
     `${target.workspaceId}\0${target.groupId}`,
@@ -621,18 +649,21 @@ export async function getTeamLimitTargetConfiguration() {
       ) / 100,
     })),
     legacy,
-    unassignedGroups: directory.allGroups.filter((group) =>
-      isAssignableTeamLimitGroup(group) &&
-      !assigned.has(`${group.workspaceId}\0${group.id}`)
-    ),
+    unassignedGroups: [...directory.account.roleGroupsById.values()]
+      .filter((roleGroup) =>
+        isAssignableTeamLimitGroup(roleGroup) &&
+        !assigned.has(`${roleGroup.workspaceId}\0${roleGroup.id}`)
+      )
+      .map((roleGroup) =>
+        directory.allGroups.find((group) =>
+          group.workspaceId === roleGroup.workspaceId && group.id === roleGroup.id
+        )!
+      ),
   };
 }
 
-export function isAssignableTeamLimitGroup(group: EnterpriseGroup): boolean {
-  if (group.workspaceId === "1awqan") return false;
-  const type = group.type.toLowerCase();
-  if (type !== "member" && type !== "custom") return false;
-  return !/(?:^|[-\s])(admins?|viewers?)\s*$/i.test(group.name);
+export function isAssignableTeamLimitGroup(group: CanonicalRoleGroup): boolean {
+  return !group.isLegacy && group.role === "member";
 }
 
 type UpstreamSyncInsert = typeof teamBudgetUpstreamSyncTable.$inferInsert;
@@ -709,12 +740,17 @@ export function calculateTeamTargetAmount(
 
 async function performTeamBudgetUpstreamReconciliation(): Promise<void> {
   const attemptedAt = new Date();
-  const [budgetSnapshot, targets, legacyTargets, directory] = await Promise.all([
+  const [budgetSnapshot, storedTargets, legacyTargets, directory] = await Promise.all([
     getEffectiveTeamBudgets(),
     db.select().from(teamLimitTargetsTable),
     db.select().from(workspaceDefaultLimitTargetsTable),
     fetchFreshLimitDirectory(),
   ]);
+  const effectiveTeams = buildCanonicalEffectiveTeams(directory.account, storedTargets);
+  const targets = storedTargets.map((target) => ({
+    ...target,
+    teamName: effectiveTeams.byRoleGroupId.get(target.groupId) ?? target.teamName,
+  }));
   const validationByIdentity = new Map(targets.map((target) => [
     `${target.workspaceId}\0${target.groupId}`,
     validateConfiguredTarget(target, directory),

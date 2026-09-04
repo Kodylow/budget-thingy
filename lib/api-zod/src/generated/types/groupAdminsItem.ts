@@ -13,6 +13,9 @@ export interface GroupAdminsItem {
   workspaceId: string;
   workspaceName: string;
   /** @nullable */
-  teamName?: string | null;
+  teamName: string | null;
+  familyKey: string;
+  familyName: string;
+  isLegacy: boolean;
   admins: GroupAdminMember[];
 }

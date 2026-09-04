@@ -11,7 +11,10 @@ import {
 import {
   applyAnnualTeamBudgetBackfill,
 } from "@workspace/db/seed-teams";
-import { __setDirectoryCacheForTests } from "./enterprise";
+import {
+  __setDirectoryCacheForTests,
+  buildCanonicalAccountDirectory,
+} from "./enterprise";
 import { setReplitBudgetTransportForTests } from "./replit-budgets";
 
 import {
@@ -320,24 +323,24 @@ describe("team budget Airtable parsing", () => {
 });
 
 describe("team budget synchronization schedule", () => {
-  it("exposes nonlegacy custom candidates but excludes admin and viewer groups", () => {
-    const group = (name: string, type = "custom", workspaceId = "workspace") => ({
-      id: name,
-      workspaceId,
-      name,
-      type,
+  it("allows only canonical nonlegacy member role groups", () => {
+    const groups = [
+      { id: "member", workspaceId: "workspace", name: "Finance - Member", type: "custom" },
+      { id: "admin", workspaceId: "workspace", name: "Finance - Admin", type: "custom" },
+      { id: "viewer", workspaceId: "workspace", name: "Finance - Viewers", type: "custom" },
+      { id: "unsuffixed", workspaceId: "workspace", name: "Finance", type: "custom" },
+      { id: "legacy", workspaceId: "1awqan", name: "Finance - Members", type: "custom" },
+    ];
+    const directory = buildCanonicalAccountDirectory({
+      workspaces: new Map(),
+      groups,
+      groupMembers: new Map(),
+      members: new Map(),
     });
-    for (const name of [
-      "BnD Analytics Team",
-      "BnD Executives",
-      "BnD Production Team",
-      "Executive Group",
-    ]) {
-      expect(isAssignableTeamLimitGroup(group(name))).toBe(true);
+    expect(isAssignableTeamLimitGroup(directory.roleGroupsById.get("member")!)).toBe(true);
+    for (const id of ["admin", "viewer", "unsuffixed", "legacy"]) {
+      expect(isAssignableTeamLimitGroup(directory.roleGroupsById.get(id)!)).toBe(false);
     }
-    expect(isAssignableTeamLimitGroup(group("Finance - Admin"))).toBe(false);
-    expect(isAssignableTeamLimitGroup(group("Finance-Viewers"))).toBe(false);
-    expect(isAssignableTeamLimitGroup(group("Legacy Team", "custom", "1awqan"))).toBe(false);
   });
 
   it("splits team limits across enabled targets while preserving overrides", () => {

@@ -183,6 +183,48 @@
       "when": 1788566000000,
       "tag": "0025_usage_reconciliation_streaks",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788567000000,
+      "tag": "0026_family_team_mappings",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1788568000000,
+      "tag": "0027_nullable_legacy_family_team",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1788569000000,
+      "tag": "0028_collision_safe_family_teams",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1788570000000,
+      "tag": "0029_team_target_assignment_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1788571000000,
+      "tag": "0030_guard_automatic_target_classification",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1788572000000,
+      "tag": "0031_reset_draft_target_inference",
+      "breakpoints": true
     }
   ]
 }

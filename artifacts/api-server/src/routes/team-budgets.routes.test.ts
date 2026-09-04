@@ -498,6 +498,37 @@ test("effective totals agree across pool, group, and summary surfaces", async ()
   expect(summary.json.totalRemainingUsd).toBe(positiveVisiblePoolTotal - 20);
 });
 
+test("workspace-qualified team spend keeps the same team separate by workspace", async () => {
+  await db.insert(teamLimitTargetsTable).values({
+    workspaceId: "task158-ws-2",
+    groupId: SECOND_GROUP_ID,
+    groupName: `${GROUP_NAME} Two`,
+    teamName: ASSIGNED,
+  });
+  try {
+    invalidateUsageSnapshotMemo();
+    const response = await request("/groups", "task158-account");
+    expect(response.status).toBe(200);
+    const firstGroup = response.json.groups.find((group) => group.groupId === GROUP_ID);
+    const secondGroup = response.json.groups.find((group) => group.groupId === SECOND_GROUP_ID);
+    expect(response.json.workspaceTeamRawSpend).toEqual(expect.arrayContaining([
+      {
+        workspaceId: "task158-ws",
+        teamName: ASSIGNED,
+        spendUsd: firstGroup.rollupSpendUsd,
+      },
+      {
+        workspaceId: "task158-ws-2",
+        teamName: ASSIGNED,
+        spendUsd: secondGroup.rollupSpendUsd,
+      },
+    ]));
+  } finally {
+    await db.delete(teamLimitTargetsTable)
+      .where(eq(teamLimitTargetsTable.groupId, SECOND_GROUP_ID));
+  }
+});
+
 test("project detail survives restart and isolates duplicate IDs by workspace", async () => {
   invalidateUsageSnapshotMemo();
   const [first, second, cluster, projectExport, activity] = await Promise.all([

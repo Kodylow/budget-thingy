@@ -51,22 +51,42 @@ vi.mock("./enterprise", async () => {
   const actual = await vi.importActual<typeof import("./enterprise")>("./enterprise");
   return {
     ...actual,
-    getDirectory: async () => ({
-      fetchedAt: Date.now(),
-      groups,
-      allGroups: groups,
-      groupMembers,
-      members: new Map(),
-      workspaces: new Map([
-        ["ws-1", { id: "ws-1", name: "Acme Workspace" }],
-        ["ws-2", { id: "ws-2", name: "Beta Workspace" }],
-      ]),
-      budgets: {
-        groupLimits: new Map(),
-        userLimits: new Map(),
-        workspaceDefaults: new Map(),
-      },
-    }),
+    getDirectory: async () => {
+      const workspaces = new Map([
+        ["ws-1", { id: "ws-1", name: "Acme Workspace", slug: "acme", memberCount: 0 }],
+        ["ws-2", { id: "ws-2", name: "Beta Workspace", slug: "beta", memberCount: 0 }],
+      ]);
+      for (const group of groups) {
+        if (!workspaces.has(group.workspaceId)) {
+          workspaces.set(group.workspaceId, {
+            id: group.workspaceId,
+            name: group.workspaceId,
+            slug: group.workspaceId,
+            memberCount: 0,
+          });
+        }
+      }
+      const members = new Map();
+      return {
+        fetchedAt: Date.now(),
+        groups,
+        allGroups: groups,
+        groupMembers,
+        members,
+        workspaces,
+        account: actual.buildCanonicalAccountDirectory({
+          workspaces,
+          groups: groups.map((group) => ({ ...group, type: "custom" })),
+          groupMembers,
+          members,
+        }),
+        budgets: {
+          groupLimits: new Map(),
+          userLimits: new Map(),
+          workspaceDefaults: new Map(),
+        },
+      };
+    },
     getBillingPeriod: () => ({
       start: PERIOD_START,
       end: PERIOD_END,
@@ -149,7 +169,8 @@ beforeEach(async () => {
     );
     CREATE TABLE team_limit_targets (
       team_name TEXT NOT NULL, workspace_id TEXT NOT NULL, group_id TEXT NOT NULL,
-      group_name TEXT NOT NULL, monthly_limit_usd DOUBLE PRECISION,
+      group_name TEXT NOT NULL, assignment_source TEXT NOT NULL DEFAULT 'manual',
+      monthly_limit_usd DOUBLE PRECISION,
       is_enabled BOOLEAN NOT NULL DEFAULT true, PRIMARY KEY(workspace_id, group_id)
     );
     CREATE TABLE workspace_default_limit_targets (
@@ -218,7 +239,7 @@ async function insertCompleteUsage(
   byWorkspace: Record<string, Array<{ userId: string; spendUsd: number }>>,
 ): Promise<void> {
   let accountTotal = 0;
-  for (const workspaceId of ["ws-1", "ws-2"]) {
+  for (const workspaceId of new Set(["ws-1", "ws-2", ...Object.keys(byWorkspace)])) {
     const members = byWorkspace[workspaceId] ?? [];
     const total = members.reduce((sum, member) => sum + member.spendUsd, 0);
     accountTotal += total;
@@ -383,6 +404,84 @@ describe("checker Postgres snapshot cutover", () => {
     expect(result.checkedTeams).toBe(2);
     expect(result.alerts.map((alert) => alert.entityId).sort())
       .toEqual(["Team A", "Team B"]);
+  });
+
+  it("does not merge same-key nonlegacy families without explicit assignments", async () => {
+    groups = [
+      { id: "g-a", workspaceId: "ws-1", name: "Shared Family - Member" },
+      { id: "g-b", workspaceId: "ws-2", name: "Shared Family - Members" },
+    ];
+    groupMembers = new Map([["g-a", ["u-a"]], ["g-b", ["u-b"]]]);
+    await pglite.exec(`
+      DELETE FROM group_budgets;
+      DELETE FROM team_limit_targets;
+      INSERT INTO team_budgets(team_name,original_amount_usd,amount_usd)
+      VALUES ('Shared Family [ws-1]',1000,1000),('Shared Family [ws-2]',1000,1000);
+    `);
+    await insertCompleteUsage({
+      "ws-1": [{ userId: "u-a", spendUsd: 600 }],
+      "ws-2": [{ userId: "u-b", spendUsd: 600 }],
+    });
+    const result = await runCheck();
+    expect(result.checkedTeams).toBe(2);
+    expect(result.alerts.map((alert) => alert.entityId).sort())
+      .toEqual(["Shared Family [ws-1]", "Shared Family [ws-2]"]);
+  });
+
+  it("aggregates same-key families only when exact targets deliberately share a team", async () => {
+    groups = [
+      { id: "g-a", workspaceId: "ws-1", name: "Shared Family - Member" },
+      { id: "g-b", workspaceId: "ws-2", name: "Shared Family - Members" },
+    ];
+    groupMembers = new Map([["g-a", ["u-a"]], ["g-b", ["u-b"]]]);
+    await pglite.exec(`
+      DELETE FROM group_budgets;
+      DELETE FROM team_limit_targets;
+      INSERT INTO team_limit_targets(workspace_id,group_id,group_name,team_name)
+      VALUES ('ws-1','g-a','Shared Family - Member','Shared Deliberately'),
+             ('ws-2','g-b','Shared Family - Members','Shared Deliberately');
+      INSERT INTO team_budgets(team_name,original_amount_usd,amount_usd)
+      VALUES ('Shared Deliberately',2000,2000);
+    `);
+    await insertCompleteUsage({
+      "ws-1": [{ userId: "u-a", spendUsd: 600 }],
+      "ws-2": [{ userId: "u-b", spendUsd: 600 }],
+    });
+    const result = await runCheck();
+    expect(result.checkedTeams).toBe(1);
+    expect(result.alerts[0]).toMatchObject({
+      entityId: "Shared Deliberately",
+      spendUsd: 1200,
+    });
+  });
+
+  it("maps singular and plural legacy role siblings through canonical family identity", async () => {
+    groups = [
+      { id: "finance-current", workspaceId: "ws-1", name: "Finance - Member" },
+      { id: "finance-legacy", workspaceId: "1awqan", name: "Finance - Members" },
+    ];
+    groupMembers = new Map([
+      ["finance-current", ["u-current"]],
+      ["finance-legacy", ["u-legacy"]],
+    ]);
+    await pglite.exec(`
+      DELETE FROM group_budgets;
+      INSERT INTO team_limit_targets(workspace_id,group_id,group_name,team_name)
+      VALUES ('ws-1','finance-current','Finance - Member','Finance Team');
+      INSERT INTO team_budgets(team_name,original_amount_usd,amount_usd)
+      VALUES ('Finance Team',1000,1000);
+    `);
+    await insertCompleteUsage({
+      "ws-1": [{ userId: "u-current", spendUsd: 300 }],
+      "1awqan": [{ userId: "u-legacy", spendUsd: 300 }],
+    });
+    const result = await runCheck();
+    expect(result.checkedTeams).toBe(1);
+    expect(result.alerts[0]).toMatchObject({
+      entityType: "team",
+      entityId: "Finance Team",
+      spendUsd: 600,
+    });
   });
 
   it("keeps group and team threshold identities independent", async () => {

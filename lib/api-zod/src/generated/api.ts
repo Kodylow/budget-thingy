@@ -154,9 +154,13 @@ export const ListGroupsResponse = zod.object({
   "groups": zod.array(zod.object({
   "groupId": zod.string(),
   "workspaceId": zod.string(),
-  "workspaceName": zod.string().nullish(),
+  "workspaceName": zod.string().nullable(),
   "name": zod.string(),
-  "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
+  "familyKey": zod.string(),
+  "familyName": zod.string(),
+  "role": zod.enum(['admin', 'member', 'viewer', 'guest', 'unsuffixed']),
+  "isLegacy": zod.boolean(),
+  "teamName": zod.string().nullable().describe('Team this group belongs to, null if unassigned'),
   "isLegacyDisplayOnly": zod.boolean().optional().describe('True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target.'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "isSynthetic": zod.boolean().optional().describe('True for a generated accounting row rather than a real Enterprise group'),
@@ -205,6 +209,11 @@ export const ListGroupsResponse = zod.object({
   "teamRawSpend": zod.record(zod.string(), zod.object({
   "spendUsd": zod.number().describe('Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)')
 })).describe('Per-team member-deduped rollup spend, with each member counted once across groups'),
+  "workspaceTeamRawSpend": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "teamName": zod.string(),
+  "spendUsd": zod.number().describe('Member-deduped rollup spend attributed to this team within this workspace.')
+})).describe('Workspace-qualified team spend for rendering workspace\/team sections without merging same-named teams across workspaces.'),
   "teamBudgets": zod.record(zod.string(), zod.number()).describe('Effective visible team budgets, including budget-only teams for account-wide callers.')
 })
 
@@ -240,9 +249,13 @@ export const GetGroupDetailResponse = zod.object({
   "group": zod.object({
   "groupId": zod.string(),
   "workspaceId": zod.string(),
-  "workspaceName": zod.string().nullish(),
+  "workspaceName": zod.string().nullable(),
   "name": zod.string(),
-  "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
+  "familyKey": zod.string(),
+  "familyName": zod.string(),
+  "role": zod.enum(['admin', 'member', 'viewer', 'guest', 'unsuffixed']),
+  "isLegacy": zod.boolean(),
+  "teamName": zod.string().nullable().describe('Team this group belongs to, null if unassigned'),
   "isLegacyDisplayOnly": zod.boolean().optional().describe('True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target.'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "isSynthetic": zod.boolean().optional().describe('True for a generated accounting row rather than a real Enterprise group'),
@@ -1468,21 +1481,29 @@ export const ListDirectoryGroupsResponseItem = zod.object({
   "groupId": zod.string(),
   "groupName": zod.string(),
   "workspaceId": zod.string(),
-  "workspaceName": zod.string()
+  "workspaceName": zod.string(),
+  "familyKey": zod.string(),
+  "familyName": zod.string(),
+  "role": zod.enum(['admin', 'member', 'viewer', 'guest', 'unsuffixed']),
+  "isLegacy": zod.boolean(),
+  "teamName": zod.string().nullable()
 })
 export const ListDirectoryGroupsResponse = zod.array(ListDirectoryGroupsResponseItem)
 
 
 /**
- * Returns every custom group with its workspace admin users from the directory. Available only to account administrators.
- * @summary List admins per group
+ * Returns every canonical family with its Team admins from the directory. Available only to account administrators.
+ * @summary List Team admins per family
  */
 export const ListWorkspaceAdminsResponseItem = zod.object({
   "groupId": zod.string(),
   "groupName": zod.string(),
   "workspaceId": zod.string(),
   "workspaceName": zod.string(),
-  "teamName": zod.string().nullish(),
+  "teamName": zod.string().nullable(),
+  "familyKey": zod.string(),
+  "familyName": zod.string(),
+  "isLegacy": zod.boolean(),
   "admins": zod.array(zod.object({
   "userId": zod.string(),
   "username": zod.string(),
@@ -1709,3 +1730,5 @@ export const ListRecentUsageIngestRunsResponseItem = zod.object({
   "status": zod.enum(['running', 'succeeded', 'partial', 'failed'])
 })
 export const ListRecentUsageIngestRunsResponse = zod.array(ListRecentUsageIngestRunsResponseItem)
+
+

@@ -1,46 +1,19 @@
-/**
- * Utilities for collapsing Admin / Member / Viewer / Guests sub-groups
- * into a single "cluster" row on the dashboard.
- *
- * Groups are considered cluster-able when:
- *   1. Their name ends with a recognised role suffix (e.g. " - Admin", "-Admins")
- *   2. At least one other group in the same team section shares the same
- *      (workspaceId, baseName) pair.
- *
- * Single-group or un-suffixed groups are left as-is (isSingleGroup = true).
- */
-
-// Matches "- Admin", " - Admins", "-Members", "- Viewer", " - Guests", etc.
-const ROLE_SUFFIX_RE = /\s*-\s*(Admins?|Members?|Viewers?|Guests?)$/i;
-
 export const ROLE_PRIORITY: Record<string, number> = {
-  Admin: 0,
-  Member: 1,
-  Viewer: 2,
-  Guest: 3,
+  admin: 0,
+  member: 1,
+  viewer: 2,
+  guest: 3,
+  unsuffixed: 4,
 };
 
-export function normalizeRole(raw: string): string {
-  const r = raw.toLowerCase();
-  if (r.startsWith('admin')) return 'Admin';
-  if (r.startsWith('member')) return 'Member';
-  if (r.startsWith('viewer')) return 'Viewer';
-  return 'Guest';
+export function roleLabel(role: string): string {
+  return role === 'unsuffixed'
+    ? 'Group'
+    : `${role.charAt(0).toUpperCase()}${role.slice(1).toLowerCase()}`;
 }
 
-/** Returns baseName + role if the group name ends with a role suffix; null otherwise. */
-export function parseRoleSuffix(name: string): { baseName: string; role: string } | null {
-  const match = ROLE_SUFFIX_RE.exec(name);
-  if (!match) return null;
-  return {
-    baseName: name.slice(0, name.length - match[0].length),
-    role: normalizeRole(match[1]!),
-  };
-}
-
-/** Returns the highest-privilege role between two role strings. */
 export function higherRole(a: string, b: string): string {
-  return (ROLE_PRIORITY[a] ?? 99) <= (ROLE_PRIORITY[b] ?? 99) ? a : b;
+  return (ROLE_PRIORITY[a.toLowerCase()] ?? 99) <= (ROLE_PRIORITY[b.toLowerCase()] ?? 99) ? a : b;
 }
 
 export interface GroupLike {
@@ -48,6 +21,10 @@ export interface GroupLike {
   workspaceId: string;
   workspaceName?: string | null;
   name: string;
+  familyKey: string;
+  familyName: string;
+  role: string;
+  isLegacy: boolean;
   teamName: string | null;
   memberCount: number | null;
   spendLoaded: boolean;
@@ -60,30 +37,25 @@ export interface GroupLike {
   rollupMemberCount?: number;
   rollupSpendLoaded?: boolean;
   rollupSpendUsd?: number;
-  /** Sum of current members' workspace spend for this group (null while loading). */
   rawMemberSpendUsd?: number | null;
   rawMemberSpendLoaded?: boolean;
   spendUpdatedAt?: string | null;
 }
 
 export interface GroupCluster {
-  /** Unique key: `${workspaceId}::${baseName}` for multi-group, or groupId for single */
   clusterKey: string;
   baseName: string;
   workspaceId: string;
   workspaceName: string | null | undefined;
   teamName: string | null;
-  /** IDs of constituent sub-groups */
   groupIds: string[];
-  /** groupId → sub-group role (Admin / Member / Viewer / Guest) */
   groupRoles: Record<string, string>;
-  /** Deduplicated members attributed across sub-groups. */
   memberCount: number;
   spendUsd: number;
   spendLoaded: boolean;
-  /** True when there is only one group — render identically to a normal group row */
+  isLegacy: boolean;
   isSingleGroup: boolean;
-  /** Populated only when isSingleGroup = true */
+  groups: GroupLike[];
   singleGroup?: GroupLike;
 }
 
@@ -95,76 +67,40 @@ export interface LogicalGroupScope {
   groupIds: string[];
 }
 
-/**
- * Builds workspace-safe logical group families for presentation-only access
- * controls. Role-suffixed siblings collapse only when at least two exist in the
- * same workspace; unmatched and standalone groups remain individual scopes.
- */
 export function buildLogicalGroupScopes<T extends {
   groupId: string;
   workspaceId: string;
   workspaceName?: string | null;
-  name: string;
+  familyKey: string;
+  familyName: string;
+  role: string;
 }>(groups: T[]): LogicalGroupScope[] {
-  const familyGroups = new Map<string, Array<T & { parsedRole: string }>>();
-  const standalone: T[] = [];
-
+  const families = new Map<string, T[]>();
   for (const group of groups) {
-    const parsed = parseRoleSuffix(group.name);
-    if (!parsed) {
-      standalone.push(group);
-      continue;
-    }
-    const scopeId = `${group.workspaceId}::${parsed.baseName}`;
-    const family = familyGroups.get(scopeId) ?? [];
-    family.push({ ...group, parsedRole: parsed.role });
-    familyGroups.set(scopeId, family);
+    const key = `${group.workspaceId}::${group.familyKey}`;
+    const family = families.get(key) ?? [];
+    family.push(group);
+    families.set(key, family);
   }
 
-  const scopes: LogicalGroupScope[] = standalone.map((group) => ({
-    scopeId: group.groupId,
-    displayName: group.name,
-    workspaceId: group.workspaceId,
-    workspaceName: group.workspaceName,
-    groupIds: [group.groupId],
-  }));
-
-  for (const [scopeId, family] of familyGroups) {
-    if (family.length < 2) {
-      const [group] = family;
-      if (group) {
-        scopes.push({
-          scopeId: group.groupId,
-          displayName: group.name,
-          workspaceId: group.workspaceId,
-          workspaceName: group.workspaceName,
-          groupIds: [group.groupId],
-        });
-      }
-      continue;
-    }
-
-    const parsed = parseRoleSuffix(family[0]!.name)!;
+  const scopes = [...families.entries()].map(([scopeId, family]) => {
     family.sort((a, b) =>
-      (ROLE_PRIORITY[a.parsedRole] ?? 99) - (ROLE_PRIORITY[b.parsedRole] ?? 99) ||
-      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
+      (ROLE_PRIORITY[a.role] ?? 99) - (ROLE_PRIORITY[b.role] ?? 99) ||
       a.groupId.localeCompare(b.groupId)
     );
-    scopes.push({
+    return {
       scopeId,
-      displayName: parsed.baseName,
+      displayName: family[0]!.familyName,
       workspaceId: family[0]!.workspaceId,
       workspaceName: family[0]!.workspaceName,
       groupIds: family.map((group) => group.groupId),
-    });
-  }
-
+    };
+  });
   const duplicateNames = new Map<string, number>();
-  for (const scope of scopes) {
+  scopes.forEach((scope) => {
     const key = scope.displayName.toLocaleLowerCase();
     duplicateNames.set(key, (duplicateNames.get(key) ?? 0) + 1);
-  }
-
+  });
   return scopes
     .map((scope) => ({
       ...scope,
@@ -183,124 +119,64 @@ export function sumAttributedRollup(groups: Array<{
   rollupMemberCount?: number;
   rollupSpendLoaded?: boolean;
   rollupSpendUsd?: number;
-}>): {
-  memberCount: number;
-  spendUsd: number;
-  spendLoaded: boolean;
-} {
+}>): { memberCount: number; spendUsd: number; spendLoaded: boolean } {
   let memberCount = 0;
   let spendUsd = 0;
   let spendLoaded = true;
   for (const group of groups) {
     memberCount += group.rollupMemberCount ?? 0;
     spendUsd += group.rollupSpendUsd ?? 0;
-    if (!group.rollupSpendLoaded) {
-      spendLoaded = false;
-    }
+    if (!group.rollupSpendLoaded) spendLoaded = false;
   }
   return { memberCount, spendUsd, spendLoaded };
 }
 
-/**
- * Groups a flat list of groups (already filtered to one team section) into clusters.
- * Returns one entry per visual row that should be rendered.
- */
 export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
-  // Count how many groups share each (workspaceId, baseName)
-  const baseCount = new Map<string, number>();
-  for (const g of groups) {
-    const p = parseRoleSuffix(g.name);
-    if (!p) continue;
-    const k = `${g.workspaceId}::${p.baseName}`;
-    baseCount.set(k, (baseCount.get(k) ?? 0) + 1);
+  const families = new Map<string, GroupLike[]>();
+  for (const group of groups) {
+    const key = `${group.workspaceId}::${group.familyKey}`;
+    const family = families.get(key) ?? [];
+    family.push(group);
+    families.set(key, family);
   }
-
-  const clusterGroups = new Map<string, GroupLike[]>();
-  const clusterRoles = new Map<string, Record<string, string>>();
-  const clusterBaseNames = new Map<string, string>();
-  const standalone: GroupLike[] = [];
-
-  for (const g of groups) {
-    const p = parseRoleSuffix(g.name);
-    if (!p) {
-      standalone.push(g);
-      continue;
-    }
-    const k = `${g.workspaceId}::${p.baseName}`;
-    if ((baseCount.get(k) ?? 0) < 2) {
-      // No sibling with same base name → treat as standalone
-      standalone.push(g);
-      continue;
-    }
-    const list = clusterGroups.get(k) ?? [];
-    list.push(g);
-    clusterGroups.set(k, list);
-    clusterBaseNames.set(k, p.baseName);
-    const roles = clusterRoles.get(k) ?? {};
-    roles[g.groupId] = p.role;
-    clusterRoles.set(k, roles);
-  }
-
-  const result: GroupCluster[] = [];
-
-  // Single-group entries preserve the dashboard-selected spend model. The
-  // caller maps this to project-attributed spend (with member spend only as a
-  // loading fallback), so substituting rawMemberSpendUsd here would silently
-  // undo project accounting for ordinary groups inside team sections.
-  for (const g of standalone) {
-    result.push({
-      clusterKey: g.groupId,
-      baseName: g.name,
-      workspaceId: g.workspaceId,
-      workspaceName: g.workspaceName,
-      teamName: g.teamName,
-      groupIds: [g.groupId],
-      groupRoles: {},
-      memberCount: g.memberCount ?? 0,
-      spendUsd: g.spendUsd ?? 0,
-      spendLoaded: g.spendLoaded,
-      isSingleGroup: true,
-      singleGroup: g,
-    });
-  }
-
-  // Multi-group cluster entries
-  for (const [key, groupList] of clusterGroups) {
-    const baseName = clusterBaseNames.get(key)!;
-    const roles = clusterRoles.get(key)!;
-
-    const { memberCount, spendUsd, spendLoaded } = sumAttributedRollup(groupList);
-
-    const first = groupList[0]!;
-    result.push({
-      clusterKey: key,
-      baseName,
-      workspaceId: first.workspaceId,
-      workspaceName: first.workspaceName,
-      teamName: first.teamName,
-      groupIds: groupList.map((g) => g.groupId),
-      groupRoles: roles,
-      memberCount,
-      spendUsd,
-      spendLoaded,
-      isSingleGroup: false,
-    });
-  }
-
-  // Preserve original order: sort by baseName alphabetically
-  result.sort((a, b) => a.baseName.localeCompare(b.baseName));
-
-  return result;
+  return [...families.entries()]
+    .map(([clusterKey, family]) => {
+      family.sort((a, b) =>
+        (ROLE_PRIORITY[a.role] ?? 99) - (ROLE_PRIORITY[b.role] ?? 99) ||
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      );
+      const first = family[0]!;
+      const totals = sumAttributedRollup(family);
+      return {
+        clusterKey,
+        baseName: first.familyName,
+        workspaceId: first.workspaceId,
+        workspaceName: first.workspaceName,
+        teamName: first.teamName,
+        groupIds: family.map((group) => group.groupId),
+        groupRoles: Object.fromEntries(family.map((group) => [group.groupId, group.role])),
+        memberCount: totals.memberCount,
+        spendUsd: totals.spendUsd,
+        spendLoaded: totals.spendLoaded,
+        isLegacy: family.every((group) => group.isLegacy),
+        isSingleGroup: family.length === 1,
+        groups: family,
+        singleGroup: family.length === 1 ? first : undefined,
+      };
+    })
+    .sort((a, b) =>
+      a.baseName.localeCompare(b.baseName, undefined, { sensitivity: 'base' }) ||
+      a.clusterKey.localeCompare(b.clusterKey)
+    );
 }
 
-/** Role → Tailwind badge colour classes */
 export function roleBadgeClass(role: string): string {
-  switch (role) {
-    case 'Admin':
+  switch (role.toLowerCase()) {
+    case 'admin':
       return 'bg-amber-100 text-amber-800 border-amber-300';
-    case 'Member':
+    case 'member':
       return 'bg-cyan-100 text-cyan-800 border-cyan-300';
-    case 'Viewer':
+    case 'viewer':
       return 'bg-slate-100 text-slate-600 border-slate-300';
     default:
       return 'bg-slate-100 text-slate-500 border-slate-200';

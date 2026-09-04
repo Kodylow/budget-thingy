@@ -121,6 +121,8 @@ const fixtures = [
     canWrite: false,
   },
 ];
+const fixtureResolver = async (id: string) =>
+  fixtures.find((item) => item.id === id)?.authz ?? null;
 
 let server;
 let baseUrl: string;
@@ -166,7 +168,7 @@ beforeAll(async () => {
       [PM, ["platform"]],
     ]),
   });
-  setAuthorizationResolver(async (id) => fixtures.find((item) => item.id === id)?.authz ?? null);
+  setAuthorizationResolver(fixtureResolver);
   setReplitBudgetTransportForTests(async () => Response.json({ ok: true }), true);
 
   await db.delete(alertsTable).where(like(alertsTable.groupId, `${PREFIX}%`));
@@ -280,7 +282,7 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
       .filter((alert) => alert.entityId.startsWith(PREFIX))
       .map((alert) => `${alert.entityType}:${alert.entityId}`).sort();
     const expected = [`group:${GM}`];
-    if (fixture.id === "account" || fixture.id === "team" || fixture.id === "both" || fixture.id === "member") {
+    if (fixture.id === "account" || fixture.id === "both") {
       expected.push(`team:${TEAM}`);
     }
     expect(entities).toEqual(expected.sort());
@@ -324,9 +326,96 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
 
 it("uses one cross-workspace team alert predicate for role unions", () => {
   const alert = { entityType: "team", entityId: TEAM, groupId: TEAM, workspaceIds: [GROWTH, PLATFORM] };
-  expect(canSeeAlertEntity(fixtures[1].authz, alert, new Set(), new Set([TEAM]))).toBe(false);
-  expect(canSeeAlertEntity(fixtures[2].authz, alert, new Set(), new Set())).toBe(true);
-  expect(canSeeAlertEntity(fixtures[4].authz, alert, new Set(), new Set([TEAM]))).toBe(true);
+  const canonicalScope = new Map([
+    [TEAM, new Map([
+      [GROWTH, new Set([GM, GA])],
+      [PLATFORM, new Set([GL])],
+    ])],
+  ]);
+  expect(canSeeAlertEntity(fixtures[1].authz, alert, new Set(), canonicalScope)).toBe(false);
+  expect(canSeeAlertEntity(fixtures[2].authz, alert, new Set(), canonicalScope)).toBe(false);
+  expect(canSeeAlertEntity(fixtures[3].authz, alert, new Set(), canonicalScope)).toBe(true);
+  expect(canSeeAlertEntity(fixtures[4].authz, alert, new Set(), canonicalScope)).toBe(false);
+});
+
+it("requires team alerts to stay inside workspace-qualified canonical family scope", () => {
+  const workspaceA = `${PREFIX}-finance-a`;
+  const workspaceB = `${PREFIX}-finance-b`;
+  const legacy = "1awqan";
+  const groupsA = [`${PREFIX}-a-admin`, `${PREFIX}-a-member`];
+  const groupsB = [`${PREFIX}-b-admin`, `${PREFIX}-b-member`];
+  const legacyGroups = [`${PREFIX}-legacy-admin`, `${PREFIX}-legacy-member`];
+  const teamAdmin = authorization(
+    "finance-admin",
+    "team_admin",
+    [...groupsA, ...legacyGroups],
+    ["finance-admin"],
+    [],
+    ["Finance"],
+  );
+  const canonicalScope = new Map([
+    ["Finance", new Map([
+      [workspaceA, new Set(groupsA)],
+      [workspaceB, new Set(groupsB)],
+      [legacy, new Set(legacyGroups)],
+    ])],
+  ]);
+  const alert = (workspaceIds: string[]) => ({
+    entityType: "team",
+    entityId: "Finance",
+    groupId: "Finance",
+    workspaceIds,
+  });
+
+  expect(canSeeAlertEntity(teamAdmin, alert([workspaceA]), new Set(), canonicalScope)).toBe(true);
+  expect(canSeeAlertEntity(teamAdmin, alert([workspaceB]), new Set(), canonicalScope)).toBe(false);
+  expect(canSeeAlertEntity(teamAdmin, alert([workspaceA, workspaceB]), new Set(), canonicalScope)).toBe(false);
+  expect(canSeeAlertEntity(teamAdmin, alert([legacy]), new Set(), canonicalScope)).toBe(true);
+});
+
+it("hides independent and spanning same-team alerts on the mounted history route", async () => {
+  const teamAdmin = authorization(
+    "route-team-a",
+    "team_admin",
+    [GM, GA],
+    ["route-team-a"],
+    [],
+    [TEAM],
+  );
+  await db.insert(teamLimitTargetsTable).values({
+    teamName: TEAM,
+    workspaceId: PLATFORM,
+    groupId: PM,
+    groupName: `${PREFIX} Platform - Member`,
+  });
+  await db.insert(alertsTable).values([
+    {
+      groupId: TEAM, groupName: TEAM, entityType: "team", entityId: TEAM, entityName: TEAM,
+      workspaceIds: [GROWTH], threshold: 75, spendUsd: 7, budgetUsd: 10,
+      recipients: [], status: "sent",
+    },
+    {
+      groupId: TEAM, groupName: TEAM, entityType: "team", entityId: TEAM, entityName: TEAM,
+      workspaceIds: [PLATFORM], threshold: 75, spendUsd: 7, budgetUsd: 10,
+      recipients: [], status: "sent",
+    },
+    {
+      groupId: TEAM, groupName: TEAM, entityType: "team", entityId: TEAM, entityName: TEAM,
+      workspaceIds: [GROWTH, PLATFORM], threshold: 90, spendUsd: 9, budgetUsd: 10,
+      recipients: [], status: "sent",
+    },
+  ]);
+  setAuthorizationResolver(async (id) => id === "route-team-a" ? teamAdmin : fixtureResolver(id));
+  try {
+    const response = await request("/alerts", { id: "route-team-a" });
+    expect(response.status).toBe(200);
+    const teamAlerts = (await response.json())
+      .filter((alert) => alert.entityType === "team" && alert.entityId === TEAM);
+    expect(teamAlerts.map((alert) => alert.workspaceIds)).toEqual([[GROWTH]]);
+  } finally {
+    setAuthorizationResolver(fixtureResolver);
+    await db.delete(teamLimitTargetsTable).where(eq(teamLimitTargetsTable.groupId, PM));
+  }
 });
 
 function dirMemberIdsForWorkspace(workspaceId: string): string[] {

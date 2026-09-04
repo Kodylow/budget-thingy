@@ -9,6 +9,7 @@ import type { Group } from './group';
 import type { GroupsResponseTeamBudgets } from './groupsResponseTeamBudgets';
 import type { GroupsResponseTeamRawSpend } from './groupsResponseTeamRawSpend';
 import type { UsageHealth } from './usageHealth';
+import type { WorkspaceTeamSpend } from './workspaceTeamSpend';
 
 export interface GroupsResponse {
   groups: Group[];
@@ -19,6 +20,8 @@ export interface GroupsResponse {
   unattributedProjectSpendUsd: number;
   /** Per-team member-deduped rollup spend, with each member counted once across groups */
   teamRawSpend: GroupsResponseTeamRawSpend;
+  /** Workspace-qualified team spend for rendering workspace/team sections without merging same-named teams across workspaces. */
+  workspaceTeamRawSpend: WorkspaceTeamSpend[];
   /** Effective visible team budgets, including budget-only teams for account-wide callers. */
   teamBudgets: GroupsResponseTeamBudgets;
 }

@@ -23,10 +23,9 @@ import { ChevronLeft, RefreshCw, DollarSign, Users, AlertCircle } from 'lucide-r
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import {
-  parseRoleSuffix,
-  normalizeRole,
   higherRole,
   roleBadgeClass,
+  roleLabel,
   ROLE_PRIORITY,
 } from '@/lib/group-clusters';
 import { GroupUserExport } from '@/components/group-user-export';
@@ -134,14 +133,13 @@ export default function ClusterDetail() {
   const projectsComplete = clusterProjectsData?.usageHealth.status === 'complete' ||
     clusterProjectsData?.usageHealth.status === 'stale';
 
-  // Build a map of groupId → sub-group role by parsing the fetched group names
+  // The API owns family and role classification; names are presentation only.
   const groupRoleMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const r of results) {
       if (!r.data) continue;
       const { group } = r.data;
-      const parsed = parseRoleSuffix(group.name);
-      m[group.groupId] = parsed?.role ?? normalizeRole(group.type);
+      m[group.groupId] = group.role;
     }
     return m;
   }, [results]);
@@ -213,7 +211,7 @@ export default function ClusterDetail() {
 
   const sortedRoleLabels = useMemo(() => {
     const roles = new Set(Object.values(groupRoleMap));
-    return [...roles].sort((a, b) => (ROLE_PRIORITY[a] ?? 99) - (ROLE_PRIORITY[b] ?? 99));
+    return [...roles].sort((a, b) => (ROLE_PRIORITY[a.toLowerCase()] ?? 99) - (ROLE_PRIORITY[b.toLowerCase()] ?? 99));
   }, [groupRoleMap]);
 
   // Project data comes directly from the cluster-projects endpoint (creator-attributed, no scaling).
@@ -372,14 +370,14 @@ export default function ClusterDetail() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3 flex-wrap">
-            {clusterName}
+             {firstGroupData?.group.familyName ?? clusterName}
             <div className="flex gap-1.5">
               {sortedRoleLabels.map((r) => (
                 <span
                   key={r}
                   className={`inline-flex items-center border rounded px-2 py-0.5 text-[10px] font-medium ${roleBadgeClass(r)}`}
                 >
-                  {r}
+                   {roleLabel(r)}
                 </span>
               ))}
             </div>
@@ -463,7 +461,7 @@ export default function ClusterDetail() {
           <CardTitle>Members</CardTitle>
           <CardDescription>
             Each person appears once. Role shows their highest privilege across{' '}
-            {sortedRoleLabels.join(' / ')} sub-groups. Spend combines member AI with
+             {sortedRoleLabels.map(roleLabel).join(' / ')} sub-groups. Spend combines member AI with
             creator-attributed project hosting and other non-AI costs.
           </CardDescription>
         </CardHeader>
@@ -559,7 +557,7 @@ export default function ClusterDetail() {
                           <span
                             className={`inline-flex items-center border rounded px-2 py-0.5 text-[10px] font-medium ${roleBadgeClass(member.role)}`}
                           >
-                            {member.role}
+                             {roleLabel(member.role)}
                           </span>
                           {member.allRoles.length > 1 &&
                             member.allRoles
@@ -569,7 +567,7 @@ export default function ClusterDetail() {
                                   key={r}
                                   className={`inline-flex items-center border rounded px-2 py-0.5 text-[10px] font-medium opacity-60 ${roleBadgeClass(r)}`}
                                 >
-                                  {r}
+                                   {roleLabel(r)}
                                 </span>
                               ))}
                         </div>

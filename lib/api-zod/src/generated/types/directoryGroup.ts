@@ -5,10 +5,17 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { DirectoryRole } from './directoryRole';
 
 export interface DirectoryGroup {
   groupId: string;
   groupName: string;
   workspaceId: string;
   workspaceName: string;
+  familyKey: string;
+  familyName: string;
+  role: DirectoryRole;
+  isLegacy: boolean;
+  /** @nullable */
+  teamName: string | null;
 }

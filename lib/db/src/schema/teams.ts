@@ -21,6 +21,10 @@ export const teamLimitTargetsTable = pgTable(
     workspaceId: text("workspace_id").notNull(),
     groupId: text("group_id").notNull(),
     groupName: text("group_name").notNull(),
+    assignmentSource: text("assignment_source")
+      .$type<"unconfirmed" | "automatic" | "manual">()
+      .notNull()
+      .default("manual"),
     monthlyLimitUsd: doublePrecision("monthly_limit_usd"),
     // Disabled rows still attribute usage to a team; only limit split,
     // reconciliation, and apply operations exclude them.
@@ -34,6 +38,25 @@ export const teamLimitTargetsTable = pgTable(
       table.groupId,
       ],
     }),
+  ],
+);
+
+export const familyTeamMappingsTable = pgTable(
+  "family_team_mappings",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    familyKey: text("family_key").notNull(),
+    familyName: text("family_name").notNull(),
+    teamName: text("team_name"),
+    isLegacy: boolean("is_legacy").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: "family_team_mappings_pkey",
+      columns: [table.workspaceId, table.familyKey],
+    }),
+    index("family_team_mappings_family_key_idx").on(table.familyKey),
+    index("family_team_mappings_team_name_idx").on(table.teamName),
   ],
 );
 
@@ -145,6 +168,7 @@ export const teamBudgetAdjustmentsTable = pgTable(
   ],
 );
 export type TeamLimitTarget = typeof teamLimitTargetsTable.$inferSelect;
+export type FamilyTeamMapping = typeof familyTeamMappingsTable.$inferSelect;
 
 export const insertTeamBudgetSchema = createInsertSchema(teamBudgetsTable).omit({
   updatedAt: true,

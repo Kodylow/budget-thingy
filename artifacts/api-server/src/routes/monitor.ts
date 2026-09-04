@@ -10,7 +10,6 @@ import {
   alertsTable,
   appAdminsTable,
   usersTable,
-  apiDirectoryCacheTable,
   apiProjectMetadataTable,
   apiProjectMetadataStateTable,
   usageLimitAuditsTable,
@@ -97,6 +96,8 @@ import {
   getBillingPeriod,
   getBillingPeriodMetadata,
   buildCanonicalGroupMergePlan,
+  buildCanonicalEffectiveTeams,
+  type CanonicalAccountDirectory,
   resolveCanonicalMergedGroupBudget,
   type EnterpriseGroup,
 } from "../lib/enterprise";
@@ -223,42 +224,66 @@ type AlertScopeEntity = {
   workspaceIds: string[];
 };
 
+export type TeamAlertCanonicalScope = ReadonlyMap<
+  string,
+  ReadonlyMap<string, ReadonlySet<string>>
+>;
+
+function buildTeamAlertCanonicalScope(
+  groups: readonly EnterpriseGroup[],
+  teamByGroup: ReadonlyMap<string, string>,
+): TeamAlertCanonicalScope {
+  const mutable = new Map<string, Map<string, Set<string>>>();
+  for (const group of groups) {
+    const teamName = teamByGroup.get(groupTeamKey(group));
+    if (!teamName) continue;
+    const byWorkspace = mutable.get(teamName) ?? new Map<string, Set<string>>();
+    const groupIds = byWorkspace.get(group.workspaceId) ?? new Set<string>();
+    groupIds.add(group.id);
+    byWorkspace.set(group.workspaceId, groupIds);
+    mutable.set(teamName, byWorkspace);
+  }
+  return mutable;
+}
+
 export function canSeeAlertEntity(
   authz: Authorization,
   alert: AlertScopeEntity,
   visibleGroupIds: ReadonlySet<string>,
-  visibleTeamNames: ReadonlySet<string>,
+  canonicalTeamScope: TeamAlertCanonicalScope,
 ): boolean {
   const scope = scopeFor(authz);
   if ("kind" in scope) return true;
   if (alert.entityType !== "team") {
     return visibleGroupIds.has(alert.entityId || alert.groupId);
   }
-  if (scope.teamNames.has(alert.entityId)) return true;
-  if (authz.roles.includes("workspace_admin")) {
-    return alert.workspaceIds.length > 0 &&
-      alert.workspaceIds.every((workspaceId) => scope.workspaceIds.has(workspaceId));
+  if (alert.workspaceIds.length === 0) return false;
+  if (
+    authz.roles.includes("workspace_admin") &&
+    alert.workspaceIds.every((workspaceId) => scope.workspaceIds.has(workspaceId))
+  ) {
+    return true;
   }
-  return visibleTeamNames.has(alert.entityId);
+  const teamByWorkspace = canonicalTeamScope.get(alert.entityId || alert.groupId);
+  if (!teamByWorkspace) return false;
+  const requiresWholeFamily = authz.roles.includes("team_admin");
+  return alert.workspaceIds.every((workspaceId) => {
+    if (scope.workspaceIds.has(workspaceId)) return true;
+    const canonicalGroupIds = teamByWorkspace.get(workspaceId);
+    if (!canonicalGroupIds || canonicalGroupIds.size === 0) return false;
+    return requiresWholeFamily
+      ? [...canonicalGroupIds].every((groupId) => scope.groupIds.has(groupId))
+      : [...canonicalGroupIds].some((groupId) => scope.groupIds.has(groupId));
+  });
 }
 
 function targetTeamForGroup(
   group: EnterpriseGroup,
-  targets: readonly (typeof teamLimitTargetsTable.$inferSelect)[],
+  source: CanonicalAccountDirectory,
+  targets: readonly (typeof teamLimitTargetsTable.$inferSelect)[] = [],
 ): string | undefined {
-  const direct = targets.find((target) =>
-    target.workspaceId === group.workspaceId && target.groupId === group.id
-  );
-  if (direct) return direct.teamName;
-  if (group.workspaceId !== "1awqan") return undefined;
-  const teams = new Set(
-    targets
-      .filter((target) =>
-        target.workspaceId !== "1awqan" && target.groupName === group.name
-      )
-      .map((target) => target.teamName),
-  );
-  return teams.size === 1 ? [...teams][0] : undefined;
+  return buildCanonicalEffectiveTeams(source, targets)
+    .byRoleGroupId.get(group.id) ?? undefined;
 }
 
 function groupTeamKey(group: Pick<EnterpriseGroup, "workspaceId" | "id">): string {
@@ -267,12 +292,14 @@ function groupTeamKey(group: Pick<EnterpriseGroup, "workspaceId" | "id">): strin
 
 function buildGroupTeamMap(
   groups: readonly EnterpriseGroup[],
-  targets: readonly (typeof teamLimitTargetsTable.$inferSelect)[],
+  source: CanonicalAccountDirectory,
   hiddenTeamNames: ReadonlySet<string> = new Set(),
+  targets: readonly (typeof teamLimitTargetsTable.$inferSelect)[] = [],
 ): Map<string, string> {
   const result = new Map<string, string>();
+  const effectiveTeams = buildCanonicalEffectiveTeams(source, targets);
   for (const group of groups) {
-    const teamName = targetTeamForGroup(group, targets);
+    const teamName = effectiveTeams.byRoleGroupId.get(group.id);
     if (teamName && !hiddenTeamNames.has(teamName)) {
       result.set(groupTeamKey(group), teamName);
     }
@@ -554,7 +581,7 @@ router.get("/groups", async (req, res): Promise<void> => {
       db.select().from(teamBudgetsTable),
     ]);
     const hiddenTeams = new Set(teamRows.filter((row) => row.isHidden).map((row) => row.teamName));
-    const teamByGroup = buildGroupTeamMap(usage.groups, assignments, hiddenTeams);
+    const teamByGroup = buildGroupTeamMap(usage.groups, dir.account, hiddenTeams, assignments);
     const mergePlan = buildCanonicalGroupMergePlan(
       usage.groups,
       dir.workspaces,
@@ -582,10 +609,15 @@ router.get("/groups", async (req, res): Promise<void> => {
       const budget = effectiveGroupBudget(
         resolveCanonicalMergedGroupBudget(group.id, mergePlan, budgetMap)?.amountUsd);
       const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
+      const canonicalGroup = dir.account.roleGroupsById.get(group.id)!;
       return {
         groupId: group.id, workspaceId: group.workspaceId,
         workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
         name: group.name,
+        familyKey: canonicalGroup.familyKey,
+        familyName: canonicalGroup.familyName,
+        role: canonicalGroup.role,
+        isLegacy: canonicalGroup.isLegacy,
         teamName: teamByGroup.get(groupTeamKey(group)) ?? null,
         type: group.type,
         isSynthetic: false, syntheticKind: undefined as "no_group" | undefined,
@@ -614,7 +646,9 @@ router.get("/groups", async (req, res): Promise<void> => {
       groups.push({
         groupId: `synthetic:no-group:${workspaceId}`, workspaceId,
         workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
-        name: "No group", teamName: null, type: "synthetic", isSynthetic: true,
+        name: "No group", familyKey: `no-group:${workspaceId}`, familyName: "No group",
+        role: "unsuffixed", isLegacy: workspaceId === "1awqan",
+        teamName: null, type: "synthetic", isSynthetic: true,
         syntheticKind: "no_group", memberCount: ungrouped.memberCount,
         rollupMemberCount: ungrouped.memberCount, spendLoaded: complete,
         spendUsd: ungrouped.spendUsd, paceSpendLoaded: complete,
@@ -638,6 +672,26 @@ router.get("/groups", async (req, res): Promise<void> => {
         spendLoaded: complete,
       };
     }
+    const workspaceTeamSpend = new Map<string, {
+      workspaceId: string;
+      teamName: string;
+      spendUsd: number;
+    }>();
+    for (const group of usage.groups) {
+      const teamName = teamByGroup.get(groupTeamKey(group));
+      if (!teamName) continue;
+      const key = `${group.workspaceId}\0${teamName}`;
+      const current = workspaceTeamSpend.get(key);
+      workspaceTeamSpend.set(key, {
+        workspaceId: group.workspaceId,
+        teamName,
+        spendUsd: (current?.spendUsd ?? 0) +
+          (usage.rollup.byGroup.get(group.id)?.spendUsd ?? 0),
+      });
+    }
+    const workspaceTeamRawSpend = [...workspaceTeamSpend.values()].sort((a, b) =>
+      a.workspaceId.localeCompare(b.workspaceId) || a.teamName.localeCompare(b.teamName)
+    );
     res.json(ListGroupsResponse.parse({
       groups, isComplete: complete, syncStatus: usage.snapshot.status,
       syncError: null, pendingCount: usage.rollup.pendingCount,
@@ -649,7 +703,8 @@ router.get("/groups", async (req, res): Promise<void> => {
       billingPeriodLabel: usage.selection.label,
       projectSpendLoaded: usage.rollup.projectAttribution.isComplete,
       unattributedProjectSpendUsd: usage.rollup.projectAttribution.unattributedSpendUsd,
-      teamRawSpend, teamBudgets: Object.fromEntries(effectiveTeamBudgetMap),
+      teamRawSpend, workspaceTeamRawSpend,
+      teamBudgets: Object.fromEntries(effectiveTeamBudgetMap),
       usageHealth: usageHealth(usage.snapshot, usage.rollup, req.authz!),
       directoryDataAsOf: getDirectoryFreshness().dataAsOf,
       directoryStale: getDirectoryFreshness().isStale,
@@ -826,7 +881,11 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           workspaceId: group.workspaceId,
           workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
           name: group.name,
-          teamName: targetTeamForGroup(group, groupTeamsRows) ?? null,
+          familyKey: dir.account.roleGroupsById.get(group.id)!.familyKey,
+          familyName: dir.account.roleGroupsById.get(group.id)!.familyName,
+          role: dir.account.roleGroupsById.get(group.id)!.role,
+          isLegacy: dir.account.roleGroupsById.get(group.id)!.isLegacy,
+          teamName: targetTeamForGroup(group, dir.account, groupTeamsRows) ?? null,
           type: group.type,
           memberCount: userIds.length,
           rollupMemberCount: mergedRollupMemberCount,
@@ -1171,7 +1230,7 @@ router.get("/summary", async (req, res): Promise<void> => {
 
         // Set of visible groups, used both to scope spend and to filter alerts.
         let visibleGroupIds = new Set<string>();
-        let visibleTeamNames = new Set<string>();
+        let alertTeamScope: TeamAlertCanonicalScope = new Map();
 
         try {
             const dir = await getDirectory();
@@ -1181,10 +1240,19 @@ router.get("/summary", async (req, res): Promise<void> => {
             visibleGroupIds = new Set(scoped.map((g) => g.id));
             const groupTeamMap = buildGroupTeamMap(
               scoped,
-              groupTeams,
+              dir.account,
               hiddenSummaryTeamNames,
+              groupTeams,
             );
-            visibleTeamNames = new Set(groupTeamMap.values());
+            alertTeamScope = buildTeamAlertCanonicalScope(
+              dir.groups,
+              buildGroupTeamMap(
+                dir.groups,
+                dir.account,
+                hiddenSummaryTeamNames,
+                groupTeams,
+              ),
+            );
             const canonical = usage.rollup;
             const mergePlan = buildCanonicalGroupMergePlan(
               scoped,
@@ -1320,8 +1388,9 @@ router.get("/summary", async (req, res): Promise<void> => {
         const alertsSentThisPeriod = allAlerts.filter(
           (a) =>
             a.status === "sent" &&
-            (a.entityType !== "team" || !hiddenSummaryTeamNames.has(a.entityId)) &&
-            canSeeAlertEntity(authz, a, visibleGroupIds, visibleTeamNames) &&
+            (a.entityType !== "team" ||
+              !hiddenSummaryTeamNames.has(a.entityId || a.groupId)) &&
+            canSeeAlertEntity(authz, a, visibleGroupIds, alertTeamScope) &&
             (!periodStart || a.sentAt >= periodStart),
         ).length;
 
@@ -1399,13 +1468,13 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
   const scopedGroups = visibleGroups(req.authz!, dir.groups);
   const visibleTeams = new Set(
     scopedGroups
-      .map((group) => targetTeamForGroup(group, assignments))
+      .map((group) => targetTeamForGroup(group, dir.account, assignments))
       .filter((teamName): teamName is string => teamName != null),
   );
   for (const teamName of req.authz!.teamNames) visibleTeams.add(teamName);
   const allWorkspaceIdsByTeam = new Map<string, Set<string>>();
   for (const group of dir.groups) {
-    const teamName = targetTeamForGroup(group, assignments);
+    const teamName = targetTeamForGroup(group, dir.account, assignments);
     if (!teamName) continue;
     const ids = allWorkspaceIdsByTeam.get(teamName) ?? new Set<string>();
     ids.add(group.workspaceId);
@@ -1413,7 +1482,7 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
   }
   const workspaceIdsByTeam = new Map<string, Set<string>>();
   for (const group of scopedGroups) {
-    const teamName = targetTeamForGroup(group, assignments);
+    const teamName = targetTeamForGroup(group, dir.account, assignments);
     if (!teamName) continue;
     const ids = workspaceIdsByTeam.get(teamName) ?? new Set<string>();
     ids.add(group.workspaceId);
@@ -1873,50 +1942,25 @@ router.delete("/groups/:groupId/budget", requireCapability("canWriteGroupLimits"
 });
 
 router.get("/workspace-admins", requireRole("account"), async (_req, res): Promise<void> => {
-  const [rows, groupTeams] = await Promise.all([
-    db.select({ directoryJson: apiDirectoryCacheTable.directoryJson }).from(apiDirectoryCacheTable),
-    db.select().from(teamLimitTargetsTable),
-  ]);
-
-  if (!rows[0]) {
-    res.json(ListWorkspaceAdminsResponse.parse([]));
-    return;
-  }
-
-  const raw = rows[0].directoryJson as Record<string, unknown>;
-  const rawWorkspaces = (raw["workspaces"] ?? {}) as Record<string, Record<string, unknown>>;
-  const rawMembers = (raw["members"] ?? {}) as Record<string, Record<string, unknown>>;
-  const rawGroupMembers = (raw["groupMembers"] ?? {}) as Record<string, string[]>;
-  const rawGroups = (raw["groups"] ?? []) as Array<{
-    id: string;
-    name: string;
-    type: string;
-    workspaceId: string;
-  }>;
-
-  const BUILT_IN = new Set(["admin", "member", "guest"]);
-  const result = rawGroups
-    .filter((g) => !BUILT_IN.has(g.type.toLowerCase()))
-    .map((g) => {
-      // Resolve the actual members of this group from the directory's groupMembers map.
-      const memberIds = rawGroupMembers[g.id] ?? [];
-      const admins = memberIds.flatMap((userId) => {
-        const m = rawMembers[userId] as Record<string, unknown> | undefined;
-        if (!m) return [];
-        return [{
-          userId,
-          username: m["username"] as string,
-          email: (m["email"] as string | null) ?? null,
-          name: (m["name"] as string | null) ?? null,
-        }];
-      });
+  const dir = await getDirectory();
+  const result = [...dir.account.familiesById.values()]
+    .map((family) => {
+      const adminGroup = family.roleGroups.get("admin");
       return {
-        groupId: g.id,
-        groupName: g.name,
-        workspaceId: g.workspaceId,
-        workspaceName: (rawWorkspaces[g.workspaceId]?.["name"] as string | undefined) ?? g.workspaceId,
-        teamName: targetTeamForGroup(g, groupTeams) ?? null,
-        admins,
+        groupId: adminGroup?.id ?? family.id,
+        groupName: family.name,
+        workspaceId: family.workspaceId,
+        workspaceName: dir.workspaces.get(family.workspaceId)?.name ?? family.workspaceId,
+        familyKey: family.key,
+        familyName: family.name,
+        isLegacy: family.isLegacy,
+        teamName: family.teamName,
+        admins: [...(adminGroup?.members.values() ?? [])].map((member) => ({
+          userId: member.userId,
+          username: member.username,
+          email: member.email,
+          name: member.name,
+        })),
       };
     })
     .sort((a, b) => a.groupName.localeCompare(b.groupName));
@@ -1943,7 +1987,7 @@ router.get("/projects/export", async (req, res): Promise<void> => {
 
     const groups = visibleGroups(req.authz!, dir.groups);
     const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
-    const groupTeamMap = buildGroupTeamMap(groups, groupTeams);
+    const groupTeamMap = buildGroupTeamMap(groups, dir.account, new Set(), groupTeams);
     const scopedWorkspaceIds = workspaceScope(req.authz!, dir, groups);
     const [snapshot, projectMetadata] = await Promise.all([
       readUsageSnapshot({
@@ -2293,7 +2337,7 @@ router.get("/alerts", async (req, res): Promise<void> => {
   const parsed = ListAlertsQueryParams.safeParse(req.query);
   const limit = parsed.success && parsed.data.limit ? parsed.data.limit : 100;
   let allowedIds = new Set<string>();
-  let visibleAlertTeamNames = new Set<string>();
+  let alertTeamScope: TeamAlertCanonicalScope = new Map();
   let currentByEntity = new Map<string, CurrentAlertUsage>();
   let hiddenAlertTeamNames = new Set<string>();
   try {
@@ -2310,10 +2354,19 @@ router.get("/alerts", async (req, res): Promise<void> => {
     hiddenAlertTeamNames = new Set(allAlertTeamBudgetRows.filter((row) => row.isHidden).map((row) => row.teamName));
     const teamByGroupName = buildGroupTeamMap(
       scoped,
-      groupTeams,
+      dir.account,
       hiddenAlertTeamNames,
+      groupTeams,
     );
-    visibleAlertTeamNames = new Set(teamByGroupName.values());
+    alertTeamScope = buildTeamAlertCanonicalScope(
+      dir.groups,
+      buildGroupTeamMap(
+        dir.groups,
+        dir.account,
+        hiddenAlertTeamNames,
+        groupTeams,
+      ),
+    );
     const groupBudgetById = new Map(groupBudgets.map((row) => [row.groupId, row.amountUsd]));
     const teamBudgetByName = effectiveAlertTeamBudgets;
     const usage = await usageForRequest(authz, dir, { rangeType: "billing" });
@@ -2366,8 +2419,9 @@ router.get("/alerts", async (req, res): Promise<void> => {
     .orderBy(desc(alertsTable.sentAt));
   const scoped = allAlerts
     .filter((a) =>
-      (a.entityType !== "team" || !hiddenAlertTeamNames.has(a.entityId)) &&
-      canSeeAlertEntity(authz, a, allowedIds, visibleAlertTeamNames)
+      (a.entityType !== "team" ||
+        !hiddenAlertTeamNames.has(a.entityId || a.groupId)) &&
+      canSeeAlertEntity(authz, a, allowedIds, alertTeamScope)
     )
     .slice(0, limit)
     .map((a) => {
@@ -2691,7 +2745,7 @@ router.get("/trends", async (req, res): Promise<void> => {
     const dir = await getDirectory();
     const visible = visibleGroups(req.authz!, dir.groups);
     const groupTeams = await db.select().from(teamLimitTargetsTable);
-    const teamNameMap = buildGroupTeamMap(visible, groupTeams);
+    const teamNameMap = buildGroupTeamMap(visible, dir.account, new Set(), groupTeams);
     const requestedTeams = teamNames ? new Set(teamNames) : null;
     const requestedGroups = groupIds ? new Set(groupIds) : null;
     const mergePlan = buildCanonicalGroupMergePlan(
@@ -2703,7 +2757,7 @@ router.get("/trends", async (req, res): Promise<void> => {
     const groups = displayGroups.filter((group) => {
       const sourceIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
       if (requestedGroups && !sourceIds.some((id) => requestedGroups.has(id))) return false;
-      const teamName = targetTeamForGroup(group, groupTeams) ?? null;
+      const teamName = targetTeamForGroup(group, dir.account, groupTeams) ?? null;
       return !requestedTeams || (teamName !== null && requestedTeams.has(teamName));
     });
 
@@ -2779,7 +2833,7 @@ router.get("/trends", async (req, res): Promise<void> => {
 
     const teams = new Map<string, typeof groups>();
     for (const group of groups) {
-      const teamName = targetTeamForGroup(group, groupTeams);
+      const teamName = targetTeamForGroup(group, dir.account, groupTeams);
       if (!teamName) continue;
       const teamGroups = teams.get(teamName) ?? [];
       teamGroups.push(group);
@@ -2869,7 +2923,7 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
 
   const visible = visibleGroups(req.authz!, dir.groups);
   const groupTeams = await db.select().from(teamLimitTargetsTable);
-  const teamNameMap = buildGroupTeamMap(visible, groupTeams);
+  const teamNameMap = buildGroupTeamMap(visible, dir.account, new Set(), groupTeams);
   const mergePlan = buildCanonicalGroupMergePlan(
     visible,
     dir.workspaces,
@@ -3003,7 +3057,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
   );
 
   const groupTeams = await db.select().from(teamLimitTargetsTable);
-  const teamNameMap = buildGroupTeamMap(orderedGroups, groupTeams);
+  const teamNameMap = buildGroupTeamMap(orderedGroups, dir.account, new Set(), groupTeams);
 
   const callerIsAccountAdmin = isAccountWide(req.authz);
   const groupedWorkspaceIds = orderedGroups.map((group) => group.workspaceId);
@@ -3465,12 +3519,20 @@ router.get("/directory/groups", requireRole("account"), async (req, res): Promis
       return;
     }
 
-    const groups = dir.groups.map((group) => ({
-      groupId: group.id,
-      groupName: group.name,
-      workspaceId: group.workspaceId,
-      workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId,
-    }));
+    const groups = dir.groups.map((group) => {
+      const canonical = dir.account.roleGroupsById.get(group.id)!;
+      return {
+        groupId: group.id,
+        groupName: group.name,
+        workspaceId: group.workspaceId,
+        workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? group.workspaceId,
+        familyKey: canonical.familyKey,
+        familyName: canonical.familyName,
+        role: canonical.role,
+        isLegacy: canonical.isLegacy,
+        teamName: canonical.teamName,
+      };
+    });
     groups.sort(
       (a, b) =>
         a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: "base" }) ||

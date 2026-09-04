@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { DirectoryRole } from './directoryRole';
 import type { GroupSyntheticKind } from './groupSyntheticKind';
 import type { SpendPoint } from './spendPoint';
 
@@ -12,13 +13,17 @@ export interface Group {
   groupId: string;
   workspaceId: string;
   /** @nullable */
-  workspaceName?: string | null;
+  workspaceName: string | null;
   name: string;
+  familyKey: string;
+  familyName: string;
+  role: DirectoryRole;
+  isLegacy: boolean;
   /**
      * Team this group belongs to, null if unassigned
      * @nullable
      */
-  teamName?: string | null;
+  teamName: string | null;
   /** True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target. */
   isLegacyDisplayOnly?: boolean;
   /** Group type (custom, admin, member, guest) */

@@ -22,7 +22,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChevronDown, Download, Search, ShieldCheck } from 'lucide-react';
 import { useRange } from '@/components/range-context';
 import { buildCsv } from '@/lib/csv';
-import { groupDirectoryByWorkspace } from '@/lib/workspace-directory-groups';
+import { buildDirectoryHierarchy } from '@/lib/workspace-directory-groups';
+import { roleBadgeClass, roleLabel } from '@/lib/group-clusters';
 
 // ---------- helpers ----------
 
@@ -333,6 +334,7 @@ export default function WorkspaceDirectory() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
+  const [showLegacyGroups, setShowLegacyGroups] = useState(false);
   const [selectedMember, setSelectedMember] = useState<DirectoryMember | null>(null);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(
     () => new Set(),
@@ -410,21 +412,25 @@ export default function WorkspaceDirectory() {
     );
   }, [members, debouncedSearch]);
 
-  const filteredDirectoryGroups = useMemo(() => {
-    const groups = directoryGroups ?? [];
-    const query = groupSearch.trim().toLowerCase();
-    if (!query) return groups;
-
-    return groups.filter(
-      (group) =>
-        group.groupName.toLowerCase().includes(query) ||
-        group.workspaceName.toLowerCase().includes(query),
-    );
-  }, [directoryGroups, groupSearch]);
-
   const groupedWorkspaces = useMemo(
-    () => groupDirectoryByWorkspace(filteredDirectoryGroups),
-    [filteredDirectoryGroups],
+    () => buildDirectoryHierarchy(directoryGroups ?? [], {
+      showLegacy: showLegacyGroups,
+      search: groupSearch,
+    }),
+    [directoryGroups, groupSearch, showLegacyGroups],
+  );
+  const visibleGroupCount = useMemo(
+    () => groupedWorkspaces.reduce(
+      (workspaceTotal, workspace) => workspaceTotal + workspace.teams.reduce(
+        (teamTotal, team) => teamTotal + team.families.reduce(
+          (familyTotal, family) => familyTotal + family.groups.length,
+          0,
+        ),
+        0,
+      ),
+      0,
+    ),
+    [groupedWorkspaces],
   );
 
   // Derive the selected member object from the live members list so workspace
@@ -492,24 +498,35 @@ export default function WorkspaceDirectory() {
               </div>
               {!groupsLoading && !groupsUnavailable && (
                 <p className="text-xs text-muted-foreground" data-testid="directory-group-counts">
-                  {filteredDirectoryGroups.length} group{filteredDirectoryGroups.length === 1 ? '' : 's'} across{' '}
+                   {visibleGroupCount} group{visibleGroupCount === 1 ? '' : 's'} across{' '}
                   {groupedWorkspaces.length} workspace{groupedWorkspaces.length === 1 ? '' : 's'}
                   {groupSearch.trim() ? ' found' : ''}
                 </p>
               )}
             </div>
 
-            <div className="relative max-w-md">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-              <Input
-                type="search"
-                placeholder="Search groups or workspaces…"
-                aria-label="Search groups or workspaces"
-                value={groupSearch}
-                onChange={(event) => setGroupSearch(event.target.value)}
-                className="pl-8"
-                data-testid="directory-groups-search"
-              />
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="relative max-w-md flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  type="search"
+                  placeholder="Search workspace, team, family, group, or role…"
+                  aria-label="Search directory groups"
+                  value={groupSearch}
+                  onChange={(event) => setGroupSearch(event.target.value)}
+                  className="pl-8"
+                  data-testid="directory-groups-search"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showLegacyGroups}
+                  onChange={(event) => setShowLegacyGroups(event.target.checked)}
+                  data-testid="toggle-directory-legacy-groups"
+                />
+                Show legacy groups
+              </label>
             </div>
 
             <div className="rounded-lg border border-border overflow-hidden">
@@ -521,7 +538,7 @@ export default function WorkspaceDirectory() {
                         Workspace
                       </th>
                       <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">
-                        Group
+                        Team / Family / Role group
                       </th>
                     </tr>
                   </thead>
@@ -559,7 +576,7 @@ export default function WorkspaceDirectory() {
                                   <span>
                                     <span className="block font-medium">{workspace.workspaceName}</span>
                                     <span className="block text-xs font-normal text-muted-foreground">
-                                      {workspace.groups.length} group{workspace.groups.length === 1 ? '' : 's'}
+                                       {workspace.teams.length} team{workspace.teams.length === 1 ? '' : 's'}
                                     </span>
                                   </span>
                                   <ChevronDown
@@ -571,18 +588,44 @@ export default function WorkspaceDirectory() {
                                 </button>
                               </th>
                             </tr>
-                            {isExpanded && workspace.groups.map((group) => (
-                              <tr
-                                key={group.groupId}
-                                id={group === workspace.groups[0] ? contentId : undefined}
-                                className="border-b border-border last:border-0"
-                                data-testid={`directory-group-row-${group.groupId}`}
-                              >
-                                <td className="px-4 py-3 text-muted-foreground">
-                                  <span className="sr-only">{workspace.workspaceName}</span>
-                                </td>
-                                <td className="px-4 py-3 font-medium">{group.groupName}</td>
-                              </tr>
+                            {isExpanded && workspace.teams.map((team, teamIndex) => (
+                              <Fragment key={team.teamName ?? '__unassigned__'}>
+                                <tr
+                                  id={teamIndex === 0 ? contentId : undefined}
+                                  className="border-b border-border bg-muted/10"
+                                >
+                                  <td className="px-4 py-2 text-muted-foreground" />
+                                  <th className="px-4 py-2 text-left font-semibold">
+                                    {team.teamName ?? 'Unassigned'}
+                                  </th>
+                                </tr>
+                                {team.families.map((family) => (
+                                  <Fragment key={family.familyKey}>
+                                    <tr className="border-b border-border">
+                                      <td className="px-4 py-2 text-muted-foreground" />
+                                      <td className="px-4 py-2 pl-8 font-medium">
+                                        {family.familyName}
+                                        {family.isLegacy && <Badge variant="outline" className="ml-2 text-[10px]">Legacy</Badge>}
+                                      </td>
+                                    </tr>
+                                    {family.groups.map((group) => (
+                                      <tr
+                                        key={group.groupId}
+                                        className="border-b border-border last:border-0"
+                                        data-testid={`directory-group-row-${group.groupId}`}
+                                      >
+                                        <td className="px-4 py-2 text-muted-foreground" />
+                                        <td className="px-4 py-2 pl-12">
+                                          <Badge variant="outline" className={`mr-2 text-[10px] ${roleBadgeClass(group.role)}`}>
+                                            {roleLabel(group.role)}
+                                          </Badge>
+                                          <span className="font-medium">{group.groupName}</span>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </Fragment>
+                                ))}
+                              </Fragment>
                             ))}
                           </Fragment>
                         );
