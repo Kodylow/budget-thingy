@@ -6,14 +6,20 @@ export const ROLE_PRIORITY: Record<string, number> = {
   unsuffixed: 4,
 };
 
-export function roleLabel(role: string): string {
-  return role === 'unsuffixed'
-    ? 'Group'
-    : `${role.charAt(0).toUpperCase()}${role.slice(1).toLowerCase()}`;
+function normalizedRole(role?: string | null): string {
+  return role?.trim().toLowerCase() || 'unsuffixed';
 }
 
-export function higherRole(a: string, b: string): string {
-  return (ROLE_PRIORITY[a.toLowerCase()] ?? 99) <= (ROLE_PRIORITY[b.toLowerCase()] ?? 99) ? a : b;
+export function roleLabel(role?: string | null): string {
+  const normalized = normalizedRole(role);
+  if (normalized === 'unsuffixed') return 'Group';
+  return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+}
+
+export function higherRole(a?: string | null, b?: string | null): string {
+  const safeA = normalizedRole(a);
+  const safeB = normalizedRole(b);
+  return (ROLE_PRIORITY[safeA] ?? 99) <= (ROLE_PRIORITY[safeB] ?? 99) ? safeA : safeB;
 }
 
 export interface GroupLike {
@@ -170,8 +176,8 @@ export function buildGroupClusters(groups: GroupLike[]): GroupCluster[] {
     );
 }
 
-export function roleBadgeClass(role: string): string {
-  switch (role.toLowerCase()) {
+export function roleBadgeClass(role?: string | null): string {
+  switch (normalizedRole(role)) {
     case 'admin':
       return 'bg-amber-100 text-amber-800 border-amber-300';
     case 'member':

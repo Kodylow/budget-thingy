@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getGetUserActivityQueryKey,
   getGetTrendsQueryKey,
@@ -28,6 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useRange } from '@/components/range-context';
 import { buildTrendsParams, PARTIAL_BUCKET_EXPLANATION } from '@/lib/trends-ui';
 import { progressivePollInterval } from '@/lib/client-performance';
+import { toast } from '@/hooks/use-toast';
 
 const SERIES_COLORS = [
   '#0f3d62',
@@ -369,6 +370,7 @@ function UserActivityCard() {
 // ---------- TrendsTab ----------
 
 export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
+  const partialBucketToast = useRef<ReturnType<typeof toast> | null>(null);
   const { rangeType, startDate, endDate } = useRange();
   const [granularity, setGranularity] = useState<GetTrendsGranularity>('week');
   const [viewBy, setViewBy] = useState<ViewBy>('team');
@@ -453,6 +455,25 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
     ? 'All groups'
     : `${selectedGroupIds.size} group${selectedGroupIds.size === 1 ? '' : 's'}`;
   const hasPartialBucket = data?.bucketRanges.some((bucket) => bucket.isPartial) ?? false;
+
+  useEffect(() => {
+    if (hasPartialBucket && !partialBucketToast.current) {
+      partialBucketToast.current = toast({
+        title: 'Trend data is still updating',
+        description: PARTIAL_BUCKET_EXPLANATION,
+      });
+      return;
+    }
+    if (!hasPartialBucket && partialBucketToast.current) {
+      partialBucketToast.current.dismiss();
+      partialBucketToast.current = null;
+    }
+  }, [hasPartialBucket]);
+
+  useEffect(() => () => {
+    partialBucketToast.current?.dismiss();
+    partialBucketToast.current = null;
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -588,16 +609,6 @@ export default function TrendsTab({ teamNames, groups }: TrendsTabProps) {
               </Popover>
             </div>
           </div>
-
-          {hasPartialBucket && (
-            <div
-              className="flex items-start gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
-              data-testid="partial-bucket-disclosure"
-            >
-              <Badge variant="outline" className="border-amber-400 text-amber-800 dark:text-amber-200">Partial</Badge>
-              <span>{PARTIAL_BUCKET_EXPLANATION}</span>
-            </div>
-          )}
 
           {isLoading && !data ? (
             <div className="h-80 animate-pulse-glow rounded-lg bg-muted" data-testid="trends-skeleton" />

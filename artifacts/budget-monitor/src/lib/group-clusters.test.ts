@@ -1,5 +1,12 @@
 import { test, expect } from 'vitest';
-import { buildGroupClusters, buildLogicalGroupScopes, sumAttributedRollup } from './group-clusters';
+import {
+  buildGroupClusters,
+  buildLogicalGroupScopes,
+  higherRole,
+  roleBadgeClass,
+  roleLabel,
+  sumAttributedRollup,
+} from './group-clusters';
 
 const base = {
   workspaceId: 'ws',
@@ -55,4 +62,11 @@ test('does not mutate API response order', () => {
   const input = [...roleGroups].reverse();
   buildGroupClusters(input);
   expect(input.map((item) => item.groupId)).toEqual(['member', 'admin']);
+});
+
+test('missing directory roles use the neutral group presentation', () => {
+  expect(roleLabel(undefined)).toBe('Group');
+  expect(roleLabel(null)).toBe('Group');
+  expect(higherRole(undefined, null)).toBe('unsuffixed');
+  expect(roleBadgeClass(undefined)).toContain('text-slate-500');
 });
