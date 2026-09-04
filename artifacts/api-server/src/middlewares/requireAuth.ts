@@ -62,6 +62,18 @@ export function requireCapability(capability: Capability) {
   };
 }
 
+export function requireTrueAccountAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!req.authz?.isTrueAccountAdmin) {
+    res.status(403).json({ error: "Access denied" });
+    return;
+  }
+  next();
+}
+
 export function requireUserLimitWorkspace(
   req: Request,
   res: Response,

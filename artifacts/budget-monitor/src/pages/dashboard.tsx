@@ -77,9 +77,13 @@ import {
   useListGroups,
   useGetSummary,
   useGetTeamsBudgets,
+  useGetUserActivity,
   getListGroupsQueryKey,
   getGetSummaryQueryKey,
   getGetTeamsBudgetsQueryKey,
+  getGetUserActivityQueryKey,
+  getListVisibleWorkspaceMembersQueryOptions,
+  getListVisibleWorkspaceMembersQueryKey,
 } from '@workspace/api-client-react';
 import { ThresholdBadge } from '@/components/threshold-badge';
 import { BudgetInput } from '@/components/budget-input';

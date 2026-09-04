@@ -114,6 +114,7 @@ import {
   requireAuth,
   requireRole,
   requireCapability,
+  requireTrueAccountAdmin,
   requireUserLimitWorkspace,
 } from "../middlewares/requireAuth";
 import {
