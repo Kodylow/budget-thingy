@@ -28,10 +28,8 @@ import {
 import { sendEmail, buildAlertEmail, isEmailConfigured } from "./email";
 import { resolveAlertRecipients } from "./alert-recipients";
 import { getVisibleEffectiveTeamBudgetMap } from "./team-budgets";
-import { withJobClaim } from "./job-claims";
 
 export const THRESHOLDS = [50, 75, 90, 100];
-export const CHECK_INTERVAL_MINUTES = 10;
 
 type CheckerDirectory = Awaited<ReturnType<typeof getDirectory>>;
 
@@ -679,9 +677,7 @@ async function runCheckInternal(): Promise<CheckResult> {
 
 let fullCheckInFlight: Promise<CheckResult> | null = null;
 
-export function runCheck(
-  _force = false,
-): Promise<CheckResult> {
+export function runCheck(): Promise<CheckResult> {
   if (fullCheckInFlight) return fullCheckInFlight;
   const check = runCheckInternal().finally(() => {
     if (fullCheckInFlight === check) fullCheckInFlight = null;
@@ -690,41 +686,21 @@ export function runCheck(
   return check;
 }
 
-export function startChecker(): void {
-  // Hydrate database-only diagnostics. Usage ingestion is owned exclusively by
-  // the fixed coordinator, never by a replica startup or dashboard request.
-  void (async () => {
-    try {
-      const storedState = await db.query.budgetCheckerStateTable.findFirst({
-        where: eq(budgetCheckerStateTable.id, "singleton"),
-      });
-      if (storedState) {
-        checkerState = {
-          lastSuccessfulEvaluationAt: storedState.lastSuccessfulEvaluationAt,
-          lastEvaluatedDataAsOf: storedState.lastEvaluatedDataAsOf,
-          lastAttemptAt: storedState.lastAttemptAt,
-          lastSkipReason: storedState.lastSkipReason,
-        };
-      }
-    } catch (err) {
-      logger.error({ err }, "Checker state hydration failed");
+/** Hydrate database-only diagnostics without starting independent background work. */
+export async function hydrateCheckerState(): Promise<void> {
+  try {
+    const storedState = await db.query.budgetCheckerStateTable.findFirst({
+      where: eq(budgetCheckerStateTable.id, "singleton"),
+    });
+    if (storedState) {
+      checkerState = {
+        lastSuccessfulEvaluationAt: storedState.lastSuccessfulEvaluationAt,
+        lastEvaluatedDataAsOf: storedState.lastEvaluatedDataAsOf,
+        lastAttemptAt: storedState.lastAttemptAt,
+        lastSkipReason: storedState.lastSkipReason,
+      };
     }
-  })();
-
-  setInterval(
-    () => {
-      void withJobClaim(
-        "budget:threshold-check",
-        CHECK_INTERVAL_MINUTES * 60 * 1000,
-        5 * 60 * 1000,
-        async (claim) => {
-          claim.signal?.throwIfAborted();
-          const result = await runCheck();
-          claim.signal?.throwIfAborted();
-          return result;
-        },
-      ).catch((err) => logger.error({ err }, "Scheduled check failed"));
-    },
-    CHECK_INTERVAL_MINUTES * 60 * 1000,
-  );
+  } catch (err) {
+    logger.error({ err }, "Checker state hydration failed");
+  }
 }

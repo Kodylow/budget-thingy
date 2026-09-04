@@ -22,7 +22,6 @@ import {
   type EnterpriseGroup,
 } from "./enterprise";
 import { logger } from "./logger";
-import { withJobClaim } from "./job-claims";
 
 const AIRTABLE_CONNECTOR = "airtable";
 const BASE_NAMES = [
@@ -33,8 +32,6 @@ export const TEAM_BUDGET_SOURCE = "airtable-finance-approval";
 export const TEAM_BUDGET_SOURCE_TABLE = "Replit Finance Approval";
 export const TEAM_BUDGET_REQUIRED_APPROVAL_STATUS = "Approved";
 const SYNC_STATE_ID = 1;
-export const TEAM_BUDGET_SYNC_INTERVAL_MS = 60 * 60 * 1000;
-export const TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const LEGACY_EXACT_MATCHES = new Map([
   ["Growth Strategy & Operations", "DXP"],
   ["Growth Strategy & Operations DXP", "DXP"],
@@ -372,7 +369,6 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
         },
       });
     });
-    queueTeamBudgetUpstreamReconciliation();
     return { ok: true, recordCount: parsed.length, acceptedCount, issueCount, error: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Airtable synchronization error";
@@ -402,72 +398,6 @@ export function refreshTeamBudgetSnapshot(): ReturnType<typeof performTeamBudget
     refreshInFlight = null;
   });
   return refreshInFlight;
-}
-
-/**
- * Run the read-only Airtable synchronization hourly. The next attempt is
- * scheduled only after the current one completes, and manual refreshes share
- * the same in-flight promise, so connector requests never overlap.
- */
-export function startTeamBudgetSyncJob(): void {
-  const schedule = (): void => {
-    const timer = setTimeout(() => {
-      void withJobClaim(
-        "team-budgets:sync",
-        TEAM_BUDGET_SYNC_INTERVAL_MS,
-        10 * 60 * 1000,
-        async (claim) => {
-          claim.signal?.throwIfAborted();
-          const result = await refreshTeamBudgetSnapshot();
-          claim.signal?.throwIfAborted();
-          return result;
-        },
-      )
-        .then((result) => {
-          if (!result.acquired) return;
-          if (result.value.ok) {
-            logger.info({
-              recordCount: result.value.recordCount,
-              acceptedCount: result.value.acceptedCount,
-              issueCount: result.value.issueCount,
-            }, "Hourly approved Replit Finance Approval team budget synchronization completed");
-          } else {
-            logger.warn(
-              { error: result.value.error },
-              "Hourly approved Replit Finance Approval team budget synchronization failed",
-            );
-          }
-        })
-        .catch((err) => {
-          logger.error(
-            { err },
-            "Hourly approved Replit Finance Approval team budget synchronization crashed",
-          );
-        })
-        .finally(schedule);
-    }, TEAM_BUDGET_SYNC_INTERVAL_MS);
-    timer.unref();
-  };
-
-  schedule();
-
-  const scheduleUpstream = (): void => {
-    const timer = setTimeout(() => {
-      void withJobClaim(
-        "team-budgets:upstream-refresh",
-        TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS,
-        10 * 60 * 1000,
-        async (claim) => {
-          claim.signal?.throwIfAborted();
-          await reconcileTeamBudgetsUpstream();
-        },
-      ).catch((err) => {
-        logger.error({ err }, "Team budget upstream refresh failed");
-      }).finally(scheduleUpstream);
-    }, TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS);
-    timer.unref();
-  };
-  scheduleUpstream();
 }
 
 export async function getEffectiveTeamBudgets() {

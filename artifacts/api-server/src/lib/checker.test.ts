@@ -267,6 +267,20 @@ describe("checker Postgres snapshot cutover", () => {
       threshold: 75,
       dataAsOf: DATA_AS_OF,
     });
+    const [persisted] = await testDb.select().from(schema.alertsTable);
+    expect(persisted?.dataAsOf).toEqual(DATA_AS_OF);
+  });
+
+  it("completes a warm billing-window threshold check in under 200 ms", async () => {
+    await insertCompleteUsage({
+      "ws-1": [{ userId: "u-1", spendUsd: 100 }],
+    });
+    await runCheck();
+    const started = process.hrtime.bigint();
+    const result = await runCheck();
+    const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+    expect(result.skipped).toBe(false);
+    expect(durationMs).toBeLessThan(200);
   });
 
   it("marks every crossed threshold while emailing only the highest once", async () => {

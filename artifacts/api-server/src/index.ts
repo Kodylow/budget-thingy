@@ -1,10 +1,9 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startChecker } from "./lib/checker";
+import { hydrateCheckerState } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
-import { startUsageIngestScheduler } from "./lib/ingest";
+import { initializeUsageIngestScheduler } from "./lib/ingest";
 import { applyAnnualTeamBudgetBackfill } from "@workspace/db/seed-teams";
-import { startTeamBudgetSyncJob } from "./lib/team-budgets";
 
 const rawPort = process.env["PORT"];
 
@@ -29,16 +28,11 @@ const server = app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   // None of these tasks may delay the listening socket. In particular, cache
   // hydration is database-only and completes before Enterprise work is started.
-  startChecker();
-  startTeamBudgetSyncJob();
-  void Promise.all([
+  void initializeUsageIngestScheduler(Promise.all([
     initCache({ revalidateOnStartup: false }),
     applyAnnualTeamBudgetBackfill(),
-  ]).then(() => {
-    startUsageIngestScheduler();
-  }).catch((err) => {
-    logger.error({ err }, "Post-listen startup initialization failed");
-  });
+    hydrateCheckerState(),
+  ]));
 });
 
 function shutdown(signal: string) {

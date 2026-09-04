@@ -15,6 +15,11 @@ import { hasDailyRosterSnapshot, recordDailyRosters } from "./history";
 import { logger } from "./logger";
 import { invalidateUsageSnapshotMemo } from "./usage-store";
 import { sumAgentUsageMetrics } from "./usage-metrics";
+import { runCheck } from "./checker";
+import {
+  reconcileTeamBudgetsUpstream,
+  refreshTeamBudgetSnapshot,
+} from "./team-budgets";
 
 const CUTOFF = "2026-05-20";
 const DAY_MS = 86_400_000;
@@ -24,6 +29,7 @@ const METADATA_WAIT_POLL_MS = 25;
 const WORKERS = 4;
 const UNIT_ATTEMPTS = 3;
 const BATCH_SIZE = 500;
+export const BACKGROUND_CYCLE_INTERVAL_MINUTES = 10;
 
 type Metrics = Array<{ id: string; name: string; category: string; costUsd: number }>;
 type UsageGroup = {
@@ -70,6 +76,49 @@ export type CycleSummary = {
   peakRequestsPerMinute: number;
   lowestRateLimitRemaining: number | null;
 };
+
+export interface BackgroundCycleOperations {
+  evaluateThresholds: () => Promise<unknown>;
+  refreshTeamLimitDrift: () => Promise<unknown>;
+  syncAllocationAdjustments: () => Promise<{ ok: boolean; error: string | null }>;
+}
+
+const defaultBackgroundCycleOperations: BackgroundCycleOperations = {
+  evaluateThresholds: runCheck,
+  refreshTeamLimitDrift: reconcileTeamBudgetsUpstream,
+  syncAllocationAdjustments: refreshTeamBudgetSnapshot,
+};
+
+/**
+ * Run all post-ingest responsibilities in their authoritative order. Each is
+ * attempted even when an earlier operation fails, then the cycle reports all
+ * failures together so the scheduler retries on its next pass.
+ */
+export async function runBackgroundCycleOperations(
+  operations: BackgroundCycleOperations = defaultBackgroundCycleOperations,
+): Promise<void> {
+  const failures: Error[] = [];
+  const attempt = async (name: string, work: () => Promise<unknown>): Promise<void> => {
+    try {
+      await work();
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      failures.push(failure);
+      logger.error({ err: failure, operation: name }, "Background cycle operation failed");
+    }
+  };
+  await attempt("threshold_evaluation", operations.evaluateThresholds);
+  await attempt("team_limit_drift_refresh", operations.refreshTeamLimitDrift);
+  await attempt("allocation_adjustment_sync", async () => {
+    const result = await operations.syncAllocationAdjustments();
+    if (!result.ok) {
+      throw new Error(result.error ?? "Allocation adjustment synchronization failed");
+    }
+  });
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "One or more background cycle operations failed");
+  }
+}
 
 let requestCountsByMinute = new Map<number, number>();
 let peakRequestsPerMinute = 0;
@@ -716,6 +765,7 @@ async function runAuthorizedCycle(now = new Date()): Promise<CycleSummary> {
     }
     const reconciliationRetries = await runQueue(await failedWorkspaceUnits());
     const remaining = await backfillUnits(workspaceIds, today);
+    await runBackgroundCycleOperations();
     const summary: CycleSummary = {
       acquired: true,
       unitsAttempted:
@@ -756,8 +806,24 @@ export function startUsageIngestScheduler(): void {
   void runCycle().catch((error) => logger.error({ err: error }, "Initial usage ingest cycle failed"));
   interval = setInterval(() => {
     void runCycle().catch((error) => logger.error({ err: error }, "Scheduled usage ingest cycle failed"));
-  }, 10 * 60_000);
+  }, BACKGROUND_CYCLE_INTERVAL_MINUTES * 60_000);
   interval.unref();
+}
+
+/**
+ * Startup hydration improves the first cycle but cannot be allowed to suppress
+ * the sole scheduler for the lifetime of the process after a transient failure.
+ */
+export async function initializeUsageIngestScheduler(
+  initialization: Promise<unknown>,
+  startScheduler: () => void = startUsageIngestScheduler,
+): Promise<void> {
+  try {
+    await initialization;
+  } catch (error) {
+    logger.error({ err: error }, "Post-listen startup initialization failed");
+  }
+  startScheduler();
 }
 
 export function __stopUsageIngestSchedulerForTests(): void {

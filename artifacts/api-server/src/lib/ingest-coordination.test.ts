@@ -1,8 +1,11 @@
 // @ts-nocheck
-import { test, expect } from "vitest";
+import { readFile } from "node:fs/promises";
+import { test, expect, vi } from "vitest";
 
 import {
+  initializeUsageIngestScheduler,
   reconciliationBounds,
+  runBackgroundCycleOperations,
   waitForLegacyMetadata,
 } from "./ingest.ts";
 
@@ -61,4 +64,51 @@ test("legacy metadata coordination returns as soon as the queue drains", async (
     pendingCount: 0,
     waitedMs: 50,
   });
+});
+
+test("post-ingest responsibilities run once in their required order", async () => {
+  const order: string[] = [];
+  await runBackgroundCycleOperations({
+    evaluateThresholds: async () => { order.push("thresholds"); },
+    refreshTeamLimitDrift: async () => { order.push("drift"); },
+    syncAllocationAdjustments: async () => {
+      order.push("adjustments");
+      return { ok: true, error: null };
+    },
+  });
+  expect(order).toEqual(["thresholds", "drift", "adjustments"]);
+});
+
+test("post-ingest responsibilities all run before combined failure is reported", async () => {
+  const order: string[] = [];
+  await expect(runBackgroundCycleOperations({
+    evaluateThresholds: async () => {
+      order.push("thresholds");
+      throw new Error("threshold failure");
+    },
+    refreshTeamLimitDrift: async () => { order.push("drift"); },
+    syncAllocationAdjustments: async () => {
+      order.push("adjustments");
+      return { ok: false, error: "adjustment failure" };
+    },
+  })).rejects.toThrow("One or more background cycle operations failed");
+  expect(order).toEqual(["thresholds", "drift", "adjustments"]);
+});
+
+test("application startup launches only the ingest scheduler", async () => {
+  const source = await readFile(new URL("../index.ts", import.meta.url), "utf8");
+  const schedulerStarts = source.match(
+    /\b(?:startChecker|startTeamBudgetSyncJob|initializeUsageIngestScheduler)\s*\(/g,
+  ) ?? [];
+  expect(schedulerStarts).toEqual(["initializeUsageIngestScheduler("]);
+  expect(source).toContain("hydrateCheckerState()");
+});
+
+test("a failed startup initializer cannot suppress the sole scheduler", async () => {
+  const startScheduler = vi.fn();
+  await initializeUsageIngestScheduler(
+    Promise.reject(new Error("transient initialization failure")),
+    startScheduler,
+  );
+  expect(startScheduler).toHaveBeenCalledOnce();
 });

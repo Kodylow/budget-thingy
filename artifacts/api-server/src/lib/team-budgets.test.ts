@@ -27,9 +27,6 @@ import {
   reconcileTeamBudgetsUpstream,
   setAirtableBudgetFetcherForTests,
   setTeamBudgetDirectoryFetcherForTests,
-  startTeamBudgetSyncJob,
-  TEAM_BUDGET_SYNC_INTERVAL_MS,
-  TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS,
   TEAM_BUDGET_SOURCE,
   updateTeamMonthlyLimit,
 } from "./team-budgets";
@@ -348,25 +345,6 @@ describe("team budget synchronization schedule", () => {
     expect(calculateTeamTargetAmount(10, 3, 7.25)).toBe(7.25);
   });
 
-  it("uses an hourly interval", () => {
-    expect(TEAM_BUDGET_SYNC_INTERVAL_MS).toBe(60 * 60 * 1000);
-    expect(TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS).toBe(15 * 60 * 1000);
-  });
-
-  it("schedules an hourly refresh without blocking server startup", () => {
-    const timeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(
-      (() => ({ unref: () => undefined })) as unknown as typeof setTimeout,
-    );
-
-    startTeamBudgetSyncJob();
-    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), TEAM_BUDGET_SYNC_INTERVAL_MS);
-    expect(timeoutSpy).toHaveBeenCalledWith(
-      expect.any(Function),
-      TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS,
-    );
-
-    timeoutSpy.mockRestore();
-  });
 });
 
 describe("effective team budget persistence", () => {

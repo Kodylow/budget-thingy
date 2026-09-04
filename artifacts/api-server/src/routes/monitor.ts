@@ -108,7 +108,6 @@ import {
   getFiredThresholdsBatch,
   getLastCheckAt,
   getCheckerState,
-  CHECK_INTERVAL_MINUTES,
 } from "../lib/checker";
 import {
   requireAuth,
@@ -136,6 +135,7 @@ import {
   getTeamBudgetUpstreamSyncRows,
   getVisibleEffectiveTeamBudgetMap,
   queueTeamBudgetUpstreamReconciliation,
+  reconcileTeamBudgetsUpstream,
   refreshTeamBudgetSnapshot,
   updateTeamMonthlyLimit,
   updateTeamAnnualAllocation,
@@ -164,7 +164,7 @@ import {
   projectAttributionKey,
   type SnapshotUsageRollup,
 } from "../lib/usage-rollup";
-import { runCycle } from "../lib/ingest";
+import { BACKGROUND_CYCLE_INTERVAL_MINUTES, runCycle } from "../lib/ingest";
 
 const router: IRouter = Router();
 
@@ -1618,7 +1618,7 @@ router.post(
   "/admin/team-budgets/reconcile",
   requireCapability("canWriteGroupLimits"),
   async (_req, res): Promise<void> => {
-    queueTeamBudgetUpstreamReconciliation();
+    await reconcileTeamBudgetsUpstream();
     res.json(
       RetryTeamBudgetUpstreamSyncResponse.parse(await buildTeamBudgetSyncStatus()),
     );
@@ -2384,7 +2384,7 @@ router.post("/alerts/check", requireRole("account"), async (req, res): Promise<v
     return;
   }
   try {
-    const result = await runCheck(true);
+    const result = await runCheck();
     res.json(
       RunAlertCheckResponse.parse({
         checkedGroups: result.checkedGroups,
@@ -2548,7 +2548,7 @@ router.get("/status", requireRole("account"), async (_req, res): Promise<void> =
       enterpriseApiOk: health.ok,
       enterpriseApiError: health.error,
       emailConfigured,
-      checkerIntervalMinutes: CHECK_INTERVAL_MINUTES,
+      checkerIntervalMinutes: BACKGROUND_CYCLE_INTERVAL_MINUTES,
       lastCheckAt: getLastCheckAt()?.toISOString() ?? null,
       lastSuccessfulEvaluationAt: checker.lastSuccessfulEvaluationAt?.toISOString() ?? null,
       lastEvaluatedDataAsOf: checker.lastEvaluatedDataAsOf?.toISOString() ?? null,
