@@ -5,3 +5,4 @@
 - [Historical membership attribution](historical-membership-attribution.md) — immutable UTC rosters require complete fresh reads; current day stays live and pre-snapshot dates are not reconstructed.
 - [Member budget accounting](member-budget-accounting.md) — Replit limits are workspace/user scoped; Remaining uses complete current-cycle workspace Agent metrics, never selected-range cluster spend.
 - [Upstream team limit targets](upstream-team-budget-targets.md) — explicit workspace/group identities control writes; legacy workspace copies are display-only.
+- [Editable team allocation baselines](editable-team-allocation-baselines.md) — admin baselines and visibility survive initialization; approved adjustments remain additive and upstream writes stay explicit.

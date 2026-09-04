@@ -1,9 +1,10 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   db,
   teamLimitTargetsTable,
   teamBudgetAdjustmentsTable,
+  teamBudgetAllocationAuditsTable,
   teamBudgetSyncStateTable,
   teamBudgetUpstreamSyncTable,
   teamBudgetsTable,
@@ -535,6 +536,74 @@ export async function updateTeamMonthlyLimit(
   if (!updated) return null;
   const snapshot = await getEffectiveTeamBudgets();
   return snapshot.teams.find((team) => team.teamName === teamName) ?? null;
+}
+
+export async function updateTeamAnnualAllocation(
+  teamName: string,
+  annualAllocationUsd: number,
+  actorUserId: string,
+) {
+  const changed = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(teamBudgetsTable)
+      .where(eq(teamBudgetsTable.teamName, teamName))
+      .for("update");
+    if (!current) return null;
+    const currentAllocation =
+      current.originalAmountUsd === 0 && current.amountUsd !== 0
+        ? current.amountUsd
+        : current.originalAmountUsd;
+    if (currentAllocation === annualAllocationUsd) return current;
+    const [updated] = await tx.update(teamBudgetsTable).set({
+      originalAmountUsd: annualAllocationUsd,
+      amountUsd: annualAllocationUsd,
+    }).where(eq(teamBudgetsTable.teamName, teamName)).returning();
+    await tx.insert(teamBudgetAllocationAuditsTable).values({
+      teamName,
+      field: "annualAllocationUsd",
+      oldValue: currentAllocation,
+      newValue: annualAllocationUsd,
+      actorUserId,
+    });
+    return updated ?? null;
+  });
+  if (!changed) return null;
+  const snapshot = await getEffectiveTeamBudgets();
+  return snapshot.teams.find((team) => team.teamName === teamName) ?? null;
+}
+
+export async function updateTeamVisibility(
+  teamName: string,
+  isHidden: boolean,
+  actorUserId: string,
+) {
+  const changed = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(teamBudgetsTable)
+      .where(eq(teamBudgetsTable.teamName, teamName))
+      .for("update");
+    if (!current) return null;
+    if (current.isHidden === isHidden) return current;
+    const [updated] = await tx.update(teamBudgetsTable).set({ isHidden })
+      .where(eq(teamBudgetsTable.teamName, teamName)).returning();
+    await tx.insert(teamBudgetAllocationAuditsTable).values({
+      teamName,
+      field: "isHidden",
+      oldValue: current.isHidden,
+      newValue: isHidden,
+      actorUserId,
+    });
+    return updated ?? null;
+  });
+  if (!changed) return null;
+  const snapshot = await getEffectiveTeamBudgets();
+  return snapshot.teams.find((team) => team.teamName === teamName) ?? null;
+}
+
+export async function getTeamAllocationAudits(teamName?: string) {
+  const query = db.select().from(teamBudgetAllocationAuditsTable);
+  return teamName
+    ? query.where(eq(teamBudgetAllocationAuditsTable.teamName, teamName))
+      .orderBy(desc(teamBudgetAllocationAuditsTable.createdAt), desc(teamBudgetAllocationAuditsTable.id))
+    : query.orderBy(desc(teamBudgetAllocationAuditsTable.createdAt), desc(teamBudgetAllocationAuditsTable.id));
 }
 
 export async function assignTeamLimitTarget(input: {

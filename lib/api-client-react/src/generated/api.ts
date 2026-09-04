@@ -64,6 +64,8 @@ import type {
   OkResponse,
   Summary,
   SystemStatus,
+  TeamAllocationAuditResponse,
+  TeamAnnualAllocationUpdate,
   TeamBudgetApplyResponse,
   TeamBudgetApplySelection,
   TeamBudgetHistoryResponse,
@@ -75,6 +77,7 @@ import type {
   TeamBudgetTargetAssignment,
   TeamBudgetTargetConfiguration,
   TeamBudgetsResponse,
+  TeamVisibilityUpdate,
   TrendsResponse,
   UnauthorizedResponse,
   UsageIngestCycleResult,
@@ -138,6 +141,11 @@ export const getCurrentAuthUser = async ( options?: RequestInit): Promise<AuthUs
 
   }
 );}
+
+
+
+
+
 export const getGetCurrentAuthUserQueryKey = () => {
     return [
     `/api/auth/user`
@@ -1828,6 +1836,230 @@ export function useGetTeamBudgetHistory<TData = Awaited<ReturnType<typeof getTea
 
 
 
+
+export const getGetTeamAllocationAuditUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/audit`
+}
+
+/**
+ * True-account-admin-only. Returns allocation administration changes newest first.
+ * @summary List annual allocation and visibility changes
+ */
+export const getTeamAllocationAudit = async ( options?: RequestInit): Promise<TeamAllocationAuditResponse> => {
+
+  return customFetch<TeamAllocationAuditResponse>(getGetTeamAllocationAuditUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeamAllocationAuditQueryKey = () => {
+    return [
+    `/api/admin/team-budgets/audit`
+    ] as const;
+    }
+
+
+export const getGetTeamAllocationAuditQueryOptions = <TData = Awaited<ReturnType<typeof getTeamAllocationAudit>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamAllocationAudit>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamAllocationAuditQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamAllocationAudit>>> = ({ signal }) => getTeamAllocationAudit({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeamAllocationAudit>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeamAllocationAuditQueryResult = NonNullable<Awaited<ReturnType<typeof getTeamAllocationAudit>>>
+export type GetTeamAllocationAuditQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List annual allocation and visibility changes
+ */
+
+export function useGetTeamAllocationAudit<TData = Awaited<ReturnType<typeof getTeamAllocationAudit>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamAllocationAudit>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeamAllocationAuditQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateTeamAnnualAllocationUrl = (teamName: string,) => {
+
+
+
+
+  return `/api/admin/team-budgets/${encodeURIComponent(teamName)}/allocation`
+}
+
+/**
+ * True-account-admin-only. Updates the durable baseline without writing any upstream limit.
+ * @summary Update a team's annual baseline allocation
+ */
+export const updateTeamAnnualAllocation = async (teamName: string,
+    teamAnnualAllocationUpdate: TeamAnnualAllocationUpdate, options?: RequestInit): Promise<TeamBudgetHistoryTeam> => {
+
+  return customFetch<TeamBudgetHistoryTeam>(getUpdateTeamAnnualAllocationUrl(teamName),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamAnnualAllocationUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateTeamAnnualAllocationMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamAnnualAllocation>>, TError,{teamName: string;data: BodyType<TeamAnnualAllocationUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTeamAnnualAllocation>>, TError,{teamName: string;data: BodyType<TeamAnnualAllocationUpdate>}, TContext> => {
+
+const mutationKey = ['updateTeamAnnualAllocation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTeamAnnualAllocation>>, {teamName: string;data: BodyType<TeamAnnualAllocationUpdate>}> = (props) => {
+          const {teamName,data} = props ?? {};
+
+          return  updateTeamAnnualAllocation(teamName,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTeamAnnualAllocationMutationResult = NonNullable<Awaited<ReturnType<typeof updateTeamAnnualAllocation>>>
+    export type UpdateTeamAnnualAllocationMutationBody = BodyType<TeamAnnualAllocationUpdate>
+    export type UpdateTeamAnnualAllocationMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Update a team's annual baseline allocation
+ */
+export const useUpdateTeamAnnualAllocation = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamAnnualAllocation>>, TError,{teamName: string;data: BodyType<TeamAnnualAllocationUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTeamAnnualAllocation>>,
+        TError,
+        {teamName: string;data: BodyType<TeamAnnualAllocationUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateTeamAnnualAllocationMutationOptions(options));
+    }
+
+export const getUpdateTeamVisibilityUrl = (teamName: string,) => {
+
+
+
+
+  return `/api/admin/team-budgets/${encodeURIComponent(teamName)}/visibility`
+}
+
+/**
+ * True-account-admin-only. Hidden teams remain visible to true admins for management.
+ * @summary Hide or show a team
+ */
+export const updateTeamVisibility = async (teamName: string,
+    teamVisibilityUpdate: TeamVisibilityUpdate, options?: RequestInit): Promise<TeamBudgetHistoryTeam> => {
+
+  return customFetch<TeamBudgetHistoryTeam>(getUpdateTeamVisibilityUrl(teamName),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamVisibilityUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateTeamVisibilityMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamVisibility>>, TError,{teamName: string;data: BodyType<TeamVisibilityUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTeamVisibility>>, TError,{teamName: string;data: BodyType<TeamVisibilityUpdate>}, TContext> => {
+
+const mutationKey = ['updateTeamVisibility'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTeamVisibility>>, {teamName: string;data: BodyType<TeamVisibilityUpdate>}> = (props) => {
+          const {teamName,data} = props ?? {};
+
+          return  updateTeamVisibility(teamName,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTeamVisibilityMutationResult = NonNullable<Awaited<ReturnType<typeof updateTeamVisibility>>>
+    export type UpdateTeamVisibilityMutationBody = BodyType<TeamVisibilityUpdate>
+    export type UpdateTeamVisibilityMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Hide or show a team
+ */
+export const useUpdateTeamVisibility = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamVisibility>>, TError,{teamName: string;data: BodyType<TeamVisibilityUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTeamVisibility>>,
+        TError,
+        {teamName: string;data: BodyType<TeamVisibilityUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateTeamVisibilityMutationOptions(options));
+    }
 
 export const getGetTeamBudgetSyncStatusUrl = () => {
 

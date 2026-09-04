@@ -119,19 +119,19 @@ export async function applyAnnualTeamBudgetBackfill(): Promise<void> {
           ...budget,
           originalAmountUsd: budget.amountUsd,
         })
-        .onConflictDoUpdate({
-          target: teamBudgetsTable.teamName,
-          set: {
-            originalAmountUsd: budget.amountUsd,
-            ...(budget.teamName === "PREPROD" ? { isHidden: true } : {}),
-          },
-        });
+        .onConflictDoNothing();
     }
 
     // The approved split replaces this budget identity after its groups move.
-    await tx
-      .delete(teamBudgetsTable)
+    const [legacy] = await tx
+      .select({ teamName: teamBudgetsTable.teamName })
+      .from(teamBudgetsTable)
       .where(eq(teamBudgetsTable.teamName, "Growth Strategy & Operations"));
+    if (legacy) {
+      await tx
+        .delete(teamBudgetsTable)
+        .where(eq(teamBudgetsTable.teamName, legacy.teamName));
+    }
   });
 }
 

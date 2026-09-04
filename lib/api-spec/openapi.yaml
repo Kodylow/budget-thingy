@@ -613,6 +613,97 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/audit:
+    get:
+      operationId: getTeamAllocationAudit
+      tags: [teams]
+      summary: List annual allocation and visibility changes
+      description: True-account-admin-only. Returns allocation administration changes newest first.
+      responses:
+        "200":
+          description: Allocation audit history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamAllocationAuditResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/{teamName}/allocation:
+    patch:
+      operationId: updateTeamAnnualAllocation
+      tags: [teams]
+      summary: Update a team's annual baseline allocation
+      description: True-account-admin-only. Updates the durable baseline without writing any upstream limit.
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamAnnualAllocationUpdate"
+      responses:
+        "200":
+          description: Annual allocation updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        "400":
+          description: Invalid annual allocation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/team-budgets/{teamName}/visibility:
+    patch:
+      operationId: updateTeamVisibility
+      tags: [teams]
+      summary: Hide or show a team
+      description: True-account-admin-only. Hidden teams remain visible to true admins for management.
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamVisibilityUpdate"
+      responses:
+        "200":
+          description: Team visibility updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        "400":
+          description: Invalid visibility value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /admin/team-budgets/sync:
     get:
       operationId: getTeamBudgetSyncStatus
@@ -654,12 +745,7 @@ paths:
       summary: Set or reset a team's monthly upstream limit
       description: True-account-admin-only. A number sets a persistent manual limit; null resets the limit to the derived annual allocation divided by twelve.
       parameters:
-        - name: teamName
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
+        - $ref: "#/components/parameters/TeamNamePath"
       requestBody:
         required: true
         content:
@@ -2372,7 +2458,7 @@ components:
           pattern: '^\d{4}-(0[1-9]|1[0-2])$'
     TeamBudgetHistoryTeam:
       type: object
-      required: [teamName, originalAmountUsd, effectiveAmountUsd, annualAllocationUsd, monthlyLimitUsd, monthlyLimitSource, adjustments]
+      required: [teamName, originalAmountUsd, effectiveAmountUsd, annualAllocationUsd, monthlyLimitUsd, monthlyLimitSource, isHidden, adjustments]
       properties:
         teamName:
           type: string
@@ -2387,6 +2473,8 @@ components:
         monthlyLimitSource:
           type: string
           enum: [derived, manual]
+        isHidden:
+          type: boolean
         adjustments:
           type: array
           items:
@@ -2416,6 +2504,53 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TeamBudgetMatchIssue"
+    TeamAnnualAllocationUpdate:
+      type: object
+      additionalProperties: false
+      required: [annualAllocationUsd]
+      properties:
+        annualAllocationUsd:
+          type: number
+          minimum: 0
+    TeamVisibilityUpdate:
+      type: object
+      additionalProperties: false
+      required: [isHidden]
+      properties:
+        isHidden:
+          type: boolean
+    TeamAllocationAudit:
+      type: object
+      required: [id, teamName, field, oldValue, newValue, actor, timestamp]
+      properties:
+        id:
+          type: integer
+        teamName:
+          type: string
+        field:
+          type: string
+          enum: [annualAllocationUsd, isHidden]
+        oldValue:
+          oneOf:
+            - type: number
+            - type: boolean
+        newValue:
+          oneOf:
+            - type: number
+            - type: boolean
+        actor:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    TeamAllocationAuditResponse:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamAllocationAudit"
     TeamBudgetSyncStatus:
       type: object
       required: [sourceTable, requiredApprovalStatus, lastAttemptAt, lastSuccessfulAt, lastError, recordCount, acceptedCount, issueCount, teams]

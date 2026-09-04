@@ -2,12 +2,14 @@ import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getGetTeamBudgetHistoryQueryKey,
+  getGetTeamAllocationAuditQueryKey,
   getGetTeamBudgetSyncStatusQueryKey,
   getGetTeamBudgetTargetsQueryKey,
   getListGroupsQueryKey,
   useApplyTeamBudgetLimits,
   useAssignTeamBudgetTarget,
   useGetTeamBudgetHistory,
+  useGetTeamAllocationAudit,
   useGetTeamBudgetSyncStatus,
   useGetTeamBudgetTargets,
   useListGroups,
@@ -15,6 +17,8 @@ import {
   useRetryTeamBudgetUpstreamSync,
   useUpdateLegacyWorkspaceLimit,
   useUpdateTeamBudgetLimit,
+  useUpdateTeamAnnualAllocation,
+  useUpdateTeamVisibility,
   useUpdateTeamBudgetTarget,
   type TeamBudgetApplySelection,
 } from '@workspace/api-client-react';
@@ -23,6 +27,8 @@ import {
   CalendarClock,
   CheckCircle2,
   Database,
+  Eye,
+  EyeOff,
   Network,
   RefreshCw,
   RotateCcw,
@@ -120,12 +126,24 @@ export default function TeamBudgets() {
   const { realRole } = useAuthContext();
   const canManage = realRole === 'account_admin';
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [allocationDrafts, setAllocationDrafts] = useState<Record<string, string>>({});
+  const [optimisticAllocations, setOptimisticAllocations] = useState<Record<string, number>>({});
+  const [optimisticVisibility, setOptimisticVisibility] = useState<Record<string, boolean>>({});
+  const [managementError, setManagementError] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [applyOutcomeError, setApplyOutcomeError] = useState<string | null>(null);
 
   const historyQuery = useGetTeamBudgetHistory({
     query: { queryKey: getGetTeamBudgetHistoryQueryKey(), staleTime: 60_000, refetchOnMount: 'always' },
+  });
+  const auditQuery = useGetTeamAllocationAudit({
+    query: {
+      queryKey: getGetTeamAllocationAuditQueryKey(),
+      staleTime: 30_000,
+      refetchOnMount: 'always',
+      enabled: canManage,
+    },
   });
   const syncQuery = useGetTeamBudgetSyncStatus({
     query: {
@@ -153,6 +171,7 @@ export default function TeamBudgets() {
 
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetHistoryQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getGetTeamAllocationAuditQueryKey() });
     void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetSyncStatusQueryKey() });
     void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetTargetsQueryKey() });
     void queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey() });
@@ -167,6 +186,8 @@ export default function TeamBudgets() {
   const updateTeam = useUpdateTeamBudgetLimit({
     mutation: { onSuccess: () => { setDrafts({}); invalidateAll(); } },
   });
+  const updateAllocation = useUpdateTeamAnnualAllocation();
+  const updateVisibility = useUpdateTeamVisibility();
   const updateTarget = useUpdateTeamBudgetTarget({
     mutation: { onSuccess: () => { setDrafts({}); invalidateAll(); } },
   });
@@ -201,15 +222,36 @@ export default function TeamBudgets() {
       formatTeamName(a.teamName).localeCompare(formatTeamName(b.teamName), 'en', { sensitivity: 'base' })),
     [history?.teams],
   );
+  const displayAllocation = (team: (typeof teams)[number]) =>
+    optimisticAllocations[team.teamName] ?? team.originalAmountUsd;
+  const displayHidden = (team: (typeof teams)[number]) =>
+    optimisticVisibility[team.teamName] ?? team.isHidden;
+  const acceptedAdjustmentTotal = (team: (typeof teams)[number]) =>
+    team.adjustments.reduce((sum, adjustment) => sum + adjustment.amountUsd, 0);
+  const displayAnnualTotal = (team: (typeof teams)[number]) =>
+    displayAllocation(team) + acceptedAdjustmentTotal(team);
+  const displayMonthlyLimit = (team: (typeof teams)[number]) =>
+    team.monthlyLimitSource === 'manual'
+      ? team.monthlyLimitUsd
+      : Math.round(displayAnnualTotal(team) / 12 * 100) / 100;
   const periods = useMemo(() => {
     const result = new Set<string>();
     teams.forEach((team) => team.adjustments.forEach((adjustment) => result.add(adjustment.submissionPeriod)));
     return [...result].sort((a, b) => periodTimestamp(a) - periodTimestamp(b) || a.localeCompare(b));
   }, [teams]);
   const totals = useMemo(() => ({
-    original: teams.reduce((sum, team) => sum + team.originalAmountUsd, 0),
-    effective: teams.reduce((sum, team) => sum + team.effectiveAmountUsd, 0),
-  }), [teams]);
+    original: teams.reduce(
+      (sum, team) => sum + (optimisticAllocations[team.teamName] ?? team.originalAmountUsd),
+      0,
+    ),
+    effective: teams.reduce(
+      (sum, team) =>
+        sum +
+        (optimisticAllocations[team.teamName] ?? team.originalAmountUsd) +
+        team.adjustments.reduce((adjustmentSum, adjustment) => adjustmentSum + adjustment.amountUsd, 0),
+      0,
+    ),
+  }), [teams, optimisticAllocations]);
 
   const groupDetails = useMemo(() => new Map(directoryGroups.map((group) => [
     `${group.workspaceId}:${group.groupId}`,
@@ -247,20 +289,84 @@ export default function TeamBudgets() {
     const value = Number(drafts[key]);
     if (Number.isFinite(value) && value >= 0) action(value);
   };
+  const cancelAllocationEdit = (teamName: string) => {
+    setAllocationDrafts((old) => {
+      const next = { ...old };
+      delete next[teamName];
+      return next;
+    });
+  };
+  const saveAllocation = (team: (typeof teams)[number]) => {
+    const value = Number(allocationDrafts[team.teamName]);
+    if (!Number.isFinite(value) || value < 0) {
+      setManagementError('Annual allocation must be a non-negative number.');
+      cancelAllocationEdit(team.teamName);
+      return;
+    }
+    const previous = displayAllocation(team);
+    setManagementError(null);
+    setOptimisticAllocations((old) => ({ ...old, [team.teamName]: value }));
+    updateAllocation.mutate(
+      { teamName: team.teamName, data: { annualAllocationUsd: value } },
+      {
+        onSuccess: () => {
+          cancelAllocationEdit(team.teamName);
+          setOptimisticAllocations((old) => {
+            const next = { ...old };
+            delete next[team.teamName];
+            return next;
+          });
+          invalidateAll();
+        },
+        onError: (error) => {
+          setOptimisticAllocations((old) => ({ ...old, [team.teamName]: previous }));
+          cancelAllocationEdit(team.teamName);
+          setManagementError(getErrorMessage(error) ?? 'Annual allocation could not be saved.');
+        },
+      },
+    );
+  };
+  const toggleVisibility = (team: (typeof teams)[number]) => {
+    const previous = displayHidden(team);
+    const nextValue = !previous;
+    setManagementError(null);
+    setOptimisticVisibility((old) => ({ ...old, [team.teamName]: nextValue }));
+    updateVisibility.mutate(
+      { teamName: team.teamName, data: { isHidden: nextValue } },
+      {
+        onSuccess: () => {
+          setOptimisticVisibility((old) => {
+            const next = { ...old };
+            delete next[team.teamName];
+            return next;
+          });
+          invalidateAll();
+        },
+        onError: (error) => {
+          setOptimisticVisibility((old) => ({ ...old, [team.teamName]: previous }));
+          setManagementError(getErrorMessage(error) ?? 'Team visibility could not be saved.');
+        },
+      },
+    );
+  };
 
   const requestErrors = [
     getErrorMessage(historyQuery.error),
+    canManage ? getErrorMessage(auditQuery.error) : null,
     canManage ? getErrorMessage(syncQuery.error) : null,
     canManage ? getErrorMessage(configQuery.error) : null,
     canManage ? getErrorMessage(groupsQuery.error) : null,
     getErrorMessage(refresh.error),
     getErrorMessage(refreshStatus.error),
     getErrorMessage(updateTeam.error),
+    getErrorMessage(updateAllocation.error),
+    getErrorMessage(updateVisibility.error),
     getErrorMessage(updateTarget.error),
     getErrorMessage(updateLegacy.error),
     getErrorMessage(assignTarget.error),
     getErrorMessage(applyLimits.error),
     applyOutcomeError,
+    managementError,
   ].filter(Boolean);
 
   const driftRows = rowsFor((item) => item.status === 'drift');
@@ -275,7 +381,7 @@ export default function TeamBudgets() {
             <h1 className="text-2xl font-bold tracking-tight md:text-3xl" data-testid="text-team-budgets-title">Team allocations &amp; limits</h1>
           </div>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-            Annual allocations come from Airtable. Monthly Agent limits reset on the billing cycle day and are hard blocks.
+            Annual allocations use an admin-managed baseline plus approved Airtable adjustments. Monthly Agent limits reset on the billing cycle day and are hard blocks.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -386,17 +492,20 @@ export default function TeamBudgets() {
         const teamRows = rowsFor((item) => item.teamName === team.teamName && item.status !== 'synced');
         const legacyCopies = legacyCopiesByTeam.get(team.teamName) ?? [];
         return (
-          <Card key={team.teamName} className="overflow-hidden shadow-sm" data-testid={`card-team-limits-${team.teamName}`}>
+          <Card key={team.teamName} className={`overflow-hidden shadow-sm ${displayHidden(team) ? 'opacity-70' : ''}`} data-testid={`card-team-limits-${team.teamName}`}>
             <CardHeader className="border-b bg-muted/30">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <CardTitle>{formatTeamName(team.teamName)}</CardTitle>
-                  <CardDescription className="mt-1">Annual allocation {currency.format(team.annualAllocationUsd)}</CardDescription>
+                  <CardDescription className="mt-1">
+                    Annual allocation {currency.format(displayAnnualTotal(team))}
+                    {displayHidden(team) && <Badge variant="secondary" className="ml-2">Hidden</Badge>}
+                  </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
                   <label className="text-xs font-medium text-muted-foreground">
                     Monthly Agent limit
-                    <Input type="number" min="0" step="0.01" className="mt-1 w-36 bg-background" value={drafts[teamKey] ?? String(team.monthlyLimitUsd)} onChange={(event) => setDrafts((old) => ({ ...old, [teamKey]: event.target.value }))} data-testid={`input-team-monthly-limit-${team.teamName}`} />
+                    <Input type="number" min="0" step="0.01" className="mt-1 w-36 bg-background" value={drafts[teamKey] ?? String(displayMonthlyLimit(team))} onChange={(event) => setDrafts((old) => ({ ...old, [teamKey]: event.target.value }))} data-testid={`input-team-monthly-limit-${team.teamName}`} />
                   </label>
                   <Button size="sm" variant="outline" onClick={() => saveNumber(teamKey, (value) => updateTeam.mutate({ teamName: team.teamName, data: { monthlyLimitUsd: value } }))} data-testid={`button-save-team-limit-${team.teamName}`}><Save className="mr-1.5 h-4 w-4" />Save</Button>
                   <Button size="sm" variant="ghost" onClick={() => updateTeam.mutate({ teamName: team.teamName, data: { monthlyLimitUsd: null } })} data-testid={`button-reset-team-limit-${team.teamName}`}><RotateCcw className="mr-1.5 h-4 w-4" />Reset to ÷12</Button>
@@ -488,7 +597,7 @@ export default function TeamBudgets() {
       <Card className="overflow-hidden shadow-sm">
         <CardHeader className="border-b bg-muted/30">
           <CardTitle className="text-lg">Annual allocation history</CardTitle>
-          <CardDescription>Approved Airtable adjustments by submission period. Account delegates can view this history; only true account admins manage upstream limits.</CardDescription>
+          <CardDescription>Admin-managed baseline plus approved Airtable adjustments by submission period. Press Enter to save an allocation or Escape to cancel. Account delegates have read-only access.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {historyQuery.isLoading ? <div className="space-y-4 p-6"><Skeleton className="h-10 w-full" /><Skeleton className="h-16 w-full" /></div> : teams.length === 0 ? (
@@ -497,29 +606,105 @@ export default function TeamBudgets() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-max text-sm" data-testid="table-team-budget-history">
                 <thead className="bg-muted/30 text-xs uppercase text-muted-foreground">
-                  <tr><th className="px-6 py-4 text-left">Team</th><th className="px-6 py-4 text-right">Original allocation</th>{periods.map((period) => <th key={period} className="px-6 py-4 text-right">{formatPeriod(period)}</th>)}<th className="px-6 py-4 text-right">Annual allocation</th></tr>
+                  <tr><th className="px-6 py-4 text-left">Team</th><th className="px-6 py-4 text-right">Baseline allocation</th>{periods.map((period) => <th key={period} className="px-6 py-4 text-right">{formatPeriod(period)}</th>)}<th className="px-6 py-4 text-right">Annual allocation</th>{canManage && <th className="px-6 py-4 text-right">Visibility</th>}</tr>
                 </thead>
                 <tbody>
                   {teams.map((team) => (
-                    <tr key={team.teamName} className="border-t">
-                      <th className="px-6 py-4 text-left font-medium">{formatTeamName(team.teamName)}</th>
-                      <td className="px-6 py-4 text-right tabular-nums">{currency.format(team.originalAmountUsd)}</td>
+                    <tr key={team.teamName} className={`border-t ${displayHidden(team) ? 'bg-muted/30 text-muted-foreground' : ''}`}>
+                      <th className="px-6 py-4 text-left font-medium">{formatTeamName(team.teamName)}{displayHidden(team) && <Badge variant="secondary" className="ml-2">Hidden</Badge>}</th>
+                      <td className="px-6 py-4 text-right tabular-nums">
+                        {canManage ? (
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="ml-auto w-36 bg-background text-right"
+                            value={allocationDrafts[team.teamName] ?? String(displayAllocation(team))}
+                            onFocus={() => setAllocationDrafts((old) => ({ ...old, [team.teamName]: String(displayAllocation(team)) }))}
+                            onChange={(event) => setAllocationDrafts((old) => ({ ...old, [team.teamName]: event.target.value }))}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                saveAllocation(team);
+                              } else if (event.key === 'Escape') {
+                                event.preventDefault();
+                                cancelAllocationEdit(team.teamName);
+                                event.currentTarget.blur();
+                              }
+                            }}
+                            disabled={updateAllocation.isPending}
+                            aria-label={`Annual baseline allocation for ${formatTeamName(team.teamName)}`}
+                            data-testid={`input-team-annual-allocation-${team.teamName}`}
+                          />
+                        ) : currency.format(displayAllocation(team))}
+                      </td>
                       {periods.map((period) => {
                         const adjustments = team.adjustments.filter((item) => item.submissionPeriod === period);
                         return <td key={period} className="px-6 py-4 text-right tabular-nums">{adjustments.length ? adjustments.map((item) => <div key={item.recordId}>{formatAdjustment(item.amountUsd)}</div>) : '—'}</td>;
                       })}
-                      <td className="px-6 py-4 text-right font-bold tabular-nums">{currency.format(team.annualAllocationUsd)}</td>
+                      <td className="px-6 py-4 text-right font-bold tabular-nums">{currency.format(displayAnnualTotal(team))}</td>
+                      {canManage && (
+                        <td className="px-6 py-4 text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => toggleVisibility(team)}
+                            disabled={updateVisibility.isPending}
+                            data-testid={`button-toggle-team-visibility-${team.teamName}`}
+                          >
+                            {displayHidden(team) ? <Eye className="mr-1.5 h-4 w-4" /> : <EyeOff className="mr-1.5 h-4 w-4" />}
+                            {displayHidden(team) ? 'Show' : 'Hide'}
+                          </Button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="border-t-2 bg-muted/40 font-bold">
-                  <tr><th className="px-6 py-4 text-left">Total</th><td className="px-6 py-4 text-right">{currency.format(totals.original)}</td><td className="px-6 py-4 text-right" colSpan={periods.length + 1}>{currency.format(totals.effective)}</td></tr>
+                  <tr><th className="px-6 py-4 text-left">Total</th><td className="px-6 py-4 text-right">{currency.format(totals.original)}</td><td className="px-6 py-4 text-right" colSpan={periods.length + 1 + (canManage ? 1 : 0)}>{currency.format(totals.effective)}</td></tr>
                 </tfoot>
               </table>
             </div>
           )}
         </CardContent>
       </Card>
+
+      {canManage && (
+        <Card className="overflow-hidden shadow-sm">
+          <CardHeader className="border-b bg-muted/30">
+            <CardTitle className="text-lg">Administrator change history</CardTitle>
+            <CardDescription>Allocation and visibility changes are recorded newest first.</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            {auditQuery.isLoading ? <div className="p-6"><Skeleton className="h-20 w-full" /></div> : (auditQuery.data?.changes.length ?? 0) === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">No administrator changes recorded yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm" data-testid="table-team-allocation-audit">
+                  <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">
+                    <tr><th className="px-5 py-3">When</th><th className="px-5 py-3">Team</th><th className="px-5 py-3">Field</th><th className="px-5 py-3">Change</th><th className="px-5 py-3">Actor</th></tr>
+                  </thead>
+                  <tbody>
+                    {auditQuery.data?.changes.map((change) => (
+                      <tr key={change.id} className="border-t">
+                        <td className="px-5 py-4 whitespace-nowrap">{new Date(change.timestamp).toLocaleString()}</td>
+                        <td className="px-5 py-4 font-medium">{formatTeamName(change.teamName)}</td>
+                        <td className="px-5 py-4">{change.field === 'annualAllocationUsd' ? 'Baseline allocation' : 'Visibility'}</td>
+                        <td className="px-5 py-4 tabular-nums">
+                          {change.field === 'annualAllocationUsd'
+                            ? `${currency.format(Number(change.oldValue))} → ${currency.format(Number(change.newValue))}`
+                            : `${change.oldValue ? 'Hidden' : 'Visible'} → ${change.newValue ? 'Hidden' : 'Visible'}`}
+                        </td>
+                        <td className="px-5 py-4 font-mono text-xs">{change.actor}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Dialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !applyLimits.isPending) setConfirmation(null); }}>
         <DialogContent data-testid="dialog-confirm-apply-limits">

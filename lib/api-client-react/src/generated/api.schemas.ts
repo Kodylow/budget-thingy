@@ -631,6 +631,7 @@ export interface TeamBudgetHistoryTeam {
   annualAllocationUsd: number;
   monthlyLimitUsd: number;
   monthlyLimitSource: TeamBudgetHistoryTeamMonthlyLimitSource;
+  isHidden: boolean;
   adjustments: TeamBudgetAdjustment[];
 }
 
@@ -654,6 +655,37 @@ export interface TeamBudgetMatchIssue {
 export interface TeamBudgetHistoryResponse {
   teams: TeamBudgetHistoryTeam[];
   issues: TeamBudgetMatchIssue[];
+}
+
+export interface TeamAnnualAllocationUpdate {
+  /** @minimum 0 */
+  annualAllocationUsd: number;
+}
+
+export interface TeamVisibilityUpdate {
+  isHidden: boolean;
+}
+
+export type TeamAllocationAuditField = typeof TeamAllocationAuditField[keyof typeof TeamAllocationAuditField];
+
+
+export const TeamAllocationAuditField = {
+  annualAllocationUsd: 'annualAllocationUsd',
+  isHidden: 'isHidden',
+} as const;
+
+export interface TeamAllocationAudit {
+  id: number;
+  teamName: string;
+  field: TeamAllocationAuditField;
+  oldValue: number | boolean;
+  newValue: number | boolean;
+  actor: string;
+  timestamp: string;
+}
+
+export interface TeamAllocationAuditResponse {
+  changes: TeamAllocationAudit[];
 }
 
 export type TeamBudgetSyncStatusSourceTable = typeof TeamBudgetSyncStatusSourceTable[keyof typeof TeamBudgetSyncStatusSourceTable];
@@ -1383,6 +1415,7 @@ export type ListAlertsParams = {
  */
 limit?: number;
 };
+
 export type ListRecentUsageIngestRunsParams = {
 /**
  * @minimum 1

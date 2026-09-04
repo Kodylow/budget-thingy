@@ -6,8 +6,10 @@ import {
   integer,
   primaryKey,
   uniqueIndex,
+  index,
   unique,
   boolean,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -62,6 +64,28 @@ export const teamBudgetsTable = pgTable("team_budgets", {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+export const teamBudgetAllocationAuditsTable = pgTable(
+  "team_budget_allocation_audits",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    teamName: text("team_name").notNull(),
+    field: text("field")
+      .$type<"annualAllocationUsd" | "isHidden">()
+      .notNull(),
+    oldValue: jsonb("old_value").$type<number | boolean>().notNull(),
+    newValue: jsonb("new_value").$type<number | boolean>().notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("team_budget_allocation_audits_team_created_idx").on(
+      table.teamName,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
 
 export const teamBudgetUpstreamSyncTable = pgTable(
   "team_budget_upstream_sync",
@@ -127,6 +151,8 @@ export const insertTeamBudgetSchema = createInsertSchema(teamBudgetsTable).omit(
 });
 export type InsertTeamBudget = z.infer<typeof insertTeamBudgetSchema>;
 export type TeamBudget = typeof teamBudgetsTable.$inferSelect;
+export type TeamBudgetAllocationAudit =
+  typeof teamBudgetAllocationAuditsTable.$inferSelect;
 export type TeamBudgetUpstreamSync =
   typeof teamBudgetUpstreamSyncTable.$inferSelect;
 

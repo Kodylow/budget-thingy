@@ -8,6 +8,7 @@ import {
   apiProjectMetadataTable,
   teamLimitTargetsTable,
   teamBudgetAdjustmentsTable,
+  teamBudgetAllocationAuditsTable,
   teamBudgetsTable,
   usageMemberDayTable,
   usageProjectDayTable,
@@ -114,6 +115,10 @@ beforeAll(async () => {
   await db.delete(teamBudgetAdjustmentsTable).where(inArray(
     teamBudgetAdjustmentsTable.sourceRecordId,
     [`${PREFIX}-assigned`, `${PREFIX}-budget-only`, `${PREFIX}-hidden`],
+  ));
+  await db.delete(teamBudgetAllocationAuditsTable).where(inArray(
+    teamBudgetAllocationAuditsTable.teamName,
+    [ASSIGNED, BUDGET_ONLY, ORIGINAL_ONLY, HIDDEN],
   ));
   await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, [
     ASSIGNED,
@@ -294,6 +299,10 @@ afterAll(async () => {
     teamBudgetAdjustmentsTable.sourceRecordId,
     [`${PREFIX}-assigned`, `${PREFIX}-budget-only`, `${PREFIX}-hidden`],
   ));
+  await db.delete(teamBudgetAllocationAuditsTable).where(inArray(
+    teamBudgetAllocationAuditsTable.teamName,
+    [ASSIGNED, BUDGET_ONLY, ORIGINAL_ONLY, HIDDEN],
+  ));
   await db.delete(teamLimitTargetsTable).where(eq(teamLimitTargetsTable.groupId, GROUP_ID));
   await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, [
     ASSIGNED,
@@ -342,10 +351,16 @@ test("sync status identifies the approval-only Finance Approval feed", async () 
   expect(json.requiredApprovalStatus).toBe("Approved");
 });
 
-test("history orders months and excludes hidden teams while retaining separate records", async () => {
+test("history orders months and exposes hidden teams only to true admins", async () => {
   const { status, json } = await request("/admin/team-budgets/history", "task158-account");
   expect(status).toBe(200);
-  expect(!json.teams.some((team) => team.teamName === HIDDEN)).toBeTruthy();
+  expect(json.teams.find((team) => team.teamName === HIDDEN)).toMatchObject({
+    isHidden: true,
+    originalAmountUsd: 1000,
+  });
+  const delegate = await request("/admin/team-budgets/history", "task158-delegate");
+  expect(delegate.status).toBe(200);
+  expect(delegate.json.teams.some((team) => team.teamName === HIDDEN)).toBe(false);
 
   const assigned = json.teams.find((team) => team.teamName === ASSIGNED);
   const budgetOnly = json.teams.find((team) => team.teamName === BUDGET_ONLY);
@@ -357,6 +372,81 @@ test("history orders months and excludes hidden teams while retaining separate r
   });
   expect(assigned.adjustments.map((row) => row.submissionPeriod)).toEqual(["2026-01"]);
   expect(budgetOnly.effectiveAmountUsd).toBe(60);
+});
+
+test("true admins atomically edit annual allocations and visibility with newest-first audit", async () => {
+  const allocationPath =
+    `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/allocation`;
+  const visibilityPath =
+    `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/visibility`;
+
+  expect((await request(allocationPath, "task158-delegate", "PATCH", {
+    annualAllocationUsd: 240,
+  })).status).toBe(403);
+  expect((await request(allocationPath, "task158-account", "PATCH", {
+    annualAllocationUsd: -1,
+  })).status).toBe(400);
+  expect((await request(allocationPath, "task158-account", "PATCH", {
+    annualAllocationUsd: 240,
+    unexpected: true,
+  })).status).toBe(400);
+
+  const allocation = await request(allocationPath, "task158-account", "PATCH", {
+    annualAllocationUsd: 240,
+  });
+  expect(allocation.status).toBe(200);
+  expect(allocation.json).toMatchObject({
+    originalAmountUsd: 240,
+    effectiveAmountUsd: 265,
+    annualAllocationUsd: 265,
+    monthlyLimitUsd: 22.08,
+    isHidden: false,
+  });
+
+  const visibility = await request(visibilityPath, "task158-account", "PATCH", {
+    isHidden: true,
+  });
+  expect(visibility.status).toBe(200);
+  expect(visibility.json.isHidden).toBe(true);
+
+  const audit = await request("/admin/team-budgets/audit", "task158-account");
+  expect(audit.status).toBe(200);
+  expect(audit.json.changes.filter((change) => change.teamName === ASSIGNED).slice(0, 2))
+    .toEqual([
+      expect.objectContaining({
+        field: "isHidden",
+        oldValue: false,
+        newValue: true,
+        actor: "task158-account",
+      }),
+      expect.objectContaining({
+        field: "annualAllocationUsd",
+        oldValue: 100,
+        newValue: 240,
+        actor: "task158-account",
+      }),
+    ]);
+  expect((await request("/admin/team-budgets/audit", "task158-delegate")).status).toBe(403);
+
+  const concurrent = await Promise.all([
+    request(allocationPath, "task158-account", "PATCH", { annualAllocationUsd: 300 }),
+    request(allocationPath, "task158-account", "PATCH", { annualAllocationUsd: 400 }),
+  ]);
+  expect(concurrent.map((response) => response.status)).toEqual([200, 200]);
+  const concurrentAudit = await request("/admin/team-budgets/audit", "task158-account");
+  const allocationChanges = concurrentAudit.json.changes
+    .filter((change) =>
+      change.teamName === ASSIGNED && change.field === "annualAllocationUsd"
+    )
+    .slice(0, 2);
+  expect(allocationChanges[1].oldValue).toBe(240);
+  expect(allocationChanges[0].oldValue).toBe(allocationChanges[1].newValue);
+  expect(new Set(allocationChanges.map((change) => change.newValue))).toEqual(
+    new Set([300, 400]),
+  );
+
+  await request(visibilityPath, "task158-account", "PATCH", { isHidden: false });
+  await request(allocationPath, "task158-account", "PATCH", { annualAllocationUsd: 100 });
 });
 
 test("effective totals agree across pool, group, and summary surfaces", async () => {

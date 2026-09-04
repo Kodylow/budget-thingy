@@ -148,6 +148,13 @@
       "when": 1788561000000,
       "tag": "0020_team_monthly_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788562000000,
+      "tag": "0021_team_allocation_audits",
+      "breakpoints": true
     }
   ]
 }

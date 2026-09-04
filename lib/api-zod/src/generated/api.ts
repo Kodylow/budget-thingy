@@ -707,6 +707,7 @@ export const GetTeamBudgetHistoryResponse = zod.object({
   "annualAllocationUsd": zod.number(),
   "monthlyLimitUsd": zod.number(),
   "monthlyLimitSource": zod.enum(['derived', 'manual']),
+  "isHidden": zod.boolean(),
   "adjustments": zod.array(zod.object({
   "recordId": zod.string(),
   "amountUsd": zod.number(),
@@ -718,6 +719,89 @@ export const GetTeamBudgetHistoryResponse = zod.object({
   "sourceTeamName": zod.string().nullable(),
   "matchState": zod.enum(['unmatched', 'invalid']),
   "error": zod.string().nullable()
+}))
+})
+
+
+/**
+ * True-account-admin-only. Returns allocation administration changes newest first.
+ * @summary List annual allocation and visibility changes
+ */
+export const GetTeamAllocationAuditResponse = zod.object({
+  "changes": zod.array(zod.object({
+  "id": zod.number(),
+  "teamName": zod.string(),
+  "field": zod.enum(['annualAllocationUsd', 'isHidden']),
+  "oldValue": zod.union([zod.number(),zod.boolean()]),
+  "newValue": zod.union([zod.number(),zod.boolean()]),
+  "actor": zod.string(),
+  "timestamp": zod.coerce.date()
+}))
+})
+
+
+/**
+ * True-account-admin-only. Updates the durable baseline without writing any upstream limit.
+ * @summary Update a team's annual baseline allocation
+ */
+export const UpdateTeamAnnualAllocationParams = zod.object({
+  "teamName": zod.coerce.string().describe('URL-encoded team name (spaces as %20)')
+})
+
+export const updateTeamAnnualAllocationBodyAnnualAllocationUsdMin = 0;
+
+
+
+export const UpdateTeamAnnualAllocationBody = zod.object({
+  "annualAllocationUsd": zod.number().min(updateTeamAnnualAllocationBodyAnnualAllocationUsdMin)
+})
+
+export const updateTeamAnnualAllocationResponseAdjustmentsItemSubmissionPeriodRegExp = new RegExp('^\\d{4}-(0[1-9]|1[0-2])$');
+
+
+export const UpdateTeamAnnualAllocationResponse = zod.object({
+  "teamName": zod.string(),
+  "originalAmountUsd": zod.number(),
+  "effectiveAmountUsd": zod.number(),
+  "annualAllocationUsd": zod.number(),
+  "monthlyLimitUsd": zod.number(),
+  "monthlyLimitSource": zod.enum(['derived', 'manual']),
+  "isHidden": zod.boolean(),
+  "adjustments": zod.array(zod.object({
+  "recordId": zod.string(),
+  "amountUsd": zod.number(),
+  "submissionPeriod": zod.string().regex(updateTeamAnnualAllocationResponseAdjustmentsItemSubmissionPeriodRegExp)
+}))
+})
+
+
+/**
+ * True-account-admin-only. Hidden teams remain visible to true admins for management.
+ * @summary Hide or show a team
+ */
+export const UpdateTeamVisibilityParams = zod.object({
+  "teamName": zod.coerce.string().describe('URL-encoded team name (spaces as %20)')
+})
+
+export const UpdateTeamVisibilityBody = zod.object({
+  "isHidden": zod.boolean()
+})
+
+export const updateTeamVisibilityResponseAdjustmentsItemSubmissionPeriodRegExp = new RegExp('^\\d{4}-(0[1-9]|1[0-2])$');
+
+
+export const UpdateTeamVisibilityResponse = zod.object({
+  "teamName": zod.string(),
+  "originalAmountUsd": zod.number(),
+  "effectiveAmountUsd": zod.number(),
+  "annualAllocationUsd": zod.number(),
+  "monthlyLimitUsd": zod.number(),
+  "monthlyLimitSource": zod.enum(['derived', 'manual']),
+  "isHidden": zod.boolean(),
+  "adjustments": zod.array(zod.object({
+  "recordId": zod.string(),
+  "amountUsd": zod.number(),
+  "submissionPeriod": zod.string().regex(updateTeamVisibilityResponseAdjustmentsItemSubmissionPeriodRegExp)
 }))
 })
 
@@ -782,11 +866,8 @@ export const RetryTeamBudgetUpstreamSyncResponse = zod.object({
  * True-account-admin-only. A number sets a persistent manual limit; null resets the limit to the derived annual allocation divided by twelve.
  * @summary Set or reset a team's monthly upstream limit
  */
-
-
-
 export const UpdateTeamBudgetLimitParams = zod.object({
-  "teamName": zod.coerce.string().min(1)
+  "teamName": zod.coerce.string().describe('URL-encoded team name (spaces as %20)')
 })
 
 export const updateTeamBudgetLimitBodyMonthlyLimitUsdMin = 0;
@@ -807,6 +888,7 @@ export const UpdateTeamBudgetLimitResponse = zod.object({
   "annualAllocationUsd": zod.number(),
   "monthlyLimitUsd": zod.number(),
   "monthlyLimitSource": zod.enum(['derived', 'manual']),
+  "isHidden": zod.boolean(),
   "adjustments": zod.array(zod.object({
   "recordId": zod.string(),
   "amountUsd": zod.number(),

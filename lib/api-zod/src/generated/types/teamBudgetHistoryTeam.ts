@@ -15,5 +15,6 @@ export interface TeamBudgetHistoryTeam {
   annualAllocationUsd: number;
   monthlyLimitUsd: number;
   monthlyLimitSource: TeamBudgetHistoryTeamMonthlyLimitSource;
+  isHidden: boolean;
   adjustments: TeamBudgetAdjustment[];
 }

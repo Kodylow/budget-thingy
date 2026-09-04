@@ -47,6 +47,13 @@ import {
   DeleteEditorResponse,
   ListDirectoryGroupsResponse,
   GetTeamBudgetHistoryResponse,
+  GetTeamAllocationAuditResponse,
+  UpdateTeamAnnualAllocationParams,
+  UpdateTeamAnnualAllocationBody,
+  UpdateTeamAnnualAllocationResponse,
+  UpdateTeamVisibilityParams,
+  UpdateTeamVisibilityBody,
+  UpdateTeamVisibilityResponse,
   GetTeamBudgetSyncStatusResponse,
   RetryTeamBudgetUpstreamSyncResponse,
   RefreshTeamBudgetsResponse,
@@ -103,6 +110,7 @@ import {
 } from "../middlewares/requireAuth";
 import {
   canSeeGroup,
+  isAccountAdmin,
   isApplicationAdmin,
   isAccountWide,
   isAdminRole,
@@ -122,6 +130,9 @@ import {
   queueTeamBudgetUpstreamReconciliation,
   refreshTeamBudgetSnapshot,
   updateTeamMonthlyLimit,
+  updateTeamAnnualAllocation,
+  updateTeamVisibility,
+  getTeamAllocationAudits,
   updateTeamLimitTargetOverride,
   updateLegacyWorkspaceLimit,
   TEAM_BUDGET_REQUIRED_APPROVAL_STATUS,
@@ -1344,25 +1355,40 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
   );
 });
 
-router.get("/admin/team-budgets/history", requireAccountAdmin, async (_req, res): Promise<void> => {
+function serializeTeamBudgetHistoryTeam(
+  team: Awaited<ReturnType<typeof getEffectiveTeamBudgets>>["teams"][number],
+  adjustments: Awaited<ReturnType<typeof getEffectiveTeamBudgets>>["adjustments"],
+) {
+  return {
+    teamName: team.teamName,
+    originalAmountUsd: team.originalAmountUsd,
+    effectiveAmountUsd: team.effectiveAmountUsd,
+    annualAllocationUsd: team.annualAllocationUsd,
+    monthlyLimitUsd: team.monthlyLimitUsd,
+    monthlyLimitSource: team.monthlyLimitSource,
+    isHidden: team.isHidden,
+    adjustments: adjustments
+      .filter((adjustment) =>
+        adjustment.teamName === team.teamName &&
+        adjustment.matchState === "accepted"
+      )
+      .map((adjustment) => ({
+        recordId: adjustment.sourceRecordId,
+        amountUsd: adjustment.amountUsd!,
+        submissionPeriod: adjustment.submissionPeriod!,
+      })),
+  };
+}
+
+router.get("/admin/team-budgets/history", requireAccountAdmin, async (req, res): Promise<void> => {
   const snapshot = await getEffectiveTeamBudgets();
-  const visible = snapshot.teams.filter((team) => !team.isHidden);
+  const visible = isAccountAdmin(req.authz)
+    ? snapshot.teams
+    : snapshot.teams.filter((team) => !team.isHidden);
   res.json(GetTeamBudgetHistoryResponse.parse({
-    teams: visible.map((team) => ({
-      teamName: team.teamName,
-      originalAmountUsd: team.originalAmountUsd,
-      effectiveAmountUsd: team.effectiveAmountUsd,
-      annualAllocationUsd: team.annualAllocationUsd,
-      monthlyLimitUsd: team.monthlyLimitUsd,
-      monthlyLimitSource: team.monthlyLimitSource,
-      adjustments: snapshot.adjustments
-        .filter((adjustment) => adjustment.teamName === team.teamName && adjustment.matchState === "accepted")
-        .map((adjustment) => ({
-          recordId: adjustment.sourceRecordId,
-          amountUsd: adjustment.amountUsd!,
-          submissionPeriod: adjustment.submissionPeriod!,
-        })),
-    })),
+    teams: visible.map((team) =>
+      serializeTeamBudgetHistoryTeam(team, snapshot.adjustments)
+    ),
     issues: snapshot.adjustments
       .filter((adjustment) => adjustment.matchState !== "accepted")
       .map((adjustment) => ({
@@ -1373,6 +1399,105 @@ router.get("/admin/team-budgets/history", requireAccountAdmin, async (_req, res)
       })),
   }));
 });
+
+router.get(
+  "/admin/team-budgets/audit",
+  requireTrueAccountAdmin,
+  async (_req, res): Promise<void> => {
+    const changes = await getTeamAllocationAudits();
+    res.json(GetTeamAllocationAuditResponse.parse({
+      changes: changes.map((change) => ({
+        id: change.id,
+        teamName: change.teamName,
+        field: change.field,
+        oldValue: change.oldValue,
+        newValue: change.newValue,
+        actor: change.actorUserId,
+        timestamp: change.createdAt,
+      })),
+    }));
+  },
+);
+
+router.patch(
+  "/admin/team-budgets/:teamName/allocation",
+  requireTrueAccountAdmin,
+  async (req, res): Promise<void> => {
+    const params = UpdateTeamAnnualAllocationParams.safeParse(req.params);
+    const body = UpdateTeamAnnualAllocationBody.safeParse(req.body);
+    const bodyKeys = req.body && typeof req.body === "object"
+      ? Object.keys(req.body as Record<string, unknown>)
+      : [];
+    if (
+      !params.success ||
+      !body.success ||
+      bodyKeys.length !== 1 ||
+      bodyKeys[0] !== "annualAllocationUsd"
+    ) {
+      res.status(400).json({
+        error: !params.success
+          ? params.error.message
+          : !body.success
+            ? body.error.message
+            : "Body must contain only annualAllocationUsd",
+      });
+      return;
+    }
+    const team = await updateTeamAnnualAllocation(
+      params.data.teamName,
+      body.data.annualAllocationUsd,
+      req.user!.id,
+    );
+    if (!team) {
+      res.status(404).json({ error: "Team not found" });
+      return;
+    }
+    const snapshot = await getEffectiveTeamBudgets();
+    res.json(UpdateTeamAnnualAllocationResponse.parse(
+      serializeTeamBudgetHistoryTeam(team, snapshot.adjustments),
+    ));
+  },
+);
+
+router.patch(
+  "/admin/team-budgets/:teamName/visibility",
+  requireTrueAccountAdmin,
+  async (req, res): Promise<void> => {
+    const params = UpdateTeamVisibilityParams.safeParse(req.params);
+    const body = UpdateTeamVisibilityBody.safeParse(req.body);
+    const bodyKeys = req.body && typeof req.body === "object"
+      ? Object.keys(req.body as Record<string, unknown>)
+      : [];
+    if (
+      !params.success ||
+      !body.success ||
+      bodyKeys.length !== 1 ||
+      bodyKeys[0] !== "isHidden"
+    ) {
+      res.status(400).json({
+        error: !params.success
+          ? params.error.message
+          : !body.success
+            ? body.error.message
+            : "Body must contain only isHidden",
+      });
+      return;
+    }
+    const team = await updateTeamVisibility(
+      params.data.teamName,
+      body.data.isHidden,
+      req.user!.id,
+    );
+    if (!team) {
+      res.status(404).json({ error: "Team not found" });
+      return;
+    }
+    const snapshot = await getEffectiveTeamBudgets();
+    res.json(UpdateTeamVisibilityResponse.parse(
+      serializeTeamBudgetHistoryTeam(team, snapshot.adjustments),
+    ));
+  },
+);
 
 async function buildTeamBudgetSyncStatus() {
   const [{ sync }, teams] = await Promise.all([
@@ -1451,24 +1576,9 @@ router.patch(
       return;
     }
     const snapshot = await getEffectiveTeamBudgets();
-    res.json(UpdateTeamBudgetLimitResponse.parse({
-      teamName: team.teamName,
-      originalAmountUsd: team.originalAmountUsd,
-      effectiveAmountUsd: team.effectiveAmountUsd,
-      annualAllocationUsd: team.annualAllocationUsd,
-      monthlyLimitUsd: team.monthlyLimitUsd,
-      monthlyLimitSource: team.monthlyLimitSource,
-      adjustments: snapshot.adjustments
-        .filter((adjustment) =>
-          adjustment.teamName === team.teamName &&
-          adjustment.matchState === "accepted"
-        )
-        .map((adjustment) => ({
-          recordId: adjustment.sourceRecordId,
-          amountUsd: adjustment.amountUsd!,
-          submissionPeriod: adjustment.submissionPeriod!,
-        })),
-    }));
+    res.json(UpdateTeamBudgetLimitResponse.parse(
+      serializeTeamBudgetHistoryTeam(team, snapshot.adjustments),
+    ));
   },
 );
 

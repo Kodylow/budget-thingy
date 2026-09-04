@@ -97,7 +97,7 @@ describe("annual allocation seed", () => {
       ]));
       expect(preservedFinance).toMatchObject({
         amountUsd: 12345.67,
-        originalAmountUsd: 140525.76,
+        originalAmountUsd: 1,
         isHidden: true,
       });
     } finally {
