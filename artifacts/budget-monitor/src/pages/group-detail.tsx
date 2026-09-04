@@ -30,7 +30,7 @@ import { indexMemberBudgets } from '@/lib/member-budgets';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 import { InternalSpendExplanation, InternalUserBadge } from '@/components/internal-user-badge';
 
-export default function GroupDetail() {
+function useGroupDetailModel() {
   const [match, params] = useRoute('/groups/:groupId');
   const groupId = params?.groupId || '';
 
@@ -91,44 +91,80 @@ export default function GroupDetail() {
 
   const groupPolicy = useMemo(() => {
     if (!workspacePoliciesQuery.data) return null;
-    return workspacePoliciesQuery.data.groups.find(g => g.groupId === groupId) ?? null;
+    return workspacePoliciesQuery.data.groups?.find(g => g.groupId === groupId) ?? null;
   }, [workspacePoliciesQuery.data, groupId]);
 
-  if (isError || (!groupId && !isLoading)) {
-    return (
-      <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="group-detail-unavailable">
-        <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+  return {
+    canWriteUserLimits,
+    data,
+    groupId,
+    groupPolicy,
+    isError,
+    isLoading,
+    projectsData,
+    workspaceId,
+    workspaceMembersMap,
+    workspaceMembersQuery,
+  };
+}
+
+function GroupDetailUnavailable() {
+  return (
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="group-detail-unavailable">
+      <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+        <ChevronLeft className="h-4 w-4" /> Back to Dashboard
+      </Link>
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+          <AlertCircle className="h-8 w-8 text-muted-foreground" />
+          <h1 className="text-xl font-semibold">Group unavailable</h1>
+          <p className="max-w-lg text-sm text-muted-foreground">
+            This group does not exist or is outside your authorized account scope.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function GroupDetailLoading() {
+  return (
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+      <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+        <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
           <ChevronLeft className="h-4 w-4" /> Back to Dashboard
         </Link>
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <AlertCircle className="h-8 w-8 text-muted-foreground" />
-            <h1 className="text-xl font-semibold">Group unavailable</h1>
-            <p className="max-w-lg text-sm text-muted-foreground">
-              This group does not exist or is outside your authorized account scope.
-            </p>
-          </CardContent>
-        </Card>
       </div>
-    );
-  }
+      <div className="h-10 w-64 bg-muted animate-pulse-glow rounded" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+        {[1,2,3,4].map(i => <div key={i} className="h-28 bg-muted animate-pulse-glow rounded" />)}
+      </div>
+      <div className="h-64 bg-muted animate-pulse-glow rounded mt-8" />
+    </div>
+  );
+}
 
-  if (!data) {
-    return (
-      <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
-        <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
-          <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
-            <ChevronLeft className="h-4 w-4" /> Back to Dashboard
-          </Link>
-        </div>
-        <div className="h-10 w-64 bg-muted animate-pulse-glow rounded" />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-          {[1,2,3,4].map(i => <div key={i} className="h-28 bg-muted animate-pulse-glow rounded" />)}
-        </div>
-        <div className="h-64 bg-muted animate-pulse-glow rounded mt-8" />
-      </div>
-    );
-  }
+export default function GroupDetail() {
+  const model = useGroupDetailModel();
+
+  if (model.isError || (!model.groupId && !model.isLoading)) return <GroupDetailUnavailable />;
+  if (!model.data) return <GroupDetailLoading />;
+  return renderGroupDetailContent(model, model.data);
+}
+
+function renderGroupDetailContent(
+  model: ReturnType<typeof useGroupDetailModel>,
+  data: NonNullable<ReturnType<typeof useGroupDetailModel>['data']>,
+) {
+  const {
+    canWriteUserLimits,
+    groupId,
+    groupPolicy,
+    projectsData,
+    workspaceId,
+    workspaceMembersMap,
+    workspaceMembersQuery,
+  } = model;
 
   const { group, members, membersSpendUsd, unattributedSpendUsd, rangeLabel } = data;
   // Use member-deduped rollup spend as the primary display — matches the dashboard row.
@@ -373,7 +409,7 @@ export default function GroupDetail() {
                         <span className="text-xs text-muted-foreground">No project ID, missing creator, or creator no longer a member</span>
                       </div>
                     </td>
-                    <td className="py-3 px-4" /> {/* Status */}
+                    <td className="py-3 px-4" />
                     <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
                     <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
                     <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
@@ -388,7 +424,7 @@ export default function GroupDetail() {
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
                   <td className="py-3 px-4 text-sm">Group Total</td>
-                  <td className="py-3 px-4" /> {/* Status */}
+                  <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
                       —

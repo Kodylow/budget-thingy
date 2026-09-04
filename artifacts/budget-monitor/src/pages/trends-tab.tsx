@@ -5,6 +5,7 @@ import {
   useGetUserActivity,
   useGetTrends,
   type GetTrendsGranularity,
+  type UserActivityEntry,
 } from '@workspace/api-client-react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import {
@@ -130,6 +131,119 @@ function fmtRole(role: string): string {
 
 // ---------- UserActivityCard ----------
 
+function UserActivityRow({
+  user,
+  index,
+  view,
+}: {
+  user: UserActivityEntry;
+  index: number;
+  view: 'spenders' | 'inactive';
+}) {
+  const isInactive = view === 'inactive';
+  return (
+    <tr className="hover:bg-muted/20 transition-colors">
+      {!isInactive && (
+        <td className="px-4 py-2.5 text-muted-foreground tabular-nums text-xs">{index + 1}</td>
+      )}
+      <td className="px-4 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs font-semibold text-muted-foreground shrink-0 uppercase">
+            {user.username.charAt(0)}
+          </div>
+          <div className="min-w-0">
+            <div className="font-medium truncate">{user.username}</div>
+            {user.isInternal && <InternalUserBadge compact />}
+            <div className="text-xs text-muted-foreground truncate">{user.email}</div>
+          </div>
+        </div>
+      </td>
+      <td className="px-4 py-2.5 hidden sm:table-cell">
+        {user.teamName || user.groupName ? (
+          <span className="text-muted-foreground text-xs">
+            {user.teamName && <span className="font-medium text-foreground">{user.teamName}</span>}
+            {user.teamName && user.groupName && <span className="mx-1 text-muted-foreground">→</span>}
+            {user.groupName && <span>{user.groupName}</span>}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground italic">Unassigned</span>
+        )}
+      </td>
+      {isInactive ? (
+        <>
+          <td className="px-4 py-2.5 hidden md:table-cell text-xs text-muted-foreground">
+            {fmtRole(user.workspaceRole)}
+          </td>
+          <td className="px-4 py-2.5 text-right">
+            <Badge variant="secondary" className="text-xs">No spend recorded</Badge>
+          </td>
+        </>
+      ) : (
+        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
+          <div>{fmtUsd(user.spendUsd)}</div>
+          <div className="text-[10px] font-normal text-muted-foreground">
+            AI {fmtUsd(user.aiSpendUsd)} · Hosting {fmtUsd(user.nonAiSpendUsd)}
+          </div>
+        </td>
+      )}
+    </tr>
+  );
+}
+
+interface UserActivityTableProps {
+  rows: UserActivityEntry[];
+  visibleRows: UserActivityEntry[];
+  view: 'spenders' | 'inactive';
+  visibleCount: number;
+  onShowMore: () => void;
+}
+
+function UserActivityTable({
+  rows,
+  visibleRows,
+  view,
+  visibleCount,
+  onShowMore,
+}: UserActivityTableProps) {
+  const hasMore = rows.length > visibleCount;
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/30">
+              {view === 'spenders' && <th className="px-4 py-2.5 text-left font-medium text-muted-foreground w-10">#</th>}
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">User</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground hidden sm:table-cell">Team → Group</th>
+              <th className={`px-4 py-2.5 font-medium text-muted-foreground ${view === 'inactive' ? 'text-left hidden md:table-cell' : 'text-right'}`}>
+                {view === 'inactive' ? 'Role' : 'Spend'}
+              </th>
+              {view === 'inactive' && <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Status</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {visibleRows.map((user, index) => (
+              <UserActivityRow key={user.userId} user={user} index={index} view={view} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {hasMore && (
+        <div className="flex items-center justify-center px-4 py-3 border-t">
+          <button onClick={onShowMore} className="text-sm text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors">
+            Show more ({rows.length - visibleCount} remaining)
+          </button>
+        </div>
+      )}
+      {!hasMore && rows.length > PAGE_SIZE && (
+        <div className="px-4 py-3 border-t text-xs text-center text-muted-foreground">
+          Showing all {rows.length} {view === 'inactive' ? 'inactive accounts' : 'users'}
+        </div>
+      )}
+    </>
+  );
+}
+
 function UserActivityCard() {
   const { data, isLoading } = useUserActivity();
   const [view, setView] = useState<'spenders' | 'inactive'>('spenders');
@@ -160,7 +274,6 @@ function UserActivityCard() {
 
   const rows = view === 'spenders' ? spenders : inactive;
   const visibleRows = rows.slice(0, visibleCount);
-  const hasMore = rows.length > visibleCount;
 
   return (
     <Card>
@@ -233,106 +346,13 @@ function UserActivityCard() {
             {search ? 'No users match that filter.' : view === 'inactive' ? 'No inactive accounts found.' : 'No spend data yet.'}
           </div>
         ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    {view === 'spenders' && (
-                      <th className="px-4 py-2.5 text-left font-medium text-muted-foreground w-10">#</th>
-                    )}
-                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">User</th>
-                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground hidden sm:table-cell">Team → Group</th>
-                    {view === 'inactive' ? (
-                      <th className="px-4 py-2.5 text-left font-medium text-muted-foreground hidden md:table-cell">Role</th>
-                    ) : (
-                      <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Spend</th>
-                    )}
-                    {view === 'inactive' && (
-                      <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Status</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {visibleRows.map((user, idx) => (
-                    <tr key={user.userId} className="hover:bg-muted/20 transition-colors">
-                      {view === 'spenders' && (
-                        <td className="px-4 py-2.5 text-muted-foreground tabular-nums text-xs">
-                          {idx + 1}
-                        </td>
-                      )}
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2.5">
-                          {/* Avatar */}
-                          <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs font-semibold text-muted-foreground shrink-0 uppercase">
-                            {user.username.charAt(0)}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-medium truncate">{user.username}</div>
-                             {user.isInternal && <InternalUserBadge compact />}
-                            <div className="text-xs text-muted-foreground truncate">{user.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 hidden sm:table-cell">
-                        {user.teamName || user.groupName ? (
-                          <span className="text-muted-foreground text-xs">
-                            {user.teamName && (
-                              <span className="font-medium text-foreground">{user.teamName}</span>
-                            )}
-                            {user.teamName && user.groupName && (
-                              <span className="mx-1 text-muted-foreground">→</span>
-                            )}
-                            {user.groupName && <span>{user.groupName}</span>}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">Unassigned</span>
-                        )}
-                      </td>
-                      {view === 'inactive' ? (
-                        <>
-                          <td className="px-4 py-2.5 hidden md:table-cell text-xs text-muted-foreground">
-                            {fmtRole(user.workspaceRole)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <Badge variant="secondary" className="text-xs">
-                              No spend recorded
-                            </Badge>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
-                            <div>{fmtUsd(user.spendUsd)}</div>
-                            <div className="text-[10px] font-normal text-muted-foreground">
-                              AI {fmtUsd(user.aiSpendUsd)} · Hosting {fmtUsd(user.nonAiSpendUsd)}
-                            </div>
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {hasMore && (
-              <div className="flex items-center justify-center px-4 py-3 border-t">
-                <button
-                  onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-                  className="text-sm text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
-                >
-                  Show more ({rows.length - visibleCount} remaining)
-                </button>
-              </div>
-            )}
-
-            {!hasMore && rows.length > PAGE_SIZE && (
-              <div className="px-4 py-3 border-t text-xs text-center text-muted-foreground">
-                Showing all {rows.length} {view === 'inactive' ? 'inactive accounts' : 'users'}
-              </div>
-            )}
-          </>
+          <UserActivityTable
+            rows={rows}
+            visibleRows={visibleRows}
+            view={view}
+            visibleCount={visibleCount}
+            onShowMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
+          />
         )}
       </CardContent>
     </Card>

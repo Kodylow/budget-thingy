@@ -151,6 +151,60 @@ import {
 
 type DashboardGroup = Group;
 
+function buildRangeQueryParams<T extends string>(
+  rangeType: T,
+  startDate: string | undefined,
+  endDate: string | undefined,
+) {
+  if (rangeType === "custom") return { rangeType, startDate, endDate };
+  return { rangeType };
+}
+
+function selectMemberName(
+  isPreview: boolean,
+  scopedMemberName: string,
+  accountUserName: string,
+) {
+  return isPreview ? scopedMemberName : accountUserName || scopedMemberName;
+}
+
+function selectAccountUserName(
+  firstName: string | null | undefined,
+  lastName: string | null | undefined,
+  email: string | null | undefined,
+) {
+  return (
+    [firstName, lastName].filter(Boolean).join(" ").trim() ||
+    email?.split("@")[0] ||
+    ""
+  );
+}
+
+function selectScopedMemberName(
+  cycleUsername: string | null | undefined,
+  termUsername: string | null | undefined,
+) {
+  return cycleUsername || termUsername || "";
+}
+
+function shouldShowReconciliation(
+  hasSummary: boolean,
+  isAccountWide: boolean,
+  spendUsd: number,
+) {
+  return hasSummary && (isAccountWide || spendUsd > 0);
+}
+
+function selectRangeLabel(
+  rangeSelection: string,
+  groupsBillingPeriodLabel: string | null | undefined,
+  summaryBillingPeriodLabel: string | null | undefined,
+  presetLabel: string,
+) {
+  if (rangeSelection === "full-term") return "May 20, 2026–present";
+  return groupsBillingPeriodLabel ?? summaryBillingPeriodLabel ?? presetLabel;
+}
+
 interface TeamSection {
   workspaceId: string;
   workspaceName: string;
@@ -174,6 +228,590 @@ interface TeamSection {
   families: GroupFamilyHierarchy[];
 }
 
+interface MemberLimit {
+  workspaceName: string;
+  budget: number | null;
+}
+
+interface MemberDashboardViewProps {
+  scopeLabel: string;
+  dashboardTitle: string;
+  cycleSpendUsd: number | null;
+  contractSpendUsd: number | null;
+  isInternal: boolean;
+  limits: MemberLimit[];
+  showLegacyGroups: boolean;
+  onToggleLegacyGroups: () => void;
+  groupsFetching: boolean;
+  groupsLoaded: boolean;
+  hasHierarchy: boolean;
+  familyRows: React.ReactNode;
+}
+
+interface DashboardTitleOptions {
+  role: string | null;
+  workspaceNames: string[];
+  teamNames: string[];
+  memberName: string;
+}
+
+function buildDashboardTitle({
+  role,
+  workspaceNames,
+  teamNames,
+  memberName,
+}: DashboardTitleOptions) {
+  if (role === "workspace_admin") {
+    if (workspaceNames.length === 1) {
+      return `${workspaceNames[0]} Workspace Dashboard`;
+    }
+    return workspaceNames.length > 1
+      ? `${workspaceNames.length} Workspaces Dashboard`
+      : "Workspace Dashboard";
+  }
+  if (role === "team_admin") {
+    if (teamNames.length === 1) return `${teamNames[0]} Group Dashboard`;
+    return teamNames.length > 1
+      ? `${teamNames.length} Groups Dashboard`
+      : "Group Dashboard";
+  }
+  if (role === "member") {
+    if (!memberName) return "My Dashboard";
+    return `${memberName}${memberName.endsWith("s") ? "'" : "'s"} Dashboard`;
+  }
+  return "Comcast Account Dashboard";
+}
+
+interface DashboardSummaryLike {
+  totalSpendUsd: number;
+  totalBudgetUsd: number;
+  totalRemainingUsd?: number | null;
+  budgetedGroups?: number;
+  groupsOver75: number;
+  groupsOver100?: number;
+  alertsSentThisPeriod: number;
+  billingPeriodLabel?: string | null;
+}
+
+interface GroupsDataLike {
+  billingPeriodLabel?: string | null;
+}
+
+function buildStatCards(
+  summary: DashboardSummaryLike | undefined,
+  groupsData: GroupsDataLike | undefined,
+  role: string | null,
+) {
+  const cards = [
+    {
+      title: "Total Spend",
+      value: summary ? `$${summary.totalSpendUsd.toFixed(2)}` : "—",
+      description:
+        summary?.billingPeriodLabel ??
+        groupsData?.billingPeriodLabel ??
+        "Current period",
+      icon: DollarSign,
+    },
+    {
+      title: "Total Budget",
+      value: summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : "—",
+      description: `${summary?.budgetedGroups ?? 0} visible groups budgeted`,
+      icon: TrendingUp,
+    },
+    {
+      title: "Remaining",
+      value:
+        summary?.totalRemainingUsd != null
+          ? `$${summary.totalRemainingUsd.toFixed(2)}`
+          : "—",
+      description: "Across visible budgeted pools",
+      icon: Wallet,
+      valueClassName:
+        (summary?.totalRemainingUsd ?? 0) < 0 ? "text-destructive" : "",
+    },
+    {
+      title: "Over Threshold",
+      value: summary ? summary.groupsOver75.toString() : "—",
+      description: `${summary?.groupsOver100 ?? 0} over budget`,
+      icon: AlertTriangle,
+    },
+    {
+      title: "Alerts Sent",
+      value: summary ? summary.alertsSentThisPeriod.toString() : "—",
+      description: "This billing period",
+      icon: RefreshCw,
+    },
+  ];
+  return cards.filter(
+    (card) => !(role === "workspace_admin" && card.title === "Alerts Sent"),
+  );
+}
+
+function MemberDashboardView({
+  scopeLabel,
+  dashboardTitle,
+  cycleSpendUsd,
+  contractSpendUsd,
+  isInternal,
+  limits,
+  showLegacyGroups,
+  onToggleLegacyGroups,
+  groupsFetching,
+  groupsLoaded,
+  hasHierarchy,
+  familyRows,
+}: MemberDashboardViewProps) {
+  return (
+    <div className="space-y-4 p-4 md:space-y-6 md:p-8">
+      <p
+        className="mx-auto max-w-3xl text-sm font-medium text-muted-foreground"
+        data-testid="text-summary-scope"
+      >
+        Yours · {scopeLabel}
+      </p>
+      <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <CardTitle data-testid="text-dashboard-title">
+              {dashboardTitle}
+            </CardTitle>
+            {isInternal && <InternalUserBadge />}
+          </div>
+          <CardDescription>
+            Your server-scoped usage, limits, and group memberships.
+          </CardDescription>
+          {isInternal && <InternalSpendExplanation />}
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <p className="text-xs text-muted-foreground">
+                Current cycle Agent spend
+              </p>
+              <p
+                className="text-2xl font-bold font-mono tabular-nums"
+                data-testid="text-member-cycle-spend"
+              >
+                {cycleSpendUsd == null ? "—" : `$${cycleSpendUsd.toFixed(2)}`}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">
+                Contract-to-date spend
+              </p>
+              <p
+                className="text-2xl font-bold font-mono tabular-nums"
+                data-testid="text-member-contract-spend"
+              >
+                {contractSpendUsd == null
+                  ? "—"
+                  : `$${contractSpendUsd.toFixed(2)}`}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Per-user limit</p>
+              <div className="space-y-1" data-testid="text-member-limits">
+                {limits.length ? (
+                  limits.map((limit) => (
+                    <p key={limit.workspaceName} className="text-sm">
+                      <span className="font-mono font-semibold">
+                        {limit.budget == null
+                          ? "—"
+                          : `$${limit.budget.toFixed(2)}`}
+                      </span>
+                      {limits.length > 1 && (
+                        <span className="ml-1 text-muted-foreground">
+                          · {limit.workspaceName}
+                        </span>
+                      )}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-2xl font-bold">—</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card data-testid="card-member-hierarchy">
+        <CardHeader>
+          <CardTitle>My families and groups</CardTitle>
+          <CardDescription>
+            Expand a family, then select a group to view its members.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-3 flex justify-end">
+            <button
+              type="button"
+              className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-pressed={showLegacyGroups}
+              data-testid="button-toggle-member-legacy-groups"
+              onClick={onToggleLegacyGroups}
+            >
+              {showLegacyGroups ? "Hide legacy groups" : "Show legacy groups"}
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table
+              className="w-full table-fixed"
+              data-testid="table-member-groups"
+            >
+              <caption className="sr-only">
+                Your authorized families and Replit role groups
+              </caption>
+              <colgroup>
+                <col className="w-[38%]" />
+                <col className="w-[10%]" />
+                <col className="w-[12%]" />
+                <col className="w-[10%]" />
+                <col className="w-[11%]" />
+                <col className="w-[9%]" />
+                <col className="w-[10%]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
+                    Hierarchy
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                    Members
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                    Spend
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                    Budget
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                    Remaining
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                    Usage
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
+                    Pace
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupsFetching && !groupsLoaded ? (
+                  <tr>
+                    <td
+                      className="py-12 text-center text-sm text-muted-foreground"
+                      colSpan={7}
+                      role="status"
+                    >
+                      Loading your authorized hierarchy…
+                    </td>
+                  </tr>
+                ) : hasHierarchy ? (
+                  familyRows
+                ) : (
+                  <tr>
+                    <td
+                      className="py-12 text-center text-sm text-muted-foreground"
+                      colSpan={7}
+                    >
+                      No authorized groups found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function DashboardHeader({
+  dashboardTitle,
+  selectedRangeLabel,
+  usageIsEmpty,
+  hasSummary,
+  showBillingWindowBanner,
+  reportingRangeStart,
+}: {
+  dashboardTitle: string;
+  selectedRangeLabel: string;
+  usageIsEmpty: boolean;
+  hasSummary: boolean;
+  showBillingWindowBanner: boolean;
+  reportingRangeStart: string;
+}) {
+  return (
+    <>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1
+            className="text-2xl md:text-3xl font-bold tracking-tight"
+            data-testid="text-dashboard-title"
+          >
+            {dashboardTitle}
+          </h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <RangeFilter selectedLabel={selectedRangeLabel} />
+        </div>
+      </div>
+      {usageIsEmpty && (
+        <p
+          className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
+          data-testid="empty-usage-data"
+        >
+          No usage data is available for this period.
+        </p>
+      )}
+      {hasSummary && (
+        <p className="text-xs text-muted-foreground">
+          Reporting period: {selectedRangeLabel}
+        </p>
+      )}
+      {showBillingWindowBanner && (
+        <div
+          className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm"
+          data-testid="billing-window-banner"
+        >
+          Total Spend uses the verified Enterprise billing window shown above,
+          beginning {new Date(reportingRangeStart).toLocaleDateString()}, rather
+          than the earlier data-availability cutoff.
+        </div>
+      )}
+    </>
+  );
+}
+
+function DashboardStatCards({
+  scopeLabel,
+  statCards,
+}: {
+  scopeLabel: string;
+  statCards: ReturnType<typeof buildStatCards>;
+}) {
+  return (
+    <div>
+      <p
+        className="mb-2 text-sm font-medium text-muted-foreground"
+        data-testid="text-summary-scope"
+      >
+        Yours · {scopeLabel}
+      </p>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+        {statCards.map((stat) => {
+          const Icon = stat.icon;
+          return (
+            <Card
+              key={stat.title}
+              data-testid={`card-stat-${stat.title.toLowerCase().replace(/\s+/g, "-")}`}
+            >
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2 md:p-6 md:pb-2">
+                <CardTitle className="text-sm font-medium">
+                  {stat.title}
+                </CardTitle>
+                <Icon className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent className="px-4 pb-4 md:px-6 md:pb-6">
+                <div
+                  className={`text-xl sm:text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ""}`}
+                  data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  {stat.value}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
+                  {stat.description}
+                </p>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ReconciliationRow({
+  isAccountWide,
+  spendUsd,
+}: {
+  isAccountWide: boolean;
+  spendUsd: number;
+}) {
+  return (
+    <tr
+      className="border-b border-border bg-muted/10"
+      data-testid={
+        isAccountWide
+          ? "row-account-reconciliation"
+          : "row-unattributed-projects"
+      }
+    >
+      <td className="py-3 px-4">
+        <div className="flex flex-col">
+          <span className="text-sm font-medium italic">
+            {isAccountWide
+              ? "True unattributed residual"
+              : "Unattributed project residual"}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {isAccountWide
+              ? "No group/project ID, missing creator, or creator no longer a member"
+              : "No project ID, missing creator, or creator no longer a member"}
+          </span>
+        </div>
+      </td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+      <td className="py-3 px-4 text-right">
+        <span className="text-sm font-mono tabular-nums">
+          ${spendUsd.toFixed(2)}
+        </span>
+      </td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
+    </tr>
+  );
+}
+
+function DashboardTotals({
+  memberCount,
+  summary,
+}: {
+  memberCount: number;
+  summary: DashboardSummaryLike | undefined;
+}) {
+  const percentUsed =
+    summary && summary.totalBudgetUsd > 0
+      ? (summary.totalSpendUsd / summary.totalBudgetUsd) * 100
+      : null;
+  return (
+    <tfoot>
+      <tr className="border-t-2 border-border bg-muted/40 font-semibold">
+        <td className="py-3 px-4 text-sm">Total</td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm font-mono tabular-nums">{memberCount}</span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm font-mono tabular-nums">
+            {summary ? `$${summary.totalSpendUsd.toFixed(2)}` : "—"}
+          </span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm font-mono tabular-nums">
+            {summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : "—"}
+          </span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span
+            className={`text-sm font-mono tabular-nums ${(summary?.totalRemainingUsd ?? 0) < 0 ? "text-destructive" : ""}`}
+          >
+            {summary?.totalRemainingUsd != null
+              ? `$${summary.totalRemainingUsd.toFixed(2)}`
+              : "—"}
+          </span>
+        </td>
+        <td className="py-3 px-4 text-right">
+          {percentUsed == null ? (
+            <span className="text-sm text-muted-foreground">—</span>
+          ) : (
+            <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
+              <span
+                className={`text-xs font-mono tabular-nums ${percentUsed >= 100 ? "text-destructive" : ""}`}
+              >
+                {percentUsed.toFixed(1)}%
+              </span>
+              <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
+                <div
+                  className={`h-full transition-all duration-500 ${percentUsed >= 100 ? "bg-destructive" : "bg-primary"}`}
+                  style={{ width: `${Math.min(percentUsed, 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </td>
+        <td className="py-3 px-4 text-right">
+          <span className="text-sm text-muted-foreground">—</span>
+        </td>
+      </tr>
+    </tfoot>
+  );
+}
+
+function selectHierarchyRows(
+  hasHierarchy: boolean,
+  startsAtWorkspace: boolean,
+  workspaceRows: React.ReactNode,
+  familyRows: React.ReactNode,
+  fallbackRows: React.ReactNode,
+) {
+  if (!hasHierarchy) return fallbackRows;
+  return startsAtWorkspace ? workspaceRows : familyRows;
+}
+
+function DashboardTableRows({
+  loading,
+  rows,
+}: {
+  loading: boolean;
+  rows: React.ReactNode;
+}) {
+  if (!loading) return <>{rows}</>;
+  return (
+    <tr>
+      <td
+        className="py-12 text-center text-sm text-muted-foreground"
+        colSpan={7}
+        role="status"
+      >
+        Loading authorized hierarchy…
+      </td>
+    </tr>
+  );
+}
+
+function DashboardReconciliation({
+  visible,
+  isAccountWide,
+  spendUsd,
+}: {
+  visible: boolean;
+  isAccountWide: boolean;
+  spendUsd: number;
+}) {
+  if (!visible) return null;
+  return (
+    <ReconciliationRow isAccountWide={isAccountWide} spendUsd={spendUsd} />
+  );
+}
+
+function DashboardTableFooter({
+  visible,
+  memberCount,
+  summary,
+}: {
+  visible: boolean;
+  memberCount: number;
+  summary: DashboardSummaryLike | undefined;
+}) {
+  if (!visible) return null;
+  return <DashboardTotals memberCount={memberCount} summary={summary} />;
+}
+
+function DashboardEmptyState({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  return (
+    <div
+      className="text-center py-12 text-muted-foreground"
+      data-testid="text-no-groups"
+    >
+      No groups found
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const { auth, isAccountWide, role, user, capabilities } = useAuthContext();
@@ -192,10 +830,7 @@ export default function Dashboard() {
   const dashboardReadyMeasured = useRef(false);
 
   const queryParams = useMemo(
-    () => ({
-      rangeType,
-      ...(rangeType === "custom" ? { startDate, endDate } : {}),
-    }),
+    () => buildRangeQueryParams(rangeType, startDate, endDate),
     [rangeType, startDate, endDate],
   );
 
@@ -454,48 +1089,7 @@ export default function Dashboard() {
     setExpandedTeams((previous) => toggleDisclosure(previous, teamKey));
   };
 
-  const statCards = [
-    {
-      title: "Total Spend",
-      value: summary ? `$${summary.totalSpendUsd.toFixed(2)}` : "—",
-      description:
-        summary?.billingPeriodLabel ??
-        groupsData?.billingPeriodLabel ??
-        "Current period",
-      icon: DollarSign,
-    },
-    {
-      title: "Total Budget",
-      value: summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : "—",
-      description: `${summary?.budgetedGroups ?? 0} visible groups budgeted`,
-      icon: TrendingUp,
-    },
-    {
-      title: "Remaining",
-      value:
-        summary?.totalRemainingUsd != null
-          ? `$${summary.totalRemainingUsd.toFixed(2)}`
-          : "—",
-      description: "Across visible budgeted pools",
-      icon: Wallet,
-      valueClassName:
-        (summary?.totalRemainingUsd ?? 0) < 0 ? "text-destructive" : "",
-    },
-    {
-      title: "Over Threshold",
-      value: summary ? summary.groupsOver75.toString() : "—",
-      description: `${summary?.groupsOver100 ?? 0} over budget`,
-      icon: AlertTriangle,
-    },
-    {
-      title: "Alerts Sent",
-      value: summary ? summary.alertsSentThisPeriod.toString() : "—",
-      description: "This billing period",
-      icon: RefreshCw,
-    },
-  ].filter(
-    (card) => !(role === "workspace_admin" && card.title === "Alerts Sent"),
-  );
+  const statCards = buildStatCards(summary, groupsData, role);
 
   const renderGroupRow = (group: (typeof groups)[0]) => {
     const hasBudget = group.budgetUsd != null && group.budgetUsd > 0;
@@ -1315,35 +1909,26 @@ export default function Dashboard() {
         .filter((name): name is string => Boolean(name)),
     ),
   ];
-  const accountUserName =
-    [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
-    user?.email?.split("@")[0] ||
-    "";
-  const scopedMemberName =
-    memberCycleActivity?.users[0]?.username ||
-    memberTermActivity?.users[0]?.username ||
-    "";
-  const memberName = auth?.isPreview
-    ? scopedMemberName
-    : accountUserName || scopedMemberName;
-  const dashboardTitle =
-    role === "workspace_admin"
-      ? scopedWorkspaceNames.length === 1
-        ? `${scopedWorkspaceNames[0]} Workspace Dashboard`
-        : scopedWorkspaceNames.length > 1
-          ? `${scopedWorkspaceNames.length} Workspaces Dashboard`
-          : "Workspace Dashboard"
-      : role === "team_admin"
-        ? scopedTeamNames.length === 1
-          ? `${scopedTeamNames[0]} Group Dashboard`
-          : scopedTeamNames.length > 1
-            ? `${scopedTeamNames.length} Groups Dashboard`
-            : "Group Dashboard"
-        : role === "member"
-          ? memberName
-            ? `${memberName}${memberName.endsWith("s") ? "'" : "'s"} Dashboard`
-            : "My Dashboard"
-          : "Comcast Account Dashboard";
+  const accountUserName = selectAccountUserName(
+    user?.firstName,
+    user?.lastName,
+    user?.email,
+  );
+  const scopedMemberName = selectScopedMemberName(
+    memberCycleActivity?.users[0]?.username,
+    memberTermActivity?.users[0]?.username,
+  );
+  const memberName = selectMemberName(
+    Boolean(auth?.isPreview),
+    scopedMemberName,
+    accountUserName,
+  );
+  const dashboardTitle = buildDashboardTitle({
+    role,
+    workspaceNames: scopedWorkspaceNames,
+    teamNames: scopedTeamNames,
+    memberName,
+  });
   const rangePresetLabel = {
     "full-term": "Full term",
     billing: "Billing period",
@@ -1351,12 +1936,38 @@ export default function Dashboard() {
     ytd: "Year to date",
     custom: "Custom range",
   }[rangeSelection];
-  const selectedRangeLabel =
-    rangeSelection === "full-term"
-      ? "May 20, 2026–present"
-      : groupsData?.billingPeriodLabel ??
-        summary?.billingPeriodLabel ??
-        rangePresetLabel;
+  const selectedRangeLabel = selectRangeLabel(
+    rangeSelection,
+    groupsData?.billingPeriodLabel,
+    summary?.billingPeriodLabel,
+    rangePresetLabel,
+  );
+  const hierarchyRows = selectHierarchyRows(
+    hasHierarchy,
+    presentation.startingLevel === "workspace",
+    hierarchySections.map(renderWorkspaceDisclosure),
+    hierarchySections.flatMap((workspace) =>
+      workspace.families.map((entry) =>
+        renderFamilyDisclosure(workspace, entry),
+      ),
+    ),
+    [...groups]
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      )
+      .map((group) => renderGroupRow(group)),
+  );
+  const totalMemberCount = groups.reduce(
+    (sum, group) => sum + group.rollupMemberCount,
+    0,
+  );
+  const reconciliationSpendUsd =
+    summary?.usageHealth.accountWorkspaceUnreconciledUsd ?? 0;
+  const showReconciliation = shouldShowReconciliation(
+    Boolean(summary),
+    isAccountWide,
+    reconciliationSpendUsd,
+  );
 
   if (role === "member") {
     const cycleUser = memberCycleActivity?.users[0];
@@ -1373,248 +1984,46 @@ export default function Dashboard() {
       }));
 
     return (
-      <div className="space-y-4 p-4 md:space-y-6 md:p-8">
-        <p
-          className="mx-auto max-w-3xl text-sm font-medium text-muted-foreground"
-          data-testid="text-summary-scope"
-        >
-          Yours · {presentation.scopeLabel}
-        </p>
-        <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <CardTitle data-testid="text-dashboard-title">
-                {dashboardTitle}
-              </CardTitle>
-              {(cycleUser?.isInternal || termUser?.isInternal) && <InternalUserBadge />}
-            </div>
-            <CardDescription>
-              Your server-scoped usage, limits, and group memberships.
-            </CardDescription>
-            {(cycleUser?.isInternal || termUser?.isInternal) && <InternalSpendExplanation />}
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  Current cycle Agent spend
-                </p>
-                <p
-                  className="text-2xl font-bold font-mono tabular-nums"
-                  data-testid="text-member-cycle-spend"
-                >
-                  {cycleUser ? `$${cycleUser.aiSpendUsd.toFixed(2)}` : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  Contract-to-date spend
-                </p>
-                <p
-                  className="text-2xl font-bold font-mono tabular-nums"
-                  data-testid="text-member-contract-spend"
-                >
-                  {termUser ? `$${termUser.spendUsd.toFixed(2)}` : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Per-user limit</p>
-                <div className="space-y-1" data-testid="text-member-limits">
-                  {limits.length ? (
-                    limits.map((limit) => (
-                      <p key={limit.workspaceName} className="text-sm">
-                        <span className="font-mono font-semibold">
-                          {limit.budget == null
-                            ? "—"
-                            : `$${limit.budget.toFixed(2)}`}
-                        </span>
-                        {limits.length > 1 && (
-                          <span className="ml-1 text-muted-foreground">
-                            · {limit.workspaceName}
-                          </span>
-                        )}
-                      </p>
-                    ))
-                  ) : (
-                    <p className="text-2xl font-bold">—</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card data-testid="card-member-hierarchy">
-          <CardHeader>
-            <CardTitle>My families and groups</CardTitle>
-            <CardDescription>
-              Expand a family, then select a group to view its members.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="mb-3 flex justify-end">
-              <button
-                type="button"
-                className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-pressed={showLegacyGroups}
-                data-testid="button-toggle-member-legacy-groups"
-                onClick={() => setShowLegacyGroups((visible) => !visible)}
-              >
-                {showLegacyGroups ? "Hide legacy groups" : "Show legacy groups"}
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed" data-testid="table-member-groups">
-                <caption className="sr-only">
-                  Your authorized families and Replit role groups
-                </caption>
-                <colgroup>
-                  <col className="w-[38%]" />
-                  <col className="w-[10%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[10%]" />
-                  <col className="w-[11%]" />
-                  <col className="w-[9%]" />
-                  <col className="w-[10%]" />
-                </colgroup>
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
-                      Hierarchy
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                      Members
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                      Spend
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                      Budget
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                      Remaining
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                      Usage
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                      Pace
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groupsFetching && !groupsData ? (
-                    <tr>
-                      <td
-                        className="py-12 text-center text-sm text-muted-foreground"
-                        colSpan={7}
-                        role="status"
-                      >
-                        Loading your authorized hierarchy…
-                      </td>
-                    </tr>
-                  ) : hasHierarchy ? (
-                    hierarchySections.flatMap((workspace) =>
-                      workspace.families.map((entry) =>
-                        renderFamilyDisclosure(workspace, entry),
-                      ),
-                    )
-                  ) : (
-                    <tr>
-                      <td
-                        className="py-12 text-center text-sm text-muted-foreground"
-                        colSpan={7}
-                      >
-                        No authorized groups found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <MemberDashboardView
+        scopeLabel={presentation.scopeLabel}
+        dashboardTitle={dashboardTitle}
+        cycleSpendUsd={cycleUser?.aiSpendUsd ?? null}
+        contractSpendUsd={termUser?.spendUsd ?? null}
+        isInternal={Boolean(cycleUser?.isInternal || termUser?.isInternal)}
+        limits={limits}
+        showLegacyGroups={showLegacyGroups}
+        onToggleLegacyGroups={() =>
+          setShowLegacyGroups((visible) => !visible)
+        }
+        groupsFetching={groupsFetching}
+        groupsLoaded={Boolean(groupsData)}
+        hasHierarchy={hasHierarchy}
+        familyRows={hierarchySections.flatMap((workspace) =>
+          workspace.families.map((entry) =>
+            renderFamilyDisclosure(workspace, entry),
+          ),
+        )}
+      />
     );
   }
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1
-            className="text-2xl md:text-3xl font-bold tracking-tight"
-            data-testid="text-dashboard-title"
-          >
-            {dashboardTitle}
-          </h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <RangeFilter selectedLabel={selectedRangeLabel} />
-        </div>
-      </div>
-      {groupsData?.usageHealth.status === "empty" && (
-        <p
-          className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
-          data-testid="empty-usage-data"
-        >
-          No usage data is available for this period.
-        </p>
-      )}
-      {summary && (
-        <p className="text-xs text-muted-foreground">
-          Reporting period: {selectedRangeLabel}
-        </p>
-      )}
-      {rangeType === "billing" &&
-        summary?.billingPeriodDiffersFromReportingCutoff && (
-          <div
-            className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm"
-            data-testid="billing-window-banner"
-          >
-            Total Spend uses the verified Enterprise billing window shown above,
-            beginning{" "}
-            {new Date(summary.reportingRangeStart).toLocaleDateString()}, rather
-            than the earlier data-availability cutoff.
-          </div>
+      <DashboardHeader
+        dashboardTitle={dashboardTitle}
+        selectedRangeLabel={selectedRangeLabel}
+        usageIsEmpty={groupsData?.usageHealth.status === "empty"}
+        hasSummary={Boolean(summary)}
+        showBillingWindowBanner={Boolean(
+          rangeType === "billing" &&
+            summary?.billingPeriodDiffersFromReportingCutoff,
         )}
-
-      <div>
-        <p
-          className="mb-2 text-sm font-medium text-muted-foreground"
-          data-testid="text-summary-scope"
-        >
-          Yours · {presentation.scopeLabel}
-        </p>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
-        {statCards.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <Card
-              key={stat.title}
-              data-testid={`card-stat-${stat.title.toLowerCase().replace(/\s+/g, "-")}`}
-            >
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2 md:p-6 md:pb-2">
-                <CardTitle className="text-sm font-medium">
-                  {stat.title}
-                </CardTitle>
-                <Icon className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent className="px-4 pb-4 md:px-6 md:pb-6">
-                <div
-                  className={`text-xl sm:text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ""}`}
-                  data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, "-")}`}
-                >
-                  {stat.value}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
-                  {stat.description}
-                </p>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-      </div>
+        reportingRangeStart={summary?.reportingRangeStart ?? ""}
+      />
+      <DashboardStatCards
+        scopeLabel={presentation.scopeLabel}
+        statCards={statCards}
+      />
 
       <Tabs defaultValue="groups" className="space-y-4">
         <TabsContent value="groups">
@@ -1674,167 +2083,23 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {groupsFetching && !groupsData ? (
-                      <tr>
-                        <td
-                          className="py-12 text-center text-sm text-muted-foreground"
-                          colSpan={7}
-                          role="status"
-                        >
-                          Loading authorized hierarchy…
-                        </td>
-                      </tr>
-                    ) : hasHierarchy ? (
-                      presentation.startingLevel === "workspace" ? (
-                        hierarchySections.map(renderWorkspaceDisclosure)
-                      ) : (
-                        hierarchySections.flatMap((workspace) =>
-                          workspace.families.map((entry) =>
-                            renderFamilyDisclosure(workspace, entry),
-                          ),
-                        )
-                      )
-                    ) : (
-                      [...groups]
-                        .sort((a, b) =>
-                          a.name.localeCompare(b.name, undefined, {
-                            sensitivity: "base",
-                          }),
-                        )
-                        .map((group) => renderGroupRow(group))
-                    )}
-                    {summary &&
-                      (isAccountWide ||
-                        summary.usageHealth.accountWorkspaceUnreconciledUsd >
-                          0) && (
-                        <tr
-                          className="border-b border-border bg-muted/10"
-                          data-testid={
-                            isAccountWide
-                              ? "row-account-reconciliation"
-                              : "row-unattributed-projects"
-                          }
-                        >
-                          <td className="py-3 px-4">
-                            <div className="flex flex-col">
-                              <span className="text-sm font-medium italic">
-                                {isAccountWide
-                                  ? "True unattributed residual"
-                                  : "Unattributed project residual"}
-                              </span>
-                              <span className="text-xs text-muted-foreground">
-                                {isAccountWide
-                                  ? "No group/project ID, missing creator, or creator no longer a member"
-                                  : "No project ID, missing creator, or creator no longer a member"}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-                            —
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <span className="text-sm font-mono tabular-nums">
-                              $
-                              {summary.usageHealth.accountWorkspaceUnreconciledUsd.toFixed(
-                                2,
-                              )}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-                            —
-                          </td>
-                          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-                            —
-                          </td>
-                          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-                            —
-                          </td>
-                          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-                            —
-                          </td>
-                        </tr>
-                      )}
+                    <DashboardTableRows
+                      loading={groupsFetching && !groupsData}
+                      rows={hierarchyRows}
+                    />
+                    <DashboardReconciliation
+                      visible={showReconciliation}
+                      isAccountWide={isAccountWide}
+                      spendUsd={reconciliationSpendUsd}
+                    />
                   </tbody>
-                  {groups.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t-2 border-border bg-muted/40 font-semibold">
-                        <td className="py-3 px-4 text-sm">Total</td>
-                        <td className="py-3 px-4 text-right">
-                          <span className="text-sm font-mono tabular-nums">
-                            {groups.reduce(
-                              (s, g) => s + g.rollupMemberCount,
-                              0,
-                            )}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <span className="text-sm font-mono tabular-nums">
-                            {summary
-                              ? `$${summary.totalSpendUsd.toFixed(2)}`
-                              : "—"}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <span className="text-sm font-mono tabular-nums">
-                            {summary
-                              ? `$${summary.totalBudgetUsd.toFixed(2)}`
-                              : "—"}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <span
-                            className={`text-sm font-mono tabular-nums ${(summary?.totalRemainingUsd ?? 0) < 0 ? "text-destructive" : ""}`}
-                          >
-                            {summary?.totalRemainingUsd != null
-                              ? `$${summary.totalRemainingUsd.toFixed(2)}`
-                              : "—"}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          {summary && summary.totalBudgetUsd > 0 ? (
-                            <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-                              <span
-                                className={`text-xs font-mono tabular-nums ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? "text-destructive" : ""}`}
-                              >
-                                {(
-                                  (summary.totalSpendUsd /
-                                    summary.totalBudgetUsd) *
-                                  100
-                                ).toFixed(1)}
-                                %
-                              </span>
-                              <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
-                                <div
-                                  className={`h-full transition-all duration-500 ${(summary.totalSpendUsd / summary.totalBudgetUsd) * 100 >= 100 ? "bg-destructive" : "bg-primary"}`}
-                                  style={{
-                                    width: `${Math.min((summary.totalSpendUsd / summary.totalBudgetUsd) * 100, 100)}%`,
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">
-                              —
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <span className="text-sm text-muted-foreground">
-                            —
-                          </span>
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
+                  <DashboardTableFooter
+                    visible={groups.length > 0}
+                    memberCount={totalMemberCount}
+                    summary={summary}
+                  />
                 </table>
-                {groups.length === 0 && (
-                  <div
-                    className="text-center py-12 text-muted-foreground"
-                    data-testid="text-no-groups"
-                  >
-                    No groups found
-                  </div>
-                )}
+                <DashboardEmptyState visible={groups.length === 0} />
               </div>
             </CardContent>
           </Card>

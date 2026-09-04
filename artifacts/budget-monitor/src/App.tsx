@@ -87,69 +87,72 @@ function RouteLoading() {
   );
 }
 
+function AccountAdminGuideRoute() {
+  const { capabilities } = useAuthContext();
+  return capabilities.canManageAccess ? <UserGuide /> : <Redirect to="/" />;
+}
+
+interface ForbiddenRouteProps {
+  testId: string;
+  message: string;
+}
+
+function ForbiddenRoute({ testId, message }: ForbiddenRouteProps) {
+  return (
+    <div className="p-4 md:p-8" data-testid={testId}>
+      <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
+        403 · Access denied
+      </h1>
+      <p className="mt-2 text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+function SettingsRoute() {
+  const { capabilities } = useAuthContext();
+  if (capabilities.canManageAccess) return <Settings />;
+  return (
+    <ForbiddenRoute
+      testId="settings-forbidden"
+      message="Settings are only available to account administrators."
+    />
+  );
+}
+
+function WorkspaceAdminsRoute() {
+  const { isAccountAdmin } = useAuthContext();
+  if (isAccountAdmin) return <WorkspaceAdmins />;
+  return (
+    <ForbiddenRoute
+      testId="workspace-admins-forbidden"
+      message="Team Admins is only available to account administrators."
+    />
+  );
+}
+
+function WorkspaceDirectoryRoute() {
+  const { capabilities } = useAuthContext();
+  if (capabilities.canManageAccess) return <WorkspaceDirectory />;
+  return (
+    <ForbiddenRoute
+      testId="workspace-directory-forbidden"
+      message="Workspace Directory is only available to account administrators."
+    />
+  );
+}
+
+function TeamBudgetsRoute() {
+  const { capabilities } = useAuthContext();
+  if (capabilities.canEditAllocations) return <TeamBudgets />;
+  return (
+    <ForbiddenRoute
+      testId="team-budgets-forbidden"
+      message="Team allocations are only available to account administrators."
+    />
+  );
+}
+
 function Router() {
-  const { capabilities, isAccountAdmin } = useAuthContext();
-
-  function AccountAdminGuideRoute() {
-    return capabilities.canManageAccess ? <UserGuide /> : <Redirect to="/" />;
-  }
-
-  function SettingsRoute() {
-    if (capabilities.canManageAccess) return <Settings />;
-    return (
-      <div className="p-4 md:p-8" data-testid="settings-forbidden">
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-          403 · Access denied
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Settings are only available to account administrators.
-        </p>
-      </div>
-    );
-  }
-
-  function WorkspaceAdminsRoute() {
-    if (isAccountAdmin) return <WorkspaceAdmins />;
-    return (
-      <div className="p-4 md:p-8" data-testid="workspace-admins-forbidden">
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-          403 · Access denied
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Team Admins is only available to account administrators.
-        </p>
-      </div>
-    );
-  }
-
-  function WorkspaceDirectoryRoute() {
-    if (capabilities.canManageAccess) return <WorkspaceDirectory />;
-    return (
-      <div className="p-4 md:p-8" data-testid="workspace-directory-forbidden">
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-          403 · Access denied
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Workspace Directory is only available to account administrators.
-        </p>
-      </div>
-    );
-  }
-
-  function TeamBudgetsRoute() {
-    if (capabilities.canEditAllocations) return <TeamBudgets />;
-    return (
-      <div className="p-4 md:p-8" data-testid="team-budgets-forbidden">
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-          403 · Access denied
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Team allocations are only available to account administrators.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <AppShell>
       <Suspense fallback={<RouteLoading />}>

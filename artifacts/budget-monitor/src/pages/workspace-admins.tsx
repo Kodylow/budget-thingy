@@ -60,6 +60,140 @@ export function normalizeWorkspaceAdminFamilies(value: unknown): WorkspaceAdminF
     });
 }
 
+function WorkspaceAdminsLoading() {
+  return (
+    <div className="p-4 md:p-8" data-testid="workspace-admins-loading">
+      <div className="animate-pulse space-y-4">
+        <div className="h-8 w-48 bg-muted rounded" />
+        <div className="h-64 bg-muted rounded" />
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceAdminsError() {
+  return (
+    <div className="p-4 md:p-8" data-testid="workspace-admins-error" role="alert">
+      <h1 className="text-2xl font-bold tracking-tight">Team Admins</h1>
+      <p className="mt-2 text-sm text-destructive">
+        Failed to load team admin data. Try refreshing the page.
+      </p>
+    </div>
+  );
+}
+
+interface FamilyListProps {
+  entries: WorkspaceAdminFamily[];
+  activeKey: string | null;
+  search: string;
+  onSelect: (key: string) => void;
+}
+
+function FamilyList({ entries, activeKey, search, onSelect }: FamilyListProps) {
+  return (
+    <Card className="flex-1 overflow-hidden flex flex-col">
+      <CardHeader className="py-2.5 px-4 border-b border-border shrink-0">
+        <CardTitle className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {entries.length} famil{entries.length === 1 ? 'y' : 'ies'}
+          {search ? ' found' : ''}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0 overflow-y-auto flex-1">
+        {entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8" data-testid="workspace-admins-empty">
+            {search ? 'No families match' : 'No team admin families found'}
+          </p>
+        ) : (
+          <ul>
+            {entries.map((entry) => {
+              const entryKey = `${entry.workspaceId}::${entry.familyKey}`;
+              const isActive = entryKey === activeKey;
+              return (
+                <li key={entryKey}>
+                  <button
+                    onClick={() => onSelect(entryKey)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors border-b border-border ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground font-medium'
+                        : 'hover:bg-muted text-foreground'
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-semibold truncate">{entry.familyName}</span>
+                      <span className="block text-[11px] truncate opacity-80">
+                        {entry.workspaceName} · {entry.teamName ?? 'Unassigned'}
+                      </span>
+                      {entry.isLegacy && <Badge variant="outline" className="mt-1 text-[9px]">Legacy</Badge>}
+                    </span>
+                    <Badge variant={isActive ? 'secondary' : 'outline'} className="text-[10px] shrink-0">
+                      {entry.admins.length}
+                    </Badge>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AdminTable({ admins }: { admins: WorkspaceAdmin[] }) {
+  if (admins.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
+        <Users className="h-8 w-8 opacity-30" />
+        <p className="text-sm">No admins found for this family</p>
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead><tr className="border-b border-border bg-muted/40">
+          <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">Name</th>
+          <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">Username</th>
+          <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">Email</th>
+        </tr></thead>
+        <tbody>
+          {admins.map((admin) => (
+            <tr key={admin.userId} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
+              <td className="px-4 py-3 font-medium">{admin.name ?? <span className="text-muted-foreground italic">—</span>}</td>
+              <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{admin.username}</td>
+              <td className="px-4 py-3 text-muted-foreground">{admin.email ?? <span className="italic">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SelectedFamilyPanel({ family }: { family: WorkspaceAdminFamily | null }) {
+  if (!family) {
+    return <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">Select a family to view its admins</div>;
+  }
+  return (
+    <Card>
+      <CardHeader className="pb-3 border-b border-border">
+        <div className="flex flex-wrap items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-muted-foreground shrink-0" />
+          <CardTitle className="text-base font-semibold">{family.familyName}</CardTitle>
+          {family.isLegacy && <Badge variant="outline" className="text-xs">Legacy</Badge>}
+          <Badge variant="secondary" className="text-xs">
+            {family.admins.length} admin{family.admins.length !== 1 ? 's' : ''}
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          {family.workspaceName} · {family.teamName ?? 'Unassigned'}
+        </p>
+      </CardHeader>
+      <CardContent className="p-0"><AdminTable admins={family.admins} /></CardContent>
+    </Card>
+  );
+}
+
 export default function GroupAdmins() {
   const { data, isLoading, isError } = useListWorkspaceAdmins();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -86,8 +220,6 @@ export default function GroupAdmins() {
     );
   }, [data, search]);
 
-  const familyCount = familyEntries.length;
-
   // Resolve active selection key, falling back to the first visible team
   const activeKey = useMemo(() => {
     const keys = familyEntries.map((item) => `${item.workspaceId}::${item.familyKey}`);
@@ -100,25 +232,11 @@ export default function GroupAdmins() {
     : null;
 
   if (isLoading) {
-    return (
-      <div className="p-4 md:p-8" data-testid="workspace-admins-loading">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 w-48 bg-muted rounded" />
-          <div className="h-64 bg-muted rounded" />
-        </div>
-      </div>
-    );
+    return <WorkspaceAdminsLoading />;
   }
 
   if (isError || !data) {
-    return (
-      <div className="p-4 md:p-8" data-testid="workspace-admins-error" role="alert">
-        <h1 className="text-2xl font-bold tracking-tight">Team Admins</h1>
-        <p className="mt-2 text-sm text-destructive">
-          Failed to load team admin data. Try refreshing the page.
-        </p>
-      </div>
-    );
+    return <WorkspaceAdminsError />;
   }
 
   return (
@@ -146,127 +264,12 @@ export default function GroupAdmins() {
             />
           </div>
 
-          <Card className="flex-1 overflow-hidden flex flex-col">
-            <CardHeader className="py-2.5 px-4 border-b border-border shrink-0">
-              <CardTitle className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                 {familyCount} famil{familyCount === 1 ? 'y' : 'ies'}
-                {search ? ' found' : ''}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0 overflow-y-auto flex-1">
-                 {familyCount === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8" data-testid="workspace-admins-empty">
-                    {search ? 'No families match' : 'No team admin families found'}
-                  </p>
-              ) : (
-                <ul>
-                   {familyEntries.map((entry) => {
-                     const entryKey = `${entry.workspaceId}::${entry.familyKey}`;
-                     const isActive = entryKey === activeKey;
-                    return (
-                       <li key={entryKey}>
-                        <button
-                           onClick={() => setSelectedKey(entryKey)}
-                          className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors border-b border-border ${
-                            isActive
-                              ? 'bg-primary text-primary-foreground font-medium'
-                              : 'hover:bg-muted text-foreground'
-                          }`}
-                        >
-                          <span className="min-w-0">
-                            <span className="block text-[13px] font-semibold truncate">
-                               {entry.familyName}
-                            </span>
-                             <span className="block text-[11px] truncate opacity-80">
-                               {entry.workspaceName} · {entry.teamName ?? 'Unassigned'}
-                             </span>
-                             {entry.isLegacy && <Badge variant="outline" className="mt-1 text-[9px]">Legacy</Badge>}
-                          </span>
-                          <Badge
-                            variant={isActive ? 'secondary' : 'outline'}
-                            className="text-[10px] shrink-0"
-                          >
-                            {entry.admins.length}
-                          </Badge>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+          <FamilyList entries={familyEntries} activeKey={activeKey} search={search} onSelect={setSelectedKey} />
         </aside>
 
         {/* Right panel — admin table */}
         <div className="flex-1 min-w-0">
-           {selectedFamily ? (
-            <Card>
-              <CardHeader className="pb-3 border-b border-border">
-                <div className="flex flex-wrap items-center gap-2">
-                  <ShieldCheck className="h-4 w-4 text-muted-foreground shrink-0" />
-                   <CardTitle className="text-base font-semibold">{selectedFamily.familyName}</CardTitle>
-                   {selectedFamily.isLegacy && <Badge variant="outline" className="text-xs">Legacy</Badge>}
-                  <Badge variant="secondary" className="text-xs">
-                     {selectedFamily.admins.length} admin{selectedFamily.admins.length !== 1 ? 's' : ''}
-                  </Badge>
-                </div>
-                 <p className="text-xs text-muted-foreground mt-2">
-                   {selectedFamily.workspaceName} · {selectedFamily.teamName ?? 'Unassigned'}
-                 </p>
-              </CardHeader>
-              <CardContent className="p-0">
-                 {selectedFamily.admins.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
-                    <Users className="h-8 w-8 opacity-30" />
-                     <p className="text-sm">No admins found for this family</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-border bg-muted/40">
-                          <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">
-                            Name
-                          </th>
-                          <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">
-                            Username
-                          </th>
-                          <th className="px-4 py-2.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wide">
-                            Email
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                         {selectedFamily.admins.map((admin) => (
-                          <tr
-                            key={admin.userId}
-                            className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
-                          >
-                            <td className="px-4 py-3 font-medium">
-                              {admin.name ?? (
-                                <span className="text-muted-foreground italic">—</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
-                              {admin.username}
-                            </td>
-                            <td className="px-4 py-3 text-muted-foreground">
-                              {admin.email ?? <span className="italic">—</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-               Select a family to view its admins
-            </div>
-          )}
+          <SelectedFamilyPanel family={selectedFamily} />
         </div>
       </div>
     </div>

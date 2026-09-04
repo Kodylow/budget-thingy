@@ -77,13 +77,98 @@ interface ClusterProject {
   workspaceName: string | null;
 }
 
-export default function ClusterDetail() {
-  const search = useSearch();
-  const params = new URLSearchParams(search);
-  const rawIds = params.get('ids') ?? '';
-  const groupIds = rawIds ? rawIds.split(',').filter(Boolean) : [];
+interface GroupDetailResult {
+  data?: {
+    group: {
+      groupId: string;
+      role: DirectoryRole;
+      workspaceId: string | null;
+    };
+    members: Array<{
+      userId: string;
+      username?: string | null;
+      email?: string | null;
+      name?: string | null;
+      spendUsd?: number | null;
+      isInternal: boolean;
+    }>;
+    unattributedSpendUsd?: number | null;
+    rangeLabel?: string | null;
+  };
+}
 
-  const { role, capabilities } = useAuthContext();
+interface WorkspaceMembersData {
+  connector: {
+    status: string;
+    canWrite: boolean;
+  };
+}
+
+function buildGroupRoleMap(results: readonly GroupDetailResult[]) {
+  const roleMap: Record<string, DirectoryRole> = {};
+  for (const result of results) {
+    if (result.data) roleMap[result.data.group.groupId] = result.data.group.role;
+  }
+  return roleMap;
+}
+
+function mergeClusterMembers(
+  results: readonly GroupDetailResult[],
+  groupRoleMap: Record<string, DirectoryRole>,
+  roleOrder: DirectoryRole[],
+) {
+  const memberMap = new Map<string, MergedMember>();
+  let totalUnattributedSpend = 0;
+  let rangeLabel = '';
+
+  for (const result of results) {
+    if (!result.data) continue;
+    const { members, unattributedSpendUsd } = result.data;
+    rangeLabel = result.data.rangeLabel ?? '';
+    const subRole = groupRoleMap[result.data.group.groupId] ?? 'unsuffixed';
+    totalUnattributedSpend += unattributedSpendUsd ?? 0;
+
+    for (const member of members) {
+      const existing = memberMap.get(member.userId);
+      const spendLoaded = member.spendUsd != null;
+      const spend = member.spendUsd ?? 0;
+      if (!existing) {
+        memberMap.set(member.userId, {
+          userId: member.userId,
+          username: member.username ?? null,
+          email: member.email ?? null,
+          name: member.name ?? null,
+          role: subRole,
+          allRoles: [subRole],
+          isInternal: member.isInternal,
+          spendUsd: spend,
+          spendLoaded,
+        });
+        continue;
+      }
+
+      const bestRole =
+        roleOrder.indexOf(subRole) < roleOrder.indexOf(existing.role)
+          ? subRole
+          : existing.role;
+      if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
+      existing.role = bestRole;
+      existing.isInternal ||= member.isInternal;
+      existing.spendLoaded = existing.spendLoaded || spendLoaded;
+      existing.spendUsd += spend;
+    }
+  }
+
+  const mergedMembers = [...memberMap.values()].sort((a, b) => b.spendUsd - a.spendUsd);
+  return {
+    mergedMembers,
+    totalMembersSpend: mergedMembers.reduce((total, member) => total + member.spendUsd, 0),
+    totalUnattributedSpend,
+    rangeLabel,
+  };
+}
+
+function useBulkLimitActions(workspaceId: string | undefined, displayedMemberIds: string[]) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const bulkSetLimits = useBulkSetWorkspaceMemberBudgets();
@@ -91,195 +176,6 @@ export default function ClusterDetail() {
   const [bulkLimit, setBulkLimit] = useState('');
   const [bulkApplying, setBulkApplying] = useState(false);
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-
-  const { rangeType, startDate, endDate } = useRange();
-  const clusterKey = groupIds.join(',');
-  const queryParams = {
-    rangeType,
-    ...(rangeType === 'custom' ? { startDate, endDate } : {}),
-    scopeGroupIds: clusterKey,
-  };
-
-  // Fetch all constituent group details in parallel
-  const results = useQueries({
-    queries: groupIds.map((id) =>
-      getGetGroupDetailQueryOptions(id, queryParams, {
-        query: {
-          queryKey: getGetGroupDetailQueryKey(id, queryParams),
-        },
-      }),
-    ),
-  });
-
-  // Single cluster-projects query: exact figures via creator attribution (no scaling)
-  const clusterProjectsQuery = useQuery(
-    getGetClusterProjectsQueryOptions(clusterKey, queryParams, {
-      query: {
-        queryKey: getGetClusterProjectsQueryKey(clusterKey, queryParams),
-        enabled: groupIds.length > 0,
-      },
-    }),
-  );
-  const clusterProjectsData = clusterProjectsQuery.data;
-  const { data: clusterHeadline } = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
-    query: {
-      queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
-      enabled: groupIds.length > 0,
-    },
-  });
-  const allLoaded = results.every((r) => !r.isLoading);
-  // The API owns family and role classification; names are presentation only.
-  const groupRoleMap = useMemo(() => {
-    const m: Record<string, DirectoryRole> = {};
-    for (const r of results) {
-      if (!r.data) continue;
-      const { group } = r.data;
-      m[group.groupId] = group.role;
-    }
-    return m;
-  }, [results]);
-
-  // Merge members across all constituent groups
-  const { mergedMembers, totalMembersSpend, totalUnattributedSpend, rangeLabel } =
-    useMemo(() => {
-      const memberMap = new Map<string, MergedMember>();
-      // Track which users have been seen so spend is only counted once per person,
-      // even if they appear in multiple sub-groups (Admin + Member, etc.).
-      const seenUserIds = new Set<string>();
-      let totalMembersSpend = 0;
-      // Use per-group unattributed from the API (deleted users / shared costs) rather
-      // than deriving it from raw group totals, which would inflate the figure.
-      let totalUnattributedSpend = 0;
-      let rangeLabel = '';
-
-      for (const r of results) {
-        if (!r.data) continue;
-        const { members, unattributedSpendUsd } = r.data;
-        rangeLabel = r.data.rangeLabel ?? '';
-        const subRole = groupRoleMap[r.data.group.groupId] ?? 'unsuffixed';
-
-        totalUnattributedSpend += unattributedSpendUsd ?? 0;
-
-        for (const m of members) {
-          const existing = memberMap.get(m.userId);
-          const spendLoaded = m.spendUsd != null;
-          const spend = m.spendUsd ?? 0;
-          if (!existing) {
-            memberMap.set(m.userId, {
-              userId: m.userId,
-              username: m.username ?? null,
-              email: m.email ?? null,
-              name: m.name ?? null,
-              role: subRole,
-              allRoles: [subRole],
-              isInternal: m.isInternal,
-              spendUsd: spend,
-              spendLoaded,
-            });
-            seenUserIds.add(m.userId);
-          } else {
-            // Update to highest-privilege role; spend is NOT added again —
-            // the same person's usage is already reflected from their first sub-group.
-            const roleOrder = clusterHeadline?.roles ?? [];
-            const bestRole =
-              roleOrder.indexOf(subRole) < roleOrder.indexOf(existing.role)
-                ? subRole
-                : existing.role;
-            if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
-            existing.role = bestRole;
-            existing.isInternal ||= m.isInternal;
-            existing.spendLoaded = existing.spendLoaded || spendLoaded;
-            existing.spendUsd += spend;
-          }
-        }
-      }
-
-      // Sum member spends after deduplication
-      for (const m of memberMap.values()) {
-        totalMembersSpend += m.spendUsd;
-      }
-
-      return {
-        mergedMembers: [...memberMap.values()].sort((a, b) => b.spendUsd - a.spendUsd),
-        totalMembersSpend,
-        totalUnattributedSpend,
-        rangeLabel,
-      };
-    }, [results, groupRoleMap, clusterHeadline?.roles]);
-
-  const clusterAttributedTotal = clusterHeadline?.spendUsd ?? 0;
-  const clusterSpendLoaded = typeof clusterHeadline?.spendUsd === 'number';
-
-  const sortedRoleLabels = clusterHeadline?.roles ?? [];
-
-  // Project data comes directly from the cluster-projects endpoint (creator-attributed, no scaling).
-  const mergedProjects: ClusterProject[] = clusterProjectsData?.projects ?? [];
-  const projectsUnattributedSpend = clusterProjectsData?.unattributedSpendUsd ?? 0;
-
-  const workspaceIds = useMemo(() => new Set(results.map(r => r.data?.group.workspaceId).filter(Boolean)), [results]);
-  const isSingleWorkspace = workspaceIds.size === 1;
-  const workspaceId = isSingleWorkspace ? [...workspaceIds][0] : undefined;
-
-  const workspaceMembersQuery = useListVisibleWorkspaceMembers(workspaceId as string, {
-    query: {
-      enabled: !!workspaceId,
-      queryKey: workspaceId ? getListVisibleWorkspaceMembersQueryKey(workspaceId) : ['workspaceMembers', ''],
-    },
-  });
-  const workspaceMembersData = workspaceMembersQuery.data;
-  const canReviewUsageLimitHistory = capabilities.canManageAccess;
-  const usageLimitAuditsQuery = useListWorkspaceUsageLimitAudits(workspaceId as string, {
-    query: {
-      enabled: Boolean(workspaceId && canReviewUsageLimitHistory),
-      queryKey: workspaceId
-        ? getListWorkspaceUsageLimitAuditsQueryKey(workspaceId)
-        : ['workspaceUsageLimitAudits', ''],
-    },
-  });
-
-  const workspaceMembersMap = useMemo(() => {
-    return indexMemberBudgets<WorkspaceMemberBudget>(
-      mergedMembers,
-      workspaceMembersData?.members ?? [],
-    );
-  }, [mergedMembers, workspaceMembersData]);
-  const connectorUnavailable =
-    workspaceMembersData?.connector.status === 'unavailable' ||
-    workspaceMembersData?.connector.status === 'error';
-  const mutationUnavailable =
-    Boolean(workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId)) &&
-    workspaceMembersData?.connector.status === 'available' &&
-    !workspaceMembersData.connector.canWrite;
-  const canEditLimits = Boolean(
-    workspaceId &&
-    capabilities.canWriteUserLimitsIn.includes(workspaceId) &&
-    workspaceId &&
-    workspaceMembersData?.connector.status === 'available' &&
-    workspaceMembersData.connector.canWrite,
-  );
-  const editingDisabledReason = mutationUnavailable || connectorUnavailable || workspaceMembersQuery.isError
-    ? 'Ask your workspace admin to enable the approved Replit integration with write:budgets permission.'
-    : !workspaceMembersData
-      ? 'Checking Replit integration permissions…'
-      : undefined;
-  const displayedMemberIds = useMemo(
-    () => eligibleLimitMemberIds(mergedMembers),
-    [mergedMembers],
-  );
-  const allDisplayedSelected =
-    displayedMemberIds.length > 0 &&
-    displayedMemberIds.every((userId) => selectedMemberIds.has(userId));
-  const someDisplayedSelected =
-    displayedMemberIds.some((userId) => selectedMemberIds.has(userId));
-  const displayedSelectedCount =
-    displayedMemberIds.filter((userId) => selectedMemberIds.has(userId)).length;
-
-  const workspacePoliciesQuery = useGetWorkspaceLimitPolicies(workspaceId as string, {
-    query: {
-      enabled: Boolean(workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId)),
-      queryKey: workspaceId ? getGetWorkspaceLimitPoliciesQueryKey(workspaceId) : ['getWorkspaceLimitPolicies', ''],
-    }
-  });
 
   const handleBulkApplyClick = () => {
     const amountUsd = Number(bulkLimit);
@@ -316,9 +212,7 @@ export default function ClusterDetail() {
     const failed = failedBulkSelection(outcomes);
     const succeeded = outcomes.length - failed.size;
     setSelectedMemberIds(failed);
-    if (succeeded > 0) {
-      invalidateBudgetCaches(queryClient, workspaceId);
-    }
+    if (succeeded > 0) invalidateBudgetCaches(queryClient, workspaceId);
     setBulkApplying(false);
     toast({
       title: failed.size === 0
@@ -331,45 +225,321 @@ export default function ClusterDetail() {
     });
   };
 
+  return {
+    applyBulkLimit,
+    bulkApplying,
+    bulkConfirmOpen,
+    bulkLimit,
+    handleBulkApplyClick,
+    selectedMemberIds,
+    setBulkConfirmOpen,
+    setBulkLimit,
+    setSelectedMemberIds,
+  };
+}
+
+function parseClusterGroupIds(search: string) {
+  const rawIds = new URLSearchParams(search).get('ids') ?? '';
+  return rawIds ? rawIds.split(',').filter(Boolean) : [];
+}
+
+function createClusterQueryParams(
+  rangeType: ReturnType<typeof useRange>['rangeType'],
+  startDate: ReturnType<typeof useRange>['startDate'],
+  endDate: ReturnType<typeof useRange>['endDate'],
+  clusterKey: string,
+) {
+  return {
+    rangeType,
+    ...(rangeType === 'custom' ? { startDate, endDate } : {}),
+    scopeGroupIds: clusterKey,
+  };
+}
+
+function useClusterQueries(
+  groupIds: string[],
+  clusterKey: string,
+  queryParams: ReturnType<typeof createClusterQueryParams>,
+) {
+  const results = useQueries({
+    queries: groupIds.map((id) =>
+      getGetGroupDetailQueryOptions(id, queryParams, {
+        query: { queryKey: getGetGroupDetailQueryKey(id, queryParams) },
+      }),
+    ),
+  });
+  const clusterProjectsQuery = useQuery(
+    getGetClusterProjectsQueryOptions(clusterKey, queryParams, {
+      query: {
+        queryKey: getGetClusterProjectsQueryKey(clusterKey, queryParams),
+        enabled: groupIds.length > 0,
+      },
+    }),
+  );
+  const { data: clusterHeadline } = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
+    query: {
+      queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
+      enabled: groupIds.length > 0,
+    },
+  });
+  return { clusterHeadline, clusterProjectsData: clusterProjectsQuery.data, results };
+}
+
+function getWorkspaceId(results: readonly GroupDetailResult[]) {
+  const workspaceIds = new Set(
+    results
+      .map((result) => result.data?.group.workspaceId)
+      .filter((workspaceId): workspaceId is string => Boolean(workspaceId)),
+  );
+  return workspaceIds.size === 1 ? [...workspaceIds][0] : undefined;
+}
+
+function getClusterPresentationData(
+  clusterProjectsData: { projects?: ClusterProject[]; unattributedSpendUsd?: number } | undefined,
+  clusterHeadline: { spendUsd?: number | null; roles?: DirectoryRole[] } | undefined,
+) {
+  return {
+    clusterAttributedTotal: clusterHeadline?.spendUsd ?? 0,
+    clusterSpendLoaded: typeof clusterHeadline?.spendUsd === 'number',
+    mergedProjects: clusterProjectsData?.projects ?? [],
+    projectsUnattributedSpend: clusterProjectsData?.unattributedSpendUsd ?? 0,
+    sortedRoleLabels: clusterHeadline?.roles ?? [],
+  };
+}
+
+function getLimitPermissions(
+  workspaceId: string | undefined,
+  workspaceMembersData: WorkspaceMembersData | undefined,
+  workspaceMembersError: boolean,
+  writableWorkspaceIds: string[],
+) {
+  const connectorUnavailable =
+    workspaceMembersData?.connector.status === 'unavailable' ||
+    workspaceMembersData?.connector.status === 'error';
+  const mutationUnavailable =
+    Boolean(workspaceId && writableWorkspaceIds.includes(workspaceId)) &&
+    workspaceMembersData?.connector.status === 'available' &&
+    !workspaceMembersData.connector.canWrite;
+  const canEditLimits = Boolean(
+    workspaceId &&
+    writableWorkspaceIds.includes(workspaceId) &&
+    workspaceMembersData?.connector.status === 'available' &&
+    workspaceMembersData.connector.canWrite,
+  );
+  const editingDisabledReason = mutationUnavailable || connectorUnavailable || workspaceMembersError
+    ? 'Ask your workspace admin to enable the approved Replit integration with write:budgets permission.'
+    : !workspaceMembersData
+      ? 'Checking Replit integration permissions…'
+      : undefined;
+  return { canEditLimits, connectorUnavailable, editingDisabledReason, mutationUnavailable };
+}
+
+function getDisplayedSelection(
+  displayedMemberIds: string[],
+  selectedMemberIds: Set<string>,
+) {
+  return {
+    allDisplayedSelected:
+      displayedMemberIds.length > 0 &&
+      displayedMemberIds.every((userId) => selectedMemberIds.has(userId)),
+    displayedSelectedCount:
+      displayedMemberIds.filter((userId) => selectedMemberIds.has(userId)).length,
+    someDisplayedSelected:
+      displayedMemberIds.some((userId) => selectedMemberIds.has(userId)),
+  };
+}
+
+function useWorkspaceLimitModel(
+  workspaceId: string | undefined,
+  mergedMembers: MergedMember[],
+  capabilities: ReturnType<typeof useAuthContext>['capabilities'],
+) {
+  const workspaceMembersQuery = useListVisibleWorkspaceMembers(workspaceId as string, {
+    query: {
+      enabled: !!workspaceId,
+      queryKey: workspaceId
+        ? getListVisibleWorkspaceMembersQueryKey(workspaceId)
+        : ['workspaceMembers', ''],
+    },
+  });
+  const workspaceMembersData = workspaceMembersQuery.data;
+  const canReviewUsageLimitHistory = capabilities.canManageAccess;
+  const usageLimitAuditsQuery = useListWorkspaceUsageLimitAudits(workspaceId as string, {
+    query: {
+      enabled: Boolean(workspaceId && canReviewUsageLimitHistory),
+      queryKey: workspaceId
+        ? getListWorkspaceUsageLimitAuditsQueryKey(workspaceId)
+        : ['workspaceUsageLimitAudits', ''],
+    },
+  });
+  const workspaceMembersMap = useMemo(
+    () => indexMemberBudgets<WorkspaceMemberBudget>(
+      mergedMembers,
+      workspaceMembersData?.members ?? [],
+    ),
+    [mergedMembers, workspaceMembersData],
+  );
+  const permissions = getLimitPermissions(
+    workspaceId,
+    workspaceMembersData as WorkspaceMembersData | undefined,
+    workspaceMembersQuery.isError,
+    capabilities.canWriteUserLimitsIn,
+  );
+  const displayedMemberIds = useMemo(
+    () => eligibleLimitMemberIds(mergedMembers),
+    [mergedMembers],
+  );
+  const bulkActions = useBulkLimitActions(workspaceId, displayedMemberIds);
+  const selection = getDisplayedSelection(displayedMemberIds, bulkActions.selectedMemberIds);
+  const workspacePoliciesQuery = useGetWorkspaceLimitPolicies(workspaceId as string, {
+    query: {
+      enabled: Boolean(workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId)),
+      queryKey: workspaceId
+        ? getGetWorkspaceLimitPoliciesQueryKey(workspaceId)
+        : ['getWorkspaceLimitPolicies', ''],
+    },
+  });
+
+  return {
+    ...bulkActions,
+    ...permissions,
+    ...selection,
+    canReviewUsageLimitHistory,
+    displayedMemberIds,
+    usageLimitAuditsQuery,
+    workspaceMembersData,
+    workspaceMembersMap,
+    workspaceMembersQuery,
+    workspacePoliciesQuery,
+  };
+}
+
+function useClusterDetailModel() {
+  const search = useSearch();
+  const groupIds = parseClusterGroupIds(search);
+  const { role, capabilities } = useAuthContext();
+  const { rangeType, startDate, endDate } = useRange();
+  const clusterKey = groupIds.join(',');
+  const queryParams = createClusterQueryParams(rangeType, startDate, endDate, clusterKey);
+  const { clusterHeadline, clusterProjectsData, results } =
+    useClusterQueries(groupIds, clusterKey, queryParams);
+  const allLoaded = results.every((r) => !r.isLoading);
+  const detailResults = results as unknown as readonly GroupDetailResult[];
+  const groupRoleMap = useMemo(() => buildGroupRoleMap(detailResults), [detailResults]);
+  const { mergedMembers, totalMembersSpend, totalUnattributedSpend, rangeLabel } =
+    useMemo(
+      () => mergeClusterMembers(detailResults, groupRoleMap, clusterHeadline?.roles ?? []),
+      [detailResults, groupRoleMap, clusterHeadline?.roles],
+    );
+  const workspaceId = getWorkspaceId(detailResults);
+  const presentation = getClusterPresentationData(clusterProjectsData, clusterHeadline);
+  const workspaceLimits = useWorkspaceLimitModel(workspaceId, mergedMembers, capabilities);
   const clusterUnavailable =
     groupIds.length === 0 ||
     results.some((result) => result.isError);
 
-  if (clusterUnavailable) {
-    return (
-      <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="cluster-detail-unavailable">
-        <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+  return {
+    ...presentation,
+    ...workspaceLimits,
+    allLoaded,
+    clusterHeadline,
+    clusterProjectsData,
+    clusterUnavailable,
+    groupIds,
+    mergedMembers,
+    rangeLabel,
+    results,
+    totalMembersSpend,
+    totalUnattributedSpend,
+    workspaceId,
+  };
+}
+
+function ClusterDetailUnavailable() {
+  return (
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="cluster-detail-unavailable">
+      <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+        <ChevronLeft className="h-4 w-4" /> Back to Dashboard
+      </Link>
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+          <AlertCircle className="h-8 w-8 text-muted-foreground" />
+          <h1 className="text-xl font-semibold">Cluster unavailable</h1>
+          <p className="max-w-lg text-sm text-muted-foreground">
+            Choose a visible group cluster from the dashboard or check that the requested groups are in your scope.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function ClusterDetailLoading() {
+  return (
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+      <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+        <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
           <ChevronLeft className="h-4 w-4" /> Back to Dashboard
         </Link>
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <AlertCircle className="h-8 w-8 text-muted-foreground" />
-            <h1 className="text-xl font-semibold">Cluster unavailable</h1>
-            <p className="max-w-lg text-sm text-muted-foreground">
-              Choose a visible group cluster from the dashboard or check that the requested groups are in your scope.
-            </p>
-          </CardContent>
-        </Card>
       </div>
-    );
-  }
+      <div className="h-10 w-64 bg-muted animate-pulse-glow rounded" />
+      <div className="grid grid-cols-2 gap-3 md:gap-4">
+        {[1, 2].map((i) => <div key={i} className="h-28 bg-muted animate-pulse-glow rounded" />)}
+      </div>
+      <div className="h-64 bg-muted animate-pulse-glow rounded mt-8" />
+    </div>
+  );
+}
 
-  if (results.every((r) => !r.data)) {
-    return (
-      <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
-        <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
-          <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
-            <ChevronLeft className="h-4 w-4" /> Back to Dashboard
-          </Link>
-        </div>
-        <div className="h-10 w-64 bg-muted animate-pulse-glow rounded" />
-        <div className="grid grid-cols-2 gap-3 md:gap-4">
-          {[1, 2].map((i) => <div key={i} className="h-28 bg-muted animate-pulse-glow rounded" />)}
-        </div>
-        <div className="h-64 bg-muted animate-pulse-glow rounded mt-8" />
-      </div>
-    );
-  }
+export default function ClusterDetail() {
+  const model = useClusterDetailModel();
+
+  if (model.clusterUnavailable) return <ClusterDetailUnavailable />;
+  if (model.results.every((result) => !result.data)) return <ClusterDetailLoading />;
+  return renderClusterDetailContent(model);
+}
+
+function renderClusterDetailContent(model: ReturnType<typeof useClusterDetailModel>) {
+  const {
+    allDisplayedSelected,
+    allLoaded,
+    applyBulkLimit,
+    bulkApplying,
+    bulkConfirmOpen,
+    bulkLimit,
+    canEditLimits,
+    canReviewUsageLimitHistory,
+    clusterAttributedTotal,
+    clusterHeadline,
+    clusterProjectsData,
+    clusterSpendLoaded,
+    connectorUnavailable,
+    displayedMemberIds,
+    displayedSelectedCount,
+    editingDisabledReason,
+    groupIds,
+    handleBulkApplyClick,
+    mergedMembers,
+    mergedProjects,
+    mutationUnavailable,
+    projectsUnattributedSpend,
+    rangeLabel,
+    results,
+    selectedMemberIds,
+    setBulkConfirmOpen,
+    setBulkLimit,
+    setSelectedMemberIds,
+    someDisplayedSelected,
+    sortedRoleLabels,
+    totalMembersSpend,
+    totalUnattributedSpend,
+    usageLimitAuditsQuery,
+    workspaceId,
+    workspaceMembersData,
+    workspaceMembersMap,
+    workspaceMembersQuery,
+    workspacePoliciesQuery,
+  } = model;
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="page-cluster-detail">
@@ -654,11 +824,11 @@ export default function ClusterDetail() {
                         </span>
                       </div>
                     </td>
-                    <td className="py-3 px-4" /> {/* Role */}
-                    <td className="py-3 px-4" /> {/* Status */}
-                    <td className="py-3 px-4" /> {/* Agent Limit */}
-                    <td className="py-3 px-4" /> {/* Agent Spend */}
-                    <td className="py-3 px-4" /> {/* Agent Remaining */}
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" />
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm font-mono tabular-nums">
                         ${totalUnattributedSpend.toFixed(2)}
@@ -671,11 +841,11 @@ export default function ClusterDetail() {
                 <tr className="bg-muted/30 font-medium border-t border-border">
                   {canEditLimits && <td className="py-3 pl-4" />}
                   <td className="py-3 px-4 text-sm">Combined Total</td>
-                  <td className="py-3 px-4" /> {/* Role */}
-                  <td className="py-3 px-4" /> {/* Status */}
-                  <td className="py-3 px-4" /> {/* Agent Limit */}
-                  <td className="py-3 px-4" /> {/* Agent Spend */}
-                  <td className="py-3 px-4" /> {/* Agent Remaining */}
+                  <td className="py-3 px-4" />
+                  <td className="py-3 px-4" />
+                  <td className="py-3 px-4" />
+                  <td className="py-3 px-4" />
+                  <td className="py-3 px-4" />
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
                       ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
