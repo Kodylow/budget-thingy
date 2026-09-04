@@ -52,6 +52,7 @@ import type {
   GroupsResponse,
   HandleBrowserLoginCallbackParams,
   HealthStatus,
+  LegacyWorkspaceLimitTarget,
   ListAlertsParams,
   ListDirectoryMembersParams,
   ListGroupsParams,
@@ -63,9 +64,16 @@ import type {
   OkResponse,
   Summary,
   SystemStatus,
+  TeamBudgetApplyResponse,
+  TeamBudgetApplySelection,
   TeamBudgetHistoryResponse,
+  TeamBudgetHistoryTeam,
+  TeamBudgetLimitUpdate,
   TeamBudgetRefreshResult,
   TeamBudgetSyncStatus,
+  TeamBudgetTarget,
+  TeamBudgetTargetAssignment,
+  TeamBudgetTargetConfiguration,
   TeamBudgetsResponse,
   TrendsResponse,
   UnauthorizedResponse,
@@ -130,11 +138,6 @@ export const getCurrentAuthUser = async ( options?: RequestInit): Promise<AuthUs
 
   }
 );}
-
-
-
-
-
 export const getGetCurrentAuthUserQueryKey = () => {
     return [
     `/api/auth/user`
@@ -1913,7 +1916,7 @@ export const getRetryTeamBudgetUpstreamSyncUrl = () => {
 }
 
 /**
- * Available only to true Enterprise account administrators; account delegates and editors are not authorized. Queues reconciliation of per-team desired budgets with upstream Replit groups and immediately returns the latest stored status.
+ * Available only to true Enterprise account administrators. Queues a read-only refresh of upstream values; this endpoint never writes budgets.
  * @summary Retry upstream Replit group budget synchronization
  */
 export const retryTeamBudgetUpstreamSync = async ( options?: RequestInit): Promise<TeamBudgetSyncStatus> => {
@@ -1974,6 +1977,444 @@ export const useRetryTeamBudgetUpstreamSync = <TError = ErrorType<UnauthorizedRe
         TContext
       > => {
       return useMutation(getRetryTeamBudgetUpstreamSyncMutationOptions(options));
+    }
+
+export const getUpdateTeamBudgetLimitUrl = (teamName: string,) => {
+
+
+
+
+  return `/api/admin/team-budgets/${teamName}/limit`
+}
+
+/**
+ * True-account-admin-only. A number sets a persistent manual limit; null resets the limit to the derived annual allocation divided by twelve.
+ * @summary Set or reset a team's monthly upstream limit
+ */
+export const updateTeamBudgetLimit = async (teamName: string,
+    teamBudgetLimitUpdate: TeamBudgetLimitUpdate, options?: RequestInit): Promise<TeamBudgetHistoryTeam> => {
+
+  return customFetch<TeamBudgetHistoryTeam>(getUpdateTeamBudgetLimitUrl(teamName),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamBudgetLimitUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateTeamBudgetLimitMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamBudgetLimit>>, TError,{teamName: string;data: BodyType<TeamBudgetLimitUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTeamBudgetLimit>>, TError,{teamName: string;data: BodyType<TeamBudgetLimitUpdate>}, TContext> => {
+
+const mutationKey = ['updateTeamBudgetLimit'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTeamBudgetLimit>>, {teamName: string;data: BodyType<TeamBudgetLimitUpdate>}> = (props) => {
+          const {teamName,data} = props ?? {};
+
+          return  updateTeamBudgetLimit(teamName,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTeamBudgetLimitMutationResult = NonNullable<Awaited<ReturnType<typeof updateTeamBudgetLimit>>>
+    export type UpdateTeamBudgetLimitMutationBody = BodyType<TeamBudgetLimitUpdate>
+    export type UpdateTeamBudgetLimitMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Set or reset a team's monthly upstream limit
+ */
+export const useUpdateTeamBudgetLimit = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamBudgetLimit>>, TError,{teamName: string;data: BodyType<TeamBudgetLimitUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTeamBudgetLimit>>,
+        TError,
+        {teamName: string;data: BodyType<TeamBudgetLimitUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateTeamBudgetLimitMutationOptions(options));
+    }
+
+export const getGetTeamBudgetTargetsUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/targets`
+}
+
+/**
+ * @summary List explicit targets, allocations, and unassigned member groups
+ */
+export const getTeamBudgetTargets = async ( options?: RequestInit): Promise<TeamBudgetTargetConfiguration> => {
+
+  return customFetch<TeamBudgetTargetConfiguration>(getGetTeamBudgetTargetsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeamBudgetTargetsQueryKey = () => {
+    return [
+    `/api/admin/team-budgets/targets`
+    ] as const;
+    }
+
+
+export const getGetTeamBudgetTargetsQueryOptions = <TData = Awaited<ReturnType<typeof getTeamBudgetTargets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetTargets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamBudgetTargetsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamBudgetTargets>>> = ({ signal }) => getTeamBudgetTargets({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetTargets>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeamBudgetTargetsQueryResult = NonNullable<Awaited<ReturnType<typeof getTeamBudgetTargets>>>
+export type GetTeamBudgetTargetsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List explicit targets, allocations, and unassigned member groups
+ */
+
+export function useGetTeamBudgetTargets<TData = Awaited<ReturnType<typeof getTeamBudgetTargets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamBudgetTargets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeamBudgetTargetsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAssignTeamBudgetTargetUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/targets`
+}
+
+/**
+ * @summary Assign an unassigned member group to a team
+ */
+export const assignTeamBudgetTarget = async (teamBudgetTargetAssignment: TeamBudgetTargetAssignment, options?: RequestInit): Promise<TeamBudgetTarget> => {
+
+  return customFetch<TeamBudgetTarget>(getAssignTeamBudgetTargetUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamBudgetTargetAssignment)
+  }
+);}
+
+
+
+
+
+export const getAssignTeamBudgetTargetMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof assignTeamBudgetTarget>>, TError,{data: BodyType<TeamBudgetTargetAssignment>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof assignTeamBudgetTarget>>, TError,{data: BodyType<TeamBudgetTargetAssignment>}, TContext> => {
+
+const mutationKey = ['assignTeamBudgetTarget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof assignTeamBudgetTarget>>, {data: BodyType<TeamBudgetTargetAssignment>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  assignTeamBudgetTarget(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AssignTeamBudgetTargetMutationResult = NonNullable<Awaited<ReturnType<typeof assignTeamBudgetTarget>>>
+    export type AssignTeamBudgetTargetMutationBody = BodyType<TeamBudgetTargetAssignment>
+    export type AssignTeamBudgetTargetMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Assign an unassigned member group to a team
+ */
+export const useAssignTeamBudgetTarget = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof assignTeamBudgetTarget>>, TError,{data: BodyType<TeamBudgetTargetAssignment>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof assignTeamBudgetTarget>>,
+        TError,
+        {data: BodyType<TeamBudgetTargetAssignment>},
+        TContext
+      > => {
+      return useMutation(getAssignTeamBudgetTargetMutationOptions(options));
+    }
+
+export const getUpdateTeamBudgetTargetUrl = (workspaceId: string,
+    groupId: string,) => {
+
+
+
+
+  return `/api/admin/team-budgets/targets/${workspaceId}/${groupId}`
+}
+
+/**
+ * @summary Set or reset a target-specific monthly override
+ */
+export const updateTeamBudgetTarget = async (workspaceId: string,
+    groupId: string,
+    teamBudgetLimitUpdate: TeamBudgetLimitUpdate, options?: RequestInit): Promise<TeamBudgetTarget> => {
+
+  return customFetch<TeamBudgetTarget>(getUpdateTeamBudgetTargetUrl(workspaceId,groupId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamBudgetLimitUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateTeamBudgetTargetMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamBudgetTarget>>, TError,{workspaceId: string;groupId: string;data: BodyType<TeamBudgetLimitUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTeamBudgetTarget>>, TError,{workspaceId: string;groupId: string;data: BodyType<TeamBudgetLimitUpdate>}, TContext> => {
+
+const mutationKey = ['updateTeamBudgetTarget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTeamBudgetTarget>>, {workspaceId: string;groupId: string;data: BodyType<TeamBudgetLimitUpdate>}> = (props) => {
+          const {workspaceId,groupId,data} = props ?? {};
+
+          return  updateTeamBudgetTarget(workspaceId,groupId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTeamBudgetTargetMutationResult = NonNullable<Awaited<ReturnType<typeof updateTeamBudgetTarget>>>
+    export type UpdateTeamBudgetTargetMutationBody = BodyType<TeamBudgetLimitUpdate>
+    export type UpdateTeamBudgetTargetMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Set or reset a target-specific monthly override
+ */
+export const useUpdateTeamBudgetTarget = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamBudgetTarget>>, TError,{workspaceId: string;groupId: string;data: BodyType<TeamBudgetLimitUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTeamBudgetTarget>>,
+        TError,
+        {workspaceId: string;groupId: string;data: BodyType<TeamBudgetLimitUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateTeamBudgetTargetMutationOptions(options));
+    }
+
+export const getUpdateLegacyWorkspaceLimitUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/legacy-limit`
+}
+
+/**
+ * @summary Set or reset the legacy workspace per-user cap
+ */
+export const updateLegacyWorkspaceLimit = async (teamBudgetLimitUpdate: TeamBudgetLimitUpdate, options?: RequestInit): Promise<LegacyWorkspaceLimitTarget> => {
+
+  return customFetch<LegacyWorkspaceLimitTarget>(getUpdateLegacyWorkspaceLimitUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamBudgetLimitUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateLegacyWorkspaceLimitMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLegacyWorkspaceLimit>>, TError,{data: BodyType<TeamBudgetLimitUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLegacyWorkspaceLimit>>, TError,{data: BodyType<TeamBudgetLimitUpdate>}, TContext> => {
+
+const mutationKey = ['updateLegacyWorkspaceLimit'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLegacyWorkspaceLimit>>, {data: BodyType<TeamBudgetLimitUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateLegacyWorkspaceLimit(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLegacyWorkspaceLimitMutationResult = NonNullable<Awaited<ReturnType<typeof updateLegacyWorkspaceLimit>>>
+    export type UpdateLegacyWorkspaceLimitMutationBody = BodyType<TeamBudgetLimitUpdate>
+    export type UpdateLegacyWorkspaceLimitMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Set or reset the legacy workspace per-user cap
+ */
+export const useUpdateLegacyWorkspaceLimit = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLegacyWorkspaceLimit>>, TError,{data: BodyType<TeamBudgetLimitUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateLegacyWorkspaceLimit>>,
+        TError,
+        {data: BodyType<TeamBudgetLimitUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateLegacyWorkspaceLimitMutationOptions(options));
+    }
+
+export const getApplyTeamBudgetLimitsUrl = () => {
+
+
+
+
+  return `/api/admin/team-budgets/apply`
+}
+
+/**
+ * True-account-admin-only. This is the only team-budget operation that writes upstream.
+ * @summary Apply selected drifted monthly limits upstream
+ */
+export const applyTeamBudgetLimits = async (teamBudgetApplySelection: TeamBudgetApplySelection, options?: RequestInit): Promise<TeamBudgetApplyResponse> => {
+
+  return customFetch<TeamBudgetApplyResponse>(getApplyTeamBudgetLimitsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(teamBudgetApplySelection)
+  }
+);}
+
+
+
+
+
+export const getApplyTeamBudgetLimitsMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyTeamBudgetLimits>>, TError,{data: BodyType<TeamBudgetApplySelection>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof applyTeamBudgetLimits>>, TError,{data: BodyType<TeamBudgetApplySelection>}, TContext> => {
+
+const mutationKey = ['applyTeamBudgetLimits'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyTeamBudgetLimits>>, {data: BodyType<TeamBudgetApplySelection>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  applyTeamBudgetLimits(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyTeamBudgetLimitsMutationResult = NonNullable<Awaited<ReturnType<typeof applyTeamBudgetLimits>>>
+    export type ApplyTeamBudgetLimitsMutationBody = BodyType<TeamBudgetApplySelection>
+    export type ApplyTeamBudgetLimitsMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Apply selected drifted monthly limits upstream
+ */
+export const useApplyTeamBudgetLimits = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyTeamBudgetLimits>>, TError,{data: BodyType<TeamBudgetApplySelection>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof applyTeamBudgetLimits>>,
+        TError,
+        {data: BodyType<TeamBudgetApplySelection>},
+        TContext
+      > => {
+      return useMutation(getApplyTeamBudgetLimitsMutationOptions(options));
     }
 
 export const getRefreshTeamBudgetsUrl = () => {

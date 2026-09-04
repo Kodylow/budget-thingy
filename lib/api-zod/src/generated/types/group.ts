@@ -19,6 +19,8 @@ export interface Group {
      * @nullable
      */
   teamName?: string | null;
+  /** True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target. */
+  isLegacyDisplayOnly?: boolean;
   /** Group type (custom, admin, member, guest) */
   type: string;
   /** True for a generated accounting row rather than a real Enterprise group */

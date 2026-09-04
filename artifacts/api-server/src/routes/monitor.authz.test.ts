@@ -11,7 +11,7 @@ import {
   editorBootstrapStateTable,
   firedThresholdsTable,
   groupBudgetsTable,
-  groupTeamsTable,
+  teamLimitTargetsTable,
   teamBudgetsTable,
   usersTable,
   usageLimitAuditsTable,
@@ -118,7 +118,7 @@ beforeAll(async () => {
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     const body = init.body ? JSON.parse(init.body) : {};
-    if (init.method === "PUT") {
+    if (init.method === "POST" && body.type === "workspace_user_limit") {
       budgetWriteUserIds.push(body.userId);
       if (budgetWriteFailures.has(body.userId)) {
         return new Response(JSON.stringify({ error: `Rejected ${body.userId}` }), {
@@ -198,9 +198,9 @@ beforeAll(async () => {
     { groupId: "g-ws1-a", amountUsd: 100 },
     { groupId: "g-ws2-a", amountUsd: 200 },
   ]).onConflictDoNothing();
-  await db.insert(groupTeamsTable).values([
-    { groupName: "Alpha", teamName: "Team One" },
-    { groupName: "Gamma", teamName: "Team Two" },
+  await db.insert(teamLimitTargetsTable).values([
+    { workspaceId: "ws-1", groupId: "g-ws1-a", groupName: "Alpha", teamName: "Team One" },
+    { workspaceId: "ws-2", groupId: "g-ws2-a", groupName: "Gamma", teamName: "Team Two" },
   ]).onConflictDoNothing();
   await db.insert(teamBudgetsTable).values([
     { teamName: "Team One", amountUsd: 500 },
@@ -275,7 +275,7 @@ afterAll(async () => {
   await db.delete(alertsTable).where(inArray(alertsTable.groupId, fixtureIds));
   await db.delete(groupBudgetsTable).where(inArray(groupBudgetsTable.groupId, fixtureIds));
   await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, ["Team One", "Team Two"]));
-  await db.delete(groupTeamsTable).where(inArray(groupTeamsTable.groupName, ["Alpha", "Gamma"]));
+  await db.delete(teamLimitTargetsTable).where(inArray(teamLimitTargetsTable.groupId, fixtureIds));
   await db.delete(editorAllowlistTable).where(inArray(editorAllowlistTable.userId, ["editor", "candidate-editor", "bootstrap-editor"]));
   await db.delete(editorBootstrapStateTable).where(
     inArray(editorBootstrapStateTable.userId, ["bootstrap-editor", "candidate-editor"]),
@@ -348,6 +348,68 @@ test("account admin sees every group", async () => {
   expect(ids).toEqual(["g-ws1-a", "g-ws2-a"]);
   expect(["complete", "stale", "partial", "empty"]).toContain(json.usageHealth.status);
   expect(typeof json.usageHealth.coverage.ratio).toBe("number");
+});
+
+test("identical nonlegacy group names retain independent team attribution and filtering", async () => {
+  const duplicateName = "Shared Cost Center";
+  const range = resolveRange("custom", "2026-06-01", "2026-06-30");
+  const originalNames = groups.map((group) => group.name);
+  groups[0].name = duplicateName;
+  groups[1].name = duplicateName;
+  await db.update(teamLimitTargetsTable)
+    .set({ groupName: duplicateName })
+    .where(inArray(teamLimitTargetsTable.groupId, ["g-ws1-a", "g-ws2-a"]));
+  __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+  __setMemberUsageForTests(
+    range.key,
+    new Map([
+      ["g-ws1-a", new Map([["ws1admin", 40]])],
+      ["g-ws2-a", new Map([["ws2user", 60]])],
+    ]),
+    new Map([["g-ws1-a", 0], ["g-ws2-a", 0]]),
+  );
+  __setWsSpendForTests("ws-1", range.key, new Map([["ws1admin", 40]]));
+  __setWsSpendForTests("ws-2", range.key, new Map([["ws2user", 60]]));
+
+  try {
+    const response = await req("/groups", { user: "acct" });
+    const attributed = new Map(
+      response.json.groups
+        .filter((group) => !group.isSynthetic)
+        .map((group) => [group.groupId, group.teamName]),
+    );
+    expect(attributed).toEqual(new Map([
+      ["g-ws1-a", "Team One"],
+      ["g-ws2-a", "Team Two"],
+    ]));
+
+    const filtered = await req(
+      "/trends?granularity=month&rangeType=custom&startDate=2026-06-01&endDate=2026-06-30&teamNames=Team%20One",
+      { user: "acct" },
+    );
+    expect(filtered.status).toBe(200);
+    const teamSeries = filtered.json.series.filter((series) => series.type === "team");
+    expect(teamSeries.map((series) => series.name)).toEqual(["Team One"]);
+    // Task 211 makes Postgres authoritative; this auth fixture intentionally
+    // has no persisted usage rows for the selected window.
+    expect(teamSeries[0].data).toEqual([0]);
+    const groupSeries = filtered.json.series.filter((series) => series.type === "group");
+    expect(groupSeries).toHaveLength(1);
+    expect(groupSeries[0].data).toEqual([0]);
+  } finally {
+    groups[0].name = originalNames[0];
+    groups[1].name = originalNames[1];
+    await db.update(teamLimitTargetsTable)
+      .set({ groupName: "Alpha" })
+      .where(eq(teamLimitTargetsTable.groupId, "g-ws1-a"));
+    await db.update(teamLimitTargetsTable)
+      .set({ groupName: "Gamma" })
+      .where(eq(teamLimitTargetsTable.groupId, "g-ws2-a"));
+    __setDirectoryCacheForTests({ workspaces, groups, members, groupMembers });
+    __setMemberUsageForTests(range.key, null);
+    __setWsSpendForTests("ws-1", range.key, null);
+    __setWsSpendForTests("ws-2", range.key, null);
+  }
 });
 
 test("stale directory authorization and handlers do not wait for an in-progress or failed refresh", async () => {
@@ -769,9 +831,9 @@ test("workspace admin sees only in-scope team pools read-only", async () => {
 
 test("workspace admin sees a shared team pool but not its account-wide alert aggregate", async () => {
   await db
-    .update(groupTeamsTable)
+    .update(teamLimitTargetsTable)
     .set({ teamName: "Shared Team" })
-    .where(inArray(groupTeamsTable.groupName, ["Alpha", "Gamma"]));
+    .where(inArray(teamLimitTargetsTable.groupId, ["g-ws1-a", "g-ws2-a"]));
   await db
     .insert(teamBudgetsTable)
     .values({ teamName: "Shared Team", amountUsd: 1400 })
@@ -808,13 +870,13 @@ test("workspace admin sees a shared team pool but not its account-wide alert agg
     if (teamAlert) await db.delete(alertsTable).where(eq(alertsTable.id, teamAlert.id));
     await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, "Shared Team"));
     await db
-      .update(groupTeamsTable)
+      .update(teamLimitTargetsTable)
       .set({ teamName: "Team One" })
-      .where(eq(groupTeamsTable.groupName, "Alpha"));
+      .where(eq(teamLimitTargetsTable.groupId, "g-ws1-a"));
     await db
-      .update(groupTeamsTable)
+      .update(teamLimitTargetsTable)
       .set({ teamName: "Team Two" })
-      .where(eq(groupTeamsTable.groupName, "Gamma"));
+      .where(eq(teamLimitTargetsTable.groupId, "g-ws2-a"));
   }
 });
 

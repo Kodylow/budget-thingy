@@ -117,6 +117,8 @@ export interface Group {
      * @nullable
      */
   teamName?: string | null;
+  /** True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target. */
+  isLegacyDisplayOnly?: boolean;
   /** Group type (custom, admin, member, guest) */
   type: string;
   /** True for a generated accounting row rather than a real Enterprise group */
@@ -614,10 +616,21 @@ export interface TeamBudgetAdjustment {
   submissionPeriod: string;
 }
 
+export type TeamBudgetHistoryTeamMonthlyLimitSource = typeof TeamBudgetHistoryTeamMonthlyLimitSource[keyof typeof TeamBudgetHistoryTeamMonthlyLimitSource];
+
+
+export const TeamBudgetHistoryTeamMonthlyLimitSource = {
+  derived: 'derived',
+  manual: 'manual',
+} as const;
+
 export interface TeamBudgetHistoryTeam {
   teamName: string;
   originalAmountUsd: number;
   effectiveAmountUsd: number;
+  annualAllocationUsd: number;
+  monthlyLimitUsd: number;
+  monthlyLimitSource: TeamBudgetHistoryTeamMonthlyLimitSource;
   adjustments: TeamBudgetAdjustment[];
 }
 
@@ -657,13 +670,20 @@ export const TeamBudgetSyncStatusRequiredApprovalStatus = {
   Approved: 'Approved',
 } as const;
 
+export type TeamBudgetUpstreamSyncTargetType = typeof TeamBudgetUpstreamSyncTargetType[keyof typeof TeamBudgetUpstreamSyncTargetType];
+
+
+export const TeamBudgetUpstreamSyncTargetType = {
+  group: 'group',
+  workspace_default: 'workspace_default',
+} as const;
+
 export type TeamBudgetUpstreamSyncStatus = typeof TeamBudgetUpstreamSyncStatus[keyof typeof TeamBudgetUpstreamSyncStatus];
 
 
 export const TeamBudgetUpstreamSyncStatus = {
-  pending: 'pending',
   synced: 'synced',
-  unresolved: 'unresolved',
+  drift: 'drift',
   failed: 'failed',
 } as const;
 
@@ -675,6 +695,7 @@ export interface TeamBudgetUpstreamSync {
   targetGroupId: string | null;
   /** @nullable */
   targetGroupName: string | null;
+  targetType: TeamBudgetUpstreamSyncTargetType;
   desiredAmountUsd: number;
   /** @nullable */
   upstreamAmountUsd: number | null;
@@ -698,6 +719,119 @@ export interface TeamBudgetSyncStatus {
   acceptedCount: number;
   issueCount: number;
   teams: TeamBudgetUpstreamSync[];
+}
+
+export interface TeamBudgetLimitUpdate {
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  monthlyLimitUsd: number | null;
+}
+
+export interface TeamBudgetTargetIdentity {
+  /** @minLength 1 */
+  workspaceId: string;
+  /** @nullable */
+  groupId?: string | null;
+}
+
+export type TeamBudgetApplySelection = {
+  /**
+     * @minItems 1
+     * @items.minLength 1
+     */
+  teamNames: string[];
+} | {
+  all: true;
+} | {
+  /** @minItems 1 */
+  targets: TeamBudgetTargetIdentity[];
+};
+
+export type TeamBudgetApplyTargetOutcomeOutcome = typeof TeamBudgetApplyTargetOutcomeOutcome[keyof typeof TeamBudgetApplyTargetOutcomeOutcome];
+
+
+export const TeamBudgetApplyTargetOutcomeOutcome = {
+  success: 'success',
+  failed: 'failed',
+} as const;
+
+export interface TeamBudgetApplyTargetOutcome {
+  workspaceId: string;
+  /** @nullable */
+  targetGroupId: string | null;
+  targetGroupName: string;
+  desiredAmountUsd: number;
+  outcome: TeamBudgetApplyTargetOutcomeOutcome;
+  /** @nullable */
+  error: string | null;
+}
+
+export type TeamBudgetApplyTeamOutcomeOutcome = typeof TeamBudgetApplyTeamOutcomeOutcome[keyof typeof TeamBudgetApplyTeamOutcomeOutcome];
+
+
+export const TeamBudgetApplyTeamOutcomeOutcome = {
+  success: 'success',
+  failed: 'failed',
+} as const;
+
+export interface TeamBudgetApplyTeamOutcome {
+  teamName: string;
+  outcome: TeamBudgetApplyTeamOutcomeOutcome;
+  targets: TeamBudgetApplyTargetOutcome[];
+}
+
+export interface TeamBudgetApplyResponse {
+  teams: TeamBudgetApplyTeamOutcome[];
+}
+
+export interface TeamBudgetTargetAssignment {
+  /** @minLength 1 */
+  teamName: string;
+  /** @minLength 1 */
+  workspaceId: string;
+  /** @minLength 1 */
+  groupId: string;
+}
+
+export interface TeamBudgetTarget {
+  teamName: string;
+  workspaceId: string;
+  groupId: string;
+  groupName: string;
+  /** @nullable */
+  monthlyLimitUsd: number | null;
+  isEnabled: boolean;
+  teamMonthlyLimitUsd: number;
+  targetAmountUsd: number;
+}
+
+export interface TeamBudgetTargetTeamSummary {
+  teamName: string;
+  monthlyLimitUsd: number;
+  targetAmountSumUsd: number;
+  differenceUsd: number;
+}
+
+export interface UnassignedTeamBudgetGroup {
+  workspaceId: string;
+  groupId: string;
+  groupName: string;
+}
+
+export interface LegacyWorkspaceLimitTarget {
+  workspaceId: string;
+  displayName: string;
+  monthlyLimitUsd: number;
+  isEnabled: boolean;
+}
+
+export interface TeamBudgetTargetConfiguration {
+  targets: TeamBudgetTarget[];
+  teams: TeamBudgetTargetTeamSummary[];
+  legacy: LegacyWorkspaceLimitTarget[];
+  unassignedGroups: UnassignedTeamBudgetGroup[];
 }
 
 export type TeamBudgetRefreshResultSourceTable = typeof TeamBudgetRefreshResultSourceTable[keyof typeof TeamBudgetRefreshResultSourceTable];
@@ -1249,7 +1383,6 @@ export type ListAlertsParams = {
  */
 limit?: number;
 };
-
 export type ListRecentUsageIngestRunsParams = {
 /**
  * @minimum 1
@@ -1257,4 +1390,3 @@ export type ListRecentUsageIngestRunsParams = {
  */
 limit?: number;
 };
-

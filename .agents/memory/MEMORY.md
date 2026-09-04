@@ -4,4 +4,4 @@
 - [Allocated pool access](allocated-pool-access.md) — editors use stable Replit IDs; true admins manage access; shared-team alerts never reveal out-of-scope spend.
 - [Historical membership attribution](historical-membership-attribution.md) — immutable UTC rosters require complete fresh reads; current day stays live and pre-snapshot dates are not reconstructed.
 - [Member budget accounting](member-budget-accounting.md) — Replit limits are workspace/user scoped; Remaining uses complete current-cycle workspace Agent metrics, never selected-range cluster spend.
-- [Upstream team budget targets](upstream-team-budget-targets.md) — force a fresh directory and fail closed on cross-workspace name reuse before writing Member-group limits.
+- [Upstream team limit targets](upstream-team-budget-targets.md) — explicit workspace/group identities control writes; legacy workspace copies are display-only.

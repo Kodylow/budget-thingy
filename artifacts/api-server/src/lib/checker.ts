@@ -3,7 +3,7 @@ import {
   db,
   groupBudgetsTable,
   teamBudgetsTable,
-  groupTeamsTable,
+  teamLimitTargetsTable,
   apiProjectMetadataTable,
   alertsTable,
   firedThresholdsTable,
@@ -34,6 +34,45 @@ export const THRESHOLDS = [50, 75, 90, 100];
 export const CHECK_INTERVAL_MINUTES = 10;
 
 type CheckerDirectory = Awaited<ReturnType<typeof getDirectory>>;
+
+type TeamTarget = Pick<
+  typeof teamLimitTargetsTable.$inferSelect,
+  "workspaceId" | "groupId" | "groupName" | "teamName"
+>;
+
+function targetTeamForGroup(
+  group: EnterpriseGroup,
+  targets: readonly TeamTarget[],
+): string | undefined {
+  const exact = targets.find((target) =>
+    target.workspaceId === group.workspaceId && target.groupId === group.id
+  );
+  if (exact) return exact.teamName;
+  if (group.workspaceId !== "1awqan") return undefined;
+  const teams = new Set(
+    targets
+      .filter((target) =>
+        target.workspaceId !== "1awqan" && target.groupName === group.name
+      )
+      .map((target) => target.teamName),
+  );
+  return teams.size === 1 ? [...teams][0] : undefined;
+}
+
+function teamMap(
+  groups: readonly EnterpriseGroup[],
+  targets: readonly TeamTarget[],
+  hidden: ReadonlySet<string>,
+): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const group of groups) {
+    const team = targetTeamForGroup(group, targets);
+    if (team && !hidden.has(team)) {
+      result.set(`${group.workspaceId}\0${group.id}`, team);
+    }
+  }
+  return result;
+}
 
 interface CheckerUsage {
   rollup: SnapshotUsageRollup;
@@ -388,25 +427,25 @@ async function buildTeamSpecs(
   prepared?: {
     allTeamBudgetRows: Array<typeof teamBudgetsTable.$inferSelect>;
     budgetByTeam: ReadonlyMap<string, number>;
-    groupTeams: Array<{ groupName: string; teamName: string }>;
+    groupTargets: TeamTarget[];
     firedByEntity?: ReadonlyMap<string, readonly number[]>;
   },
 ): Promise<EntitySpec[]> {
-  const [allCheckerTeamBudgetRows, budgetByTeam, groupTeams] = prepared
-    ? [prepared.allTeamBudgetRows, prepared.budgetByTeam, prepared.groupTeams]
+  const [allCheckerTeamBudgetRows, budgetByTeam, groupTargets] = prepared
+    ? [prepared.allTeamBudgetRows, prepared.budgetByTeam, prepared.groupTargets]
     : await Promise.all([
         db.select().from(teamBudgetsTable),
         getVisibleEffectiveTeamBudgetMap(),
-        db.select().from(groupTeamsTable),
+        db.select().from(teamLimitTargetsTable),
       ]);
   const teamBudgets = allCheckerTeamBudgetRows.filter((tb) => !tb.isHidden);
   if (teamBudgets.length === 0) return [];
 
   const hiddenCheckerTeamNames = new Set(allCheckerTeamBudgetRows.filter((tb) => tb.isHidden).map((tb) => tb.teamName));
-  const teamByGroupName = new Map(
-    groupTeams
-      .filter((gt) => !hiddenCheckerTeamNames.has(gt.teamName))
-      .map((gt) => [gt.groupName, gt.teamName]),
+  const teamByGroupName = teamMap(
+    dir.groups,
+    groupTargets,
+    hiddenCheckerTeamNames,
   );
 
   // Period start for team thresholds: use the shared cutoff-anchored billing
@@ -418,10 +457,14 @@ async function buildTeamSpecs(
   // Aggregate attributed group spend and contributing workspaces per team.
   const spendByTeam = new Map<string, number>();
   const workspacesByTeam = new Map<string, Set<string>>();
-  const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
+  const mergePlan = buildCanonicalGroupMergePlan(
+    dir.groups,
+    dir.workspaces,
+    teamByGroupName,
+  );
   for (const group of dir.groups.filter((candidate) =>
     !mergePlan.hiddenGroupIds.has(candidate.id))) {
-    const teamName = teamByGroupName.get(group.name);
+    const teamName = teamByGroupName.get(`${group.workspaceId}\0${group.id}`);
     if (!teamName) continue;
     if (!budgetByTeam.has(teamName)) continue;
     const groupSpend = (mergePlan.mergeMap.get(group.id) ?? [group.id])
@@ -553,11 +596,11 @@ async function runCheckInternal(): Promise<CheckResult> {
     await persistSkippedCheckerState(lastAttemptAt, skipReason);
     return { checkedGroups: 0, checkedTeams: 0, alerts: [], evaluatedAt: null, dataAsOf: null, skipped: true, skipReason };
   }
-  const [budgets, effectiveTeamBudgetMap, allRunTeamBudgetRows, groupTeams] = await Promise.all([
+  const [budgets, effectiveTeamBudgetMap, allRunTeamBudgetRows, groupTargets] = await Promise.all([
     db.select().from(groupBudgetsTable),
     getVisibleEffectiveTeamBudgetMap(),
     db.select().from(teamBudgetsTable),
-    db.select().from(groupTeamsTable),
+    db.select().from(teamLimitTargetsTable),
   ]);
   const budgetByGroupId = new Map(budgets.map((row) => [row.groupId, row.amountUsd]));
   const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
@@ -617,7 +660,7 @@ async function runCheckInternal(): Promise<CheckResult> {
     const teamResult = await evaluateTeamsOnce(dir, usage, {
       allTeamBudgetRows: allRunTeamBudgetRows,
       budgetByTeam: effectiveTeamBudgetMap,
-      groupTeams,
+      groupTargets,
       firedByEntity,
     });
     checkedTeams = teamResult.checkedTeams;

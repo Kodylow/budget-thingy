@@ -3,7 +3,7 @@
  * Run with: npx tsx src/seed-teams.ts
  */
 import { db } from "./index.js";
-import { groupTeamsTable, teamBudgetsTable } from "./schema/index.js";
+import { teamBudgetsTable } from "./schema/index.js";
 import { eq } from "drizzle-orm";
 
 export const BASELINE_GROUP_TEAMS: { groupName: string; teamName: string }[] = [
@@ -112,20 +112,6 @@ export const ORIGINAL_TEAM_BUDGETS: { teamName: string; amountUsd: number; isHid
 
 export async function applyAnnualTeamBudgetBackfill(): Promise<void> {
   await db.transaction(async (tx) => {
-    // Fresh published databases receive schema but not standalone seed data.
-    // Restore missing baseline mappings without overwriting later administrator
-    // reassignments of an existing group.
-    await tx
-      .insert(groupTeamsTable)
-      .values(BASELINE_GROUP_TEAMS)
-      .onConflictDoNothing({ target: groupTeamsTable.groupName });
-
-    // Only legacy assignments are remapped here.
-    await tx
-      .update(groupTeamsTable)
-      .set({ teamName: "DXP" })
-      .where(eq(groupTeamsTable.teamName, "Growth Strategy & Operations"));
-
     for (const budget of ORIGINAL_TEAM_BUDGETS) {
       await tx
         .insert(teamBudgetsTable)
@@ -150,18 +136,6 @@ export async function applyAnnualTeamBudgetBackfill(): Promise<void> {
 }
 
 async function seed() {
-  console.log("Seeding group→team mapping...");
-  for (const assignment of BASELINE_GROUP_TEAMS) {
-    await db
-      .insert(groupTeamsTable)
-      .values(assignment)
-      .onConflictDoUpdate({
-        target: groupTeamsTable.groupName,
-        set: { teamName: assignment.teamName },
-      });
-  }
-  console.log(`Inserted ${BASELINE_GROUP_TEAMS.length} group→team rows`);
-
   console.log("Seeding team budgets...");
   await applyAnnualTeamBudgetBackfill();
   console.log(`Inserted ${ORIGINAL_TEAM_BUDGETS.length} team budget rows`);

@@ -46,9 +46,15 @@ export function isConfigured(): boolean {
 let lastApiError: string | null = null;
 let lastApiOk = false;
 const enterpriseIngestContext = new AsyncLocalStorage<boolean>();
+const enterpriseLimitValidationContext = new AsyncLocalStorage<boolean>();
 
 export function withEnterpriseIngestAccess<T>(work: () => Promise<T>): Promise<T> {
   return enterpriseIngestContext.run(true, work);
+}
+
+/** Force-refresh directory metadata solely for validating upstream limit targets. */
+export function getFreshDirectoryForLimitValidation(): Promise<DirectoryCache> {
+  return enterpriseLimitValidationContext.run(true, () => getDirectory(true));
 }
 
 export function getApiHealth(): { ok: boolean; error: string | null } {
@@ -68,7 +74,11 @@ async function rawFetch(
   path: string,
   params: Record<string, string | undefined>,
 ): Promise<{ body: unknown; headers: Headers }> {
-  if (process.env.NODE_ENV !== "test" && !enterpriseIngestContext.getStore()) {
+  if (
+    process.env.NODE_ENV !== "test" &&
+    !enterpriseIngestContext.getStore() &&
+    !enterpriseLimitValidationContext.getStore()
+  ) {
     throw new EnterpriseApiError(
       0,
       "Enterprise API access is restricted to the usage ingestion scheduler",
@@ -4910,10 +4920,12 @@ export function resolveCanonicalMergedGroupBudget(
   return { amountUsd: budgetByGroupId.get(aliasId)!, sourceGroupId: aliasId };
 }
 
+// hint: Structural and logic conflict. Both design and behavior differ.
 /** Shared migration policy for same-name groups duplicated across workspaces. */
 export function buildCanonicalGroupMergePlan(
   groups: readonly EnterpriseGroup[],
   workspaces: ReadonlyMap<string, Pick<EnterpriseWorkspace, "name">>,
+  teamByGroupIdentity?: ReadonlyMap<string, string>,
 ): CanonicalGroupMergePlan {
   const byName = new Map<string, EnterpriseGroup[]>();
   for (const group of groups) {
@@ -4926,6 +4938,18 @@ export function buildCanonicalGroupMergePlan(
   const hiddenGroupIds = new Set<string>();
   const primaryByGroupId = new Map<string, string>();
   for (const matches of byName.values()) {
+    const mappedTeams = new Set(
+      matches
+        .map((group) => teamByGroupIdentity?.get(`${group.workspaceId}\0${group.id}`))
+        .filter((team): team is string => !!team),
+    );
+    if (mappedTeams.size > 1) {
+      for (const group of matches) {
+        mergeMap.set(group.id, [group.id]);
+        primaryByGroupId.set(group.id, group.id);
+      }
+      continue;
+    }
     const body = matches[0]!.name
       .replace(/^az-replit\s*[-–]\s*/i, "")
       .toLowerCase()
@@ -5056,7 +5080,7 @@ export function getCanonicalUsage(
         (nonAiSpendByUser.get(row.userKey) ?? 0) + row.nonAiSpendUsd,
       );
     }
-    const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces);
+    const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces, teamByGroupName);
     const displayGroups = groups.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
     const spendByPrimaryGroup = new Map<string, number>();
     for (const group of displayGroups) {
@@ -5070,7 +5094,8 @@ export function getCanonicalUsage(
     }
     const byTeam = new Map<string, number>();
     for (const group of displayGroups) {
-      const teamName = teamByGroupName?.get(group.name);
+      const teamName = teamByGroupName?.get(`${group.workspaceId}\0${group.id}`) ??
+        teamByGroupName?.get(group.name);
       if (teamName) {
         byTeam.set(
           teamName,
@@ -5315,7 +5340,7 @@ export function getCanonicalUsage(
   const creatorAttributionRequired =
     detailLoadedProjectNonAiSpendUsd > 1e-9 ||
     detailRollupSpendUsd - detailAiSpendUsd > 1e-9;
-  const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces);
+  const mergePlan = buildCanonicalGroupMergePlan(groups, workspaces, teamByGroupName);
   const displayGroups = groups.filter((group) => !mergePlan.hiddenGroupIds.has(group.id));
   const spendByPrimaryGroup = new Map<string, number>();
   for (const group of displayGroups) {
@@ -5328,7 +5353,8 @@ export function getCanonicalUsage(
   const byTeam = new Map<string, number>();
   if (teamByGroupName) {
     for (const group of displayGroups) {
-      const teamName = teamByGroupName.get(group.name);
+      const teamName = teamByGroupName.get(`${group.workspaceId}\0${group.id}`) ??
+        teamByGroupName.get(group.name);
       if (!teamName) continue;
       byTeam.set(
         teamName,

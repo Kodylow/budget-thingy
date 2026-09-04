@@ -141,6 +141,13 @@
       "when": 1788560000000,
       "tag": "0019_usage_ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788561000000,
+      "tag": "0020_team_monthly_limits",
+      "breakpoints": true
     }
   ]
 }

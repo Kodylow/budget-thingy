@@ -6,10 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { TeamBudgetAdjustment } from './teamBudgetAdjustment';
+import type { TeamBudgetHistoryTeamMonthlyLimitSource } from './teamBudgetHistoryTeamMonthlyLimitSource';
 
 export interface TeamBudgetHistoryTeam {
   teamName: string;
   originalAmountUsd: number;
   effectiveAmountUsd: number;
+  annualAllocationUsd: number;
+  monthlyLimitUsd: number;
+  monthlyLimitSource: TeamBudgetHistoryTeamMonthlyLimitSource;
   adjustments: TeamBudgetAdjustment[];
 }

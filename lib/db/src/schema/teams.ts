@@ -4,16 +4,46 @@ import {
   doublePrecision,
   timestamp,
   integer,
+  primaryKey,
   uniqueIndex,
+  unique,
   boolean,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
-export const groupTeamsTable = pgTable("group_teams", {
-  groupName: text("group_name").primaryKey(),
-  teamName: text("team_name").notNull(),
-});
+export const teamLimitTargetsTable = pgTable(
+  "team_limit_targets",
+  {
+    teamName: text("team_name").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    groupId: text("group_id").notNull(),
+    groupName: text("group_name").notNull(),
+    monthlyLimitUsd: doublePrecision("monthly_limit_usd"),
+    // Disabled rows still attribute usage to a team; only limit split,
+    // reconciliation, and apply operations exclude them.
+    isEnabled: boolean("is_enabled").notNull().default(true),
+  },
+  (table) => [
+    primaryKey({
+      name: "team_limit_targets_pkey",
+      columns: [
+      table.workspaceId,
+      table.groupId,
+      ],
+    }),
+  ],
+);
+
+export const workspaceDefaultLimitTargetsTable = pgTable(
+  "workspace_default_limit_targets",
+  {
+    workspaceId: text("workspace_id").primaryKey(),
+    displayName: text("display_name").notNull(),
+    monthlyLimitUsd: doublePrecision("monthly_limit_usd").notNull().default(1),
+    isEnabled: boolean("is_enabled").notNull().default(true),
+  },
+);
 
 export const teamBudgetsTable = pgTable("team_budgets", {
   teamName: text("team_name").primaryKey(),
@@ -21,6 +51,11 @@ export const teamBudgetsTable = pgTable("team_budgets", {
   originalAmountUsd: doublePrecision("original_amount_usd").notNull().default(0),
   /** Legacy mirror of the original allocation, retained for a safe rolling migration. */
   amountUsd: doublePrecision("amount_usd").notNull(),
+  monthlyLimitUsd: doublePrecision("monthly_limit_usd"),
+  monthlyLimitSource: text("monthly_limit_source")
+    .$type<"derived" | "manual">()
+    .notNull()
+    .default("derived"),
   isHidden: boolean("is_hidden").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
@@ -31,16 +66,21 @@ export const teamBudgetsTable = pgTable("team_budgets", {
 export const teamBudgetUpstreamSyncTable = pgTable(
   "team_budget_upstream_sync",
   {
-    teamName: text("team_name").primaryKey(),
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    teamName: text("team_name").notNull(),
     workspaceId: text("workspace_id"),
     targetGroupId: text("target_group_id"),
     targetGroupName: text("target_group_name"),
+    targetType: text("target_type")
+      .$type<"group" | "workspace_default">()
+      .notNull()
+      .default("group"),
     desiredAmountUsd: doublePrecision("desired_amount_usd").notNull(),
     upstreamAmountUsd: doublePrecision("upstream_amount_usd"),
     status: text("status")
-      .$type<"pending" | "synced" | "unresolved" | "failed">()
+      .$type<"synced" | "drift" | "failed">()
       .notNull()
-      .default("pending"),
+      .default("failed"),
     reason: text("reason"),
     lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -48,6 +88,13 @@ export const teamBudgetUpstreamSyncTable = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
+  (table) => [
+    unique("team_budget_upstream_sync_target_idx").on(
+      table.workspaceId,
+      table.targetType,
+      table.targetGroupId,
+    ).nullsNotDistinct(),
+  ],
 );
 
 export const teamBudgetAdjustmentsTable = pgTable(
@@ -73,9 +120,7 @@ export const teamBudgetAdjustmentsTable = pgTable(
     ),
   ],
 );
-export const insertGroupTeamSchema = createInsertSchema(groupTeamsTable);
-export type InsertGroupTeam = z.infer<typeof insertGroupTeamSchema>;
-export type GroupTeam = typeof groupTeamsTable.$inferSelect;
+export type TeamLimitTarget = typeof teamLimitTargetsTable.$inferSelect;
 
 export const insertTeamBudgetSchema = createInsertSchema(teamBudgetsTable).omit({
   updatedAt: true,

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { TeamBudgetUpstreamSyncStatus } from './teamBudgetUpstreamSyncStatus';
+import type { TeamBudgetUpstreamSyncTargetType } from './teamBudgetUpstreamSyncTargetType';
 
 export interface TeamBudgetUpstreamSync {
   teamName: string;
@@ -15,6 +16,7 @@ export interface TeamBudgetUpstreamSync {
   targetGroupId: string | null;
   /** @nullable */
   targetGroupName: string | null;
+  targetType: TeamBudgetUpstreamSyncTargetType;
   desiredAmountUsd: number;
   /** @nullable */
   upstreamAmountUsd: number | null;

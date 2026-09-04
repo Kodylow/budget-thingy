@@ -51,8 +51,8 @@ Monitors spending by group and team across the Comcast Replit Enterprise account
 ## Product
 
 - Dashboard: all Enterprise groups with spend for a selectable range (billing period / MTD / YTD / custom dates), inline budget set/edit/remove, remaining budget, % used with color-coded threshold badges and progress bars, account-wide summary stats, per-group refresh.
-- Group drill-down (`/groups/:groupId`): per-member allocated budget (platform user limit or workspace default), usage, remaining, % used, role; reconciliation footer (member spend + unattributed = group total).
-- Budgets merge two sources: app budgets (set in this tool, used for email alerting) and platform budgets read from the Enterprise `/budgets` API (`workspace_group_limit`); `budgetSource` distinguishes them. Platform budgets are read-only here.
+- Group drill-down (`/groups/:groupId`): per-member Monthly Agent limit (workspace user limit or workspace default), usage, remaining, % used, role; reconciliation footer (member spend + unattributed = group total). Monthly Agent limit · resets on billing cycle day · hard block.
+- Group accounting merges two sources: app allocations (set in this tool, used for email alerting) and platform limits read from the Enterprise `/budgets` API (`workspace_group_limit`); `budgetSource` distinguishes them. Platform limits are Monthly Agent limits that reset on the billing cycle day and hard-block paid services.
 - Alerts: group/team history with configured pool and spend, plus an account-operator "run check now" action and Kody-only fixed-recipient activity examples.
 - Settings: true-admin-only notification recipients, managed editor allowlist, and system status; the persisted Kody identity also has the predefined email-test console.
 

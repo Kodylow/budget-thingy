@@ -10,8 +10,7 @@ export type TeamBudgetUpstreamSyncStatus = typeof TeamBudgetUpstreamSyncStatus[k
 
 
 export const TeamBudgetUpstreamSyncStatus = {
-  pending: 'pending',
   synced: 'synced',
-  unresolved: 'unresolved',
+  drift: 'drift',
   failed: 'failed',
 } as const;

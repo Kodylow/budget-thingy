@@ -1,25 +1,67 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  useGetTeamBudgetHistory,
   getGetTeamBudgetHistoryQueryKey,
-  useGetTeamBudgetSyncStatus,
   getGetTeamBudgetSyncStatusQueryKey,
+  getGetTeamBudgetTargetsQueryKey,
+  getListGroupsQueryKey,
+  useApplyTeamBudgetLimits,
+  useAssignTeamBudgetTarget,
+  useGetTeamBudgetHistory,
+  useGetTeamBudgetSyncStatus,
+  useGetTeamBudgetTargets,
+  useListGroups,
   useRefreshTeamBudgets,
-  useRetryTeamBudgetUpstreamSync
+  useRetryTeamBudgetUpstreamSync,
+  useUpdateLegacyWorkspaceLimit,
+  useUpdateTeamBudgetLimit,
+  useUpdateTeamBudgetTarget,
+  type TeamBudgetApplySelection,
 } from '@workspace/api-client-react';
-
 import {
-  AlertCircle, CalendarClock, CheckCircle2, RefreshCw, WalletCards,
-  Clock, XCircle, HelpCircle, Network, UploadCloud, Database
+  AlertCircle,
+  CalendarClock,
+  CheckCircle2,
+  Database,
+  Network,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  ShieldAlert,
+  UploadCloud,
+  WalletCards,
+  XCircle,
 } from 'lucide-react';
+
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthContext } from '@/components/auth-context';
 import { formatTeamName } from '@/lib/team-names';
+
+const currency = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+});
 
 function periodTimestamp(period: string): number {
   const normalized = period.trim();
@@ -39,436 +81,478 @@ function formatPeriod(period: string): string {
   }).format(timestamp);
 }
 
-const currency = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-});
-
 function formatAdjustment(amountUsd: number): string {
   return `${amountUsd >= 0 ? '+' : '−'}${currency.format(Math.abs(amountUsd))}`;
 }
 
-function getErrorMessage(err: unknown): string | null {
-  if (!err) return null;
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'object' && 'error' in err) return String((err as any).error);
-  if (typeof err === 'object' && 'message' in err) return String((err as any).message);
-  return String(err);
+function getErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && 'error' in error) return String((error as { error: unknown }).error);
+  if (typeof error === 'object' && 'message' in error) return String((error as { message: unknown }).message);
+  return String(error);
 }
 
 function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case 'synced':
-      return (
-        <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800 font-medium">
-          <CheckCircle2 className="mr-1.5 w-3 h-3" /> Synced
-        </Badge>
-      );
-    case 'pending':
-      return (
-        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800 font-medium">
-          <Clock className="mr-1.5 w-3 h-3" /> Pending
-        </Badge>
-      );
-    case 'unresolved':
-      return (
-        <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700 font-medium">
-          <HelpCircle className="mr-1.5 w-3 h-3" /> Unresolved Target
-        </Badge>
-      );
-    case 'failed':
-      return (
-        <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800 font-medium">
-          <XCircle className="mr-1.5 w-3 h-3" /> Failed
-        </Badge>
-      );
-    default:
-      return (
-        <Badge variant="outline" className="bg-muted text-muted-foreground font-medium">
-          {status}
-        </Badge>
-      );
+  if (status === 'synced') {
+    return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700"><CheckCircle2 className="mr-1 h-3 w-3" />synced</Badge>;
   }
+  if (status === 'failed') {
+    return <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700"><XCircle className="mr-1 h-3 w-3" />failed</Badge>;
+  }
+  return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700"><AlertCircle className="mr-1 h-3 w-3" />drift</Badge>;
 }
+
+type ConfirmationRow = {
+  workspace: string;
+  group: string;
+  amountUsd: number;
+};
+
+type Confirmation = {
+  title: string;
+  selection: TeamBudgetApplySelection;
+  rows: ConfirmationRow[];
+};
 
 export default function TeamBudgets() {
   const queryClient = useQueryClient();
   const { realRole } = useAuthContext();
-  const canManageUpstreamSync = realRole === 'account_admin';
+  const canManage = realRole === 'account_admin';
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [applyOutcomeError, setApplyOutcomeError] = useState<string | null>(null);
 
   const historyQuery = useGetTeamBudgetHistory({
-    query: { queryKey: getGetTeamBudgetHistoryQueryKey(), staleTime: 60_000, refetchOnMount: 'always' }
+    query: { queryKey: getGetTeamBudgetHistoryQueryKey(), staleTime: 60_000, refetchOnMount: 'always' },
   });
-
   const syncQuery = useGetTeamBudgetSyncStatus({
     query: {
       queryKey: getGetTeamBudgetSyncStatusQueryKey(),
-      staleTime: 60_000,
+      staleTime: 30_000,
       refetchOnMount: 'always',
-      enabled: canManageUpstreamSync,
-    }
+      enabled: canManage,
+    },
+  });
+  const configQuery = useGetTeamBudgetTargets({
+    query: {
+      queryKey: getGetTeamBudgetTargetsQueryKey(),
+      staleTime: 30_000,
+      refetchOnMount: 'always',
+      enabled: canManage,
+    },
+  });
+  const groupsQuery = useListGroups(undefined, {
+    query: {
+      queryKey: getListGroupsQueryKey(),
+      staleTime: 60_000,
+      enabled: canManage,
+    },
   });
 
-  const refresh = useRefreshTeamBudgets({
+  const invalidateAll = () => {
+    void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetHistoryQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetSyncStatusQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetTargetsQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getListGroupsQueryKey() });
+  };
+
+  const refresh = useRefreshTeamBudgets({ mutation: { onSuccess: invalidateAll } });
+  const refreshStatus = useRetryTeamBudgetUpstreamSync({
     mutation: {
-      onSuccess: () => {
-        void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetHistoryQueryKey() });
-        void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetSyncStatusQueryKey() });
+      onSuccess: invalidateAll,
+    },
+  });
+  const updateTeam = useUpdateTeamBudgetLimit({
+    mutation: { onSuccess: () => { setDrafts({}); invalidateAll(); } },
+  });
+  const updateTarget = useUpdateTeamBudgetTarget({
+    mutation: { onSuccess: () => { setDrafts({}); invalidateAll(); } },
+  });
+  const updateLegacy = useUpdateLegacyWorkspaceLimit({
+    mutation: { onSuccess: () => { setDrafts({}); invalidateAll(); } },
+  });
+  const assignTarget = useAssignTeamBudgetTarget({
+    mutation: { onSuccess: () => { setAssignments({}); invalidateAll(); } },
+  });
+  const applyLimits = useApplyTeamBudgetLimits({
+    mutation: {
+      onSuccess: (response) => {
+        const failures = response.teams.flatMap((team) =>
+          team.targets
+            .filter((target) => target.outcome === 'failed')
+            .map((target) => `${target.targetGroupName}: ${target.error ?? 'Upstream write failed'}`),
+        );
+        setApplyOutcomeError(failures.length ? failures.join(' · ') : null);
+        setConfirmation(null);
+        invalidateAll();
       },
-      onError: () => {
-        void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetSyncStatusQueryKey() });
-      }
-    }
+    },
   });
 
-  const retrySync = useRetryTeamBudgetUpstreamSync({
-    mutation: {
-      onSuccess: () => {
-        void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetHistoryQueryKey() });
-        void queryClient.invalidateQueries({ queryKey: getGetTeamBudgetSyncStatusQueryKey() });
-      }
-    }
-  });
-
-  const data = historyQuery.data;
+  const history = historyQuery.data;
   const sync = syncQuery.data;
+  const config = configQuery.data;
+  const directoryGroups = groupsQuery.data?.groups ?? [];
 
   const teams = useMemo(
-    () => [...(data?.teams ?? [])].sort((a, b) =>
-      formatTeamName(a.teamName).localeCompare(formatTeamName(b.teamName), 'en', {
-        sensitivity: 'base',
-      }),
-    ),
-    [data?.teams],
+    () => [...(history?.teams ?? [])].sort((a, b) =>
+      formatTeamName(a.teamName).localeCompare(formatTeamName(b.teamName), 'en', { sensitivity: 'base' })),
+    [history?.teams],
   );
-
   const periods = useMemo(() => {
-    const values = new Set<string>();
-    for (const team of teams) {
-      for (const adjustment of team.adjustments ?? []) values.add(adjustment.submissionPeriod);
-    }
-    return [...values].sort((a, b) => periodTimestamp(a) - periodTimestamp(b) || a.localeCompare(b));
+    const result = new Set<string>();
+    teams.forEach((team) => team.adjustments.forEach((adjustment) => result.add(adjustment.submissionPeriod)));
+    return [...result].sort((a, b) => periodTimestamp(a) - periodTimestamp(b) || a.localeCompare(b));
   }, [teams]);
-
   const totals = useMemo(() => ({
-    originalAmountUsd: teams.reduce((sum, team) => sum + team.originalAmountUsd, 0),
-    effectiveAmountUsd: teams.reduce((sum, team) => sum + team.effectiveAmountUsd, 0),
-    adjustmentsByPeriod: new Map(
-      periods.map((period) => [
-        period,
-        teams.reduce(
-          (sum, team) => sum + (team.adjustments ?? [])
-            .filter((adjustment) => adjustment.submissionPeriod === period)
-            .reduce((teamSum, adjustment) => teamSum + adjustment.amountUsd, 0),
-          0,
-        ),
-      ]),
-    ),
-  }), [periods, teams]);
+    original: teams.reduce((sum, team) => sum + team.originalAmountUsd, 0),
+    effective: teams.reduce((sum, team) => sum + team.effectiveAmountUsd, 0),
+  }), [teams]);
 
-  const syncErrors = (data?.issues ?? []).map((issue) => {
-    const team = issue.sourceTeamName ? ` for “${issue.sourceTeamName}”` : '';
-    return `Airtable record ${issue.recordId}${team}: ${issue.error ?? issue.matchState}`;
-  });
-  if (sync?.lastError) syncErrors.unshift(`Latest refresh failed: ${sync.lastError}`);
+  const groupDetails = useMemo(() => new Map(directoryGroups.map((group) => [
+    `${group.workspaceId}:${group.groupId}`,
+    group,
+  ])), [directoryGroups]);
+  const syncByTarget = useMemo(() => new Map((sync?.teams ?? []).map((target) => [
+    `${target.workspaceId ?? ''}:${target.targetGroupId ?? ''}`,
+    target,
+  ])), [sync?.teams]);
+  const legacyCopiesByTeam = useMemo(() => {
+    const result = new Map<string, typeof directoryGroups>();
+    directoryGroups.filter((group) => group.isLegacyDisplayOnly && group.teamName).forEach((group) => {
+      const existing = result.get(group.teamName!) ?? [];
+      existing.push(group);
+      result.set(group.teamName!, existing);
+    });
+    return result;
+  }, [directoryGroups]);
 
-  const refreshError = getErrorMessage(refresh.error);
-  const historyError = getErrorMessage(historyQuery.error);
-  const statusError = canManageUpstreamSync ? getErrorMessage(syncQuery.error) : null;
-  const retryError = getErrorMessage(retrySync.error);
-  const loadError = historyError || statusError;
-  const isRefreshing = refresh.isPending;
-  const isRetrying = retrySync.isPending;
+  const workspaceLabel = (workspaceId: string) => {
+    const group = directoryGroups.find((item) => item.workspaceId === workspaceId && item.workspaceName);
+    return group?.workspaceName ?? workspaceId;
+  };
+  const rowsFor = (predicate: (item: NonNullable<typeof sync>['teams'][number]) => boolean) =>
+    (sync?.teams ?? []).filter(predicate).map((item) => ({
+      workspace: item.workspaceId ? workspaceLabel(item.workspaceId) : 'Unknown workspace',
+      group: item.targetGroupName ?? (item.targetType === 'workspace_default' ? 'Legacy workspace per-user cap' : 'Unknown member group'),
+      amountUsd: item.desiredAmountUsd,
+    }));
 
-  const upstreamTeams = useMemo(() => {
-    return [...(sync?.teams ?? [])].sort((a, b) =>
-      formatTeamName(a.teamName).localeCompare(formatTeamName(b.teamName), 'en', { sensitivity: 'base' })
-    );
-  }, [sync?.teams]);
+  const requestConfirmation = (title: string, selection: TeamBudgetApplySelection, rows: ConfirmationRow[]) => {
+    if (rows.length > 0) setConfirmation({ title, selection, rows });
+  };
+  const saveNumber = (key: string, action: (value: number) => void) => {
+    const value = Number(drafts[key]);
+    if (Number.isFinite(value) && value >= 0) action(value);
+  };
+
+  const requestErrors = [
+    getErrorMessage(historyQuery.error),
+    canManage ? getErrorMessage(syncQuery.error) : null,
+    canManage ? getErrorMessage(configQuery.error) : null,
+    canManage ? getErrorMessage(groupsQuery.error) : null,
+    getErrorMessage(refresh.error),
+    getErrorMessage(refreshStatus.error),
+    getErrorMessage(updateTeam.error),
+    getErrorMessage(updateTarget.error),
+    getErrorMessage(updateLegacy.error),
+    getErrorMessage(assignTarget.error),
+    getErrorMessage(applyLimits.error),
+    applyOutcomeError,
+  ].filter(Boolean);
+
+  const driftRows = rowsFor((item) => item.status === 'drift');
+  const knownTeamNames = [...new Set(teams.map((team) => team.teamName))];
 
   return (
-    <div className="p-4 md:p-8 space-y-8 max-w-[100vw] pb-24" data-testid="page-team-budgets">
+    <div className="max-w-[100vw] space-y-8 p-4 pb-24 md:p-8" data-testid="page-team-budgets">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <WalletCards className="h-7 w-7 text-primary" aria-hidden="true" />
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground" data-testid="text-team-budgets-title">
-              Team Budgets
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight md:text-3xl" data-testid="text-team-budgets-title">Team allocations &amp; limits</h1>
           </div>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground leading-relaxed">
-            Audit annual allocations from Airtable and monitor their effective enforcement upstream across Replit workspaces.
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            Annual allocations come from Airtable. Monthly Agent limits reset on the billing cycle day and are hard blocks.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => refresh.mutate()}
-            disabled={isRefreshing}
-            data-testid="button-refresh-team-budgets"
-            className="bg-card shadow-xs font-medium"
-          >
-            <Database className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin text-primary' : 'text-muted-foreground'}`} />
-            {isRefreshing ? 'Syncing Airtable…' : 'Pull from Airtable'}
-          </Button>
+        <div className="flex flex-wrap gap-2">
+          {canManage && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => refresh.mutate()}
+              disabled={refresh.isPending}
+              data-testid="button-refresh-allocations"
+            >
+              <Database className={`mr-2 h-4 w-4 ${refresh.isPending ? 'animate-spin' : ''}`} />
+              {refresh.isPending ? 'Refreshing…' : 'Refresh allocations'}
+            </Button>
+          )}
+          {canManage && (
+            <Button
+              type="button"
+              onClick={() => requestConfirmation('Apply all drift', { all: true }, driftRows)}
+              disabled={driftRows.length === 0 || applyLimits.isPending}
+              data-testid="button-apply-all-drift"
+            >
+              <UploadCloud className="mr-2 h-4 w-4" />Apply all drift
+            </Button>
+          )}
         </div>
       </div>
 
-      {(loadError || refreshError || retryError) && (
-        <Alert variant="destructive" className="border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-400" data-testid="alert-team-budget-request-error">
+      {requestErrors.length > 0 && (
+        <Alert variant="destructive" data-testid="alert-team-budget-request-error">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle className="font-semibold">{loadError ? 'Budgets could not be loaded' : 'Action failed'}</AlertTitle>
-          <AlertDescription className="mt-1">
-            {loadError || refreshError || retryError}
-            {refreshError && data && ' The last successfully synchronized budgets remain visible below.'}
-          </AlertDescription>
+          <AlertTitle>Action needs attention</AlertTitle>
+          <AlertDescription>{requestErrors.join(' · ')}</AlertDescription>
         </Alert>
       )}
 
-      {syncErrors.length > 0 && (
-        <Alert variant="destructive" className="border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-400" data-testid="alert-team-budget-sync-errors">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle className="font-semibold">Some records need review</AlertTitle>
+      {canManage && (
+        <Alert>
+          <ShieldAlert className="h-4 w-4" />
+          <AlertTitle>Monthly Agent limit · resets on billing cycle day · hard block</AlertTitle>
           <AlertDescription>
-            <ul className="mt-2 list-disc space-y-1 pl-5 marker:text-red-500/50">
-              {syncErrors.map((error, index) => <li key={`${error}-${index}`}>{error}</li>)}
-            </ul>
+            Reaching a limit blocks paid services for members of that group. A team’s target total may differ from its monthly limit; the difference is informational and does not prevent applying changes.
           </AlertDescription>
         </Alert>
       )}
 
-      {canManageUpstreamSync && <Card className="shadow-sm border-border overflow-hidden">
-        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between border-b bg-muted/30 pb-5">
-          <div>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Network className="h-5 w-5 text-muted-foreground" />
-              Upstream Enforcement
-            </CardTitle>
-            <CardDescription className="mt-1.5">
-              Synchronization status between authorized budget allocations and Replit workspace limits.
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
+      {canManage && (
+        <Card className="overflow-hidden shadow-sm">
+          <CardHeader className="gap-3 border-b bg-muted/30 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-lg"><Network className="h-5 w-5" />Legacy workspace per-user cap</CardTitle>
+              <CardDescription>Defaults to $1.00 per user. This workspace-wide limit uses the same drift and apply workflow.</CardDescription>
+            </div>
             <Button
-              variant="secondary"
+              variant="outline"
               size="sm"
-              onClick={() => retrySync.mutate()}
-              disabled={isRetrying || syncQuery.isLoading}
-              className="h-8 shadow-xs"
-              data-testid="button-retry-team-budget-sync"
+              onClick={() => refreshStatus.mutate()}
+              disabled={refreshStatus.isPending}
+              data-testid="button-refresh-upstream-status"
             >
-              <UploadCloud className={`mr-2 h-3.5 w-3.5 ${isRetrying ? 'animate-pulse text-primary' : 'text-muted-foreground'}`} />
-              {isRetrying ? 'Reconciling…' : 'Reconcile with Replit'}
+              <RefreshCw className={`mr-2 h-4 w-4 ${refreshStatus.isPending ? 'animate-spin' : ''}`} />
+              Refresh upstream status
             </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {syncQuery.isLoading ? (
-            <div className="p-6 space-y-4">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : upstreamTeams.length > 0 ? (
-            <div className="overflow-x-auto">
-               <table className="w-full text-sm text-left border-collapse">
-                  <thead>
-                     <tr>
-                        <th className="px-6 py-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider border-b border-border/50">Team</th>
-                        <th className="px-6 py-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider border-b border-border/50">Target Workspace Group</th>
-                        <th className="px-6 py-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider border-b border-border/50 text-right">Desired Allocation</th>
-                        <th className="px-6 py-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider border-b border-border/50 text-right">Enforced Upstream</th>
-                        <th className="px-6 py-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider border-b border-border/50">Sync Status</th>
-                        <th className="px-6 py-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider border-b border-border/50 text-right">Last Attempt</th>
-                     </tr>
+          </CardHeader>
+          <CardContent className="p-0">
+            {configQuery.isLoading ? <div className="p-6"><Skeleton className="h-12 w-full" /></div> : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">
+                    <tr><th className="px-5 py-3">Workspace</th><th className="px-5 py-3">Desired per-user limit</th><th className="px-5 py-3">Upstream</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr>
                   </thead>
-                  <tbody className="divide-y divide-border/40 bg-card">
-                     {upstreamTeams.map((team, idx) => (
-                        <tr key={`${team.teamName}-${idx}`} className="hover:bg-muted/30 transition-colors group">
-                           <td className="px-6 py-4 font-medium text-foreground whitespace-nowrap">
-                              {formatTeamName(team.teamName)}
-                           </td>
-                           <td className="px-6 py-4">
-                              {team.targetGroupName ? (
-                                 <div className="flex flex-col gap-0.5">
-                                   <span className="font-medium text-foreground">{team.targetGroupName}</span>
-                                    <span className="text-xs text-muted-foreground font-mono">
-                                      {[team.workspaceId, team.targetGroupId].filter(Boolean).join(' · ')}
-                                    </span>
-                                 </div>
-                              ) : (
-                                 <span className="text-muted-foreground italic text-xs">Unassigned</span>
-                              )}
-                           </td>
-                           <td className="px-6 py-4 text-right tabular-nums font-mono text-muted-foreground">
-                              {currency.format(team.desiredAmountUsd)}
-                           </td>
-                           <td className="px-6 py-4 text-right tabular-nums font-mono font-medium text-foreground">
-                              {team.upstreamAmountUsd != null ? currency.format(team.upstreamAmountUsd) : <span className="text-muted-foreground">—</span>}
-                           </td>
-                           <td className="px-6 py-4 align-top">
-                              <div className="flex flex-col gap-2 items-start max-w-[280px]">
-                                 <StatusBadge status={team.status} />
-                                 {team.reason && (
-                                    <span className="text-xs text-muted-foreground/80 leading-relaxed block break-words" title={team.reason}>
-                                      {team.reason}
-                                    </span>
-                                 )}
-                              </div>
-                           </td>
-                           <td className="px-6 py-4 text-right text-muted-foreground text-xs whitespace-nowrap align-top pt-5">
-                              {team.lastAttemptAt ? new Date(team.lastAttemptAt).toLocaleString(undefined, {
-                                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-                              }) : '—'}
-                           </td>
+                  <tbody>
+                    {(config?.legacy ?? []).map((legacy) => {
+                      const key = `legacy:${legacy.workspaceId}`;
+                      const status = syncByTarget.get(`${legacy.workspaceId}:`);
+                      return (
+                        <tr key={legacy.workspaceId} className="border-t">
+                          <td className="px-5 py-4 font-medium">{legacy.displayName}<div className="font-mono text-xs text-muted-foreground">{legacy.workspaceId}</div></td>
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-2">
+                              <Input type="number" min="0" step="0.01" className="w-28" value={drafts[key] ?? String(legacy.monthlyLimitUsd)} onChange={(event) => setDrafts((old) => ({ ...old, [key]: event.target.value }))} data-testid={`input-legacy-limit-${legacy.workspaceId}`} />
+                              <Button size="icon" variant="ghost" title="Save" onClick={() => saveNumber(key, (value) => updateLegacy.mutate({ data: { monthlyLimitUsd: value } }))} data-testid={`button-save-legacy-limit-${legacy.workspaceId}`}><Save className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" title="Reset to $1.00" onClick={() => updateLegacy.mutate({ data: { monthlyLimitUsd: null } })} data-testid={`button-reset-legacy-limit-${legacy.workspaceId}`}><RotateCcw className="h-4 w-4" /></Button>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 tabular-nums">{status?.upstreamAmountUsd == null ? '—' : currency.format(status.upstreamAmountUsd)}</td>
+                          <td className="px-5 py-4">{status ? <StatusBadge status={status.status} /> : <span className="text-muted-foreground">—</span>}</td>
+                          <td className="px-5 py-4 text-right">
+                            <Button size="sm" variant="outline" disabled={!status || status.status === 'synced'} onClick={() => requestConfirmation('Apply legacy per-user cap', { targets: [{ workspaceId: legacy.workspaceId, groupId: null }] }, rowsFor((item) => item.workspaceId === legacy.workspaceId && item.targetType === 'workspace_default'))} data-testid={`button-apply-legacy-limit-${legacy.workspaceId}`}>Apply</Button>
+                          </td>
                         </tr>
-                     ))}
+                      );
+                    })}
                   </tbody>
-               </table>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground bg-card">
-              <Network className="w-12 h-12 mb-4 text-muted-foreground/30" />
-              <h3 className="font-medium text-foreground">No reconciliation attempts yet</h3>
-              <p className="text-sm mt-1 max-w-md">
-                Reconcile to resolve each team’s live Member group and compare its enforced Replit budget.
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>}
-
-      <Card className="shadow-sm border-border overflow-hidden">
-        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between border-b bg-muted/30 pb-5">
-          <div>
-            <CardTitle className="text-lg">Annual Allocation Audit</CardTitle>
-            <CardDescription className="mt-1.5">
-              Each credit request is shown separately in its submission period to form the updated budget total.
-            </CardDescription>
-          </div>
-          <div className="flex flex-wrap items-center gap-2" data-testid="status-team-budget-sync">
-            {sync?.lastError || syncErrors.length > 0 ? (
-              <Badge variant="destructive" className="font-medium">Sync needs attention</Badge>
-            ) : isRefreshing ? (
-              <Badge variant="outline" className="font-medium bg-background"><RefreshCw className="mr-1.5 h-3 w-3 animate-spin text-primary" />Syncing</Badge>
-            ) : data && sync ? (
-              <Badge variant="secondary" className="font-medium"><CheckCircle2 className="mr-1.5 h-3 w-3 text-muted-foreground" />Last good data</Badge>
-            ) : null}
-            {sync?.lastSuccessfulAt && (
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium ml-2" data-testid="text-last-budget-refresh">
-                <CalendarClock className="h-3.5 w-3.5" />
-                Refreshed {new Date(sync.lastSuccessfulAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-              </span>
+                </table>
+              </div>
             )}
-          </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {canManage && (configQuery.isLoading ? (
+        <Card><CardContent className="space-y-3 p-6"><Skeleton className="h-20 w-full" /><Skeleton className="h-40 w-full" /></CardContent></Card>
+      ) : teams.map((team) => {
+        const teamConfig = config?.teams.find((item) => item.teamName === team.teamName);
+        const targets = (config?.targets ?? []).filter((target) => target.teamName === team.teamName);
+        const teamKey = `team:${team.teamName}`;
+        const teamRows = rowsFor((item) => item.teamName === team.teamName && item.status !== 'synced');
+        const legacyCopies = legacyCopiesByTeam.get(team.teamName) ?? [];
+        return (
+          <Card key={team.teamName} className="overflow-hidden shadow-sm" data-testid={`card-team-limits-${team.teamName}`}>
+            <CardHeader className="border-b bg-muted/30">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <CardTitle>{formatTeamName(team.teamName)}</CardTitle>
+                  <CardDescription className="mt-1">Annual allocation {currency.format(team.annualAllocationUsd)}</CardDescription>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Monthly Agent limit
+                    <Input type="number" min="0" step="0.01" className="mt-1 w-36 bg-background" value={drafts[teamKey] ?? String(team.monthlyLimitUsd)} onChange={(event) => setDrafts((old) => ({ ...old, [teamKey]: event.target.value }))} data-testid={`input-team-monthly-limit-${team.teamName}`} />
+                  </label>
+                  <Button size="sm" variant="outline" onClick={() => saveNumber(teamKey, (value) => updateTeam.mutate({ teamName: team.teamName, data: { monthlyLimitUsd: value } }))} data-testid={`button-save-team-limit-${team.teamName}`}><Save className="mr-1.5 h-4 w-4" />Save</Button>
+                  <Button size="sm" variant="ghost" onClick={() => updateTeam.mutate({ teamName: team.teamName, data: { monthlyLimitUsd: null } })} data-testid={`button-reset-team-limit-${team.teamName}`}><RotateCcw className="mr-1.5 h-4 w-4" />Reset to ÷12</Button>
+                  <Button size="sm" disabled={teamRows.length === 0} onClick={() => requestConfirmation(`Apply ${formatTeamName(team.teamName)}`, { teamNames: [team.teamName] }, teamRows)} data-testid={`button-apply-team-limit-${team.teamName}`}>Apply team drift</Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1040px] text-sm">
+                  <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">
+                    <tr><th className="px-5 py-3">Workspace</th><th className="px-5 py-3">Member group</th><th className="px-5 py-3 text-right">Members</th><th className="px-5 py-3">Desired limit</th><th className="px-5 py-3 text-right">Upstream limit</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Action</th></tr>
+                  </thead>
+                  <tbody>
+                    {targets.map((target) => {
+                      const key = `target:${target.workspaceId}:${target.groupId}`;
+                      const detail = groupDetails.get(`${target.workspaceId}:${target.groupId}`);
+                      const status = syncByTarget.get(`${target.workspaceId}:${target.groupId}`);
+                      return (
+                        <tr key={`${target.workspaceId}:${target.groupId}`} className="border-t">
+                          <td className="px-5 py-4">{detail?.workspaceName ?? target.workspaceId}</td>
+                          <td className="px-5 py-4 font-medium">{target.groupName}</td>
+                          <td className="px-5 py-4 text-right tabular-nums">{detail?.memberCount ?? '—'}</td>
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-1">
+                              <Input type="number" min="0" step="0.01" className="w-28" value={drafts[key] ?? String(target.targetAmountUsd)} onChange={(event) => setDrafts((old) => ({ ...old, [key]: event.target.value }))} data-testid={`input-target-limit-${target.workspaceId}-${target.groupId}`} />
+                              <Button size="icon" variant="ghost" title="Save" onClick={() => saveNumber(key, (value) => updateTarget.mutate({ workspaceId: target.workspaceId, groupId: target.groupId, data: { monthlyLimitUsd: value } }))} data-testid={`button-save-target-limit-${target.workspaceId}-${target.groupId}`}><Save className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" title="Reset to team monthly limit" onClick={() => updateTarget.mutate({ workspaceId: target.workspaceId, groupId: target.groupId, data: { monthlyLimitUsd: null } })} data-testid={`button-reset-target-limit-${target.workspaceId}-${target.groupId}`}><RotateCcw className="h-4 w-4" /></Button>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 text-right tabular-nums">{status?.upstreamAmountUsd == null ? '—' : currency.format(status.upstreamAmountUsd)}</td>
+                          <td className="px-5 py-4">{status ? <StatusBadge status={status.status} /> : '—'}</td>
+                          <td className="px-5 py-4 text-right"><Button size="sm" variant="outline" disabled={!status || status.status === 'synced'} onClick={() => requestConfirmation(`Apply ${target.groupName}`, { targets: [{ workspaceId: target.workspaceId, groupId: target.groupId }] }, rowsFor((item) => item.workspaceId === target.workspaceId && item.targetGroupId === target.groupId))} data-testid={`button-apply-target-${target.workspaceId}-${target.groupId}`}>Apply</Button></td>
+                        </tr>
+                      );
+                    })}
+                    {legacyCopies.map((group) => (
+                      <tr key={`legacy-copy:${group.workspaceId}:${group.groupId}`} className="border-t bg-muted/40 text-muted-foreground">
+                        <td className="px-5 py-4">{group.workspaceName ?? group.workspaceId}</td>
+                        <td className="px-5 py-4">{group.name} <Badge variant="secondary" className="ml-2">Legacy copy · not capped</Badge></td>
+                        <td className="px-5 py-4 text-right">{group.memberCount ?? '—'}</td>
+                        <td className="px-5 py-4" colSpan={4}>Shown for reference only; no member-group limit is applied.</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t-2 bg-muted/30 font-medium">
+                    <tr>
+                      <td className="px-5 py-4" colSpan={3}>Team target total</td>
+                      <td className="px-5 py-4 tabular-nums">{currency.format(teamConfig?.targetAmountSumUsd ?? 0)}</td>
+                      <td className="px-5 py-4" colSpan={3}>
+                        Difference from monthly limit: <span className="tabular-nums">{formatAdjustment(teamConfig?.differenceUsd ?? -(teamConfig?.monthlyLimitUsd ?? team.monthlyLimitUsd))}</span>
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">(informational; does not block apply)</span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      }))}
+
+      {canManage && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Unassigned member groups</CardTitle>
+            <CardDescription>Choose a team to create an explicit target. Groups listed here come from the current API configuration.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(config?.unassignedGroups ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No unassigned member groups.</p> : (config?.unassignedGroups ?? []).map((group) => {
+              const key = `${group.workspaceId}:${group.groupId}`;
+              return (
+                <div key={key} className="flex flex-col gap-3 rounded-md border p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div><div className="font-medium" data-testid={`text-unassigned-group-${group.groupId}`}>{group.groupName}</div><div className="text-xs text-muted-foreground">{workspaceLabel(group.workspaceId)}</div></div>
+                  <div className="flex w-full gap-2 sm:w-auto">
+                    <Select value={assignments[key]} onValueChange={(value) => setAssignments((old) => ({ ...old, [key]: value }))}>
+                      <SelectTrigger className="w-full sm:w-56" data-testid={`select-team-assignment-${group.groupId}`}><SelectValue placeholder="Choose team" /></SelectTrigger>
+                      <SelectContent>{knownTeamNames.map((teamName) => <SelectItem key={teamName} value={teamName}>{formatTeamName(teamName)}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <Button disabled={!assignments[key] || assignTarget.isPending} onClick={() => assignTarget.mutate({ data: { teamName: assignments[key], workspaceId: group.workspaceId, groupId: group.groupId } })} data-testid={`button-assign-group-${group.groupId}`}>Assign</Button>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="overflow-hidden shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
+          <CardTitle className="text-lg">Annual allocation history</CardTitle>
+          <CardDescription>Approved Airtable adjustments by submission period. Account delegates can view this history; only true account admins manage upstream limits.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {historyQuery.isLoading ? (
-            <div className="p-6 space-y-4" data-testid="loading-team-budgets">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : teams.length === 0 && !loadError ? (
-            <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground bg-card" data-testid="empty-team-budgets">
-              <WalletCards className="mx-auto h-12 w-12 text-muted-foreground/30 mb-4" />
-              <h3 className="font-medium text-foreground">No visible team budgets</h3>
-              <p className="mt-1 text-sm max-w-md">
-                Refresh to synchronize the latest approved credit requests from Airtable.
-              </p>
-            </div>
-          ) : teams.length > 0 ? (
-            <div className="overflow-x-auto relative">
-              <table className="w-full min-w-max border-separate border-spacing-0" data-testid="table-team-budget-history">
-                <thead>
-                  <tr>
-                    <th className="sticky left-0 z-20 min-w-52 border-b border-border/50 bg-muted/40 px-6 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Team
-                    </th>
-                    <th className="min-w-36 border-b border-border/50 bg-muted/40 px-6 py-4 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Original budget
-                    </th>
-                    {periods.map((period) => (
-                      <th key={period} className="min-w-44 border-b border-border/50 bg-muted/40 px-6 py-4 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        {formatPeriod(period)}
-                      </th>
-                    ))}
-                    <th className="sticky right-0 z-20 min-w-36 border-b border-border/50 bg-muted/40 px-6 py-4 text-right text-xs font-bold text-foreground uppercase tracking-wider shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] dark:shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.3)]">
-                      Updated total
-                    </th>
-                  </tr>
+          {historyQuery.isLoading ? <div className="space-y-4 p-6"><Skeleton className="h-10 w-full" /><Skeleton className="h-16 w-full" /></div> : teams.length === 0 ? (
+            <div className="p-12 text-center text-sm text-muted-foreground">No visible team allocations.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-sm" data-testid="table-team-budget-history">
+                <thead className="bg-muted/30 text-xs uppercase text-muted-foreground">
+                  <tr><th className="px-6 py-4 text-left">Team</th><th className="px-6 py-4 text-right">Original allocation</th>{periods.map((period) => <th key={period} className="px-6 py-4 text-right">{formatPeriod(period)}</th>)}<th className="px-6 py-4 text-right">Annual allocation</th></tr>
                 </thead>
-                <tbody className="bg-card">
+                <tbody>
                   {teams.map((team) => (
-                    <tr key={team.teamName} data-testid={`row-team-budget-${team.teamName}`} className="hover:bg-muted/30 transition-colors group">
-                      <th className="sticky left-0 z-10 border-b border-border/40 bg-card group-hover:bg-muted/10 px-6 py-4 text-left text-sm font-medium text-foreground whitespace-nowrap transition-colors">
-                        {formatTeamName(team.teamName)}
-                      </th>
-                      <td className="border-b border-border/40 px-6 py-4 text-right font-mono text-sm tabular-nums text-muted-foreground">
-                        {currency.format(team.originalAmountUsd)}
-                      </td>
+                    <tr key={team.teamName} className="border-t">
+                      <th className="px-6 py-4 text-left font-medium">{formatTeamName(team.teamName)}</th>
+                      <td className="px-6 py-4 text-right tabular-nums">{currency.format(team.originalAmountUsd)}</td>
                       {periods.map((period) => {
-                        const adjustments = (team.adjustments ?? []).filter(
-                          (adjustment) => adjustment.submissionPeriod === period,
-                        );
-                        return (
-                          <td key={period} className="border-b border-border/40 px-6 py-4 text-right align-top">
-                            {adjustments.length === 0 ? (
-                              <span className="text-muted-foreground/40">—</span>
-                            ) : (
-                              <ul className="space-y-2 flex flex-col items-end">
-                                {adjustments.map((adjustment) => (
-                                  <li
-                                    key={adjustment.recordId}
-                                    className="font-mono text-sm tabular-nums text-foreground/90 bg-muted/50 inline-block px-2 py-0.5 rounded"
-                                    data-testid={`text-budget-adjustment-${adjustment.recordId}`}
-                                  >
-                                    {formatAdjustment(adjustment.amountUsd)}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </td>
-                        );
+                        const adjustments = team.adjustments.filter((item) => item.submissionPeriod === period);
+                        return <td key={period} className="px-6 py-4 text-right tabular-nums">{adjustments.length ? adjustments.map((item) => <div key={item.recordId}>{formatAdjustment(item.amountUsd)}</div>) : '—'}</td>;
                       })}
-                      <td className="sticky right-0 z-10 border-b border-border/40 bg-card group-hover:bg-muted/10 px-6 py-4 text-right font-mono text-sm font-bold tabular-nums text-foreground shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] dark:shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.3)] transition-colors" data-testid={`text-updated-budget-${team.teamName}`}>
-                        {currency.format(team.effectiveAmountUsd)}
-                      </td>
+                      <td className="px-6 py-4 text-right font-bold tabular-nums">{currency.format(team.annualAllocationUsd)}</td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot>
-                  <tr data-testid="row-team-budget-total">
-                    <th className="sticky left-0 z-10 border-t-2 border-border/60 bg-muted/60 px-6 py-5 text-left text-sm font-bold text-foreground">
-                      Total
-                    </th>
-                    <td className="border-t-2 border-border/60 bg-muted/60 px-6 py-5 text-right font-mono text-sm font-bold tabular-nums text-foreground">
-                      {currency.format(totals.originalAmountUsd)}
-                    </td>
-                    {periods.map((period) => (
-                      <td
-                        key={period}
-                        className="border-t-2 border-border/60 bg-muted/60 px-6 py-5 text-right font-mono text-sm font-bold tabular-nums text-foreground"
-                      >
-                        {formatAdjustment(totals.adjustmentsByPeriod.get(period) ?? 0)}
-                      </td>
-                    ))}
-                    <td
-                      className="sticky right-0 z-10 border-t-2 border-border/60 bg-muted/60 px-6 py-5 text-right font-mono text-sm font-bold tabular-nums text-foreground shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] dark:shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.3)]"
-                      data-testid="text-team-budget-grand-total"
-                    >
-                      {currency.format(totals.effectiveAmountUsd)}
-                    </td>
-                  </tr>
+                <tfoot className="border-t-2 bg-muted/40 font-bold">
+                  <tr><th className="px-6 py-4 text-left">Total</th><td className="px-6 py-4 text-right">{currency.format(totals.original)}</td><td className="px-6 py-4 text-right" colSpan={periods.length + 1}>{currency.format(totals.effective)}</td></tr>
                 </tfoot>
               </table>
             </div>
-          ) : null}
+          )}
         </CardContent>
       </Card>
+
+      <Dialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !applyLimits.isPending) setConfirmation(null); }}>
+        <DialogContent data-testid="dialog-confirm-apply-limits">
+          <DialogHeader>
+            <DialogTitle>{confirmation?.title}</DialogTitle>
+            <DialogDescription>Review every upstream write before continuing.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-72 space-y-2 overflow-y-auto">
+            {confirmation?.rows.map((row, index) => (
+              <div key={`${row.workspace}:${row.group}:${index}`} className="rounded-md border p-3 text-sm">
+                <div className="font-medium">{row.workspace}</div>
+                <div className="flex justify-between gap-4 text-muted-foreground"><span>{row.group}</span><span className="font-mono text-foreground">{currency.format(row.amountUsd)}</span></div>
+              </div>
+            ))}
+          </div>
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>Reaching a limit blocks all members of the group from paid services until the next billing cycle.</AlertDescription>
+          </Alert>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmation(null)} disabled={applyLimits.isPending} data-testid="button-cancel-apply-limits">Cancel</Button>
+            <Button onClick={() => confirmation && applyLimits.mutate({ data: confirmation.selection })} disabled={!confirmation || applyLimits.isPending} data-testid="button-confirm-apply-limits">
+              {applyLimits.isPending ? 'Applying…' : 'Confirm and apply'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {sync?.lastSuccessfulAt && canManage && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="text-last-budget-refresh">
+          <CalendarClock className="h-3.5 w-3.5" />Upstream status refreshed {new Date(sync.lastSuccessfulAt).toLocaleString()}
+        </p>
+      )}
     </div>
   );
 }

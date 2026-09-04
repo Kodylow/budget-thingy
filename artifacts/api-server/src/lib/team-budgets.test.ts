@@ -1,34 +1,37 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   db,
-  groupTeamsTable,
   teamBudgetAdjustmentsTable,
   teamBudgetSyncStateTable,
   teamBudgetUpstreamSyncTable,
   teamBudgetsTable,
+  teamLimitTargetsTable,
 } from "@workspace/db";
 import {
   applyAnnualTeamBudgetBackfill,
-  BASELINE_GROUP_TEAMS,
 } from "@workspace/db/seed-teams";
 import { __setDirectoryCacheForTests } from "./enterprise";
 import { setReplitBudgetTransportForTests } from "./replit-budgets";
 
 import {
+  applyTeamBudgetLimits,
   buildSnapshotRows,
+  calculateTeamTargetAmount,
   getEffectiveTeamBudgets,
   getVisibleEffectiveTeamBudgetMap,
+  isAssignableTeamLimitGroup,
   parseAirtableBudgetRecord,
   parseSubmissionPeriod,
   refreshTeamBudgetSnapshot,
   reconcileTeamBudgetsUpstream,
-  resolveTeamBudgetTargets,
   setAirtableBudgetFetcherForTests,
   setTeamBudgetDirectoryFetcherForTests,
   startTeamBudgetSyncJob,
   TEAM_BUDGET_SYNC_INTERVAL_MS,
+  TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS,
   TEAM_BUDGET_SOURCE,
+  updateTeamMonthlyLimit,
 } from "./team-budgets";
 
 const PREFIX = "__task158_test__";
@@ -38,48 +41,7 @@ const RENAMED_TEAM = `${PREFIX} Renamed`;
 const HIDDEN = `${PREFIX} Hidden`;
 
 describe("annual allocation seed", () => {
-  it("restores missing baseline group mappings without overwriting an existing reassignment", async () => {
-    const missing = BASELINE_GROUP_TEAMS.find(
-      (row) => row.groupName === "AZ-Replit - Comcast Advertising - Admin",
-    )!;
-    const reassigned = BASELINE_GROUP_TEAMS.find(
-      (row) => row.groupName === "AZ-Replit - Finance - Admin",
-    )!;
-    const customTeam = `${PREFIX} Reassigned`;
-
-    await db.delete(groupTeamsTable).where(eq(groupTeamsTable.groupName, missing.groupName));
-    await db
-      .insert(groupTeamsTable)
-      .values({ groupName: reassigned.groupName, teamName: customTeam })
-      .onConflictDoUpdate({
-        target: groupTeamsTable.groupName,
-        set: { teamName: customTeam },
-      });
-
-    try {
-      await applyAnnualTeamBudgetBackfill();
-
-      const [restoredRows, preservedRows] = await Promise.all([
-        db.select().from(groupTeamsTable).where(eq(groupTeamsTable.groupName, missing.groupName)),
-        db.select().from(groupTeamsTable).where(eq(groupTeamsTable.groupName, reassigned.groupName)),
-      ]);
-
-      expect(restoredRows).toEqual([
-        expect.objectContaining(missing),
-      ]);
-      expect(preservedRows).toEqual([
-        expect.objectContaining({ groupName: reassigned.groupName, teamName: customTeam }),
-      ]);
-    } finally {
-      await db
-        .update(groupTeamsTable)
-        .set({ teamName: reassigned.teamName })
-        .where(eq(groupTeamsTable.groupName, reassigned.groupName));
-    }
-  });
-
-  it("splits the legacy Growth Strategy pool into the canonical DXP and Non-DXP rows", async () => {
-    const groupName = "AZ-Replit - Growth Strategy & Operations - Admin";
+  it("seeds canonical DXP and Non-DXP budgets idempotently", async () => {
     const [existingFinance] = await db
       .select()
       .from(teamBudgetsTable)
@@ -87,13 +49,6 @@ describe("annual allocation seed", () => {
 
     expect(existingFinance).toBeDefined();
 
-    await db
-      .insert(groupTeamsTable)
-      .values({ groupName, teamName: "Growth Strategy & Operations" })
-      .onConflictDoUpdate({
-        target: groupTeamsTable.groupName,
-        set: { teamName: "Growth Strategy & Operations" },
-      });
     await db
       .insert(teamBudgetsTable)
       .values({
@@ -114,10 +69,6 @@ describe("annual allocation seed", () => {
       await applyAnnualTeamBudgetBackfill();
       await applyAnnualTeamBudgetBackfill();
 
-      const assignments = await db
-        .select()
-        .from(groupTeamsTable)
-        .where(eq(groupTeamsTable.groupName, groupName));
       const splitBudgets = await db
         .select()
         .from(teamBudgetsTable)
@@ -131,8 +82,6 @@ describe("annual allocation seed", () => {
         .from(teamBudgetsTable)
         .where(eq(teamBudgetsTable.teamName, "Finance"));
 
-      expect(assignments).toHaveLength(1);
-      expect(assignments[0]?.teamName).toBe("DXP");
       expect(splitBudgets).toHaveLength(2);
       expect(splitBudgets).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -373,98 +322,35 @@ describe("team budget Airtable parsing", () => {
   });
 });
 
-describe("team budget upstream target resolution", () => {
-  const group = (id: string, workspaceId: string, name: string) => ({
-    id,
-    workspaceId,
-    name,
-    type: "custom",
-  });
-
-  it("parses singular and plural role suffixes and selects only Member groups", () => {
-    const groups = [
-      group("a", "w1", "Platform-Admin"),
-      group("m", "w1", "Platform-Members"),
-      group("v", "w1", "Platform-Viewer"),
-      group("g", "w1", "Platform-Guests"),
-    ];
-    const [resolved] = resolveTeamBudgetTargets(
-      ["Platform Team"],
-      groups,
-      [{ groupName: "Platform-Admin", teamName: "Platform Team" }],
-    );
-    expect(resolved).toMatchObject({
-      workspaceId: "w1",
-      targetGroupId: "m",
-      targetGroupName: "Platform-Members",
-      reason: null,
-    });
-  });
-
-  it("resolves a renamed member through an exactly mapped live sibling", () => {
-    const [resolved] = resolveTeamBudgetTargets(
-      ["Renamed Team"],
-      [
-        group("admin", "w1", "Current Name - Admins"),
-        group("live-member-id", "w1", "Current Name - Members"),
-      ],
-      [
-        { groupName: "Old Name - Members", teamName: "Renamed Team" },
-        { groupName: "Current Name - Admins", teamName: "Renamed Team" },
-      ],
-    );
-    expect(resolved?.targetGroupId).toBe("live-member-id");
-    expect(resolved?.targetGroupName).toBe("Current Name - Members");
-  });
-
-  it("fails closed when an assigned live group name is reused across workspaces", () => {
-    const [resolved] = resolveTeamBudgetTargets(
-      ["Shared Name Team"],
-      [
-        group("admin-a", "workspace-a", "Shared Family - Admin"),
-        group("member-a", "workspace-a", "Shared Family - Member"),
-        group("admin-b", "workspace-b", "Shared Family - Admin"),
-        group("member-b", "workspace-b", "Shared Family - Members"),
-      ],
-      [{ groupName: "Shared Family - Admin", teamName: "Shared Name Team" }],
-    );
-
-    expect(resolved).toMatchObject({
-      targetGroupId: null,
-      workspaceId: null,
-    });
-    expect(resolved?.reason).toContain("No uniquely assigned");
-  });
-
-  it("reports missing and ambiguous member targets without selecting siblings", () => {
-    const groups = [
-      group("only-admin", "w1", "No Member - Admin"),
-      group("m1", "w1", "First - Member"),
-      group("a1", "w1", "First - Admin"),
-      group("m2", "w2", "Second - Members"),
-      group("guest2", "w2", "Second - Guest"),
-    ];
-    const results = resolveTeamBudgetTargets(
-      ["Missing", "Ambiguous"],
-      groups,
-      [
-        { groupName: "No Member - Admin", teamName: "Missing" },
-        { groupName: "First - Admin", teamName: "Ambiguous" },
-        { groupName: "Second - Guest", teamName: "Ambiguous" },
-      ],
-    );
-    expect(results[0]).toMatchObject({ targetGroupId: null });
-    expect(results[0]?.reason).toContain("No uniquely assigned");
-    expect(results[1]).toMatchObject({ targetGroupId: null });
-    expect(results[1]?.reason).toContain("Ambiguous");
-    expect(results.map((row) => row.targetGroupId)).not.toContain("only-admin");
-    expect(results.map((row) => row.targetGroupId)).not.toContain("guest2");
-  });
-});
-
 describe("team budget synchronization schedule", () => {
+  it("exposes nonlegacy custom candidates but excludes admin and viewer groups", () => {
+    const group = (name: string, type = "custom", workspaceId = "workspace") => ({
+      id: name,
+      workspaceId,
+      name,
+      type,
+    });
+    for (const name of [
+      "BnD Analytics Team",
+      "BnD Executives",
+      "BnD Production Team",
+      "Executive Group",
+    ]) {
+      expect(isAssignableTeamLimitGroup(group(name))).toBe(true);
+    }
+    expect(isAssignableTeamLimitGroup(group("Finance - Admin"))).toBe(false);
+    expect(isAssignableTeamLimitGroup(group("Finance-Viewers"))).toBe(false);
+    expect(isAssignableTeamLimitGroup(group("Legacy Team", "custom", "1awqan"))).toBe(false);
+  });
+
+  it("splits team limits across enabled targets while preserving overrides", () => {
+    expect(calculateTeamTargetAmount(10, 3, null)).toBe(3.33);
+    expect(calculateTeamTargetAmount(10, 3, 7.25)).toBe(7.25);
+  });
+
   it("uses an hourly interval", () => {
     expect(TEAM_BUDGET_SYNC_INTERVAL_MS).toBe(60 * 60 * 1000);
+    expect(TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS).toBe(15 * 60 * 1000);
   });
 
   it("schedules an hourly refresh without blocking server startup", () => {
@@ -474,6 +360,10 @@ describe("team budget synchronization schedule", () => {
 
     startTeamBudgetSyncJob();
     expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), TEAM_BUDGET_SYNC_INTERVAL_MS);
+    expect(timeoutSpy).toHaveBeenCalledWith(
+      expect.any(Function),
+      TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS,
+    );
 
     timeoutSpy.mockRestore();
   });
@@ -573,6 +463,9 @@ describe("effective team budget persistence", () => {
     const existing = snapshot.teams.find((team) => team.teamName === EXISTING);
     expect(existing?.originalAmountUsd).toBe(100);
     expect(existing?.effectiveAmountUsd).toBe(155);
+    expect(existing?.annualAllocationUsd).toBe(155);
+    expect(existing?.monthlyLimitUsd).toBe(12.92);
+    expect(existing?.monthlyLimitSource).toBe("derived");
     expect(existing?.amountUsd).toBe(100);
 
     const visible = await getVisibleEffectiveTeamBudgetMap();
@@ -587,6 +480,19 @@ describe("effective team budget persistence", () => {
         `${PREFIX}-issue`,
       ],
     ));
+  });
+
+  it("persists a manual monthly limit until explicitly reset to derived", async () => {
+    let updated = await updateTeamMonthlyLimit(EXISTING, 7.25);
+    expect(updated).toMatchObject({
+      monthlyLimitUsd: 7.25,
+      monthlyLimitSource: "manual",
+    });
+    updated = await updateTeamMonthlyLimit(EXISTING, null);
+    expect(updated).toMatchObject({
+      monthlyLimitUsd: 8.33,
+      monthlyLimitSource: "derived",
+    });
   });
 
   it("refresh is idempotent, preserves legacy history, and a failure preserves the last good snapshot", async () => {
@@ -747,7 +653,7 @@ describe("team budget upstream reconciliation", () => {
     ];
   });
   const upstream = new Map<string, number | null>();
-  let mutations: Array<{ method: string; groupId: string }> = [];
+  let mutations: Array<{ method: string; groupId: string; amountUsd: number | null }> = [];
   let failingGroupId: string | null = null;
 
   const installTransport = (canWrite: boolean) => {
@@ -761,13 +667,16 @@ describe("team budget upstream reconciliation", () => {
           })),
         });
       }
-      const body = init.body ? JSON.parse(init.body) as { groupId: string; amountUsd: number } : null;
+      const body = init.body ? JSON.parse(init.body) as {
+        groupId: string;
+        amountUsd: number | null;
+      } : null;
       const groupId = body?.groupId ?? new URL(`https://test.invalid${path}`).searchParams.get("groupId")!;
-      mutations.push({ method: init.method, groupId });
+      mutations.push({ method: init.method, groupId, amountUsd: body?.amountUsd ?? null });
       if (groupId === failingGroupId) {
         return new Response(JSON.stringify({ error: "simulated mutation failure" }), { status: 500 });
       }
-      upstream.set(groupId, init.method === "DELETE" ? null : body!.amountUsd);
+      upstream.set(groupId, body!.amountUsd);
       return new Response(null, { status: 204 });
     }, canWrite);
   };
@@ -781,9 +690,9 @@ describe("team budget upstream reconciliation", () => {
       teamBudgetUpstreamSyncTable.teamName,
       teamNames,
     ));
-    await db.delete(groupTeamsTable).where(inArray(
-      groupTeamsTable.groupName,
-      groups.map((group) => group.name),
+    await db.delete(teamLimitTargetsTable).where(inArray(
+      teamLimitTargetsTable.groupId,
+      groups.map((group) => group.id),
     ));
     await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, teamNames));
     await db.insert(teamBudgetsTable).values([
@@ -800,9 +709,14 @@ describe("team budget upstream reconciliation", () => {
       submissionPeriod: "2026-01",
       matchState: "accepted",
     });
-    await db.insert(groupTeamsTable).values(groups
-      .filter((group) => group.id.startsWith("admin"))
-      .map((group, index) => ({ groupName: group.name, teamName: teamNames[index]! })));
+    await db.insert(teamLimitTargetsTable).values(groups
+      .filter((group) => group.id.startsWith("member"))
+      .map((group, index) => ({
+        groupId: group.id,
+        groupName: group.name,
+        workspaceId: group.workspaceId,
+        teamName: teamNames[index]!,
+      })));
     __setDirectoryCacheForTests({
       groups,
       members: new Map(),
@@ -822,14 +736,14 @@ describe("team budget upstream reconciliation", () => {
       teamBudgetUpstreamSyncTable.teamName,
       teamNames,
     ));
-    await db.delete(groupTeamsTable).where(inArray(
-      groupTeamsTable.groupName,
-      groups.map((group) => group.name),
+    await db.delete(teamLimitTargetsTable).where(inArray(
+      teamLimitTargetsTable.groupId,
+      groups.map((group) => group.id),
     ));
     await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, teamNames));
   });
 
-  it("clears zero, skips cent-equivalent limits, and verifies the result", async () => {
+  it("reads only explicit member targets and records monthly drift without mutating", async () => {
     upstream.clear();
     upstream.set("member-0", 12);
     upstream.set("member-1", 10.001);
@@ -840,28 +754,28 @@ describe("team budget upstream reconciliation", () => {
 
     await reconcileTeamBudgetsUpstream();
 
-    expect(mutations).toEqual([{ method: "DELETE", groupId: "member-0" }]);
+    expect(mutations).toEqual([]);
     const rows = await db.select().from(teamBudgetUpstreamSyncTable)
       .where(inArray(teamBudgetUpstreamSyncTable.teamName, [TEAM_CLEAR, TEAM_SAME]));
     expect(rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ teamName: TEAM_CLEAR, status: "synced", upstreamAmountUsd: null }),
-      expect.objectContaining({ teamName: TEAM_SAME, status: "synced", upstreamAmountUsd: 10.001 }),
+      expect.objectContaining({ teamName: TEAM_CLEAR, targetGroupId: "member-0", status: "drift", desiredAmountUsd: 0 }),
+      expect.objectContaining({ teamName: TEAM_SAME, targetGroupId: "member-1", status: "drift", desiredAmountUsd: 0.83 }),
     ]));
   });
 
-  it("leaves changed limits pending without write scope and performs no mutation", async () => {
+  it("records drift independently of write scope and performs no mutation", async () => {
     upstream.set("member-1", 2);
     mutations = [];
     installTransport(false);
     await reconcileTeamBudgetsUpstream();
-    const [row] = await db.select().from(teamBudgetUpstreamSyncTable)
+    const rows = await db.select().from(teamBudgetUpstreamSyncTable)
       .where(eq(teamBudgetUpstreamSyncTable.teamName, TEAM_SAME));
     expect(mutations).toHaveLength(0);
-    expect(row).toMatchObject({ status: "pending", targetGroupId: "member-1", upstreamAmountUsd: 2 });
-    expect(row?.reason).toContain("write:budgets");
+    expect(rows.find((row) => row.targetGroupId === "member-1"))
+      .toMatchObject({ status: "drift", upstreamAmountUsd: 2, reason: null });
   });
 
-  it("uses the forced fresh directory target instead of a stale cached ID", async () => {
+  it("fails a deleted exact target without substituting a same-name group", async () => {
     const admin = groups[2]!;
     const staleMember = {
       ...groups[3]!,
@@ -884,35 +798,102 @@ describe("team budget upstream reconciliation", () => {
 
     await reconcileTeamBudgetsUpstream();
 
-    expect(mutations).toEqual([
-      { method: "PUT", groupId: "fresh-recreated-member" },
-    ]);
+    expect(mutations).toEqual([]);
     expect(mutations.some(({ groupId }) => groupId === "stale-recreated-member")).toBe(false);
-    const [row] = await db.select().from(teamBudgetUpstreamSyncTable)
+    const rows = await db.select().from(teamBudgetUpstreamSyncTable)
       .where(eq(teamBudgetUpstreamSyncTable.teamName, TEAM_SAME));
-    expect(row).toMatchObject({
-      status: "synced",
-      targetGroupId: "fresh-recreated-member",
+    expect(rows.find((row) => row.targetGroupId === "member-1")).toMatchObject({
+      status: "failed",
+      targetGroupId: "member-1",
     });
+    expect(rows.find((row) => row.targetGroupId === "member-1")?.reason)
+      .toContain("missing");
 
     __setDirectoryCacheForTests({ groups, members: new Map() });
     setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
   });
 
-  it("isolates a mutation failure, preserves local history, and succeeds on retry", async () => {
+  it("marks a retyped configured target failed during reconciliation", async () => {
+    const retyped = groups.map((group) =>
+      group.id === "member-1"
+        ? { ...group, name: `${PREFIX} Family 1 - Admin` }
+        : group
+    );
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: retyped }));
+    await reconcileTeamBudgetsUpstream();
+    const [row] = await db.select().from(teamBudgetUpstreamSyncTable).where(and(
+      eq(teamBudgetUpstreamSyncTable.workspaceId, workspaceId),
+      eq(teamBudgetUpstreamSyncTable.targetGroupId, "member-1"),
+    ));
+    expect(row).toMatchObject({ status: "failed" });
+    expect(row?.reason).toContain("no longer an eligible");
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
+  });
+
+  it("revalidates exact identity immediately before apply and skips a deleted target", async () => {
+    upstream.set("member-2", 0);
+    mutations = [];
+    installTransport(true);
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
+    await reconcileTeamBudgetsUpstream();
+    setTeamBudgetDirectoryFetcherForTests(async () => ({
+      allGroups: groups.filter((group) => group.id !== "member-2"),
+    }));
+    const applied = await applyTeamBudgetLimits({
+      targets: [{ workspaceId, groupId: "member-2" }],
+    });
+    const outcome = applied.teams.flatMap((team) => team.targets)[0];
+    expect(outcome).toMatchObject({ targetGroupId: "member-2", outcome: "failed" });
+    expect(outcome.error).toContain("missing");
+    expect(mutations).toEqual([]);
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
+  });
+
+  it("revalidates eligibility immediately before apply and skips a retyped target", async () => {
+    upstream.set("member-2", 0);
+    mutations = [];
+    installTransport(true);
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
+    await reconcileTeamBudgetsUpstream();
+    setTeamBudgetDirectoryFetcherForTests(async () => ({
+      allGroups: groups.map((group) =>
+        group.id === "member-2"
+          ? { ...group, name: `${PREFIX} Family 2 - Viewer` }
+          : group
+      ),
+    }));
+    const applied = await applyTeamBudgetLimits({
+      targets: [{ workspaceId, groupId: "member-2" }],
+    });
+    const outcome = applied.teams.flatMap((team) => team.targets)[0];
+    expect(outcome).toMatchObject({ targetGroupId: "member-2", outcome: "failed" });
+    expect(outcome.error).toContain("no longer an eligible");
+    expect(mutations).toEqual([]);
+    expect((await applyTeamBudgetLimits({ teamNames: [TEAM_ONE] })).teams).toEqual([]);
+    const broad = await applyTeamBudgetLimits({ all: true });
+    expect(broad.teams.some((team) => team.teamName === TEAM_ONE)).toBe(false);
+    expect(mutations.some((mutation) => mutation.groupId === "member-2")).toBe(false);
+    setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
+  });
+
+  it("applies only when explicitly requested and reports per-target failures", async () => {
     upstream.set("member-2", 0);
     upstream.set("member-3", 0);
     failingGroupId = "member-3";
     mutations = [];
     installTransport(true);
     await reconcileTeamBudgetsUpstream();
-
-    let rows = await db.select().from(teamBudgetUpstreamSyncTable)
-      .where(inArray(teamBudgetUpstreamSyncTable.teamName, [TEAM_ONE, TEAM_TWO]));
-    expect(rows.find((row) => row.teamName === TEAM_ONE)?.status).toBe("synced");
-    expect(rows.find((row) => row.teamName === TEAM_TWO)?.status).toBe("failed");
-    expect(upstream.get("member-2")).toBe(11);
+    expect(mutations).toEqual([]);
+    const applied = await applyTeamBudgetLimits({ teamNames: [TEAM_ONE, TEAM_TWO, TEAM_TWO] });
+    expect(applied.teams.map((team) => team.teamName)).toEqual([TEAM_ONE, TEAM_TWO]);
+    expect(applied.teams.find((team) => team.teamName === TEAM_ONE)?.outcome).toBe("success");
+    expect(applied.teams.find((team) => team.teamName === TEAM_TWO)?.outcome).toBe("failed");
+    expect(upstream.get("member-2")).toBe(0.92);
     expect(upstream.get("member-3")).toBe(0);
+    expect(mutations).toEqual(expect.arrayContaining([
+      { method: "POST", groupId: "member-2", amountUsd: 0.92 },
+      { method: "POST", groupId: "member-3", amountUsd: 1.83 },
+    ]));
     expect(await db.select().from(teamBudgetAdjustmentsTable).where(eq(
       teamBudgetAdjustmentsTable.sourceRecordId,
       `${PREFIX}-upstream-history`,
@@ -920,11 +901,11 @@ describe("team budget upstream reconciliation", () => {
 
     failingGroupId = null;
     mutations = [];
-    await reconcileTeamBudgetsUpstream();
-    rows = await db.select().from(teamBudgetUpstreamSyncTable)
-      .where(inArray(teamBudgetUpstreamSyncTable.teamName, [TEAM_ONE, TEAM_TWO]));
-    expect(rows.every((row) => row.status === "synced")).toBe(true);
-    expect(mutations).toEqual([{ method: "PUT", groupId: "member-3" }]);
-    expect(upstream.get("member-3")).toBe(22);
+    const retried = await applyTeamBudgetLimits({ teamNames: [TEAM_TWO] });
+    expect(retried.teams[0]?.outcome).toBe("success");
+    expect(mutations).toEqual([
+      { method: "POST", groupId: "member-3", amountUsd: 1.83 },
+    ]);
+    expect(upstream.get("member-3")).toBe(1.83);
   });
 });

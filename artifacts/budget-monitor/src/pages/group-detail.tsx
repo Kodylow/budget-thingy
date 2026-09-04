@@ -141,9 +141,13 @@ export default function GroupDetail() {
       loading: !displaySpendLoaded,
     },
     {
-      title: 'Budget',
+      title: group.budgetSource === 'platform' ? 'Monthly Agent limit' : 'Allocation',
       value: group.budgetUsd !== null && group.budgetUsd !== undefined ? `$${group.budgetUsd.toFixed(2)}` : '—',
-      description: group.budgetSource ? `Source: ${group.budgetSource.replace('_', ' ')}` : 'No budget set',
+      description: group.budgetSource === 'platform'
+        ? 'Resets on billing cycle day · hard block'
+        : group.budgetSource
+          ? `Source: ${group.budgetSource.replace('_', ' ')}`
+          : 'No allocation set',
       icon: TrendingUp,
       loading: false,
     },
@@ -239,7 +243,7 @@ export default function GroupDetail() {
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <div>
             <p className="font-medium">
-              {mutationUnavailable ? 'Budget editing unavailable' : 'Member budgets unavailable'}
+              {mutationUnavailable ? 'Limit editing unavailable' : 'Member limits unavailable'}
             </p>
             <p className="text-xs opacity-90 mt-0.5">
               A workspace administrator must enable the approved Replit integration
@@ -272,7 +276,7 @@ export default function GroupDetail() {
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Ind. Budget</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Monthly limit</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
                   <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting / Non-AI</th>

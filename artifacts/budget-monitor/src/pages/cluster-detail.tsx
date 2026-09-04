@@ -410,7 +410,7 @@ export default function ClusterDetail() {
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">
-              Total spend used for budgets and alerts
+              Total spend used for allocations and alerts
             </p>
           </CardContent>
         </Card>

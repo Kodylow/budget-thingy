@@ -97,7 +97,8 @@ beforeEach(async () => {
   await pglite.exec(`
     DROP TABLE IF EXISTS alerts, alert_delivery_claims, fired_thresholds,
       group_budgets, team_budget_adjustments, team_budget_sync_state,
-      team_budgets, group_teams, admin_emails, budget_checker_state,
+      team_budgets, team_limit_targets, workspace_default_limit_targets,
+      team_budget_upstream_sync, admin_emails, budget_checker_state,
       api_project_metadata, usage_member_day, usage_project_day,
       usage_workspace_day, usage_account_day CASCADE;
     CREATE TABLE alerts (
@@ -129,7 +130,9 @@ beforeEach(async () => {
     );
     CREATE TABLE team_budgets (
       team_name TEXT PRIMARY KEY, original_amount_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
-      amount_usd DOUBLE PRECISION NOT NULL, is_hidden BOOLEAN NOT NULL DEFAULT false,
+      amount_usd DOUBLE PRECISION NOT NULL, monthly_limit_usd DOUBLE PRECISION,
+      monthly_limit_source TEXT NOT NULL DEFAULT 'derived',
+      is_hidden BOOLEAN NOT NULL DEFAULT false,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE team_budget_adjustments (
@@ -144,7 +147,23 @@ beforeEach(async () => {
       last_error TEXT, record_count INTEGER NOT NULL DEFAULT 0,
       accepted_count INTEGER NOT NULL DEFAULT 0, issue_count INTEGER NOT NULL DEFAULT 0
     );
-    CREATE TABLE group_teams (group_name TEXT PRIMARY KEY, team_name TEXT NOT NULL);
+    CREATE TABLE team_limit_targets (
+      team_name TEXT NOT NULL, workspace_id TEXT NOT NULL, group_id TEXT NOT NULL,
+      group_name TEXT NOT NULL, monthly_limit_usd DOUBLE PRECISION,
+      is_enabled BOOLEAN NOT NULL DEFAULT true, PRIMARY KEY(workspace_id, group_id)
+    );
+    CREATE TABLE workspace_default_limit_targets (
+      workspace_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+      monthly_limit_usd DOUBLE PRECISION NOT NULL DEFAULT 1,
+      is_enabled BOOLEAN NOT NULL DEFAULT true
+    );
+    CREATE TABLE team_budget_upstream_sync (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, team_name TEXT NOT NULL,
+      workspace_id TEXT, target_group_id TEXT, target_group_name TEXT,
+      target_type TEXT NOT NULL DEFAULT 'group', desired_amount_usd DOUBLE PRECISION NOT NULL,
+      upstream_amount_usd DOUBLE PRECISION, status TEXT NOT NULL DEFAULT 'failed',
+      reason TEXT, last_attempt_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE admin_emails (
       id SERIAL PRIMARY KEY, email TEXT NOT NULL UNIQUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -310,8 +329,8 @@ describe("checker Postgres snapshot cutover", () => {
     ]);
     await pglite.exec(`
       DELETE FROM group_budgets;
-      INSERT INTO group_teams(group_name,team_name)
-      VALUES ('Alpha','Platform'),('Beta','Platform');
+      INSERT INTO team_limit_targets(workspace_id,group_id,group_name,team_name)
+      VALUES ('ws-1','g-a','Alpha','Platform'),('ws-2','g-b','Beta','Platform');
       INSERT INTO team_budgets(team_name,original_amount_usd,amount_usd)
       VALUES ('Platform',1000,1000);
     `);
@@ -329,6 +348,29 @@ describe("checker Postgres snapshot cutover", () => {
     });
   });
 
+  it("attributes identical nonlegacy group names by workspace and group identity", async () => {
+    groups = [
+      { id: "g-a", workspaceId: "ws-1", name: "Shared Name" },
+      { id: "g-b", workspaceId: "ws-2", name: "Shared Name" },
+    ];
+    groupMembers = new Map([["g-a", ["u-a"]], ["g-b", ["u-b"]]]);
+    await pglite.exec(`
+      DELETE FROM group_budgets;
+      INSERT INTO team_limit_targets(workspace_id,group_id,group_name,team_name)
+      VALUES ('ws-1','g-a','Shared Name','Team A'),('ws-2','g-b','Shared Name','Team B');
+      INSERT INTO team_budgets(team_name,original_amount_usd,amount_usd)
+      VALUES ('Team A',1000,1000),('Team B',1000,1000);
+    `);
+    await insertCompleteUsage({
+      "ws-1": [{ userId: "u-a", spendUsd: 600 }],
+      "ws-2": [{ userId: "u-b", spendUsd: 600 }],
+    });
+    const result = await runCheck();
+    expect(result.checkedTeams).toBe(2);
+    expect(result.alerts.map((alert) => alert.entityId).sort())
+      .toEqual(["Team A", "Team B"]);
+  });
+
   it("keeps group and team threshold identities independent", async () => {
     groups = [
       GROUP,
@@ -339,7 +381,8 @@ describe("checker Postgres snapshot cutover", () => {
       ["g-a", ["u-2"]],
     ]);
     await pglite.exec(`
-      INSERT INTO group_teams(group_name,team_name) VALUES ('Alpha','Platform');
+      INSERT INTO team_limit_targets(workspace_id,group_id,group_name,team_name)
+      VALUES ('ws-1','g-a','Alpha','Platform');
       INSERT INTO team_budgets(team_name,original_amount_usd,amount_usd)
       VALUES ('Platform',1000,1000);
     `);

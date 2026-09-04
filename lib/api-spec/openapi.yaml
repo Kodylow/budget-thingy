@@ -635,7 +635,7 @@ paths:
       operationId: retryTeamBudgetUpstreamSync
       tags: [teams]
       summary: Retry upstream Replit group budget synchronization
-      description: Available only to true Enterprise account administrators; account delegates and editors are not authorized. Queues reconciliation of per-team desired budgets with upstream Replit groups and immediately returns the latest stored status.
+      description: Available only to true Enterprise account administrators. Queues a read-only refresh of upstream values; this endpoint never writes budgets.
       responses:
         "200":
           description: Reconciliation queued; latest stored synchronization status
@@ -643,6 +643,185 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TeamBudgetSyncStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/{teamName}/limit:
+    patch:
+      operationId: updateTeamBudgetLimit
+      tags: [teams]
+      summary: Set or reset a team's monthly upstream limit
+      description: True-account-admin-only. A number sets a persistent manual limit; null resets the limit to the derived annual allocation divided by twelve.
+      parameters:
+        - name: teamName
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetLimitUpdate"
+      responses:
+        "200":
+          description: Monthly limit updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        "400":
+          description: Invalid monthly limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/team-budgets/targets:
+    get:
+      operationId: getTeamBudgetTargets
+      tags: [teams]
+      summary: List explicit targets, allocations, and unassigned member groups
+      responses:
+        "200":
+          description: Target configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetTargetConfiguration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: assignTeamBudgetTarget
+      tags: [teams]
+      summary: Assign an unassigned member group to a team
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetTargetAssignment"
+      responses:
+        "200":
+          description: Assigned target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetTarget"
+        "400":
+          description: Invalid target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/targets/{workspaceId}/{groupId}:
+    patch:
+      operationId: updateTeamBudgetTarget
+      tags: [teams]
+      summary: Set or reset a target-specific monthly override
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - { name: groupId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetLimitUpdate"
+      responses:
+        "200":
+          description: Updated target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetTarget"
+        "400":
+          description: Invalid override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Target not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/legacy-limit:
+    patch:
+      operationId: updateLegacyWorkspaceLimit
+      tags: [teams]
+      summary: Set or reset the legacy workspace per-user cap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetLimitUpdate"
+      responses:
+        "200":
+          description: Legacy cap updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegacyWorkspaceLimitTarget"
+        "400":
+          description: Invalid limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/apply:
+    post:
+      operationId: applyTeamBudgetLimits
+      tags: [teams]
+      summary: Apply selected drifted monthly limits upstream
+      description: True-account-admin-only. This is the only team-budget operation that writes upstream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetApplySelection"
+      responses:
+        "200":
+          description: Per-team and per-target apply outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetApplyResponse"
+        "400":
+          description: Invalid apply selection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1536,6 +1715,9 @@ components:
         teamName:
           type: ["string", "null"]
           description: Team this group belongs to, null if unassigned
+        isLegacyDisplayOnly:
+          type: boolean
+          description: True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target.
         type:
           type: string
           description: Group type (custom, admin, member, guest)
@@ -2190,7 +2372,7 @@ components:
           pattern: '^\d{4}-(0[1-9]|1[0-2])$'
     TeamBudgetHistoryTeam:
       type: object
-      required: [teamName, originalAmountUsd, effectiveAmountUsd, adjustments]
+      required: [teamName, originalAmountUsd, effectiveAmountUsd, annualAllocationUsd, monthlyLimitUsd, monthlyLimitSource, adjustments]
       properties:
         teamName:
           type: string
@@ -2198,6 +2380,13 @@ components:
           type: number
         effectiveAmountUsd:
           type: number
+        annualAllocationUsd:
+          type: number
+        monthlyLimitUsd:
+          type: number
+        monthlyLimitSource:
+          type: string
+          enum: [derived, manual]
         adjustments:
           type: array
           items:
@@ -2255,7 +2444,7 @@ components:
             $ref: "#/components/schemas/TeamBudgetUpstreamSync"
     TeamBudgetUpstreamSync:
       type: object
-      required: [teamName, workspaceId, targetGroupId, targetGroupName, desiredAmountUsd, upstreamAmountUsd, status, reason, lastAttemptAt]
+      required: [teamName, workspaceId, targetGroupId, targetGroupName, targetType, desiredAmountUsd, upstreamAmountUsd, status, reason, lastAttemptAt]
       properties:
         teamName:
           type: string
@@ -2265,17 +2454,163 @@ components:
           type: [string, "null"]
         targetGroupName:
           type: [string, "null"]
+        targetType:
+          type: string
+          enum: [group, workspace_default]
         desiredAmountUsd:
           type: number
         upstreamAmountUsd:
           type: [number, "null"]
         status:
           type: string
-          enum: [pending, synced, unresolved, failed]
+          enum: [synced, drift, failed]
         reason:
           type: [string, "null"]
         lastAttemptAt:
           type: [string, "null"]
+    TeamBudgetLimitUpdate:
+      type: object
+      additionalProperties: false
+      required: [monthlyLimitUsd]
+      properties:
+        monthlyLimitUsd:
+          type: [number, "null"]
+          minimum: 0
+    TeamBudgetApplySelection:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [teamNames]
+          properties:
+            teamNames:
+              type: array
+              minItems: 1
+              items:
+                type: string
+                minLength: 1
+        - type: object
+          additionalProperties: false
+          required: [all]
+          properties:
+            all:
+              type: boolean
+              const: true
+        - type: object
+          additionalProperties: false
+          required: [targets]
+          properties:
+            targets:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/TeamBudgetTargetIdentity"
+    TeamBudgetTargetIdentity:
+      type: object
+      additionalProperties: false
+      required: [workspaceId]
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+        groupId:
+          type: [string, "null"]
+    TeamBudgetApplyTargetOutcome:
+      type: object
+      required: [workspaceId, targetGroupId, targetGroupName, desiredAmountUsd, outcome, error]
+      properties:
+        workspaceId:
+          type: string
+        targetGroupId:
+          type: [string, "null"]
+        targetGroupName:
+          type: string
+        desiredAmountUsd:
+          type: number
+        outcome:
+          type: string
+          enum: [success, failed]
+        error:
+          type: [string, "null"]
+    TeamBudgetApplyTeamOutcome:
+      type: object
+      required: [teamName, outcome, targets]
+      properties:
+        teamName:
+          type: string
+        outcome:
+          type: string
+          enum: [success, failed]
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetApplyTargetOutcome"
+    TeamBudgetApplyResponse:
+      type: object
+      required: [teams]
+      properties:
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetApplyTeamOutcome"
+    TeamBudgetTargetAssignment:
+      type: object
+      additionalProperties: false
+      required: [teamName, workspaceId, groupId]
+      properties:
+        teamName: { type: string, minLength: 1 }
+        workspaceId: { type: string, minLength: 1 }
+        groupId: { type: string, minLength: 1 }
+    TeamBudgetTarget:
+      type: object
+      required: [teamName, workspaceId, groupId, groupName, monthlyLimitUsd, isEnabled, teamMonthlyLimitUsd, targetAmountUsd]
+      properties:
+        teamName: { type: string }
+        workspaceId: { type: string }
+        groupId: { type: string }
+        groupName: { type: string }
+        monthlyLimitUsd: { type: [number, "null"] }
+        isEnabled: { type: boolean }
+        teamMonthlyLimitUsd: { type: number }
+        targetAmountUsd: { type: number }
+    TeamBudgetTargetTeamSummary:
+      type: object
+      required: [teamName, monthlyLimitUsd, targetAmountSumUsd, differenceUsd]
+      properties:
+        teamName: { type: string }
+        monthlyLimitUsd: { type: number }
+        targetAmountSumUsd: { type: number }
+        differenceUsd: { type: number }
+    UnassignedTeamBudgetGroup:
+      type: object
+      required: [workspaceId, groupId, groupName]
+      properties:
+        workspaceId: { type: string }
+        groupId: { type: string }
+        groupName: { type: string }
+    LegacyWorkspaceLimitTarget:
+      type: object
+      required: [workspaceId, displayName, monthlyLimitUsd, isEnabled]
+      properties:
+        workspaceId: { type: string }
+        displayName: { type: string }
+        monthlyLimitUsd: { type: number }
+        isEnabled: { type: boolean }
+    TeamBudgetTargetConfiguration:
+      type: object
+      required: [targets, teams, legacy, unassignedGroups]
+      properties:
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/TeamBudgetTarget" }
+        teams:
+          type: array
+          items: { $ref: "#/components/schemas/TeamBudgetTargetTeamSummary" }
+        legacy:
+          type: array
+          items: { $ref: "#/components/schemas/LegacyWorkspaceLimitTarget" }
+        unassignedGroups:
+          type: array
+          items: { $ref: "#/components/schemas/UnassignedTeamBudgetGroup" }
     TeamBudgetRefreshResult:
       type: object
       required: [sourceTable, requiredApprovalStatus, ok, recordCount, acceptedCount, issueCount, error]

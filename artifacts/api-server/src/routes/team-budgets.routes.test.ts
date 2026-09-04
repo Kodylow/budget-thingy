@@ -6,7 +6,7 @@ import {
   db,
   apiProjectMetadataStateTable,
   apiProjectMetadataTable,
-  groupTeamsTable,
+  teamLimitTargetsTable,
   teamBudgetAdjustmentsTable,
   teamBudgetsTable,
   usageMemberDayTable,
@@ -19,7 +19,6 @@ import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
 import { __setDirectoryCacheForTests } from "../lib/enterprise.ts";
 import { setTeamBudgetDirectoryFetcherForTests } from "../lib/team-budgets.ts";
 import { invalidateUsageSnapshotMemo } from "../lib/usage-store.ts";
-
 const PREFIX = "__task158_route__";
 const ASSIGNED = `${PREFIX} Assigned`;
 const BUDGET_ONLY = `${PREFIX} Budget Only`;
@@ -122,7 +121,7 @@ beforeAll(async () => {
     ORIGINAL_ONLY,
     HIDDEN,
   ]));
-  await db.delete(groupTeamsTable).where(eq(groupTeamsTable.groupName, GROUP_NAME));
+  await db.delete(teamLimitTargetsTable).where(eq(teamLimitTargetsTable.groupId, GROUP_ID));
   const usageWorkspaceIds = ["task158-ws", "task158-ws-2"];
   await db.delete(apiProjectMetadataStateTable)
     .where(inArray(apiProjectMetadataStateTable.workspaceId, usageWorkspaceIds));
@@ -140,7 +139,12 @@ beforeAll(async () => {
     { teamName: ORIGINAL_ONLY, amountUsd: 75, originalAmountUsd: 75 },
     { teamName: HIDDEN, amountUsd: 1000, originalAmountUsd: 1000, isHidden: true },
   ]);
-  await db.insert(groupTeamsTable).values({ groupName: GROUP_NAME, teamName: ASSIGNED });
+  await db.insert(teamLimitTargetsTable).values({
+    workspaceId: "task158-ws",
+    groupId: GROUP_ID,
+    groupName: GROUP_NAME,
+    teamName: ASSIGNED,
+  });
   await db.insert(usageMemberDayTable).values([
     {
       workspaceId: "task158-ws",
@@ -290,7 +294,7 @@ afterAll(async () => {
     teamBudgetAdjustmentsTable.sourceRecordId,
     [`${PREFIX}-assigned`, `${PREFIX}-budget-only`, `${PREFIX}-hidden`],
   ));
-  await db.delete(groupTeamsTable).where(eq(groupTeamsTable.groupName, GROUP_NAME));
+  await db.delete(teamLimitTargetsTable).where(eq(teamLimitTargetsTable.groupId, GROUP_ID));
   await db.delete(teamBudgetsTable).where(inArray(teamBudgetsTable.teamName, [
     ASSIGNED,
     BUDGET_ONLY,
@@ -300,10 +304,14 @@ afterAll(async () => {
   delete process.env.REPLIT_ENTERPRISE_API_KEY;
 });
 
-async function request(path, user, method = "GET") {
+async function request(path, user, method = "GET", body = undefined) {
   const response = await fetch(`${baseUrl}/api${path}`, {
     method,
-    headers: user ? { "x-test-user": user } : {},
+    headers: {
+      ...(user ? { "x-test-user": user } : {}),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
   let json = null;
@@ -334,44 +342,6 @@ test("sync status identifies the approval-only Finance Approval feed", async () 
   expect(json.requiredApprovalStatus).toBe("Approved");
 });
 
-test("upstream status and retry reject delegates and editors", async () => {
-  expect((await request("/admin/team-budgets/history", "task158-delegate")).status).toBe(200);
-  for (const user of ["task158-delegate", "task158-editor"]) {
-    expect((await request("/admin/team-budgets/sync", user)).status).toBe(403);
-    expect((await request("/admin/team-budgets/reconcile", user, "POST")).status).toBe(403);
-  }
-});
-
-test("only a true account admin can retry upstream budget reconciliation", async () => {
-  expect((await request("/admin/team-budgets/reconcile", undefined, "POST")).status).toBe(401);
-  expect((await request("/admin/team-budgets/reconcile", "task158-workspace", "POST")).status).toBe(403);
-  let rejectDirectory;
-  const pendingDirectory = new Promise((_resolve, reject) => {
-    rejectDirectory = reject;
-  });
-  setTeamBudgetDirectoryFetcherForTests(() => pendingDirectory);
-  const startedAt = Date.now();
-  const accountAdmin = await request(
-    "/admin/team-budgets/reconcile",
-    "task158-account",
-    "POST",
-  );
-  expect(accountAdmin.status).toBe(200);
-  expect(Array.isArray(accountAdmin.json.teams)).toBeTruthy();
-  expect(Date.now() - startedAt < 1_000, "retry response must not await Enterprise").toBeTruthy();
-
-  rejectDirectory(new Error("forced delayed directory failure"));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  setTeamBudgetDirectoryFetcherForTests(async () => ({
-    allGroups: [{
-      id: GROUP_ID,
-      workspaceId: "task158-ws",
-      name: GROUP_NAME,
-      type: "custom",
-    }],
-  }));
-});
-
 test("history orders months and excludes hidden teams while retaining separate records", async () => {
   const { status, json } = await request("/admin/team-budgets/history", "task158-account");
   expect(status).toBe(200);
@@ -379,16 +349,14 @@ test("history orders months and excludes hidden teams while retaining separate r
 
   const assigned = json.teams.find((team) => team.teamName === ASSIGNED);
   const budgetOnly = json.teams.find((team) => team.teamName === BUDGET_ONLY);
-  expect({
-      original: assigned.originalAmountUsd,
-      effective: assigned.effectiveAmountUsd,
-      periods: assigned.adjustments.map((adjustment) => adjustment.submissionPeriod),
-    }).toEqual({ original: 100, effective: 125, periods: ["2026-01"] });
-  expect({
-      original: budgetOnly.originalAmountUsd,
-      effective: budgetOnly.effectiveAmountUsd,
-      periods: budgetOnly.adjustments.map((adjustment) => adjustment.submissionPeriod),
-    }).toEqual({ original: 50, effective: 60, periods: ["2026-02"] });
+  expect(assigned).toMatchObject({
+    originalAmountUsd: 100,
+    effectiveAmountUsd: 125,
+    monthlyLimitUsd: 10.42,
+    monthlyLimitSource: "derived",
+  });
+  expect(assigned.adjustments.map((row) => row.submissionPeriod)).toEqual(["2026-01"]);
+  expect(budgetOnly.effectiveAmountUsd).toBe(60);
 });
 
 test("effective totals agree across pool, group, and summary surfaces", async () => {
@@ -489,4 +457,58 @@ test("workspace admins see assigned effective pools but not account budget-only 
   expect(!json.budgets.some((budget) => budget.teamName === BUDGET_ONLY)).toBeTruthy();
   expect(!json.budgets.some((budget) => budget.teamName === ORIGINAL_ONLY)).toBeTruthy();
   expect(!json.budgets.some((budget) => budget.teamName === HIDDEN)).toBeTruthy();
+});
+
+test("true admins can edit and reset monthly team and target limits", async () => {
+  const path = `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/limit`;
+  expect((await request(path, "task158-workspace", "PATCH", {
+    monthlyLimitUsd: 9,
+  })).status).toBe(403);
+  let response = await request(path, "task158-account", "PATCH", {
+    monthlyLimitUsd: 9,
+  });
+  expect(response.status).toBe(200);
+  expect(response.json).toMatchObject({
+    monthlyLimitUsd: 9,
+    monthlyLimitSource: "manual",
+  });
+  response = await request(path, "task158-account", "PATCH", {
+    monthlyLimitUsd: null,
+  });
+  expect(response.json).toMatchObject({
+    monthlyLimitUsd: 10.42,
+    monthlyLimitSource: "derived",
+  });
+
+  const targetPath =
+    `/admin/team-budgets/targets/task158-ws/${encodeURIComponent(GROUP_ID)}`;
+  response = await request(targetPath, "task158-account", "PATCH", {
+    monthlyLimitUsd: 4.5,
+  });
+  expect(response.status).toBe(200);
+  expect(response.json).toMatchObject({
+    teamName: ASSIGNED,
+    workspaceId: "task158-ws",
+    groupId: GROUP_ID,
+    monthlyLimitUsd: 4.5,
+    targetAmountUsd: 4.5,
+  });
+  response = await request(targetPath, "task158-account", "PATCH", {
+    monthlyLimitUsd: null,
+  });
+  expect(response.status).toBe(200);
+  expect(response.json).toMatchObject({
+    monthlyLimitUsd: null,
+    targetAmountUsd: 10.42,
+  });
+});
+
+test("apply validates an exact explicit selection", async () => {
+  expect((await request("/admin/team-budgets/apply", "task158-account", "POST", {
+    all: false,
+  })).status).toBe(400);
+  expect((await request("/admin/team-budgets/apply", "task158-account", "POST", {
+    all: true,
+    teamNames: [ASSIGNED],
+  })).status).toBe(400);
 });

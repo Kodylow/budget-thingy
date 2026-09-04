@@ -138,6 +138,7 @@ export const ListGroupsResponse = zod.object({
   "workspaceName": zod.string().nullish(),
   "name": zod.string(),
   "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
+  "isLegacyDisplayOnly": zod.boolean().optional().describe('True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target.'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "isSynthetic": zod.boolean().optional().describe('True for a generated accounting row rather than a real Enterprise group'),
   "syntheticKind": zod.enum(['no_group']).optional().describe('Kind of generated accounting row; present only when isSynthetic is true'),
@@ -216,6 +217,7 @@ export const GetGroupDetailResponse = zod.object({
   "workspaceName": zod.string().nullish(),
   "name": zod.string(),
   "teamName": zod.string().nullish().describe('Team this group belongs to, null if unassigned'),
+  "isLegacyDisplayOnly": zod.boolean().optional().describe('True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target.'),
   "type": zod.string().describe('Group type (custom, admin, member, guest)'),
   "isSynthetic": zod.boolean().optional().describe('True for a generated accounting row rather than a real Enterprise group'),
   "syntheticKind": zod.enum(['no_group']).optional().describe('Kind of generated accounting row; present only when isSynthetic is true'),
@@ -702,6 +704,9 @@ export const GetTeamBudgetHistoryResponse = zod.object({
   "teamName": zod.string(),
   "originalAmountUsd": zod.number(),
   "effectiveAmountUsd": zod.number(),
+  "annualAllocationUsd": zod.number(),
+  "monthlyLimitUsd": zod.number(),
+  "monthlyLimitSource": zod.enum(['derived', 'manual']),
   "adjustments": zod.array(zod.object({
   "recordId": zod.string(),
   "amountUsd": zod.number(),
@@ -735,9 +740,10 @@ export const GetTeamBudgetSyncStatusResponse = zod.object({
   "workspaceId": zod.string().nullable(),
   "targetGroupId": zod.string().nullable(),
   "targetGroupName": zod.string().nullable(),
+  "targetType": zod.enum(['group', 'workspace_default']),
   "desiredAmountUsd": zod.number(),
   "upstreamAmountUsd": zod.number().nullable(),
-  "status": zod.enum(['pending', 'synced', 'unresolved', 'failed']),
+  "status": zod.enum(['synced', 'drift', 'failed']),
   "reason": zod.string().nullable(),
   "lastAttemptAt": zod.string().nullable()
 }))
@@ -745,7 +751,7 @@ export const GetTeamBudgetSyncStatusResponse = zod.object({
 
 
 /**
- * Available only to true Enterprise account administrators; account delegates and editors are not authorized. Queues reconciliation of per-team desired budgets with upstream Replit groups and immediately returns the latest stored status.
+ * Available only to true Enterprise account administrators. Queues a read-only refresh of upstream values; this endpoint never writes budgets.
  * @summary Retry upstream Replit group budget synchronization
  */
 export const RetryTeamBudgetUpstreamSyncResponse = zod.object({
@@ -762,11 +768,193 @@ export const RetryTeamBudgetUpstreamSyncResponse = zod.object({
   "workspaceId": zod.string().nullable(),
   "targetGroupId": zod.string().nullable(),
   "targetGroupName": zod.string().nullable(),
+  "targetType": zod.enum(['group', 'workspace_default']),
   "desiredAmountUsd": zod.number(),
   "upstreamAmountUsd": zod.number().nullable(),
-  "status": zod.enum(['pending', 'synced', 'unresolved', 'failed']),
+  "status": zod.enum(['synced', 'drift', 'failed']),
   "reason": zod.string().nullable(),
   "lastAttemptAt": zod.string().nullable()
+}))
+})
+
+
+/**
+ * True-account-admin-only. A number sets a persistent manual limit; null resets the limit to the derived annual allocation divided by twelve.
+ * @summary Set or reset a team's monthly upstream limit
+ */
+
+
+
+export const UpdateTeamBudgetLimitParams = zod.object({
+  "teamName": zod.coerce.string().min(1)
+})
+
+export const updateTeamBudgetLimitBodyMonthlyLimitUsdMin = 0;
+
+
+
+export const UpdateTeamBudgetLimitBody = zod.object({
+  "monthlyLimitUsd": zod.number().min(updateTeamBudgetLimitBodyMonthlyLimitUsdMin).nullable()
+})
+
+export const updateTeamBudgetLimitResponseAdjustmentsItemSubmissionPeriodRegExp = new RegExp('^\\d{4}-(0[1-9]|1[0-2])$');
+
+
+export const UpdateTeamBudgetLimitResponse = zod.object({
+  "teamName": zod.string(),
+  "originalAmountUsd": zod.number(),
+  "effectiveAmountUsd": zod.number(),
+  "annualAllocationUsd": zod.number(),
+  "monthlyLimitUsd": zod.number(),
+  "monthlyLimitSource": zod.enum(['derived', 'manual']),
+  "adjustments": zod.array(zod.object({
+  "recordId": zod.string(),
+  "amountUsd": zod.number(),
+  "submissionPeriod": zod.string().regex(updateTeamBudgetLimitResponseAdjustmentsItemSubmissionPeriodRegExp)
+}))
+})
+
+
+/**
+ * @summary List explicit targets, allocations, and unassigned member groups
+ */
+export const GetTeamBudgetTargetsResponse = zod.object({
+  "targets": zod.array(zod.object({
+  "teamName": zod.string(),
+  "workspaceId": zod.string(),
+  "groupId": zod.string(),
+  "groupName": zod.string(),
+  "monthlyLimitUsd": zod.number().nullable(),
+  "isEnabled": zod.boolean(),
+  "teamMonthlyLimitUsd": zod.number(),
+  "targetAmountUsd": zod.number()
+})),
+  "teams": zod.array(zod.object({
+  "teamName": zod.string(),
+  "monthlyLimitUsd": zod.number(),
+  "targetAmountSumUsd": zod.number(),
+  "differenceUsd": zod.number()
+})),
+  "legacy": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "displayName": zod.string(),
+  "monthlyLimitUsd": zod.number(),
+  "isEnabled": zod.boolean()
+})),
+  "unassignedGroups": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "groupId": zod.string(),
+  "groupName": zod.string()
+}))
+})
+
+
+/**
+ * @summary Assign an unassigned member group to a team
+ */
+
+
+
+
+
+export const AssignTeamBudgetTargetBody = zod.object({
+  "teamName": zod.string().min(1),
+  "workspaceId": zod.string().min(1),
+  "groupId": zod.string().min(1)
+})
+
+export const AssignTeamBudgetTargetResponse = zod.object({
+  "teamName": zod.string(),
+  "workspaceId": zod.string(),
+  "groupId": zod.string(),
+  "groupName": zod.string(),
+  "monthlyLimitUsd": zod.number().nullable(),
+  "isEnabled": zod.boolean(),
+  "teamMonthlyLimitUsd": zod.number(),
+  "targetAmountUsd": zod.number()
+})
+
+
+/**
+ * @summary Set or reset a target-specific monthly override
+ */
+export const UpdateTeamBudgetTargetParams = zod.object({
+  "workspaceId": zod.coerce.string(),
+  "groupId": zod.coerce.string()
+})
+
+export const updateTeamBudgetTargetBodyMonthlyLimitUsdMin = 0;
+
+
+
+export const UpdateTeamBudgetTargetBody = zod.object({
+  "monthlyLimitUsd": zod.number().min(updateTeamBudgetTargetBodyMonthlyLimitUsdMin).nullable()
+})
+
+export const UpdateTeamBudgetTargetResponse = zod.object({
+  "teamName": zod.string(),
+  "workspaceId": zod.string(),
+  "groupId": zod.string(),
+  "groupName": zod.string(),
+  "monthlyLimitUsd": zod.number().nullable(),
+  "isEnabled": zod.boolean(),
+  "teamMonthlyLimitUsd": zod.number(),
+  "targetAmountUsd": zod.number()
+})
+
+
+/**
+ * @summary Set or reset the legacy workspace per-user cap
+ */
+export const updateLegacyWorkspaceLimitBodyMonthlyLimitUsdMin = 0;
+
+
+
+export const UpdateLegacyWorkspaceLimitBody = zod.object({
+  "monthlyLimitUsd": zod.number().min(updateLegacyWorkspaceLimitBodyMonthlyLimitUsdMin).nullable()
+})
+
+export const UpdateLegacyWorkspaceLimitResponse = zod.object({
+  "workspaceId": zod.string(),
+  "displayName": zod.string(),
+  "monthlyLimitUsd": zod.number(),
+  "isEnabled": zod.boolean()
+})
+
+
+/**
+ * True-account-admin-only. This is the only team-budget operation that writes upstream.
+ * @summary Apply selected drifted monthly limits upstream
+ */
+
+
+
+
+
+
+export const ApplyTeamBudgetLimitsBody = zod.union([zod.object({
+  "teamNames": zod.array(zod.string().min(1)).min(1)
+}),zod.object({
+  "all": zod.boolean()
+}),zod.object({
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string().min(1),
+  "groupId": zod.string().nullish()
+})).min(1)
+})])
+
+export const ApplyTeamBudgetLimitsResponse = zod.object({
+  "teams": zod.array(zod.object({
+  "teamName": zod.string(),
+  "outcome": zod.enum(['success', 'failed']),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "targetGroupId": zod.string().nullable(),
+  "targetGroupName": zod.string(),
+  "desiredAmountUsd": zod.number(),
+  "outcome": zod.enum(['success', 'failed']),
+  "error": zod.string().nullable()
+}))
 }))
 })
 
@@ -1305,5 +1493,3 @@ export const ListRecentUsageIngestRunsResponseItem = zod.object({
   "status": zod.enum(['running', 'succeeded', 'partial', 'failed'])
 })
 export const ListRecentUsageIngestRunsResponse = zod.array(ListRecentUsageIngestRunsResponseItem)
-
-

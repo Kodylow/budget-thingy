@@ -1,20 +1,22 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import {
   db,
-  groupTeamsTable,
+  teamLimitTargetsTable,
   teamBudgetAdjustmentsTable,
   teamBudgetSyncStateTable,
   teamBudgetUpstreamSyncTable,
   teamBudgetsTable,
+  workspaceDefaultLimitTargetsTable,
 } from "@workspace/db";
 import {
-  clearReplitGroupBudget,
+  listBudgets,
   listReplitGroupBudgets,
   setReplitGroupBudget,
+  setWorkspaceDefaultUserLimit,
 } from "./replit-budgets";
 import {
-  getDirectory,
+  getFreshDirectoryForLimitValidation,
   type DirectoryCache,
   type EnterpriseGroup,
 } from "./enterprise";
@@ -31,6 +33,7 @@ export const TEAM_BUDGET_SOURCE_TABLE = "Replit Finance Approval";
 export const TEAM_BUDGET_REQUIRED_APPROVAL_STATUS = "Approved";
 const SYNC_STATE_ID = 1;
 export const TEAM_BUDGET_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+export const TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const LEGACY_EXACT_MATCHES = new Map([
   ["Growth Strategy & Operations", "DXP"],
   ["Growth Strategy & Operations DXP", "DXP"],
@@ -53,115 +56,6 @@ type TeamBudgetDirectoryFetcher = () => Promise<
 >;
 let directoryFetchOverride: TeamBudgetDirectoryFetcher | null = null;
 
-type GroupAssignment = Pick<
-  typeof groupTeamsTable.$inferSelect,
-  "groupName" | "teamName"
->;
-
-export interface TeamBudgetTargetResolution {
-  teamName: string;
-  workspaceId: string | null;
-  targetGroupId: string | null;
-  targetGroupName: string | null;
-  reason: string | null;
-}
-
-interface RoleGroup extends EnterpriseGroup {
-  role: "admin" | "member" | "viewer" | "guest";
-  base: string;
-}
-
-/**
- * Resolve the sole live Member(s) group for each team. Stored mappings are
- * deliberately consulted by exact current group name, while a mapping on any
- * live role sibling establishes the ownership of the whole role family.
- */
-export function resolveTeamBudgetTargets(
-  teamNames: readonly string[],
-  liveGroups: readonly EnterpriseGroup[],
-  assignments: readonly GroupAssignment[],
-): TeamBudgetTargetResolution[] {
-  const workspacesByGroupName = new Map<string, Set<string>>();
-  for (const group of liveGroups) {
-    const workspaces = workspacesByGroupName.get(group.name) ?? new Set<string>();
-    workspaces.add(group.workspaceId);
-    workspacesByGroupName.set(group.name, workspaces);
-  }
-  const assignmentByWorkspaceAndGroup = new Map<string, string>();
-  for (const assignment of assignments) {
-    const workspaces = workspacesByGroupName.get(assignment.groupName);
-    if (workspaces?.size !== 1) continue;
-    const [workspaceId] = workspaces;
-    assignmentByWorkspaceAndGroup.set(
-      `${workspaceId}\0${assignment.groupName}`,
-      assignment.teamName,
-    );
-  }
-  const families = new Map<string, RoleGroup[]>();
-  const suffix = /^(.*)-\s*(admins?|members?|viewers?|guests?)$/i;
-
-  for (const group of liveGroups) {
-    const match = suffix.exec(group.name);
-    const base = match?.[1]?.trim();
-    if (!match || !base) continue;
-    const rawRole = match[2]!.toLowerCase();
-    const role: RoleGroup["role"] = rawRole.startsWith("admin")
-      ? "admin"
-      : rawRole.startsWith("member")
-        ? "member"
-        : rawRole.startsWith("viewer")
-          ? "viewer"
-          : "guest";
-    const parsed: RoleGroup = { ...group, role, base };
-    const key = `${group.workspaceId}\0${base}`;
-    families.set(key, [...(families.get(key) ?? []), parsed]);
-  }
-
-  const candidatesByTeam = new Map<string, RoleGroup[]>();
-  for (const siblings of families.values()) {
-    const assignedTeams = new Set(
-      siblings
-        .map((sibling) =>
-          assignmentByWorkspaceAndGroup.get(
-            `${sibling.workspaceId}\0${sibling.name}`,
-          ),
-        )
-        .filter((teamName): teamName is string => teamName != null),
-    );
-    if (assignedTeams.size !== 1) continue;
-    const [teamName] = assignedTeams;
-    const members = siblings.filter((sibling) => sibling.role === "member");
-    if (members.length !== 1) continue;
-    candidatesByTeam.set(teamName!, [
-      ...(candidatesByTeam.get(teamName!) ?? []),
-      members[0]!,
-    ]);
-  }
-
-  return teamNames.map((teamName) => {
-    const candidates = candidatesByTeam.get(teamName) ?? [];
-    if (candidates.length === 1) {
-      const target = candidates[0]!;
-      return {
-        teamName,
-        workspaceId: target.workspaceId,
-        targetGroupId: target.id,
-        targetGroupName: target.name,
-        reason: null,
-      };
-    }
-    return {
-      teamName,
-      workspaceId: null,
-      targetGroupId: null,
-      targetGroupName: null,
-      reason: candidates.length === 0
-        ? "No uniquely assigned live Member/Members group was found"
-        : `Ambiguous target: ${candidates.length} live Member/Members groups resolve to this team`,
-    };
-  });
-}
-
 /** Test-only seam. */
 export function setAirtableBudgetFetcherForTests(fetcher: AirtableBudgetFetcher | null): void {
   fetchOverride = fetcher;
@@ -172,6 +66,43 @@ export function setTeamBudgetDirectoryFetcherForTests(
   fetcher: TeamBudgetDirectoryFetcher | null,
 ): void {
   directoryFetchOverride = fetcher;
+}
+
+async function fetchFreshLimitDirectory(): Promise<Pick<DirectoryCache, "allGroups">> {
+  return (directoryFetchOverride ?? getFreshDirectoryForLimitValidation)();
+}
+
+function validateConfiguredTarget(
+  target: Pick<typeof teamLimitTargetsTable.$inferSelect, "workspaceId" | "groupId">,
+  directory: Pick<DirectoryCache, "allGroups">,
+): { group: EnterpriseGroup | null; reason: string | null } {
+  const group = directory.allGroups.find((candidate) =>
+    candidate.workspaceId === target.workspaceId && candidate.id === target.groupId
+  );
+  if (!group) {
+    return {
+      group: null,
+      reason: `Group ${target.groupId} is missing from workspace ${target.workspaceId}`,
+    };
+  }
+  if (!isAssignableTeamLimitGroup(group)) {
+    return {
+      group,
+      reason: `Group ${target.groupId} in workspace ${target.workspaceId} is no longer an eligible nonlegacy member target`,
+    };
+  }
+  return { group, reason: null };
+}
+
+export async function getFreshEligibleTeamLimitGroup(
+  workspaceId: string,
+  groupId: string,
+): Promise<EnterpriseGroup | null> {
+  const validation = validateConfiguredTarget(
+    { workspaceId, groupId },
+    await fetchFreshLimitDirectory(),
+  );
+  return validation.reason ? null : validation.group;
 }
 
 function valueAsString(value: unknown): string | null {
@@ -353,7 +284,7 @@ async function performTeamBudgetSnapshotRefresh(): Promise<{
     const [current, priorAdjustments, groupAssignments] = await Promise.all([
       db.select().from(teamBudgetsTable),
       db.select().from(teamBudgetAdjustmentsTable),
-      db.select({ teamName: groupTeamsTable.teamName }).from(groupTeamsTable),
+      db.select({ teamName: teamLimitTargetsTable.teamName }).from(teamLimitTargetsTable),
     ]);
     const existingTeams = new Set(current.map((row) => row.teamName));
     const acceptedNewTeamsByRecordId = new Map(
@@ -518,6 +449,24 @@ export function startTeamBudgetSyncJob(): void {
   };
 
   schedule();
+
+  const scheduleUpstream = (): void => {
+    const timer = setTimeout(() => {
+      void withJobClaim(
+        "team-budgets:upstream-refresh",
+        TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS,
+        10 * 60 * 1000,
+        async (claim) => {
+          claim.signal?.throwIfAborted();
+          await reconcileTeamBudgetsUpstream();
+        },
+      ).catch((err) => {
+        logger.error({ err }, "Team budget upstream refresh failed");
+      }).finally(scheduleUpstream);
+    }, TEAM_BUDGET_UPSTREAM_REFRESH_INTERVAL_MS);
+    timer.unref();
+  };
+  scheduleUpstream();
 }
 
 export async function getEffectiveTeamBudgets() {
@@ -544,11 +493,21 @@ export async function getEffectiveTeamBudgets() {
         team.originalAmountUsd === 0 && team.amountUsd !== 0
           ? team.amountUsd
           : team.originalAmountUsd;
+      const monthlyLimitSource =
+        team.monthlyLimitSource === "manual" && team.monthlyLimitUsd != null
+          ? "manual"
+          : "derived";
       return {
         ...team,
         originalAmountUsd,
-        effectiveAmountUsd:
-          originalAmountUsd + (acceptedByTeam.get(team.teamName) ?? 0),
+        effectiveAmountUsd: originalAmountUsd + (acceptedByTeam.get(team.teamName) ?? 0),
+        annualAllocationUsd: originalAmountUsd + (acceptedByTeam.get(team.teamName) ?? 0),
+        monthlyLimitUsd: monthlyLimitSource === "manual"
+          ? team.monthlyLimitUsd
+          : Math.round(
+              (originalAmountUsd + (acceptedByTeam.get(team.teamName) ?? 0)) / 12 * 100,
+            ) / 100,
+        monthlyLimitSource,
       };
     }),
     adjustments,
@@ -565,22 +524,155 @@ export async function getVisibleEffectiveTeamBudgetMap(): Promise<Map<string, nu
   );
 }
 
+export async function updateTeamMonthlyLimit(
+  teamName: string,
+  monthlyLimitUsd: number | null,
+) {
+  const [updated] = await db.update(teamBudgetsTable).set({
+    monthlyLimitUsd,
+    monthlyLimitSource: monthlyLimitUsd == null ? "derived" : "manual",
+  }).where(eq(teamBudgetsTable.teamName, teamName)).returning();
+  if (!updated) return null;
+  const snapshot = await getEffectiveTeamBudgets();
+  return snapshot.teams.find((team) => team.teamName === teamName) ?? null;
+}
+
+export async function assignTeamLimitTarget(input: {
+  teamName: string;
+  workspaceId: string;
+  groupId: string;
+  groupName: string;
+}) {
+  const [row] = await db.insert(teamLimitTargetsTable).values(input)
+    .onConflictDoUpdate({
+      target: [teamLimitTargetsTable.workspaceId, teamLimitTargetsTable.groupId],
+      set: { teamName: input.teamName, groupName: input.groupName, isEnabled: true },
+    }).returning();
+  return row!;
+}
+
+export async function updateTeamLimitTargetOverride(
+  workspaceId: string,
+  groupId: string,
+  monthlyLimitUsd: number | null,
+) {
+  const [row] = await db.update(teamLimitTargetsTable)
+    .set({ monthlyLimitUsd })
+    .where(and(
+      eq(teamLimitTargetsTable.workspaceId, workspaceId),
+      eq(teamLimitTargetsTable.groupId, groupId),
+    )).returning();
+  return row ?? null;
+}
+
+export async function updateLegacyWorkspaceLimit(monthlyLimitUsd: number | null) {
+  const [row] = await db.update(workspaceDefaultLimitTargetsTable)
+    .set({ monthlyLimitUsd: monthlyLimitUsd ?? 1 })
+    .where(eq(workspaceDefaultLimitTargetsTable.workspaceId, "1awqan"))
+    .returning();
+  return row ?? null;
+}
+
+export async function getTeamLimitTargetConfiguration() {
+  const [snapshot, targets, legacy, directory] = await Promise.all([
+    getEffectiveTeamBudgets(),
+    db.select().from(teamLimitTargetsTable),
+    db.select().from(workspaceDefaultLimitTargetsTable),
+    fetchFreshLimitDirectory(),
+  ]);
+  const teamLimits = new Map(snapshot.teams.map((team) => [team.teamName, team.monthlyLimitUsd]));
+  const validationByIdentity = new Map(targets.map((target) => [
+    `${target.workspaceId}\0${target.groupId}`,
+    validateConfiguredTarget(target, directory),
+  ]));
+  const enabledCount = new Map<string, number>();
+  for (const target of targets) {
+    if (
+      target.isEnabled &&
+      !validationByIdentity.get(`${target.workspaceId}\0${target.groupId}`)?.reason
+    ) {
+      enabledCount.set(target.teamName, (enabledCount.get(target.teamName) ?? 0) + 1);
+    }
+  }
+  const configured = targets.map((target) => {
+    const teamMonthlyLimitUsd = teamLimits.get(target.teamName) ?? 0;
+    const targetAmountUsd = calculateTeamTargetAmount(
+      teamMonthlyLimitUsd,
+      enabledCount.get(target.teamName) ?? 1,
+      target.monthlyLimitUsd,
+    );
+    return { ...target, teamMonthlyLimitUsd, targetAmountUsd };
+  });
+  const sums = new Map<string, number>();
+  for (const target of configured.filter((row) =>
+    row.isEnabled &&
+    !validationByIdentity.get(`${row.workspaceId}\0${row.groupId}`)?.reason
+  )) {
+    sums.set(target.teamName, (sums.get(target.teamName) ?? 0) + target.targetAmountUsd);
+  }
+  const assigned = new Set(targets.map((target) => `${target.workspaceId}\0${target.groupId}`));
+  return {
+    targets: configured,
+    teams: snapshot.teams.filter((team) => !team.isHidden).map((team) => ({
+      teamName: team.teamName,
+      monthlyLimitUsd: team.monthlyLimitUsd,
+      targetAmountSumUsd: Math.round((sums.get(team.teamName) ?? 0) * 100) / 100,
+      differenceUsd: Math.round(
+        ((sums.get(team.teamName) ?? 0) - (team.monthlyLimitUsd ?? 0)) * 100,
+      ) / 100,
+    })),
+    legacy,
+    unassignedGroups: directory.allGroups.filter((group) =>
+      isAssignableTeamLimitGroup(group) &&
+      !assigned.has(`${group.workspaceId}\0${group.id}`)
+    ),
+  };
+}
+
+export function isAssignableTeamLimitGroup(group: EnterpriseGroup): boolean {
+  if (group.workspaceId === "1awqan") return false;
+  const type = group.type.toLowerCase();
+  if (type !== "member" && type !== "custom") return false;
+  return !/(?:^|[-\s])(admins?|viewers?)\s*$/i.test(group.name);
+}
+
 type UpstreamSyncInsert = typeof teamBudgetUpstreamSyncTable.$inferInsert;
 
 async function persistUpstreamSync(row: UpstreamSyncInsert): Promise<void> {
-  await db.insert(teamBudgetUpstreamSyncTable).values(row).onConflictDoUpdate({
-    target: teamBudgetUpstreamSyncTable.teamName,
-    set: {
-      workspaceId: row.workspaceId,
-      targetGroupId: row.targetGroupId,
-      targetGroupName: row.targetGroupName,
-      desiredAmountUsd: row.desiredAmountUsd,
-      upstreamAmountUsd: row.upstreamAmountUsd,
-      status: row.status,
-      reason: row.reason,
-      lastAttemptAt: row.lastAttemptAt,
-    },
-  });
+  const mutable = {
+    teamName: row.teamName,
+    workspaceId: row.workspaceId,
+    targetGroupId: row.targetGroupId,
+    targetGroupName: row.targetGroupName,
+    targetType: row.targetType,
+    desiredAmountUsd: row.desiredAmountUsd,
+    upstreamAmountUsd: row.upstreamAmountUsd,
+    status: row.status,
+    reason: row.reason,
+    lastAttemptAt: row.lastAttemptAt,
+  };
+  try {
+    await db.insert(teamBudgetUpstreamSyncTable).values(row).onConflictDoUpdate({
+      target: [
+        teamBudgetUpstreamSyncTable.workspaceId,
+        teamBudgetUpstreamSyncTable.targetType,
+        teamBudgetUpstreamSyncTable.targetGroupId,
+      ],
+      set: mutable,
+    });
+  } catch (error) {
+    // Rolling-migration compatibility for processes that start before the
+    // corrective exact-identity index DDL is applied.
+    const cause = (error as { cause?: { code?: string } }).cause;
+    if (cause?.code !== "42P10") throw error;
+    await db.insert(teamBudgetUpstreamSyncTable).values(row).onConflictDoUpdate({
+      target: [
+        teamBudgetUpstreamSyncTable.teamName,
+        teamBudgetUpstreamSyncTable.targetGroupId,
+      ],
+      set: mutable,
+    });
+  }
 }
 
 function amountsMatch(desired: number, upstream: number | null): boolean {
@@ -591,60 +683,108 @@ function amountsMatch(desired: number, upstream: number | null): boolean {
   return upstream != null && desiredCents === Math.round(upstream * 100);
 }
 
+function readBudgetAmount(value: unknown): number | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ["budgetUsd", "amountUsd", "limitUsd", "amount", "limit"]) {
+    const candidate = record[key];
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
+  }
+  for (const nested of Object.values(record)) {
+    if (nested && typeof nested === "object") {
+      const candidate = readBudgetAmount(nested);
+      if (candidate != null) return candidate;
+    }
+  }
+  return null;
+}
+
+export function calculateTeamTargetAmount(
+  teamMonthlyLimitUsd: number,
+  enabledTargetCount: number,
+  targetOverrideUsd: number | null,
+): number {
+  if (targetOverrideUsd != null) return targetOverrideUsd;
+  return Math.round(teamMonthlyLimitUsd / Math.max(1, enabledTargetCount) * 100) / 100;
+}
+
 async function performTeamBudgetUpstreamReconciliation(): Promise<void> {
   const attemptedAt = new Date();
-  const [budgetMap, assignments] = await Promise.all([
-    getVisibleEffectiveTeamBudgetMap(),
-    db.select().from(groupTeamsTable),
+  const [budgetSnapshot, targets, legacyTargets, directory] = await Promise.all([
+    getEffectiveTeamBudgets(),
+    db.select().from(teamLimitTargetsTable),
+    db.select().from(workspaceDefaultLimitTargetsTable),
+    fetchFreshLimitDirectory(),
   ]);
-  // Target IDs are safety-sensitive: bypass the normal 15-minute directory
-  // cache immediately before resolving names to live workspace/group IDs.
-  const directory = await (
-    directoryFetchOverride ?? (() => getDirectory(true))
-  )();
-  const resolutions = resolveTeamBudgetTargets(
-    [...budgetMap.keys()],
-    directory.allGroups,
-    assignments,
+  const validationByIdentity = new Map(targets.map((target) => [
+    `${target.workspaceId}\0${target.groupId}`,
+    validateConfiguredTarget(target, directory),
+  ]));
+  const budgetMap = new Map(
+    budgetSnapshot.teams
+      .filter((team) => !team.isHidden)
+      .map((team) => [team.teamName, team.monthlyLimitUsd]),
   );
+  const enabledByTeam = new Map<string, number>();
+  for (const target of targets) {
+    if (
+      target.isEnabled &&
+      !validationByIdentity.get(`${target.workspaceId}\0${target.groupId}`)?.reason
+    ) {
+      enabledByTeam.set(target.teamName, (enabledByTeam.get(target.teamName) ?? 0) + 1);
+    }
+  }
   const resolvedByWorkspace = new Map<string, Array<{
-    resolution: TeamBudgetTargetResolution;
+    target: typeof teamLimitTargetsTable.$inferSelect;
     desiredAmountUsd: number;
   }>>();
-
-  for (const resolution of resolutions) {
-    const desiredAmountUsd = budgetMap.get(resolution.teamName)!;
-    if (resolution.reason || !resolution.workspaceId || !resolution.targetGroupId) {
+  for (const target of targets.filter((row) => row.isEnabled)) {
+    const validation = validationByIdentity.get(`${target.workspaceId}\0${target.groupId}`)!;
+    if (validation.reason) {
+      const teamLimit = budgetMap.get(target.teamName) ?? 0;
       await persistUpstreamSync({
-        teamName: resolution.teamName,
-        workspaceId: null,
-        targetGroupId: null,
-        targetGroupName: null,
-        desiredAmountUsd,
+        teamName: target.teamName,
+        workspaceId: target.workspaceId,
+        targetGroupId: target.groupId,
+        targetGroupName: target.groupName,
+        targetType: "group",
+        desiredAmountUsd: calculateTeamTargetAmount(
+          teamLimit,
+          enabledByTeam.get(target.teamName) ?? 1,
+          target.monthlyLimitUsd,
+        ),
         upstreamAmountUsd: null,
-        status: "unresolved",
-        reason: resolution.reason ?? "Target group identity is incomplete",
+        status: "failed",
+        reason: validation.reason,
         lastAttemptAt: attemptedAt,
       });
       continue;
     }
-    const rows = resolvedByWorkspace.get(resolution.workspaceId) ?? [];
-    rows.push({ resolution, desiredAmountUsd });
-    resolvedByWorkspace.set(resolution.workspaceId, rows);
+    const teamLimit = budgetMap.get(target.teamName);
+    if (teamLimit == null) continue;
+    const desiredAmountUsd = calculateTeamTargetAmount(
+      teamLimit,
+      enabledByTeam.get(target.teamName) ?? 1,
+      target.monthlyLimitUsd,
+    );
+    const rows = resolvedByWorkspace.get(target.workspaceId) ?? [];
+    rows.push({ target, desiredAmountUsd });
+    resolvedByWorkspace.set(target.workspaceId, rows);
   }
 
   for (const [workspaceId, teams] of resolvedByWorkspace) {
     const snapshot = await listReplitGroupBudgets(workspaceId);
     if (snapshot.status !== "available") {
-      for (const { resolution, desiredAmountUsd } of teams) {
+      for (const { target, desiredAmountUsd } of teams) {
         await persistUpstreamSync({
-          teamName: resolution.teamName,
+          teamName: target.teamName,
           workspaceId,
-          targetGroupId: resolution.targetGroupId,
-          targetGroupName: resolution.targetGroupName,
+          targetGroupId: target.groupId,
+          targetGroupName: target.groupName,
+          targetType: "group",
           desiredAmountUsd,
           upstreamAmountUsd: null,
-          status: snapshot.status === "unavailable" ? "pending" : "failed",
+          status: "failed",
           reason: snapshot.error ?? "The Replit group budget feed could not be read",
           lastAttemptAt: attemptedAt,
         });
@@ -652,18 +792,15 @@ async function performTeamBudgetUpstreamReconciliation(): Promise<void> {
       continue;
     }
 
-    const verify: Array<{
-      resolution: TeamBudgetTargetResolution;
-      desiredAmountUsd: number;
-    }> = [];
     for (const team of teams) {
-      const { resolution, desiredAmountUsd } = team;
-      const current = snapshot.budgets.get(resolution.targetGroupId!)?.budgetUsd ?? null;
+      const { target, desiredAmountUsd } = team;
+      const current = snapshot.budgets.get(target.groupId)?.budgetUsd ?? null;
       const baseRow = {
-        teamName: resolution.teamName,
+        teamName: target.teamName,
         workspaceId,
-        targetGroupId: resolution.targetGroupId,
-        targetGroupName: resolution.targetGroupName,
+        targetGroupId: target.groupId,
+        targetGroupName: target.groupName,
+        targetType: "group" as const,
         desiredAmountUsd,
         upstreamAmountUsd: current,
         lastAttemptAt: attemptedAt,
@@ -674,59 +811,76 @@ async function performTeamBudgetUpstreamReconciliation(): Promise<void> {
           status: "synced",
           reason: null,
         });
-      } else if (!snapshot.canWrite) {
+      } else {
         await persistUpstreamSync({
           ...baseRow,
-          status: "pending",
-          reason: "The configured Replit budgets credential does not grant write:budgets",
+          status: "drift",
+          reason: null,
         });
-      } else {
-        try {
-          if (Math.round(desiredAmountUsd * 100) === 0) {
-            await clearReplitGroupBudget(workspaceId, resolution.targetGroupId!);
-          } else {
-            await setReplitGroupBudget(
-              workspaceId,
-              resolution.targetGroupId!,
-              desiredAmountUsd,
-            );
-          }
-          verify.push(team);
-        } catch (error) {
-          await persistUpstreamSync({
-            ...baseRow,
-            status: "failed",
-            reason: error instanceof Error ? error.message : "Group budget mutation failed",
-          });
-        }
       }
     }
+  }
 
-    if (!verify.length) continue;
-    const observed = await listReplitGroupBudgets(workspaceId);
-    for (const { resolution, desiredAmountUsd } of verify) {
-      const upstreamAmountUsd =
-        observed.status === "available"
-          ? (observed.budgets.get(resolution.targetGroupId!)?.budgetUsd ?? null)
-          : null;
-      const matches =
-        observed.status === "available" &&
-        amountsMatch(desiredAmountUsd, upstreamAmountUsd);
+  for (const legacy of legacyTargets.filter((row) => row.isEnabled)) {
+    try {
+      const raw = await listBudgets("workspace_default_user_limit", legacy.workspaceId);
+      const upstreamAmountUsd = raw.length ? readBudgetAmount(raw[0]) : null;
       await persistUpstreamSync({
-        teamName: resolution.teamName,
-        workspaceId,
-        targetGroupId: resolution.targetGroupId,
-        targetGroupName: resolution.targetGroupName,
-        desiredAmountUsd,
+        teamName: legacy.displayName,
+        workspaceId: legacy.workspaceId,
+        targetGroupId: null,
+        targetGroupName: legacy.displayName,
+        targetType: "workspace_default",
+        desiredAmountUsd: legacy.monthlyLimitUsd,
         upstreamAmountUsd,
-        status: matches ? "synced" : "failed",
-        reason: matches
-          ? null
-          : observed.error ?? "The upstream group budget did not match the desired amount after mutation",
+        status: amountsMatch(legacy.monthlyLimitUsd, upstreamAmountUsd) ? "synced" : "drift",
+        reason: null,
+        lastAttemptAt: attemptedAt,
+      });
+    } catch (error) {
+      await persistUpstreamSync({
+        teamName: legacy.displayName,
+        workspaceId: legacy.workspaceId,
+        targetGroupId: null,
+        targetGroupName: legacy.displayName,
+        targetType: "workspace_default",
+        desiredAmountUsd: legacy.monthlyLimitUsd,
+        upstreamAmountUsd: null,
+        status: "failed",
+        reason: error instanceof Error ? error.message : "Workspace default budget read failed",
         lastAttemptAt: attemptedAt,
       });
     }
   }
+
+  // Remove only identities that are no longer enabled/configured. Unlike a
+  // table-wide pre-delete, this cannot erase rows inserted by a concurrent
+  // reconciliation process.
+  await db.execute(sql`
+    DELETE FROM ${teamBudgetUpstreamSyncTable} AS sync
+    WHERE NOT (
+      (
+        sync.target_type = 'group'
+        AND EXISTS (
+          SELECT 1
+          FROM ${teamLimitTargetsTable} AS target
+          WHERE target.workspace_id = sync.workspace_id
+            AND target.group_id = sync.target_group_id
+            AND target.is_enabled = true
+        )
+      )
+      OR
+      (
+        sync.target_type = 'workspace_default'
+        AND EXISTS (
+          SELECT 1
+          FROM ${workspaceDefaultLimitTargetsTable} AS target
+          WHERE target.workspace_id = sync.workspace_id
+            AND target.is_enabled = true
+        )
+      )
+    )
+  `);
 }
 
 /** A process-local single flight shared by direct and queued reconciliations. */
@@ -747,5 +901,130 @@ export function queueTeamBudgetUpstreamReconciliation(): void {
 
 export async function getTeamBudgetUpstreamSyncRows() {
   return db.select().from(teamBudgetUpstreamSyncTable)
-    .orderBy(asc(teamBudgetUpstreamSyncTable.teamName));
+    .orderBy(
+      asc(teamBudgetUpstreamSyncTable.teamName),
+      asc(teamBudgetUpstreamSyncTable.targetGroupName),
+    );
+}
+
+export interface ApplyTeamBudgetTargetOutcome {
+  workspaceId: string;
+  targetGroupId: string | null;
+  targetGroupName: string;
+  desiredAmountUsd: number;
+  outcome: "success" | "failed";
+  error: string | null;
+}
+
+export async function applyTeamBudgetLimits(
+  selection:
+    | { all: true }
+    | { teamNames: string[] }
+    | { targets: Array<{ workspaceId: string; groupId?: string | null }> },
+) {
+  const [allRows, groupTargets, legacyTargets] = await Promise.all([
+    getTeamBudgetUpstreamSyncRows(),
+    db.select().from(teamLimitTargetsTable),
+    db.select().from(workspaceDefaultLimitTargetsTable),
+  ]);
+  const enabledGroups = new Set(
+    groupTargets
+      .filter((target) => target.isEnabled)
+      .map((target) => `${target.workspaceId}\0${target.groupId}`),
+  );
+  const enabledDefaults = new Set(
+    legacyTargets
+      .filter((target) => target.isEnabled)
+      .map((target) => target.workspaceId),
+  );
+  const rows = allRows.filter((row) =>
+    row.targetType === "workspace_default"
+      ? !!row.workspaceId && enabledDefaults.has(row.workspaceId)
+      : !!row.workspaceId && !!row.targetGroupId &&
+        enabledGroups.has(`${row.workspaceId}\0${row.targetGroupId}`)
+  );
+  const selectedRows = "all" in selection
+    ? rows.filter((row) => row.status === "drift")
+    : "teamNames" in selection
+      ? rows.filter((row) =>
+          row.status === "drift" && new Set(selection.teamNames).has(row.teamName)
+        )
+      : rows.filter((row) => selection.targets.some((target) =>
+          target.workspaceId === row.workspaceId &&
+          (target.groupId ?? null) === row.targetGroupId
+        ));
+  const requested = new Set(selectedRows.map((row) => row.teamName));
+  const byTeam = new Map<string, ApplyTeamBudgetTargetOutcome[]>();
+  for (const teamName of requested) {
+    const targets = selectedRows.filter((row) =>
+      row.teamName === teamName &&
+      row.workspaceId &&
+      row.targetGroupName
+    );
+    const outcomes: ApplyTeamBudgetTargetOutcome[] = [];
+    for (const target of targets) {
+      try {
+        if (target.targetType === "workspace_default") {
+          await setWorkspaceDefaultUserLimit(
+            target.workspaceId!,
+            Math.round(target.desiredAmountUsd * 100) === 0 ? null : target.desiredAmountUsd,
+          );
+        } else {
+          const validation = validateConfiguredTarget(
+            {
+              workspaceId: target.workspaceId!,
+              groupId: target.targetGroupId!,
+            },
+            await fetchFreshLimitDirectory(),
+          );
+          if (validation.reason) {
+            if ("targets" in selection) {
+              outcomes.push({
+                workspaceId: target.workspaceId!,
+                targetGroupId: target.targetGroupId,
+                targetGroupName: target.targetGroupName!,
+                desiredAmountUsd: target.desiredAmountUsd,
+                outcome: "failed",
+                error: validation.reason,
+              });
+            }
+            continue;
+          }
+          await setReplitGroupBudget(
+            target.workspaceId!,
+            target.targetGroupId!,
+            Math.round(target.desiredAmountUsd * 100) === 0 ? null : target.desiredAmountUsd,
+          );
+        }
+        outcomes.push({
+          workspaceId: target.workspaceId!,
+          targetGroupId: target.targetGroupId,
+          targetGroupName: target.targetGroupName!,
+          desiredAmountUsd: target.desiredAmountUsd,
+          outcome: "success",
+          error: null,
+        });
+      } catch (error) {
+        outcomes.push({
+          workspaceId: target.workspaceId!,
+          targetGroupId: target.targetGroupId,
+          targetGroupName: target.targetGroupName!,
+          desiredAmountUsd: target.desiredAmountUsd,
+          outcome: "failed",
+          error: error instanceof Error ? error.message : "Group budget mutation failed",
+        });
+      }
+    }
+    if (outcomes.length > 0) byTeam.set(teamName, outcomes);
+  }
+  await reconcileTeamBudgetsUpstream();
+  return {
+    teams: [...byTeam].map(([teamName, targets]) => ({
+      teamName,
+      outcome: targets.length > 0 && targets.every((target) => target.outcome === "success")
+        ? "success" as const
+        : "failed" as const,
+      targets,
+    })),
+  };
 }

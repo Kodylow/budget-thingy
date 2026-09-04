@@ -19,6 +19,30 @@ export interface ReplitGroupBudget {
   budgetUsd: number | null;
 }
 
+export type ReplitBudgetType =
+  | "workspace_group_limit"
+  | "workspace_user_limit"
+  | "workspace_default_user_limit";
+
+export type ReplitBudgetWrite =
+  | {
+      type: "workspace_group_limit";
+      workspaceId: string;
+      groupId: string;
+      amountUsd: number | null;
+    }
+  | {
+      type: "workspace_user_limit";
+      workspaceId: string;
+      userId: string;
+      amountUsd: number | null;
+    }
+  | {
+      type: "workspace_default_user_limit";
+      workspaceId: string;
+      amountUsd: number | null;
+    };
+
 export interface ReplitBudgetSnapshot {
   status: BudgetConnectorStatus;
   canWrite: boolean;
@@ -152,14 +176,22 @@ async function request(
   path: string,
   init: ReplitBudgetRequest,
 ): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await (transportOverride ?? configuredTransport())(path, init);
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Replit connector unavailable";
-    throw new ReplitBudgetConnectorError(errorKind(message), message);
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      response = await (transportOverride ?? configuredTransport())(path, init);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Replit connector unavailable";
+      throw new ReplitBudgetConnectorError(errorKind(message), message);
+    }
+    if (response.status !== 409 || attempt === 1) break;
+    const retryAfter = Number(response.headers.get("retry-after") ?? "1");
+    const delaySeconds =
+      Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : 1;
+    await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1_000));
   }
+  if (!response) throw new Error("Replit budgets API returned no response");
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     let message = text || `${response.status} ${response.statusText}`.trim();
@@ -182,7 +214,9 @@ async function request(
         : "error";
     throw new ReplitBudgetConnectorError(
       kind,
-      `Replit budgets API request failed: ${message}`,
+      response.status === 400
+        ? message
+        : `Replit budgets API request failed: ${message}`,
       response.status,
     );
   }
@@ -211,6 +245,14 @@ function isAgentMetric(value: unknown): boolean {
     (value.toLowerCase() === "agent" ||
       value.toLowerCase().includes("ai_agent") ||
       value.toLowerCase().includes("ai-agent"))
+  );
+}
+
+function isBudgetType(value: unknown): value is ReplitBudgetType {
+  return (
+    value === "workspace_group_limit" ||
+    value === "workspace_user_limit" ||
+    value === "workspace_default_user_limit"
   );
 }
 
@@ -263,7 +305,11 @@ export function parseReplitMemberBudget(
     fallbackWorkspaceId,
   );
   if (!userId || !workspaceId) return null;
-  const explicitMetric = stringValue(row.metric, row.metricId, row.type);
+  const explicitMetric = stringValue(
+    row.metric,
+    row.metricId,
+    isBudgetType(row.type) ? undefined : row.type,
+  );
   if (explicitMetric && !isAgentMetric(explicitMetric)) return null;
 
   const budgetUsd =
@@ -297,7 +343,11 @@ export function parseReplitGroupBudget(
     fallbackWorkspaceId,
   );
   if (!groupId || !workspaceId) return null;
-  const explicitMetric = stringValue(row.metric, row.metricId, row.type);
+  const explicitMetric = stringValue(
+    row.metric,
+    row.metricId,
+    isBudgetType(row.type) ? undefined : row.type,
+  );
   if (explicitMetric && !isAgentMetric(explicitMetric)) return null;
 
   const budgetUsd =
@@ -342,39 +392,45 @@ function nextCursor(body: unknown): string | null {
     : null;
 }
 
+/** List all budget rows of one type, optionally scoped to a workspace. */
+export async function listBudgets(
+  type: ReplitBudgetType,
+  workspaceId?: string,
+): Promise<unknown[]> {
+  const rows: unknown[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const query = new URLSearchParams({ type });
+    if (workspaceId) query.set("workspaceId", workspaceId);
+    query.set("limit", "100");
+    if (cursor) query.set("cursor", cursor);
+    const body = await request(`/v1/budgets?${query}`, { method: "GET" });
+    rows.push(...pageRows(body));
+    cursor = nextCursor(body);
+    if (!cursor) return rows;
+  }
+  throw new Error(`Replit budgets pagination exceeded ${MAX_PAGES} pages`);
+}
+
 export async function listReplitMemberBudgets(
   workspaceId: string,
 ): Promise<ReplitBudgetSnapshot> {
   const budgets = new Map<string, ReplitMemberBudget>();
-  let cursor: string | null = null;
   try {
     const canWrite = await connectorCanWrite();
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const query = new URLSearchParams({
-        workspaceId,
-        billingPeriod: "current",
-        limit: "100",
-      });
-      if (cursor) query.set("cursor", cursor);
-      const body = await request(`/v1/budgets?${query}`, { method: "GET" });
-      for (const value of pageRows(body)) {
-        const parsed = parseReplitMemberBudget(value, workspaceId);
-        if (parsed && parsed.workspaceId === workspaceId) {
-          const existing = budgets.get(parsed.userId);
-          if (existing && existing.budgetUsd !== parsed.budgetUsd) {
-            throw new Error(
-              `Replit budgets API returned conflicting limits for workspace user ${parsed.userId}`,
-            );
-          }
-          // Stable workspace/user identity deduplicates replayed pages without
-          // duplicating a limit across role-based groups.
-          budgets.set(parsed.userId, parsed);
+    for (const value of await listBudgets("workspace_user_limit", workspaceId)) {
+      const parsed = parseReplitMemberBudget(value, workspaceId);
+      if (parsed && parsed.workspaceId === workspaceId) {
+        const existing = budgets.get(parsed.userId);
+        if (existing && existing.budgetUsd !== parsed.budgetUsd) {
+          throw new Error(
+            `Replit budgets API returned conflicting limits for workspace user ${parsed.userId}`,
+          );
         }
+        budgets.set(parsed.userId, parsed);
       }
-      cursor = nextCursor(body);
-      if (!cursor) return { status: "available", canWrite, error: null, budgets };
     }
-    throw new Error(`Replit budgets pagination exceeded ${MAX_PAGES} pages`);
+    return { status: "available", canWrite, error: null, budgets };
   } catch (error) {
     const connectorError =
       error instanceof ReplitBudgetConnectorError
@@ -398,34 +454,21 @@ export async function listReplitGroupBudgets(
   workspaceId: string,
 ): Promise<ReplitGroupBudgetSnapshot> {
   const budgets = new Map<string, ReplitGroupBudget>();
-  let cursor: string | null = null;
   try {
     const canWrite = await connectorCanWrite();
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const query = new URLSearchParams({
-        workspaceId,
-        billingPeriod: "current",
-        metric: "replit:v0:teams:ai_agent",
-        limit: "100",
-      });
-      if (cursor) query.set("cursor", cursor);
-      const body = await request(`/v1/budgets?${query}`, { method: "GET" });
-      for (const value of pageRows(body)) {
-        const parsed = parseReplitGroupBudget(value, workspaceId);
-        if (parsed && parsed.workspaceId === workspaceId) {
-          const existing = budgets.get(parsed.groupId);
-          if (existing && existing.budgetUsd !== parsed.budgetUsd) {
-            throw new Error(
-              `Replit budgets API returned conflicting limits for workspace group ${parsed.groupId}`,
-            );
-          }
-          budgets.set(parsed.groupId, parsed);
+    for (const value of await listBudgets("workspace_group_limit", workspaceId)) {
+      const parsed = parseReplitGroupBudget(value, workspaceId);
+      if (parsed && parsed.workspaceId === workspaceId) {
+        const existing = budgets.get(parsed.groupId);
+        if (existing && existing.budgetUsd !== parsed.budgetUsd) {
+          throw new Error(
+            `Replit budgets API returned conflicting limits for workspace group ${parsed.groupId}`,
+          );
         }
+        budgets.set(parsed.groupId, parsed);
       }
-      cursor = nextCursor(body);
-      if (!cursor) return { status: "available", canWrite, error: null, budgets };
     }
-    throw new Error(`Replit budgets pagination exceeded ${MAX_PAGES} pages`);
+    return { status: "available", canWrite, error: null, budgets };
   } catch (error) {
     const connectorError =
       error instanceof ReplitBudgetConnectorError
@@ -448,56 +491,48 @@ export async function listReplitGroupBudgets(
 export async function setReplitMemberBudget(
   workspaceId: string,
   userId: string,
-  amountUsd: number,
+  amountUsd: number | null,
 ): Promise<void> {
-  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-    throw new TypeError("amountUsd must be a finite number greater than zero");
-  }
-  if (!(await connectorCanWrite())) {
-    throw new ReplitBudgetConnectorError(
-      "unavailable",
-      "The approved Replit integration does not grant write:budgets",
-    );
-  }
-  await request("/v1/budgets", {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      workspaceId,
-      userId,
-      billingPeriod: "current",
-      metric: "replit:v0:teams:ai_agent",
-      amountUsd,
-    }),
-  });
-}
-
-export async function clearReplitMemberBudget(
-  workspaceId: string,
-  userId: string,
-): Promise<void> {
-  if (!(await connectorCanWrite())) {
-    throw new ReplitBudgetConnectorError(
-      "unavailable",
-      "The approved Replit integration does not grant write:budgets",
-    );
-  }
-  const query = new URLSearchParams({
+  await setBudget({
+    type: "workspace_user_limit",
     workspaceId,
     userId,
-    billingPeriod: "current",
-    metric: "replit:v0:teams:ai_agent",
+    amountUsd,
   });
-  await request(`/v1/budgets?${query}`, { method: "DELETE" });
 }
 
 export async function setReplitGroupBudget(
   workspaceId: string,
   groupId: string,
-  amountUsd: number,
+  amountUsd: number | null,
 ): Promise<void> {
-  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-    throw new TypeError("amountUsd must be a finite number greater than zero");
+  await setBudget({
+    type: "workspace_group_limit",
+    workspaceId,
+    groupId,
+    amountUsd,
+  });
+}
+
+export async function setWorkspaceDefaultUserLimit(
+  workspaceId: string,
+  amountUsd: number | null,
+): Promise<void> {
+  await setBudget({
+    type: "workspace_default_user_limit",
+    workspaceId,
+    amountUsd,
+  });
+}
+
+export async function setBudget(budget: ReplitBudgetWrite): Promise<void> {
+  if (
+    budget.amountUsd !== null &&
+    (!Number.isFinite(budget.amountUsd) || budget.amountUsd <= 0)
+  ) {
+    throw new TypeError(
+      "amountUsd must be null or a finite number greater than zero",
+    );
   }
   if (!(await connectorCanWrite())) {
     throw new ReplitBudgetConnectorError(
@@ -506,33 +541,16 @@ export async function setReplitGroupBudget(
     );
   }
   await request("/v1/budgets", {
-    method: "PUT",
+    method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      workspaceId,
-      groupId,
-      billingPeriod: "current",
-      metric: "replit:v0:teams:ai_agent",
-      amountUsd,
+      type: budget.type,
+      workspaceId: budget.workspaceId,
+      ...("groupId" in budget ? { groupId: budget.groupId } : {}),
+      ...("userId" in budget ? { userId: budget.userId } : {}),
+      currency: "USD",
+      period: "billing_cycle",
+      amountUsd: budget.amountUsd,
     }),
   });
-}
-
-export async function clearReplitGroupBudget(
-  workspaceId: string,
-  groupId: string,
-): Promise<void> {
-  if (!(await connectorCanWrite())) {
-    throw new ReplitBudgetConnectorError(
-      "unavailable",
-      "The approved Replit integration does not grant write:budgets",
-    );
-  }
-  const query = new URLSearchParams({
-    workspaceId,
-    groupId,
-    billingPeriod: "current",
-    metric: "replit:v0:teams:ai_agent",
-  });
-  await request(`/v1/budgets?${query}`, { method: "DELETE" });
 }
