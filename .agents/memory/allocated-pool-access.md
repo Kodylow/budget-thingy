@@ -9,6 +9,12 @@ Managed account editors are authorized by stable Replit user ID, not email. The 
 
 **How to apply:** New operational controls may admit both account admins and account editors. Access management, notification recipients, and system settings must remain true-admin-only.
 
+Role-scoped preview is a builder exception, not an account-admin privilege. Grant it only as a dedicated server capability attached to the active, non-revoked stable bootstrap subject; preserve that real capability while effective preview permissions remain scoped.
+
+**Why:** Coupling preview to the broad account role exposed builder-only controls to every account administrator and allowed forged preview headers to reach scoped authorization resolution.
+
+**How to apply:** Check the real signed-in authorization before accepting preview input. Clients may render controls from the returned capability, but must never infer builder identity from email or account role.
+
 Frontend data fetching and controls must be gated by the exact server capability they require, not by the broad `account` role. Read-only account delegates may share that role while lacking allocation-edit or upstream-limit permissions.
 
 **Why:** Role-only gating caused protected page-mount queries to return 403 for a legitimate read-only delegate, producing an “Access denied” toast even though the visible allocation history was authorized.

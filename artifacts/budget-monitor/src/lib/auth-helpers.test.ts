@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkCanAccessSettings,
+  checkCanPreviewRoles,
   checkCanTestEmail,
   checkIsDenied,
   checkRealIsAccountAdmin,
@@ -9,6 +10,7 @@ import {
 const capabilities = {
   canManageAccess: true,
   canEditAllocations: true,
+  canPreviewRoles: false,
   canWriteGroupLimits: false,
   canWriteUserLimitsIn: ['workspace-1'],
 };
@@ -24,6 +26,12 @@ describe('authorization helpers', () => {
   it('derives email testing from access-management capability', () => {
     expect(checkCanTestEmail(capabilities)).toBe(true);
     expect(checkCanTestEmail({ ...capabilities, canManageAccess: false })).toBe(false);
+  });
+
+  it('derives role preview only from the dedicated server capability', () => {
+    expect(checkCanPreviewRoles(capabilities)).toBe(false);
+    expect(checkCanPreviewRoles({ ...capabilities, canPreviewRoles: true })).toBe(true);
+    expect(checkCanPreviewRoles(undefined)).toBe(false);
   });
 
   it('marks only authenticated users without authorization as denied', () => {

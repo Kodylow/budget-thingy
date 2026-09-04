@@ -7,6 +7,6 @@
  */
 
 /**
- * Account-only synthetic authorization view.
+ * Builder-only synthetic authorization view.
  */
 export type PreviewAsHeaderParameter = string;

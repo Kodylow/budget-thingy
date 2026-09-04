@@ -57,17 +57,18 @@ const member = {
   nonAiSpendUsd: 0,
 };
 
-function capabilities(role: Role) {
+function capabilities(role: Role, canPreviewRoles = false) {
   const account = role === 'account';
   return {
     canManageAccess: account,
     canEditAllocations: account,
+    canPreviewRoles,
     canWriteGroupLimits: account,
     canWriteUserLimitsIn: account || role === 'workspace_admin' ? [WORKSPACE_ID] : [],
   };
 }
 
-function authEnvelope(role: Role) {
+function authEnvelope(role: Role, canPreviewRoles = false, previewAs: string | null = null) {
   if (role === 'signed_out') {
     return { user: null, auth: null, capabilities: capabilities(role) };
   }
@@ -79,18 +80,29 @@ function authEnvelope(role: Role) {
     profileImageUrl: null,
   };
   if (role === 'denied') return { user, auth: null, capabilities: capabilities(role) };
+  const previewRole = canPreviewRoles && previewAs
+    ? previewAs.split(':', 1)[0] as Role
+    : null;
+  const effectiveRole = previewRole && ['workspace_admin', 'team_admin', 'member'].includes(previewRole)
+    ? previewRole
+    : role;
   return {
     user,
     auth: {
-      role,
-      roles: [role],
-      workspaceIds: role === 'account' ? [] : [WORKSPACE_ID],
-      teamNames: role === 'team_admin' ? ['Smoke Team'] : [],
+      role: effectiveRole,
+      roles: [effectiveRole],
+      workspaceIds: effectiveRole === 'account' || effectiveRole === 'team_admin' || effectiveRole === 'member'
+        ? []
+        : [WORKSPACE_ID],
+      teamNames: effectiveRole === 'team_admin' ? ['Smoke Team'] : [],
       groupIds: [GROUP_ID],
       userIds: [member.userId],
-      isPreview: false,
+      isPreview: effectiveRole !== role,
     },
-    capabilities: capabilities(role),
+    capabilities: {
+      ...capabilities(effectiveRole, canPreviewRoles),
+      canPreviewRoles,
+    },
   };
 }
 
@@ -102,11 +114,20 @@ function json(route: Route, body: unknown, status = 200) {
   });
 }
 
-async function mockApi(page: Page, role: Role) {
+async function mockApi(
+  page: Page,
+  role: Role,
+  canPreviewRoles = false,
+  previewHeaders: Array<string | null> = [],
+) {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
-    if (path === '/api/auth/user') return json(route, authEnvelope(role));
+    if (path === '/api/auth/user') {
+      const previewAs = route.request().headers()['x-preview-as'] ?? null;
+      previewHeaders.push(previewAs);
+      return json(route, authEnvelope(role, canPreviewRoles, previewAs));
+    }
     if (path === '/api/groups') {
       return json(route, {
         groups: [group],
@@ -354,6 +375,37 @@ test.describe('authenticated account route smoke', () => {
       failure === 'console: Failed to load resource: the server responded with a status of 404 (Not Found)'
     )).toBe(true);
   });
+
+  test('ordinary account admins do not receive builder preview controls', async ({ page }) => {
+    await page.goto('/');
+    await expectReady(page, '[data-testid="text-dashboard-title"]');
+    await expect(page.locator('[data-testid="rbac-preview-control"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="badge-role"]')).toHaveText('Account admin');
+  });
+});
+
+test('builder capability enters and resets a scoped preview without losing real access', async ({ page }) => {
+  const previewHeaders: Array<string | null> = [];
+  await mockApi(page, 'account', true, previewHeaders);
+  await page.goto('/');
+  await expectReady(page, '[data-testid="text-dashboard-title"]');
+  await expect(page.locator('[data-testid="rbac-preview-control"]')).toBeVisible();
+  await expect(page.locator('[data-testid="badge-role"]')).toHaveText('Account admin');
+
+  await page.locator('[data-testid="select-rbac-preview"]').click();
+  await page.getByText('Smoke Workspace', { exact: true }).click();
+  await expect(page.locator('[data-testid="badge-role"]')).toHaveText('Workspace admin');
+  await expect(page.locator('[data-testid="button-reset-rbac-preview"]')).toBeVisible();
+  expect(previewHeaders).toContain(`workspace_admin:${WORKSPACE_ID}`);
+
+  await page.locator('[data-testid="button-reset-rbac-preview"]').click();
+  await expect(page.locator('[data-testid="badge-role"]')).toHaveText('Account admin');
+  await expect(page.locator('[data-testid="button-reset-rbac-preview"]')).toHaveCount(0);
+  expect(previewHeaders.at(-1)).toBeNull();
+
+  await page.reload();
+  await expectReady(page, '[data-testid="text-dashboard-title"]');
+  await expect(page.locator('[data-testid="badge-role"]')).toHaveText('Account admin');
 });
 
 test.describe('authorization route matrix', () => {

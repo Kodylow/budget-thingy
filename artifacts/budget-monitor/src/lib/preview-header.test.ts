@@ -19,6 +19,7 @@ it('adds exactly one preview header to a generated API request', async () => {
       capabilities: {
         canManageAccess: false,
         canEditAllocations: false,
+        canPreviewRoles: false,
         canWriteGroupLimits: false,
         canWriteUserLimitsIn: [],
       },

@@ -105,6 +105,7 @@ function authorization(
     capabilities: {
       canManageAccess: account,
       canEditAllocations: account,
+      canPreviewRoles: false,
       canWriteGroupLimits: account,
       canWriteUserLimitsIn: account ? [GROWTH, PLATFORM] : workspaceIds,
     },
@@ -390,6 +391,18 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
       .filter((group) => !group.isSynthetic)
       .map((group) => group.groupId).sort()).toEqual([...fixture.groups].sort());
   });
+});
+
+it("ignores a forged preview header from an ordinary account admin", async () => {
+  const fixture = fixtures[0]!;
+  const response = await request("/groups", fixture, {
+    headers: { "X-Preview-As": `workspace_admin:${PLATFORM}` },
+  });
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.groups
+    .filter((group) => !group.isSynthetic)
+    .map((group) => group.groupId).sort()).toEqual([...allGroups].sort());
 });
 
 it("rejects individual and bulk usage-limit targeting of internal members", async () => {

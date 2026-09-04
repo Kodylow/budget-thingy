@@ -9,6 +9,8 @@
 export interface AuthCapabilities {
   canManageAccess: boolean;
   canEditAllocations: boolean;
+  /** Server-derived builder capability for entering role-scoped previews. */
+  canPreviewRoles: boolean;
   canWriteGroupLimits: boolean;
   canWriteUserLimitsIn: string[];
 }

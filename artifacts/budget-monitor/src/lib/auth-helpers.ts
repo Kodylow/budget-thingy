@@ -13,6 +13,10 @@ export function checkCanTestEmail(capabilities: AuthCapabilities | null | undefi
   return capabilities?.canManageAccess === true;
 }
 
+export function checkCanPreviewRoles(capabilities: AuthCapabilities | null | undefined): boolean {
+  return capabilities?.canPreviewRoles === true;
+}
+
 export function checkCanAccessSettings(
   isAccountAdmin: boolean,
   realIsAccountAdmin: boolean,

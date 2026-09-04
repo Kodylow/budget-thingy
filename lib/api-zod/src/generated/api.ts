@@ -17,7 +17,7 @@ export const getCurrentAuthUserHeaderXPreviewAsRegExp = new RegExp('^(workspace_
 
 export const GetCurrentAuthUserHeader = zod.object({
   "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.'),
-  "X-Preview-As": zod.string().regex(getCurrentAuthUserHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getCurrentAuthUserHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const GetCurrentAuthUserResponse = zod.object({
@@ -40,6 +40,7 @@ export const GetCurrentAuthUserResponse = zod.object({
   "capabilities": zod.object({
   "canManageAccess": zod.boolean(),
   "canEditAllocations": zod.boolean(),
+  "canPreviewRoles": zod.boolean().describe('Server-derived builder capability for entering role-scoped previews.'),
   "canWriteGroupLimits": zod.boolean(),
   "canWriteUserLimitsIn": zod.array(zod.string())
 })
@@ -142,7 +143,7 @@ export const listGroupsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|te
 
 
 export const ListGroupsHeader = zod.object({
-  "X-Preview-As": zod.string().regex(listGroupsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(listGroupsHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const listGroupsResponseUsageHealthCoverageRatioMin = 0;
@@ -303,7 +304,7 @@ export const getGroupDetailHeaderXPreviewAsRegExp = new RegExp('^(workspace_admi
 
 
 export const GetGroupDetailHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getGroupDetailHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getGroupDetailHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const getGroupDetailResponseUsageHealthCoverageRatioMin = 0;
@@ -413,7 +414,7 @@ export const getGroupProjectsHeaderXPreviewAsRegExp = new RegExp('^(workspace_ad
 
 
 export const GetGroupProjectsHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getGroupProjectsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getGroupProjectsHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const getGroupProjectsResponseUsageHealthCoverageRatioMin = 0;
@@ -484,7 +485,7 @@ export const getClusterProjectsHeaderXPreviewAsRegExp = new RegExp('^(workspace_
 
 
 export const GetClusterProjectsHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getClusterProjectsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getClusterProjectsHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const getClusterProjectsResponseUsageHealthCoverageRatioMin = 0;
@@ -555,7 +556,7 @@ export const getCanonicalClusterHeadlineHeaderXPreviewAsRegExp = new RegExp('^(w
 
 
 export const GetCanonicalClusterHeadlineHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getCanonicalClusterHeadlineHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getCanonicalClusterHeadlineHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMin = 0;
@@ -605,7 +606,7 @@ export const getSummaryHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|te
 
 
 export const GetSummaryHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getSummaryHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getSummaryHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const getSummaryResponseUsageHealthCoverageRatioMin = 0;
@@ -676,7 +677,7 @@ export const getTrendsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|tea
 
 
 export const GetTrendsHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getTrendsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getTrendsHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const getTrendsResponseUsageHealthCoverageRatioMin = 0;
@@ -738,7 +739,7 @@ export const getUserActivityHeaderXPreviewAsRegExp = new RegExp('^(workspace_adm
 
 
 export const GetUserActivityHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getUserActivityHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getUserActivityHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const getUserActivityResponseUsageHealthCoverageRatioMin = 0;
@@ -804,7 +805,7 @@ export const exportUsersCsvHeaderXPreviewAsRegExp = new RegExp('^(workspace_admi
 
 
 export const ExportUsersCsvHeader = zod.object({
-  "X-Preview-As": zod.string().regex(exportUsersCsvHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(exportUsersCsvHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const ExportUsersCsvResponse = zod.unknown()
@@ -849,7 +850,7 @@ export const exportProjectsCsvHeaderXPreviewAsRegExp = new RegExp('^(workspace_a
 
 
 export const ExportProjectsCsvHeader = zod.object({
-  "X-Preview-As": zod.string().regex(exportProjectsCsvHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(exportProjectsCsvHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const ExportProjectsCsvResponse = zod.unknown()
@@ -907,7 +908,7 @@ export const getTeamsBudgetsHeaderXPreviewAsRegExp = new RegExp('^(workspace_adm
 
 
 export const GetTeamsBudgetsHeader = zod.object({
-  "X-Preview-As": zod.string().regex(getTeamsBudgetsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(getTeamsBudgetsHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const GetTeamsBudgetsResponse = zod.object({
@@ -1750,7 +1751,7 @@ export const listAlertsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|te
 
 
 export const ListAlertsHeader = zod.object({
-  "X-Preview-As": zod.string().regex(listAlertsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
+  "X-Preview-As": zod.string().regex(listAlertsHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
 })
 
 export const listAlertsResponseBlockedMemberCountMin = 0;
@@ -1987,4 +1988,5 @@ export const ListRecentUsageIngestRunsResponseItem = zod.object({
   "status": zod.enum(['running', 'succeeded', 'partial', 'failed'])
 })
 export const ListRecentUsageIngestRunsResponse = zod.array(ListRecentUsageIngestRunsResponseItem)
+
 

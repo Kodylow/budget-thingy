@@ -130,6 +130,7 @@ beforeAll(async () => {
         teamNames: [], groupIds: [], userIds: [userId], isTrueAccountAdmin: false,
         capabilities: {
           canManageAccess: true, canEditAllocations: true,
+          canPreviewRoles: false,
           canWriteGroupLimits: false, canWriteUserLimitsIn: ["task158-ws"],
         },
       });
@@ -140,6 +141,7 @@ beforeAll(async () => {
         teamNames: [], groupIds: [], userIds: [userId], isTrueAccountAdmin: false,
         capabilities: {
           canManageAccess: true, canEditAllocations: true,
+          canPreviewRoles: false,
           canWriteGroupLimits: false, canWriteUserLimitsIn: ["task158-ws"],
         },
       });

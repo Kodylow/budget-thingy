@@ -12,6 +12,7 @@ export type AuthzRole = "account" | "workspace_admin" | "team_admin" | "member";
 export type Capability =
   | "canManageAccess"
   | "canEditAllocations"
+  | "canPreviewRoles"
   | "canWriteGroupLimits";
 
 export interface Authorization {
@@ -28,6 +29,7 @@ export interface Authorization {
   capabilities: {
     canManageAccess: boolean;
     canEditAllocations: boolean;
+    canPreviewRoles: boolean;
     canWriteGroupLimits: boolean;
     canWriteUserLimitsIn: string[];
   };
@@ -147,6 +149,7 @@ function buildAuthorization(input: {
   userIds?: Iterable<string>;
   allWorkspaceIds?: Iterable<string>;
   isTrueAccountAdmin?: boolean;
+  canPreviewRoles?: boolean;
   isPreview?: boolean;
 }): Authorization {
   const roles = unique(input.roles) as AuthzRole[];
@@ -164,6 +167,7 @@ function buildAuthorization(input: {
     capabilities: {
       canManageAccess: account,
       canEditAllocations: account,
+      canPreviewRoles: input.canPreviewRoles === true,
       canWriteGroupLimits: input.isTrueAccountAdmin === true,
       canWriteUserLimitsIn: account
         ? unique(input.allWorkspaceIds ?? [])
@@ -321,6 +325,7 @@ async function resolveFromDirectory(
     userIds,
     allWorkspaceIds,
     isTrueAccountAdmin: trueAdmin,
+    canPreviewRoles: isBootstrapAccountAdmin,
     isPreview: !!forceRole,
   });
 }
@@ -337,7 +342,7 @@ export async function resolvePreviewAuthorization(
   real: Authorization,
   header: unknown,
 ): Promise<Authorization> {
-  if (!real.roles.includes("account") || typeof header !== "string") return real;
+  if (!real.capabilities.canPreviewRoles || typeof header !== "string") return real;
   const separator = header.indexOf(":");
   if (separator < 1) return real;
   const role = header.slice(0, separator);

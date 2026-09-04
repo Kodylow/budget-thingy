@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { setPreviewAsGetter } from '@workspace/api-client-react';
 import {
@@ -62,10 +62,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   previewRef.current = preview;
   setPreviewAsGetter(() => previewRef.current);
   const { user, auth, capabilities, isLoading, isAuthenticated, login, logout } = useReplitAuth(preview);
-  const realAuthRef = useRef<AuthAuthorization | null>(null);
-  if (!preview && auth && !auth.isPreview) realAuthRef.current = auth;
-  const realRole = realAuthRef.current?.role ?? auth?.role ?? null;
-  const canPreviewRbac = realRole === 'account';
+  const realAuthRef = useRef<{ userId: string; auth: AuthAuthorization } | null>(null);
+  if (user && !preview && auth && !auth.isPreview) {
+    realAuthRef.current = { userId: user.id, auth };
+  }
+  const cachedRealEntry = realAuthRef.current;
+  const cachedRealAuth = cachedRealEntry && cachedRealEntry.userId === user?.id
+    ? cachedRealEntry.auth
+    : null;
+  const realRole = cachedRealAuth?.role ?? auth?.role ?? null;
+  const canPreviewRbac = capabilities?.canPreviewRoles === true;
 
   const setPreview = useCallback((next: PreviewSelection | null) => {
     if (!canPreviewRbac) return;
@@ -84,6 +90,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setPreviewState(null);
     });
   }, [queryClient]);
+  const logoutAndClearPreview = useCallback(() => {
+    ++previewTransitionRef.current;
+    previewRef.current = null;
+    realAuthRef.current = null;
+    setPreviewState(null);
+    queryClient.clear();
+    logout();
+  }, [logout, queryClient]);
+  const identityRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const identity = user?.id ?? null;
+    if (identityRef.current !== undefined && identityRef.current !== identity) {
+      ++previewTransitionRef.current;
+      previewRef.current = null;
+      realAuthRef.current = null;
+      setPreviewState(null);
+      queryClient.clear();
+    }
+    identityRef.current = identity;
+  }, [queryClient, user?.id]);
+  useEffect(() => {
+    if (!isLoading && preview && !canPreviewRbac) resetPreview();
+  }, [canPreviewRbac, isLoading, preview, resetPreview]);
 
   const value = useMemo<AuthContextValue>(() => {
     // `auth === null` while signed in means access-denied.
@@ -92,6 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const effectiveCapabilities: AuthCapabilities = capabilities ?? {
       canManageAccess: false,
       canEditAllocations: false,
+      canPreviewRoles: false,
       canWriteGroupLimits: false,
       canWriteUserLimitsIn: [],
     };
@@ -124,9 +154,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canWrite: effectiveCapabilities.canEditAllocations,
       workspaceIds: auth?.workspaceIds ?? [],
       login,
-      logout,
+      logout: logoutAndClearPreview,
     };
-  }, [user, auth, capabilities, isLoading, isAuthenticated, login, logout, preview, realRole, canPreviewRbac, setPreview, resetPreview]);
+  }, [user, auth, capabilities, isLoading, isAuthenticated, login, logoutAndClearPreview, preview, realRole, canPreviewRbac, setPreview, resetPreview]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

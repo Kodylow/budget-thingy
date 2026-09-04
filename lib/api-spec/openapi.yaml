@@ -1900,7 +1900,7 @@ components:
       name: X-Preview-As
       in: header
       required: false
-      description: Account-only synthetic authorization view.
+      description: Builder-only synthetic authorization view.
       schema:
         type: string
         pattern: '^(workspace_admin|team_admin|member):.+$'
@@ -2018,12 +2018,15 @@ components:
           $ref: '#/components/schemas/AuthCapabilities'
     AuthCapabilities:
       type: object
-      required: [canManageAccess, canEditAllocations, canWriteGroupLimits, canWriteUserLimitsIn]
+      required: [canManageAccess, canEditAllocations, canPreviewRoles, canWriteGroupLimits, canWriteUserLimitsIn]
       properties:
         canManageAccess:
           type: boolean
         canEditAllocations:
           type: boolean
+        canPreviewRoles:
+          type: boolean
+          description: Server-derived builder capability for entering role-scoped previews.
         canWriteGroupLimits:
           type: boolean
         canWriteUserLimitsIn:

@@ -1,7 +1,7 @@
 - [Replit Enterprise usage API](enterprise-usage-api.md) — /usage has one scheduled owner, atomic daily replacement, stale-first reads, and period keys from resolved interval.startTime.
 - [Workspace-aware rollups](overlapping-group-rollups.md) — workspace usage is authoritative; stable group attribution plus synthetic No group rows preserves every workspace charge.
 - [Group spend display model](group-spend-display-model.md) — canonical workspace rollups drive rows, drill-downs, teams, and alerts; project attribution remains explanatory.
-- [Allocated pool access](allocated-pool-access.md) — editors use stable Replit IDs; true admins manage access; shared-team alerts never reveal out-of-scope spend.
+- [Allocated pool access](allocated-pool-access.md) — stable-ID capabilities govern editors and builder previews; shared-team alerts never reveal out-of-scope spend.
 - [Historical membership attribution](historical-membership-attribution.md) — immutable UTC rosters require complete fresh reads; current day stays live and pre-snapshot dates are not reconstructed.
 - [Member budget accounting](member-budget-accounting.md) — Replit limits are workspace/user scoped; Remaining uses complete current-cycle workspace Agent metrics, never selected-range cluster spend.
 - [Upstream team limit targets](upstream-team-budget-targets.md) — explicit workspace/group identities control writes; legacy workspace copies are display-only.

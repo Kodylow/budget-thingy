@@ -459,6 +459,7 @@ describe("canonical team-admin scope", () => {
       capabilities: {
         canManageAccess: true,
         canEditAllocations: true,
+        canPreviewRoles: true,
         canWriteGroupLimits: true,
         canWriteUserLimitsIn: [],
       },
@@ -517,6 +518,7 @@ describe("canonical team-admin scope", () => {
       capabilities: {
         canManageAccess: true,
         canEditAllocations: true,
+        canPreviewRoles: true,
         canWriteGroupLimits: true,
         canWriteUserLimitsIn: [],
       },

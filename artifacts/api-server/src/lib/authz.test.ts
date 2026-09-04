@@ -38,6 +38,7 @@ function authz(
     capabilities: {
       canManageAccess: account,
       canEditAllocations: account,
+      canPreviewRoles: false,
       canWriteGroupLimits: account,
       canWriteUserLimitsIn: values.workspaceIds ?? [],
     },
@@ -156,6 +157,7 @@ describe("designated account-admin bootstrap", () => {
       capabilities: {
         canManageAccess: true,
         canEditAllocations: true,
+        canPreviewRoles: true,
         canWriteGroupLimits: true,
         canWriteUserLimitsIn: [...WORKSPACE_IDS].sort(),
       },
@@ -292,12 +294,19 @@ describe("designated account-admin bootstrap", () => {
       capabilities: {
         canManageAccess: true,
         canEditAllocations: true,
+        canPreviewRoles: false,
         canWriteGroupLimits: false,
       },
     });
+    expect(
+      await resolvePreviewAuthorization(
+        resolved!,
+        `workspace_admin:${WORKSPACE_IDS[0]}`,
+      ),
+    ).toBe(resolved);
   });
 
-  it("retains true-admin access in real mode and removes it in preview mode", async () => {
+  it("retains true-admin access in real mode and supports every scoped preview target", async () => {
     await maybeBootstrapAppAdmin({
       sub: BOOTSTRAP_USER_ID,
       email: BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
@@ -315,17 +324,18 @@ describe("designated account-admin bootstrap", () => {
     expect(next).toHaveBeenCalledOnce();
     expect(status).not.toHaveBeenCalled();
 
-    const preview = await resolvePreviewAuthorization(
+    const workspacePreview = await resolvePreviewAuthorization(
       real,
       `workspace_admin:${WORKSPACE_IDS[0]}`,
     );
-    expect(preview).toMatchObject({
+    expect(workspacePreview).toMatchObject({
       role: "workspace_admin",
       isTrueAccountAdmin: false,
       isPreview: true,
       capabilities: {
         canManageAccess: false,
         canEditAllocations: false,
+        canPreviewRoles: false,
         canWriteGroupLimits: false,
         canWriteUserLimitsIn: [WORKSPACE_IDS[0]],
       },
@@ -333,11 +343,30 @@ describe("designated account-admin bootstrap", () => {
 
     const previewNext = vi.fn();
     requireTrueAccountAdmin(
-      { authz: preview } as never,
+      { authz: workspacePreview } as never,
       { status } as never,
       previewNext,
     );
     expect(previewNext).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledWith(403);
+
+    const memberPreview = await resolvePreviewAuthorization(
+      real,
+      `member:${OTHER_USER_ID}`,
+    );
+    expect(memberPreview).toMatchObject({
+      role: "member",
+      userId: OTHER_USER_ID,
+      userIds: [OTHER_USER_ID],
+      isPreview: true,
+      capabilities: {
+        canPreviewRoles: false,
+      },
+    });
+
+    await expect(resolvePreviewAuthorization(real, "not-a-preview")).resolves.toBe(real);
+    await expect(
+      resolvePreviewAuthorization(real, `workspace_admin:missing-workspace`),
+    ).resolves.toBe(real);
   });
 });

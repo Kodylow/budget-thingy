@@ -120,6 +120,7 @@ router.get('/auth/user', async (req: Request, res: Response) => {
       capabilities: {
         canManageAccess: false,
         canEditAllocations: false,
+        canPreviewRoles: false,
         canWriteGroupLimits: false,
         canWriteUserLimitsIn: [],
       },
@@ -147,12 +148,18 @@ router.get('/auth/user', async (req: Request, res: Response) => {
             isPreview: auth.isPreview ?? false,
           }
         : null,
-      capabilities: auth?.capabilities ?? {
-        canManageAccess: false,
-        canEditAllocations: false,
-        canWriteGroupLimits: false,
-        canWriteUserLimitsIn: [],
-      },
+      capabilities: auth
+        ? {
+            ...auth.capabilities,
+            canPreviewRoles: realAuth?.capabilities.canPreviewRoles === true,
+          }
+        : {
+            canManageAccess: false,
+            canEditAllocations: false,
+            canPreviewRoles: false,
+            canWriteGroupLimits: false,
+            canWriteUserLimitsIn: [],
+          },
     }),
   );
 });

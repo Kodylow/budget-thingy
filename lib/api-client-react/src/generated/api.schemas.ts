@@ -92,6 +92,8 @@ export interface AuthAuthorization {
 export interface AuthCapabilities {
   canManageAccess: boolean;
   canEditAllocations: boolean;
+  /** Server-derived builder capability for entering role-scoped previews. */
+  canPreviewRoles: boolean;
   canWriteGroupLimits: boolean;
   canWriteUserLimitsIn: string[];
 }
@@ -1546,7 +1548,7 @@ export type ScopeGroupIdsParameter = string;
 export type AuthorizationSessionHeaderParameter = string;
 
 /**
- * Account-only synthetic authorization view.
+ * Builder-only synthetic authorization view.
  */
 export type PreviewAsHeaderParameter = string;
 
@@ -1775,3 +1777,4 @@ export type ListRecentUsageIngestRunsParams = {
  */
 limit?: number;
 };
+
