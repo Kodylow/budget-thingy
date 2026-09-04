@@ -1,3 +1,4 @@
+import React from "react";
 import { Link, useLocation } from 'wouter';
 import { ReactNode, useEffect, useState } from 'react';
 import {
@@ -89,15 +90,15 @@ function useMobileNavigation(): MobileNavigation {
   };
 }
 
-function usePreviewOptions(canPreviewRbac: boolean, isPreviewing: boolean): PreviewOptions {
+function usePreviewOptions(canPreviewRbac: boolean, isPreviewing: boolean, isOpen: boolean): PreviewOptions {
   const { data: workspacesData } = useListVisibleWorkspaces({
-    query: { enabled: canPreviewRbac && !isPreviewing, queryKey: getListVisibleWorkspacesQueryKey() },
+    query: { enabled: canPreviewRbac && !isPreviewing && isOpen, queryKey: getListVisibleWorkspacesQueryKey() },
   });
   const { data: membersData } = useListDirectoryMembers({}, {
-    query: { enabled: canPreviewRbac && !isPreviewing, queryKey: getListDirectoryMembersQueryKey({}) },
+    query: { enabled: canPreviewRbac && !isPreviewing && isOpen, queryKey: getListDirectoryMembersQueryKey({}) },
   });
   const { data: teamsData } = useGetTeamsBudgets({
-    query: { enabled: canPreviewRbac && !isPreviewing, queryKey: getGetTeamsBudgetsQueryKey() },
+    query: { enabled: canPreviewRbac && !isPreviewing && isOpen, queryKey: getGetTeamsBudgetsQueryKey() },
   });
   const [options, setOptions] = useState<PreviewOptions>({
     workspaces: [],
@@ -118,32 +119,31 @@ function usePreviewOptions(canPreviewRbac: boolean, isPreviewing: boolean): Prev
 }
 
 function getNavSections(
-  canManageAccess: boolean,
-  canEditAllocations: boolean,
+  capabilities: ReturnType<typeof useAuthContext>['capabilities'],
   isAccountAdmin: boolean,
+  role: ReturnType<typeof useAuthContext>['role']
 ) {
   return [
     {
       label: 'Overview',
       items: [
         { path: '/', label: 'Dashboard', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
-      ],
-    },
-    {
-      label: 'Notifications',
-      items: [
-        { path: '/alerts', label: 'Email activity', icon: Bell, show: true, testId: 'nav-alerts' },
+        { path: '/spend', label: 'Spend details', icon: WalletCards, show: true, testId: 'nav-spend' },
       ],
     },
     {
       label: 'Administration',
       items: [
-        { path: '/user-guide', label: 'User Guide', icon: BookOpen, show: canManageAccess, testId: 'nav-user-guide' },
-        { path: '/settings', label: 'Settings', icon: Settings, show: canManageAccess, testId: 'nav-settings' },
-        { path: '/trends', label: 'Trends', icon: TrendingUp, show: true, testId: 'nav-trends' },
-        { path: '/workspace-admins', label: 'Team Admins', icon: Users, show: isAccountAdmin, testId: 'nav-workspace-admins' },
-        { path: '/workspace-directory', label: 'Workspace Directory', icon: BookUser, show: canManageAccess, testId: 'nav-workspace-directory' },
-        { path: '/team-budgets', label: 'Team Budgets', icon: WalletCards, show: canEditAllocations, testId: 'nav-team-budgets' },
+        { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canEditAllocations, testId: 'nav-allocations' },
+        { path: '/alerts', label: 'Email activity', icon: Bell, show: role !== 'member' && role !== 'denied' && role !== null, testId: 'nav-alerts' },
+        { path: '/access', label: 'Access', icon: Users, show: capabilities.canManageAccess, testId: 'nav-access' },
+        { path: '/settings', label: 'Settings', icon: Settings, show: capabilities.canManageSystem || capabilities.canManageNotifications, testId: 'nav-settings' },
+      ],
+    },
+    {
+      label: 'Support',
+      items: [
+        { path: '/help', label: 'Help', icon: BookOpen, show: true, testId: 'nav-help' },
       ],
     },
   ].map((section) => ({
@@ -168,7 +168,7 @@ function getRoleLabel(
 ): string {
   if (isAccountAdmin) return 'Account admin';
   if (isWorkspaceAdmin) return 'Workspace admin';
-  if (isTeamAdmin) return 'Team admin';
+  if (isTeamAdmin) return 'Family admin';
   return 'Member';
 }
 
@@ -272,11 +272,11 @@ function SidebarHeader({ close }: Pick<MobileNavigation, 'close'>) {
 }
 
 function Navigation({ location }: { location: string }) {
-  const { capabilities, isAccountAdmin } = useAuthContext();
+  const { capabilities, isAccountAdmin, role } = useAuthContext();
   const sections = getNavSections(
-    capabilities.canManageAccess,
-    capabilities.canEditAllocations,
+    capabilities,
     isAccountAdmin,
+    role
   );
 
   return (
@@ -407,11 +407,11 @@ function MemberPreviewOptions({ options, normalizedSearch, choosePreview }: Prev
 
 function PreviewPicker() {
   const {
-    preview, canPreviewRbac, setPreview, resetPreview, isPreviewing,
+    preview, canPreviewRbac, setPreview, resetPreview, isPreviewing, auth, capabilities
   } = useAuthContext();
-  const options = usePreviewOptions(canPreviewRbac, isPreviewing);
-  const [search, setSearch] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const options = usePreviewOptions(canPreviewRbac, isPreviewing, isOpen);
+  const [search, setSearch] = useState('');
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const choosePreview = (value: string) => {
     if (value === 'real') {
@@ -428,6 +428,7 @@ function PreviewPicker() {
   };
 
   if (!canPreviewRbac) return null;
+  const isPreviewReadOnly = auth?.previewReadOnly === true;
 
   return (
     <div className="space-y-1.5 border-t border-sidebar-border pt-2" data-testid="rbac-preview-control">
@@ -436,9 +437,16 @@ function PreviewPicker() {
           RBAC preview
         </span>
         {isPreviewing && (
-          <Badge variant="outline" className="text-[9px] border-amber-500 text-amber-700 dark:text-amber-300">
-            Simulated
-          </Badge>
+          <div className="flex gap-1.5">
+            {isPreviewReadOnly && (
+              <Badge variant="outline" className="text-[9px] border-muted bg-muted/50">
+                Read-only
+              </Badge>
+            )}
+            <Badge variant="outline" className="text-[9px] border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30">
+              Simulated
+            </Badge>
+          </div>
         )}
       </div>
       <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -589,6 +597,7 @@ function Sidebar({ location, isOpen, close }: SidebarProps) {
   );
 }
 
+export { getNavSections };
 export function AppShell({ children }: AppShellProps) {
   const [location] = useLocation();
   const mobileNavigation = useMobileNavigation();

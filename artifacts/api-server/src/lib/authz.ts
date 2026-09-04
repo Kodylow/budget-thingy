@@ -10,10 +10,15 @@ import { logger } from "./logger";
 
 export type AuthzRole = "account" | "workspace_admin" | "team_admin" | "member";
 export type Capability =
+  | "canViewAccountUsage"
   | "canManageAccess"
   | "canEditAllocations"
+  | "canManageNotifications"
+  | "canManageSystem"
   | "canPreviewRoles"
-  | "canWriteGroupLimits";
+  | "canWriteGroupLimits"
+  | "canRunChecks"
+  | "canSendTestEmail";
 
 export interface Authorization {
   /** Highest role, retained as a convenient display value. */
@@ -25,12 +30,21 @@ export interface Authorization {
   teamNames: string[];
   groupIds: string[];
   userIds: string[];
+  /** Groups for which the caller has managerial, rather than self-only, scope. */
+  managedGroupIds?: string[];
+  /** Qualified visibility used to avoid cross-group Cartesian expansion. */
+  groupUserIds?: Record<string, string[]>;
   isTrueAccountAdmin: boolean;
   capabilities: {
+    canViewAccountUsage: boolean;
     canManageAccess: boolean;
     canEditAllocations: boolean;
+    canManageNotifications: boolean;
+    canManageSystem: boolean;
     canPreviewRoles: boolean;
     canWriteGroupLimits: boolean;
+    canRunChecks: boolean;
+    canSendTestEmail: boolean;
     canWriteUserLimitsIn: string[];
   };
   isPreview?: boolean;
@@ -43,6 +57,8 @@ export type AuthorizationScope =
       workspaceIds: Set<string>;
       teamNames: Set<string>;
       userIds: Set<string>;
+      managedGroupIds: Set<string>;
+      groupUserIds: ReadonlyMap<string, ReadonlySet<string>>;
     };
 
 export type AuthorizationResolver = (userId: string) => Promise<Authorization | null>;
@@ -161,13 +177,15 @@ function highestRole(roles: AuthzRole[]): AuthzRole {
     .find((role) => roles.includes(role)) ?? "member";
 }
 
-function buildAuthorization(input: {
+export function buildAuthorization(input: {
   userId: string;
   roles: AuthzRole[];
   workspaceIds?: Iterable<string>;
   teamNames?: Iterable<string>;
   groupIds?: Iterable<string>;
   userIds?: Iterable<string>;
+  managedGroupIds?: Iterable<string>;
+  groupUserIds?: ReadonlyMap<string, Iterable<string>>;
   allWorkspaceIds?: Iterable<string>;
   isTrueAccountAdmin?: boolean;
   canPreviewRoles?: boolean;
@@ -176,6 +194,10 @@ function buildAuthorization(input: {
   const roles = unique(input.roles) as AuthzRole[];
   const account = roles.includes("account");
   const workspaceIds = unique(input.workspaceIds ?? []);
+  const trueAdmin = input.isTrueAccountAdmin === true;
+  const preview = input.isPreview === true;
+  const accountWideViewer = account;
+  const mutationAllowed = !preview;
   return {
     role: highestRole(roles),
     roles,
@@ -184,13 +206,27 @@ function buildAuthorization(input: {
     teamNames: unique(input.teamNames ?? []),
     groupIds: unique(input.groupIds ?? []),
     userIds: unique(input.userIds ?? []),
-    isTrueAccountAdmin: input.isTrueAccountAdmin === true,
+    managedGroupIds: unique(input.managedGroupIds ?? []),
+    groupUserIds: input.groupUserIds
+      ? Object.fromEntries([...input.groupUserIds].map(([groupId, ids]) => [
+          groupId,
+          unique(ids),
+        ]))
+      : undefined,
+    isTrueAccountAdmin: trueAdmin,
     capabilities: {
-      canManageAccess: account,
-      canEditAllocations: account,
-      canPreviewRoles: input.canPreviewRoles === true,
-      canWriteGroupLimits: input.isTrueAccountAdmin === true,
-      canWriteUserLimitsIn: account
+      canViewAccountUsage: accountWideViewer,
+      canManageAccess: mutationAllowed && trueAdmin,
+      canEditAllocations: mutationAllowed && account,
+      canManageNotifications: mutationAllowed && trueAdmin,
+      canManageSystem: mutationAllowed && trueAdmin,
+      canPreviewRoles: !preview && input.canPreviewRoles === true,
+      canWriteGroupLimits: mutationAllowed && trueAdmin,
+      canRunChecks: mutationAllowed && trueAdmin,
+      canSendTestEmail: mutationAllowed && trueAdmin,
+      canWriteUserLimitsIn: !mutationAllowed
+        ? []
+        : trueAdmin
         ? unique(input.allWorkspaceIds ?? [])
         : roles.includes("workspace_admin")
           ? workspaceIds
@@ -253,6 +289,8 @@ async function resolveFromDirectory(
   const teamNames = new Set<string>();
   const groupIds = new Set<string>();
   const userIds = new Set<string>([userId]);
+  const managedGroupIds = new Set<string>();
+  const groupUserIds = new Map<string, Set<string>>();
 
   const trueAdmin = !forceRole &&
     (member?.isAccountAdmin === true || isBootstrapAccountAdmin);
@@ -310,7 +348,9 @@ async function resolveFromDirectory(
     for (const family of families) {
       const admins = family.roleGroups.get("admin");
       const effectiveTeam = effectiveTeams.byFamilyId.get(family.id);
-      if (effectiveTeam && admins?.members.has(userId)) {
+      const activeInFamilyWorkspace =
+        member.workspaces.get(family.workspaceId)?.isDisabled === false;
+      if (effectiveTeam && activeInFamilyWorkspace && admins?.members.has(userId)) {
         adminFamilyIds.add(family.id);
         includeLegacySibling(family.id);
         teamNames.add(effectiveTeam);
@@ -332,6 +372,7 @@ async function resolveFromDirectory(
       !!roleGroup && adminFamilyIds.has(roleGroup.familyId);
     const selfVisible =
       (!forceRole || forceRole === "member") &&
+      member?.workspaces.get(group.workspaceId)?.isDisabled === false &&
       (dir.groupMembers.get(group.id) ?? []).includes(userId);
     const visible =
       workspaceIds.has(group.workspaceId) ||
@@ -339,9 +380,17 @@ async function resolveFromDirectory(
       selfVisible;
     if (visible) {
       groupIds.add(group.id);
+      const qualifiedUsers = groupUserIds.get(group.id) ?? new Set<string>();
       if (workspaceIds.has(group.workspaceId) || teamVisible) {
-        for (const id of dir.groupMembers.get(group.id) ?? []) userIds.add(id);
+        managedGroupIds.add(group.id);
+        for (const id of dir.groupMembers.get(group.id) ?? []) {
+          userIds.add(id);
+          qualifiedUsers.add(id);
+        }
+      } else if (selfVisible) {
+        qualifiedUsers.add(userId);
       }
+      groupUserIds.set(group.id, qualifiedUsers);
     }
   }
 
@@ -352,6 +401,8 @@ async function resolveFromDirectory(
     teamNames,
     groupIds,
     userIds,
+    managedGroupIds,
+    groupUserIds,
     allWorkspaceIds,
     isTrueAccountAdmin: trueAdmin,
     canPreviewRoles: isBootstrapAccountAdmin,
@@ -371,22 +422,34 @@ export async function resolvePreviewAuthorization(
   real: Authorization,
   header: unknown,
 ): Promise<Authorization> {
-  if (!real.capabilities.canPreviewRoles || typeof header !== "string") return real;
+  if (!real.capabilities.canPreviewRoles || header == null) return real;
+  if (typeof header !== "string") throw new InvalidPreviewError();
   const separator = header.indexOf(":");
-  if (separator < 1) return real;
+  if (separator < 1) throw new InvalidPreviewError();
   const role = header.slice(0, separator);
   const value = header.slice(separator + 1).trim();
-  if (!value || !["workspace_admin", "team_admin", "member"].includes(role)) return real;
+  if (!value || !["workspace_admin", "team_admin", "member"].includes(role)) {
+    throw new InvalidPreviewError();
+  }
   if (role === "member") {
     const preview = await resolveFromDirectory(value, "member", value);
-    return preview ?? real;
+    if (!preview) throw new InvalidPreviewError();
+    return preview;
   }
   const preview = await resolveFromDirectory(
     real.userId,
     role as "workspace_admin" | "team_admin",
     value,
   );
-  return preview ?? real;
+  if (!preview) throw new InvalidPreviewError();
+  return preview;
+}
+
+export class InvalidPreviewError extends Error {
+  constructor() {
+    super("Preview target is invalid or no longer available");
+    this.name = "InvalidPreviewError";
+  }
 }
 
 export function scopeFor(authz: Authorization): AuthorizationScope {
@@ -396,6 +459,17 @@ export function scopeFor(authz: Authorization): AuthorizationScope {
     workspaceIds: new Set(authz.workspaceIds),
     teamNames: new Set(authz.teamNames),
     userIds: new Set(authz.userIds),
+    managedGroupIds: new Set(authz.managedGroupIds ?? (
+      authz.roles.some((role) => role === "workspace_admin" || role === "team_admin")
+        ? authz.groupIds
+        : []
+    )),
+    groupUserIds: new Map(
+      Object.entries(authz.groupUserIds ?? {}).map(([groupId, ids]) => [
+        groupId,
+        new Set(ids),
+      ]),
+    ),
   };
 }
 

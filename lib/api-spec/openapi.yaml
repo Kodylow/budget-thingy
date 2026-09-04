@@ -375,6 +375,231 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /dashboard:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getDashboard
+      tags: [groups]
+      summary: Compact scoped dashboard cards and charts
+      description: >
+        Returns one committed, stored-data dashboard generation. Period boundaries
+        and trend buckets are UTC and end-exclusive. This endpoint never refreshes
+        upstream limits and does not include people, project, or hierarchy tables.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/TrendGranularity"
+        - $ref: "#/components/parameters/TrendMode"
+      responses:
+        "200":
+          description: Compact coherent dashboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardResponse"
+        "400":
+          description: Invalid scope or period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Stored accounting data unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /spend/pools:
+    get:
+      operationId: listSpendPools
+      tags: [groups]
+      summary: List authorized canonical budget pools
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Canonical pool page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/groups:
+    get:
+      operationId: listSpendGroups
+      tags: [groups]
+      summary: List authorized workspace-qualified groups
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Group page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/people:
+    get:
+      operationId: listSpendPeople
+      tags: [groups]
+      summary: List authorized workspace-qualified people usage
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: People page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/projects:
+    get:
+      operationId: listSpendProjects
+      tags: [groups]
+      summary: List authorized workspace-qualified project usage
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Project page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/pools.csv:
+    get:
+      operationId: exportSpendPoolsCsv
+      tags: [groups]
+      summary: Export the authorized filtered canonical pool rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/groups.csv:
+    get:
+      operationId: exportSpendGroupsCsv
+      tags: [groups]
+      summary: Export the authorized filtered group rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/people.csv:
+    get:
+      operationId: exportSpendPeopleCsv
+      tags: [groups]
+      summary: Export the authorized filtered people rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/projects.csv:
+    get:
+      operationId: exportSpendProjectsTableCsv
+      tags: [groups]
+      summary: Export the authorized filtered project rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /trends:
     parameters:
       - $ref: '#/components/parameters/PreviewAsHeader'
@@ -1805,6 +2030,21 @@ paths:
           $ref: "#/components/responses/Forbidden"
 components:
   responses:
+    SpendCsv:
+      description: CSV containing exactly the authorized filtered rows in server sort order.
+      headers:
+        X-Filtered-Rows:
+          schema: { type: integer, minimum: 0 }
+        X-Total-Spend-Usd:
+          schema: { type: number }
+        X-Generation-Id:
+          schema: { type: string }
+        X-Usage-Range:
+          description: UTC end-exclusive committed reporting interval.
+          schema: { type: string }
+      content:
+        text/csv:
+          schema: { type: string }
     Unauthorized:
       description: Authentication required — no valid session.
       content:
@@ -1861,6 +2101,66 @@ components:
       schema:
         type: string
         enum: [billing, full-term, mtd, ytd, custom]
+    ViewScope:
+      name: viewScope
+      in: query
+      required: false
+      description: Server-resolved presentation scope; managed excludes unrelated self-only grants.
+      schema:
+        type: string
+        enum: [managed, my, all_authorized]
+    TrendGranularity:
+      name: granularity
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [day, week, month]
+    TrendMode:
+      name: trendMode
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [period, cumulative]
+    SpendSearch:
+      name: search
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 200
+    SpendStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [all, over, attention, budgeted, unbudgeted, no_allocation, shared, explicit, inherited, no_limit, unavailable]
+    SpendSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [status, spend_desc, spend_asc, name_asc, name_desc]
+    SpendPage:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    SpendPageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
     StartDate:
       name: startDate
       in: query
@@ -1905,6 +2205,220 @@ components:
         type: string
         pattern: '^(workspace_admin|team_admin|member):.+$'
   schemas:
+    ReportingPeriod:
+      type: object
+      required: [start, endExclusive, timezone, label]
+      properties:
+        start: { type: string, format: date-time }
+        endExclusive: { type: string, format: date-time }
+        timezone: { type: string, const: UTC }
+        label: { type: string }
+    AccountingMetadata:
+      type: object
+      required: [generationId, costBasis, status, dataAsOf, directoryDataAsOf, stale, coverage, qualifications]
+      properties:
+        generationId: { type: string }
+        costBasis:
+          type: string
+          enum: [allocation_eligible_committed]
+        status:
+          type: string
+          enum: [complete, stale, partial, empty]
+        dataAsOf: { type: [string, "null"], format: date-time }
+        directoryDataAsOf: { type: [string, "null"], format: date-time }
+        stale: { type: boolean }
+        coverage:
+          type: object
+          required: [ratio, requestedDays, missingDays, failedWorkspaceDays]
+          properties:
+            ratio: { type: number, minimum: 0, maximum: 1 }
+            requestedDays: { type: integer, minimum: 0 }
+            missingDays:
+              type: array
+              items: { type: string }
+            failedWorkspaceDays:
+              type: array
+              items: { type: string }
+        qualifications:
+          type: array
+          items: { type: string }
+    DashboardScope:
+      type: object
+      required: [viewScope, label, workspaceIds, groupIds, isPersonal]
+      properties:
+        viewScope:
+          type: string
+          enum: [managed, my, all_authorized]
+        label: { type: string }
+        workspaceIds:
+          type: array
+          items: { type: string }
+        groupIds:
+          type: array
+          items: { type: string }
+        isPersonal: { type: boolean }
+    DashboardCard:
+      type: object
+      required: [key, label, value, unit, qualification]
+      properties:
+        key:
+          type: string
+          enum: [eligible_spend, allocated_budget, allocation_remaining, pools_attention, spend, agent_spend, other_services, members_with_spend, your_agent_spend, monthly_agent_limit, agent_limit_remaining]
+        label: { type: string }
+        value: { type: [number, "null"] }
+        unit:
+          type: string
+          enum: [usd, count]
+        qualification: { type: [string, "null"] }
+    DashboardTrendBucket:
+      type: object
+      required: [start, endExclusive, spendUsd, valueUsd, isPartial, isMissing]
+      properties:
+        start: { type: string, format: date-time }
+        endExclusive: { type: string, format: date-time }
+        spendUsd: { type: [number, "null"] }
+        valueUsd: { type: [number, "null"] }
+        isPartial: { type: boolean }
+        isMissing: { type: boolean }
+    DashboardBreakdownItem:
+      type: object
+      required: [id, label, spendUsd, kind, drillThrough]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        spendUsd: { type: number }
+        kind:
+          type: string
+          enum: [workspace, group, other, unattributed, reconciliation]
+        drillThrough: { type: [string, "null"] }
+    DashboardAccounting:
+      type: object
+      required: [eligibleSpendUsd, grossSpendUsd, internalExcludedUsd, unbudgetedUsd, unattributedUsd, reconciliationUsd]
+      properties:
+        eligibleSpendUsd: { type: number }
+        grossSpendUsd: { type: number }
+        internalExcludedUsd: { type: number }
+        unbudgetedUsd: { type: number }
+        unattributedUsd: { type: number }
+        reconciliationUsd: { type: number }
+    DashboardResponse:
+      type: object
+      required: [scope, period, cardVariant, cards, trend, breakdown, accounting, metadata]
+      properties:
+        scope:
+          $ref: "#/components/schemas/DashboardScope"
+        period:
+          $ref: "#/components/schemas/ReportingPeriod"
+        cardVariant:
+          type: string
+          enum: [budget_health, usage_analysis, personal_limit, personal_usage]
+        cards:
+          type: array
+          minItems: 3
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/DashboardCard"
+        trend:
+          type: object
+          required: [granularity, mode, buckets]
+          properties:
+            granularity:
+              type: string
+              enum: [day, week, month]
+            mode:
+              type: string
+              enum: [period, cumulative]
+            buckets:
+              type: array
+              maxItems: 62
+              items:
+                $ref: "#/components/schemas/DashboardTrendBucket"
+        breakdown:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/DashboardBreakdownItem"
+        accounting:
+          $ref: "#/components/schemas/DashboardAccounting"
+        metadata:
+          $ref: "#/components/schemas/AccountingMetadata"
+    SpendTableRow:
+      type: object
+      required: [id, kind, name, workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, status, memberCount, ownerName, limitState, limitObservationStatus, sharedPool]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [pool, group, person, project, unattributed, reconciliation]
+        name: { type: string }
+        workspaceId: { type: [string, "null"] }
+        workspaceName: { type: [string, "null"] }
+        spendUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        allocationUsd: { type: [number, "null"] }
+        remainingUsd: { type: [number, "null"] }
+        percentUsed: { type: [number, "null"] }
+        status: { type: string }
+        memberCount: { type: [integer, "null"] }
+        ownerName: { type: [string, "null"] }
+        limitState:
+          type: string
+          enum: [not_applicable, explicit, inherited, no_limit, unavailable]
+        limitObservationStatus:
+          type: string
+          enum: [not_applicable, complete, failed, unavailable]
+          description: Durable observation result; failed and never-observed snapshots remain distinct.
+        sharedPool: { type: boolean }
+    SpendTableResponse:
+      type: object
+      required: [view, scope, period, rows, page, pageSize, totalRows, filteredRows, totals, facets, metadata]
+      properties:
+        view:
+          type: string
+          enum: [pools, groups, people, projects]
+        scope:
+          $ref: "#/components/schemas/DashboardScope"
+        period:
+          $ref: "#/components/schemas/ReportingPeriod"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpendTableRow"
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        totalRows: { type: integer, minimum: 0 }
+        filteredRows: { type: integer, minimum: 0 }
+        totals:
+          type: object
+          required: [spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, internalExcludedUsd, unbudgetedUsd, unattributedUsd, reconciliationUsd]
+          properties:
+            spendUsd: { type: number }
+            agentSpendUsd: { type: number }
+            otherServicesUsd: { type: number }
+            allocationUsd: { type: number }
+            internalExcludedUsd: { type: number }
+            unbudgetedUsd: { type: number }
+            unattributedUsd: { type: number }
+            reconciliationUsd: { type: number }
+        facets:
+          type: object
+          required: [statuses, workspaces]
+          properties:
+            statuses:
+              type: object
+              additionalProperties: { type: integer, minimum: 0 }
+            workspaces:
+              type: array
+              items:
+                type: object
+                required: [id, name, count]
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  count: { type: integer, minimum: 0 }
+        metadata:
+          $ref: "#/components/schemas/AccountingMetadata"
     HealthStatus:
       type: object
       properties:
@@ -1999,6 +2513,13 @@ components:
             type: string
         isPreview:
           type: boolean
+        viewScope:
+          type: string
+          enum: [managed, my, all_authorized]
+          description: Server-selected default presentation scope.
+        previewReadOnly:
+          type: boolean
+          description: True when mutations must be rejected for the effective preview.
     AuthUserEnvelope:
       type: object
       required: [user, auth, capabilities]
@@ -2022,7 +2543,13 @@ components:
       properties:
         canManageAccess:
           type: boolean
+        canViewAccountUsage:
+          type: boolean
         canEditAllocations:
+          type: boolean
+        canManageNotifications:
+          type: boolean
+        canManageSystem:
           type: boolean
         canPreviewRoles:
           type: boolean
@@ -2031,8 +2558,13 @@ components:
           type: boolean
         canWriteUserLimitsIn:
           type: array
+          description: Workspace IDs in which the caller may write a user limit.
           items:
             type: string
+        canRunChecks:
+          type: boolean
+        canSendTestEmail:
+          type: boolean
     MobileTokenExchangeRequest:
       type: object
       required: [code, code_verifier, redirect_uri, state]

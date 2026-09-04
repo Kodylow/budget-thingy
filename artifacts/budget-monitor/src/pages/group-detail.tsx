@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { useRoute, Link } from 'wouter';
+import { useRoute, Link, useSearch } from 'wouter';
 import {
   useGetGroupDetail,
   getGetGroupDetailQueryKey,
@@ -108,12 +108,22 @@ function useGroupDetailModel() {
   };
 }
 
+function BackLink() {
+  const search = useSearch();
+  const returnTo = new URLSearchParams(search).get('returnTo');
+  const backHref = (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')) ? returnTo : '/spend';
+
+  return (
+    <Link href={backHref} className="flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+      <ChevronLeft className="h-4 w-4" /> Back
+    </Link>
+  );
+}
+
 function GroupDetailUnavailable() {
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="group-detail-unavailable">
-      <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
-        <ChevronLeft className="h-4 w-4" /> Back to Dashboard
-      </Link>
+      <BackLink />
       <Card>
         <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
           <AlertCircle className="h-8 w-8 text-muted-foreground" />
@@ -131,9 +141,7 @@ function GroupDetailLoading() {
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
       <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
-        <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
-          <ChevronLeft className="h-4 w-4" /> Back to Dashboard
-        </Link>
+        <BackLink />
       </div>
       <div className="h-10 w-64 bg-muted animate-pulse-glow rounded" />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
@@ -223,9 +231,7 @@ function renderGroupDetailContent(
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="page-group-detail">
       <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
-        <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
-          <ChevronLeft className="h-4 w-4" /> Back to Dashboard
-        </Link>
+        <BackLink />
       </div>
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

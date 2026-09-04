@@ -540,7 +540,7 @@ router.put(
 
 router.get(
   "/directory/workspaces/:workspaceId/usage-limit-audits",
-  requireCapability("canWriteGroupLimits"),
+  requireUserLimitWorkspace,
   async (req, res): Promise<void> => {
     const workspaceId = String(req.params["workspaceId"]);
     const dir = await getDirectory();
@@ -558,7 +558,7 @@ router.get(
   },
 );
 
-router.get("/directory/groups", requireRole("account"), async (req, res): Promise<void> => {
+router.get("/directory/groups", requireCapability("canManageAccess"), async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
@@ -666,7 +666,7 @@ router.get("/directory/groups", requireRole("account"), async (req, res): Promis
   }
 });
 
-router.get("/directory/members", requireRole("account"), async (req, res): Promise<void> => {
+router.get("/directory/members", requireCapability("canManageAccess"), async (req, res): Promise<void> => {
   try {
     const dir = await getDirectory();
     if (!dir) {

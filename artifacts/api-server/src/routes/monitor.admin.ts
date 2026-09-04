@@ -5,7 +5,7 @@ import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsT
 
 const router = Router();
 
-router.get("/workspace-admins", requireRole("account"), async (_req, res): Promise<void> => {
+router.get("/workspace-admins", requireCapability("canManageAccess"), async (_req, res): Promise<void> => {
   const dir = await getDirectory();
   const result = [...dir.account.familiesById.values()]
     .map((family) => {
@@ -36,7 +36,7 @@ router.get("/workspace-admins", requireRole("account"), async (_req, res): Promi
 // Project spend CSV export — all groups, one row per project
 // ---------------------------------------------------------------------------
 
-router.get("/admins", requireRole("account"), async (_req, res): Promise<void> => {
+router.get("/admins", requireCapability("canManageNotifications"), async (_req, res): Promise<void> => {
   const admins = await db.select().from(adminEmailsTable).orderBy(adminEmailsTable.id);
   res.json(
     ListAdminsResponse.parse(
@@ -51,7 +51,7 @@ router.get("/admins", requireRole("account"), async (_req, res): Promise<void> =
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-router.post("/admins", requireRole("account"), async (req, res): Promise<void> => {
+router.post("/admins", requireCapability("canManageNotifications"), async (req, res): Promise<void> => {
   const parsed = AddAdminBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -84,7 +84,7 @@ router.post("/admins", requireRole("account"), async (req, res): Promise<void> =
   );
 });
 
-router.delete("/admins/:adminId", requireRole("account"), async (req, res): Promise<void> => {
+router.delete("/admins/:adminId", requireCapability("canManageNotifications"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params["adminId"])
     ? req.params["adminId"][0]
     : req.params["adminId"];
@@ -168,7 +168,7 @@ router.delete("/app-admins/:userId", requireCapability("canManageAccess"), async
 });
 
 
-router.get("/status", requireRole("account"), async (_req, res): Promise<void> => {
+router.get("/status", requireCapability("canManageSystem"), async (_req, res): Promise<void> => {
   const health = getApiHealth();
   const [emailConfigured, notificationSettings] = await Promise.all([
     isEmailConfigured(),
@@ -258,7 +258,7 @@ router.get("/status", requireRole("account"), async (_req, res): Promise<void> =
 
 router.get(
   "/usage/account-observation/export",
-  requireCapability("canWriteGroupLimits"),
+  requireCapability("canViewAccountUsage"),
   async (req, res): Promise<void> => {
     const parsed = GetAccountUsageObservationExportQueryParams.safeParse(req.query);
     if (!parsed.success) {
@@ -299,7 +299,7 @@ router.get(
 
 router.post(
   "/admin/usage/ingest/cycle",
-  requireCapability("canWriteGroupLimits"),
+  requireCapability("canRunChecks"),
   async (req, res): Promise<void> => {
     try {
       res.json(await runCycle());
@@ -312,7 +312,7 @@ router.post(
 
 router.get(
   "/admin/usage/ingest/runs/recent",
-  requireCapability("canWriteGroupLimits"),
+  requireCapability("canManageSystem"),
   async (req, res): Promise<void> => {
     const rawLimit = Number(req.query["limit"] ?? 20);
     const limit = Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;

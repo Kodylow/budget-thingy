@@ -1,11 +1,10 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { Route, Switch, Router as WouterRouter } from 'wouter';
+import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 import { AppShell } from '@/components/app-shell';
-import Dashboard from '@/pages/dashboard';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
@@ -17,18 +16,17 @@ import {
 import { setUnauthorizedHandler } from '@workspace/api-client-react';
 import { clearAuthCache } from '@workspace/replit-auth-web';
 import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
-import { Redirect } from 'wouter';
 import { previewScopedQueryHash } from '@/lib/preview-query-cache';
 
-const Settings = lazy(() => import('@/pages/settings'));
-const Trends = lazy(() => import('@/pages/trends'));
+const Dashboard = lazy(() => import('@/pages/dashboard'));
+const Spend = lazy(() => import('@/pages/spend'));
+const Allocations = lazy(() => import('@/pages/team-budgets'));
 const Alerts = lazy(() => import('@/pages/alerts'));
+const Access = lazy(() => import('@/pages/access'));
+const Settings = lazy(() => import('@/pages/settings'));
+const Help = lazy(() => import('@/pages/user-guide'));
 const GroupDetail = lazy(() => import('@/pages/group-detail'));
 const ClusterDetail = lazy(() => import('@/pages/cluster-detail'));
-const WorkspaceAdmins = lazy(() => import('@/pages/workspace-admins'));
-const WorkspaceDirectory = lazy(() => import('@/pages/workspace-directory'));
-const TeamBudgets = lazy(() => import('@/pages/team-budgets'));
-const UserGuide = lazy(() => import('@/pages/user-guide'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -87,69 +85,83 @@ function RouteLoading() {
   );
 }
 
-function AccountAdminGuideRoute() {
-  const { capabilities } = useAuthContext();
-  return capabilities.canManageAccess ? <UserGuide /> : <Redirect to="/" />;
-}
-
 interface ForbiddenRouteProps {
   testId: string;
   message: string;
 }
 
 function ForbiddenRoute({ testId, message }: ForbiddenRouteProps) {
+  const { isPreviewing, resetPreview } = useAuthContext();
+
   return (
     <div className="p-4 md:p-8" data-testid={testId}>
       <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
         403 · Access denied
       </h1>
-      <p className="mt-2 text-muted-foreground">{message}</p>
+      <p className="mt-2 text-muted-foreground mb-4">{message}</p>
+      {isPreviewing && (
+        <button
+          onClick={resetPreview}
+          className="text-sm text-primary hover:underline underline-offset-4"
+        >
+          Reset to your real view
+        </button>
+      )}
     </div>
   );
 }
 
 function SettingsRoute() {
   const { capabilities } = useAuthContext();
-  if (capabilities.canManageAccess) return <Settings />;
+  if (capabilities.canManageSystem || capabilities.canManageNotifications) return <Settings />;
   return (
     <ForbiddenRoute
       testId="settings-forbidden"
-      message="Settings are only available to account administrators."
+      message="Settings are only available to system or notification administrators."
     />
   );
 }
 
-function WorkspaceAdminsRoute() {
-  const { isAccountAdmin } = useAuthContext();
-  if (isAccountAdmin) return <WorkspaceAdmins />;
-  return (
-    <ForbiddenRoute
-      testId="workspace-admins-forbidden"
-      message="Team Admins is only available to account administrators."
-    />
-  );
-}
-
-function WorkspaceDirectoryRoute() {
+function AccessRoute() {
   const { capabilities } = useAuthContext();
-  if (capabilities.canManageAccess) return <WorkspaceDirectory />;
+  if (capabilities.canManageAccess) return <Access />;
   return (
     <ForbiddenRoute
-      testId="workspace-directory-forbidden"
-      message="Workspace Directory is only available to account administrators."
+      testId="access-forbidden"
+      message="Access is only available to access administrators."
     />
   );
 }
 
-function TeamBudgetsRoute() {
-  const { capabilities } = useAuthContext();
-  if (capabilities.canEditAllocations) return <TeamBudgets />;
+function AlertsRoute() {
+  const { role } = useAuthContext();
+  if (role !== 'member') return <Alerts />;
   return (
     <ForbiddenRoute
-      testId="team-budgets-forbidden"
-      message="Team allocations are only available to account administrators."
+      testId="alerts-forbidden"
+      message="Alert history is only available to managers and administrators."
     />
   );
+}
+
+function AllocationsRoute() {
+  const { capabilities } = useAuthContext();
+  if (capabilities.canEditAllocations) return <Allocations />;
+  return (
+    <ForbiddenRoute
+      testId="allocations-forbidden"
+      message="Allocations are only available to budget editors."
+    />
+  );
+}
+
+function PreserveQueryRedirect({ to }: { to: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    const search = window.location.search;
+    setLocation(to + search, { replace: true });
+  }, [to, setLocation]);
+  return null;
 }
 
 function Router() {
@@ -158,13 +170,19 @@ function Router() {
       <Suspense fallback={<RouteLoading />}>
         <Switch>
           <Route path="/" component={Dashboard} />
-          <Route path="/user-guide" component={AccountAdminGuideRoute} />
-          <Route path="/alerts" component={Alerts} />
-          <Route path="/trends" component={Trends} />
+          <Route path="/spend" component={Spend} />
+          <Route path="/allocations" component={AllocationsRoute} />
+          <Route path="/alerts" component={AlertsRoute} />
+          <Route path="/access" component={AccessRoute} />
           <Route path="/settings" component={SettingsRoute} />
-          <Route path="/workspace-admins" component={WorkspaceAdminsRoute} />
-          <Route path="/workspace-directory" component={WorkspaceDirectoryRoute} />
-          <Route path="/team-budgets" component={TeamBudgetsRoute} />
+          <Route path="/help" component={Help} />
+
+          <Route path="/trends" component={() => <PreserveQueryRedirect to="/" />} />
+          <Route path="/team-budgets" component={() => <PreserveQueryRedirect to="/allocations" />} />
+          <Route path="/workspace-admins" component={() => <PreserveQueryRedirect to="/access" />} />
+          <Route path="/workspace-directory" component={() => <PreserveQueryRedirect to="/spend" />} />
+          <Route path="/user-guide" component={() => <PreserveQueryRedirect to="/help" />} />
+
           <Route path="/groups/:groupId" component={GroupDetail} />
           <Route path="/clusters" component={ClusterDetail} />
           <Route component={NotFound} />

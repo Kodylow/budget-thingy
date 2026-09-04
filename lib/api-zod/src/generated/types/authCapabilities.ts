@@ -8,9 +8,15 @@
 
 export interface AuthCapabilities {
   canManageAccess: boolean;
+  canViewAccountUsage?: boolean;
   canEditAllocations: boolean;
+  canManageNotifications?: boolean;
+  canManageSystem?: boolean;
   /** Server-derived builder capability for entering role-scoped previews. */
   canPreviewRoles: boolean;
   canWriteGroupLimits: boolean;
+  /** Workspace IDs in which the caller may write a user limit. */
   canWriteUserLimitsIn: string[];
+  canRunChecks?: boolean;
+  canSendTestEmail?: boolean;
 }

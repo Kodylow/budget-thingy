@@ -438,6 +438,11 @@ export interface PlatformBudgets {
   groupLimits: Map<string, Map<string, number>>;
   userLimits: Map<string, Map<string, number>>;
   workspaceDefaults: Map<string, number>;
+  observation: {
+    status: "complete" | "failed" | "unavailable";
+    observedAt: number | null;
+    error: string | null;
+  };
 }
 interface RawBudget {
   type: string;
@@ -468,7 +473,7 @@ export interface DirectoryHydrationState {
   reason: "not_started" | "hydrated" | "not_found" | "lookup_failed";
 }
 
-interface SerializedDirectory {
+export interface SerializedDirectory {
   fetchedAt: number;
   workspaces: Record<string, EnterpriseWorkspace>;
   groups: EnterpriseGroup[];
@@ -481,6 +486,11 @@ interface SerializedDirectory {
     groupLimits: Record<string, Record<string, number>>;
     userLimits: Record<string, Record<string, number>>;
     workspaceDefaults: Record<string, number>;
+    observation?: {
+      status: "complete" | "failed" | "unavailable";
+      observedAt: number | null;
+      error: string | null;
+    };
   };
   familyMappings?: FamilyMapping[];
 }
@@ -492,7 +502,7 @@ let directoryHydrationState: DirectoryHydrationState = {
   reason: "not_started",
 };
 
-function serializeDirectory(directory: DirectoryCache): SerializedDirectory {
+export function serializeDirectory(directory: DirectoryCache): SerializedDirectory {
   return {
     fetchedAt: directory.fetchedAt,
     workspaces: Object.fromEntries(directory.workspaces),
@@ -513,6 +523,7 @@ function serializeDirectory(directory: DirectoryCache): SerializedDirectory {
         Object.fromEntries(limits),
       ])),
       workspaceDefaults: Object.fromEntries(directory.budgets.workspaceDefaults),
+      observation: directory.budgets.observation,
     },
     familyMappings: [...directory.account.familiesById.values()].map((family) => ({
       workspaceId: family.workspaceId,
@@ -524,7 +535,7 @@ function serializeDirectory(directory: DirectoryCache): SerializedDirectory {
   };
 }
 
-function deserializeDirectory(serialized: SerializedDirectory): DirectoryCache {
+export function deserializeDirectory(serialized: SerializedDirectory): DirectoryCache {
   const workspaces = new Map(Object.entries(serialized.workspaces));
   const allGroups = serialized.allGroups ?? serialized.groups;
   const groupMembers = new Map(Object.entries(serialized.groupMembers));
@@ -543,6 +554,11 @@ function deserializeDirectory(serialized: SerializedDirectory): DirectoryCache {
     userLimits: new Map(Object.entries(serialized.budgets.userLimits)
       .map(([id, limits]) => [id, new Map(Object.entries(limits))])),
     workspaceDefaults: new Map(Object.entries(serialized.budgets.workspaceDefaults)),
+    observation: serialized.budgets.observation ?? {
+      status: "unavailable",
+      observedAt: null,
+      error: null,
+    },
   };
   const groups = allGroups.filter(isCustomGroup);
   return {
@@ -606,8 +622,31 @@ async function refreshDirectory(): Promise<DirectoryCache> {
         groupLimits: new Map(),
         userLimits: new Map(),
         workspaceDefaults: new Map(),
+        observation: {
+          status: "unavailable",
+          observedAt: null,
+          error: null,
+        },
       };
-      for (const budget of await paginate<RawBudget>("/budgets", {})) {
+      let observedBudgets: RawBudget[] = [];
+      try {
+        observedBudgets = await paginate<RawBudget>("/budgets", {});
+        budgets.observation = {
+          status: "complete",
+          observedAt: Date.now(),
+          error: null,
+        };
+      } catch (error) {
+        if (limitValidationContext.getStore()) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        budgets.observation = {
+          status: "failed",
+          observedAt: Date.now(),
+          error: message.slice(0, 1000),
+        };
+        logger.warn({ err: error }, "Failed to observe Enterprise budget limits");
+      }
+      for (const budget of observedBudgets) {
         if (!budget.workspaceId || budget.amountUsd == null) continue;
         if (budget.type === "workspace_group_limit" && budget.groupId) {
           const limits = budgets.groupLimits.get(budget.workspaceId) ?? new Map();
@@ -729,6 +768,7 @@ export function __setDirectoryCacheForTests(
     members: Map<string, EnterpriseMember>;
     fetchedAt?: number;
     mappings?: readonly FamilyMapping[];
+    budgets?: PlatformBudgets;
   } | null,
 ): void {
   if (!fixture) {
@@ -759,7 +799,12 @@ export function __setDirectoryCacheForTests(
         .filter((member) => member.isInternalReplitUser)
         .map((member) => member.userId),
     ),
-    budgets: { groupLimits: new Map(), userLimits: new Map(), workspaceDefaults: new Map() },
+    budgets: fixture.budgets ?? {
+      groupLimits: new Map(),
+      userLimits: new Map(),
+      workspaceDefaults: new Map(),
+      observation: { status: "unavailable", observedAt: null, error: null },
+    },
     account: buildCanonicalAccountDirectory({
       workspaces,
       groups: fixture.groups,

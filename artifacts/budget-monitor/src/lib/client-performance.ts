@@ -118,7 +118,10 @@ export function reportDashboardMilestonePainted(
         context,
       );
 
-      if (phaseStartMark) {
+      if (
+        phaseStartMark &&
+        performance.getEntriesByName(phaseStartMark, 'mark').length > 0
+      ) {
         performance.measure(phaseMeasurement, phaseStartMark, paintedMark);
         const phaseDuration = performance
           .getEntriesByName(phaseMeasurement)

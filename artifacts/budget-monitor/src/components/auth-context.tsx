@@ -139,16 +139,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const resolvedRealRole: ResolvedRole | null = !isAuthenticated ? null : (realRole ?? 'denied');
     const effectiveCapabilities: AuthCapabilities = capabilities ?? {
       canManageAccess: false,
+      canViewAccountUsage: false,
       canEditAllocations: false,
+      canManageNotifications: false,
+      canManageSystem: false,
       canPreviewRoles: false,
       canWriteGroupLimits: false,
       canWriteUserLimitsIn: [],
+      canRunChecks: false,
+      canSendTestEmail: false,
     };
     const isAccountAdmin = role === 'account';
     const isWorkspaceAdmin = role === 'workspace_admin';
     const isTeamAdmin = role === 'team_admin';
     const isDenied = isAuthenticated && auth == null;
     const realIsAccountAdmin = resolvedRealRole === 'account';
+    const previewReadOnly = auth?.previewReadOnly === true;
+    const canWrite = !previewReadOnly && (effectiveCapabilities.canEditAllocations || effectiveCapabilities.canWriteGroupLimits || effectiveCapabilities.canWriteUserLimitsIn.length > 0);
 
     return {
       user,
@@ -161,7 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       realRole: resolvedRealRole,
       realIsAccountAdmin,
       capabilities: effectiveCapabilities,
-      canTestEmail: effectiveCapabilities.canManageAccess,
+      canTestEmail: effectiveCapabilities.canSendTestEmail ?? false,
       preview,
       canPreviewRbac,
       setPreview,
@@ -172,7 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isTeamAdmin,
       isWorkspaceAdmin,
       isDenied,
-      canWrite: effectiveCapabilities.canEditAllocations,
+      canWrite,
       workspaceIds: auth?.workspaceIds ?? [],
       login,
       logout: logoutAndClearPreview,

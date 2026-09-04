@@ -31,6 +31,7 @@ import type {
   BeginBrowserLoginParams,
   CheckResult,
   ClusterHeadline,
+  DashboardResponse,
   DirectoryGroupsResponse,
   DirectoryMember,
   EmailSettings,
@@ -39,11 +40,16 @@ import type {
   EmailTestSelection,
   ErrorEnvelope,
   ExportProjectsCsvParams,
+  ExportSpendGroupsCsvParams,
+  ExportSpendPeopleCsvParams,
+  ExportSpendPoolsCsvParams,
+  ExportSpendProjectsTableCsvParams,
   ExportUsersCsvParams,
   ForbiddenResponse,
   GetAccountUsageObservationExportParams,
   GetCanonicalClusterHeadlineParams,
   GetClusterProjectsParams,
+  GetDashboardParams,
   GetGroupDetailParams,
   GetGroupProjectsParams,
   GetSummaryParams,
@@ -62,6 +68,10 @@ import type {
   ListDirectoryMembersParams,
   ListGroupsParams,
   ListRecentUsageIngestRunsParams,
+  ListSpendGroupsParams,
+  ListSpendPeopleParams,
+  ListSpendPoolsParams,
+  ListSpendProjectsParams,
   LogoutBrowserSessionParams,
   LogoutSuccess,
   MemberLimitPolicyInput,
@@ -69,6 +79,8 @@ import type {
   MobileTokenExchangeRequest,
   MobileTokenExchangeSuccess,
   OkResponse,
+  SpendCsvResponse,
+  SpendTableResponse,
   Summary,
   SystemStatus,
   TeamAllocationAuditResponse,
@@ -1189,6 +1201,763 @@ export function useGetSummary<TData = Awaited<ReturnType<typeof getSummary>>, TE
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetSummaryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDashboardUrl = (params?: GetDashboardParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/dashboard?${stringifiedParams}` : `/api/dashboard`
+}
+
+/**
+ * Returns one committed, stored-data dashboard generation. Period boundaries and trend buckets are UTC and end-exclusive. This endpoint never refreshes upstream limits and does not include people, project, or hierarchy tables.
+ * @summary Compact scoped dashboard cards and charts
+ */
+export const getDashboard = async (params?: GetDashboardParams, options?: RequestInit): Promise<DashboardResponse> => {
+
+  return customFetch<DashboardResponse>(getGetDashboardUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDashboardQueryKey = (params?: GetDashboardParams,) => {
+    return [
+    `/api/dashboard`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetDashboardQueryOptions = <TData = Awaited<ReturnType<typeof getDashboard>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params?: GetDashboardParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDashboardQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDashboard>>> = ({ signal }) => getDashboard(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDashboard>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDashboardQueryResult = NonNullable<Awaited<ReturnType<typeof getDashboard>>>
+export type GetDashboardQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Compact scoped dashboard cards and charts
+ */
+
+export function useGetDashboard<TData = Awaited<ReturnType<typeof getDashboard>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ params?: GetDashboardParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDashboardQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListSpendPoolsUrl = (params?: ListSpendPoolsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/pools?${stringifiedParams}` : `/api/spend/pools`
+}
+
+/**
+ * @summary List authorized canonical budget pools
+ */
+export const listSpendPools = async (params?: ListSpendPoolsParams, options?: RequestInit): Promise<SpendTableResponse> => {
+
+  return customFetch<SpendTableResponse>(getListSpendPoolsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSpendPoolsQueryKey = (params?: ListSpendPoolsParams,) => {
+    return [
+    `/api/spend/pools`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListSpendPoolsQueryOptions = <TData = Awaited<ReturnType<typeof listSpendPools>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ListSpendPoolsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSpendPoolsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSpendPools>>> = ({ signal }) => listSpendPools(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSpendPools>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSpendPoolsQueryResult = NonNullable<Awaited<ReturnType<typeof listSpendPools>>>
+export type ListSpendPoolsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List authorized canonical budget pools
+ */
+
+export function useListSpendPools<TData = Awaited<ReturnType<typeof listSpendPools>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ListSpendPoolsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSpendPoolsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListSpendGroupsUrl = (params?: ListSpendGroupsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/groups?${stringifiedParams}` : `/api/spend/groups`
+}
+
+/**
+ * @summary List authorized workspace-qualified groups
+ */
+export const listSpendGroups = async (params?: ListSpendGroupsParams, options?: RequestInit): Promise<SpendTableResponse> => {
+
+  return customFetch<SpendTableResponse>(getListSpendGroupsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSpendGroupsQueryKey = (params?: ListSpendGroupsParams,) => {
+    return [
+    `/api/spend/groups`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListSpendGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listSpendGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ListSpendGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSpendGroupsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSpendGroups>>> = ({ signal }) => listSpendGroups(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSpendGroups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSpendGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof listSpendGroups>>>
+export type ListSpendGroupsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List authorized workspace-qualified groups
+ */
+
+export function useListSpendGroups<TData = Awaited<ReturnType<typeof listSpendGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ListSpendGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSpendGroupsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListSpendPeopleUrl = (params?: ListSpendPeopleParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/people?${stringifiedParams}` : `/api/spend/people`
+}
+
+/**
+ * @summary List authorized workspace-qualified people usage
+ */
+export const listSpendPeople = async (params?: ListSpendPeopleParams, options?: RequestInit): Promise<SpendTableResponse> => {
+
+  return customFetch<SpendTableResponse>(getListSpendPeopleUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSpendPeopleQueryKey = (params?: ListSpendPeopleParams,) => {
+    return [
+    `/api/spend/people`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListSpendPeopleQueryOptions = <TData = Awaited<ReturnType<typeof listSpendPeople>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ListSpendPeopleParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendPeople>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSpendPeopleQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSpendPeople>>> = ({ signal }) => listSpendPeople(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSpendPeople>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSpendPeopleQueryResult = NonNullable<Awaited<ReturnType<typeof listSpendPeople>>>
+export type ListSpendPeopleQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List authorized workspace-qualified people usage
+ */
+
+export function useListSpendPeople<TData = Awaited<ReturnType<typeof listSpendPeople>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ListSpendPeopleParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendPeople>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSpendPeopleQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListSpendProjectsUrl = (params?: ListSpendProjectsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/projects?${stringifiedParams}` : `/api/spend/projects`
+}
+
+/**
+ * @summary List authorized workspace-qualified project usage
+ */
+export const listSpendProjects = async (params?: ListSpendProjectsParams, options?: RequestInit): Promise<SpendTableResponse> => {
+
+  return customFetch<SpendTableResponse>(getListSpendProjectsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSpendProjectsQueryKey = (params?: ListSpendProjectsParams,) => {
+    return [
+    `/api/spend/projects`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListSpendProjectsQueryOptions = <TData = Awaited<ReturnType<typeof listSpendProjects>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ListSpendProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSpendProjectsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSpendProjects>>> = ({ signal }) => listSpendProjects(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSpendProjects>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSpendProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof listSpendProjects>>>
+export type ListSpendProjectsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List authorized workspace-qualified project usage
+ */
+
+export function useListSpendProjects<TData = Awaited<ReturnType<typeof listSpendProjects>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ListSpendProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSpendProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSpendProjectsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportSpendPoolsCsvUrl = (params?: ExportSpendPoolsCsvParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/pools.csv?${stringifiedParams}` : `/api/spend/pools.csv`
+}
+
+/**
+ * @summary Export the authorized filtered canonical pool rows
+ */
+export const exportSpendPoolsCsv = async (params?: ExportSpendPoolsCsvParams, options?: RequestInit): Promise<SpendCsvResponse> => {
+
+  return customFetch<SpendCsvResponse>(getExportSpendPoolsCsvUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportSpendPoolsCsvQueryKey = (params?: ExportSpendPoolsCsvParams,) => {
+    return [
+    `/api/spend/pools.csv`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportSpendPoolsCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportSpendPoolsCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ExportSpendPoolsCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendPoolsCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportSpendPoolsCsvQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportSpendPoolsCsv>>> = ({ signal }) => exportSpendPoolsCsv(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportSpendPoolsCsv>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportSpendPoolsCsvQueryResult = NonNullable<Awaited<ReturnType<typeof exportSpendPoolsCsv>>>
+export type ExportSpendPoolsCsvQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Export the authorized filtered canonical pool rows
+ */
+
+export function useExportSpendPoolsCsv<TData = Awaited<ReturnType<typeof exportSpendPoolsCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ExportSpendPoolsCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendPoolsCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportSpendPoolsCsvQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportSpendGroupsCsvUrl = (params?: ExportSpendGroupsCsvParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/groups.csv?${stringifiedParams}` : `/api/spend/groups.csv`
+}
+
+/**
+ * @summary Export the authorized filtered group rows
+ */
+export const exportSpendGroupsCsv = async (params?: ExportSpendGroupsCsvParams, options?: RequestInit): Promise<SpendCsvResponse> => {
+
+  return customFetch<SpendCsvResponse>(getExportSpendGroupsCsvUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportSpendGroupsCsvQueryKey = (params?: ExportSpendGroupsCsvParams,) => {
+    return [
+    `/api/spend/groups.csv`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportSpendGroupsCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportSpendGroupsCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ExportSpendGroupsCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendGroupsCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportSpendGroupsCsvQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportSpendGroupsCsv>>> = ({ signal }) => exportSpendGroupsCsv(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportSpendGroupsCsv>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportSpendGroupsCsvQueryResult = NonNullable<Awaited<ReturnType<typeof exportSpendGroupsCsv>>>
+export type ExportSpendGroupsCsvQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Export the authorized filtered group rows
+ */
+
+export function useExportSpendGroupsCsv<TData = Awaited<ReturnType<typeof exportSpendGroupsCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ExportSpendGroupsCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendGroupsCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportSpendGroupsCsvQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportSpendPeopleCsvUrl = (params?: ExportSpendPeopleCsvParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/people.csv?${stringifiedParams}` : `/api/spend/people.csv`
+}
+
+/**
+ * @summary Export the authorized filtered people rows
+ */
+export const exportSpendPeopleCsv = async (params?: ExportSpendPeopleCsvParams, options?: RequestInit): Promise<SpendCsvResponse> => {
+
+  return customFetch<SpendCsvResponse>(getExportSpendPeopleCsvUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportSpendPeopleCsvQueryKey = (params?: ExportSpendPeopleCsvParams,) => {
+    return [
+    `/api/spend/people.csv`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportSpendPeopleCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportSpendPeopleCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ExportSpendPeopleCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendPeopleCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportSpendPeopleCsvQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportSpendPeopleCsv>>> = ({ signal }) => exportSpendPeopleCsv(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportSpendPeopleCsv>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportSpendPeopleCsvQueryResult = NonNullable<Awaited<ReturnType<typeof exportSpendPeopleCsv>>>
+export type ExportSpendPeopleCsvQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Export the authorized filtered people rows
+ */
+
+export function useExportSpendPeopleCsv<TData = Awaited<ReturnType<typeof exportSpendPeopleCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ExportSpendPeopleCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendPeopleCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportSpendPeopleCsvQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportSpendProjectsTableCsvUrl = (params?: ExportSpendProjectsTableCsvParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/projects.csv?${stringifiedParams}` : `/api/spend/projects.csv`
+}
+
+/**
+ * @summary Export the authorized filtered project rows
+ */
+export const exportSpendProjectsTableCsv = async (params?: ExportSpendProjectsTableCsvParams, options?: RequestInit): Promise<SpendCsvResponse> => {
+
+  return customFetch<SpendCsvResponse>(getExportSpendProjectsTableCsvUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportSpendProjectsTableCsvQueryKey = (params?: ExportSpendProjectsTableCsvParams,) => {
+    return [
+    `/api/spend/projects.csv`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportSpendProjectsTableCsvQueryOptions = <TData = Awaited<ReturnType<typeof exportSpendProjectsTableCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: ExportSpendProjectsTableCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendProjectsTableCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportSpendProjectsTableCsvQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportSpendProjectsTableCsv>>> = ({ signal }) => exportSpendProjectsTableCsv(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportSpendProjectsTableCsv>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportSpendProjectsTableCsvQueryResult = NonNullable<Awaited<ReturnType<typeof exportSpendProjectsTableCsv>>>
+export type ExportSpendProjectsTableCsvQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Export the authorized filtered project rows
+ */
+
+export function useExportSpendProjectsTableCsv<TData = Awaited<ReturnType<typeof exportSpendProjectsTableCsv>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+ params?: ExportSpendProjectsTableCsvParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportSpendProjectsTableCsv>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportSpendProjectsTableCsvQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

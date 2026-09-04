@@ -1,2309 +1,436 @@
-import React, {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React from "react";
+import { useMemo, useEffect, lazy, Suspense, useRef } from "react";
+import { useLocation, useSearch } from "wouter";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  RefreshCw,
-  AlertTriangle,
-  DollarSign,
-  TrendingUp,
-  Wallet,
-  ChevronDown,
-  ChevronRight,
-  Layers,
-} from "lucide-react";
-
-import { useAuthContext } from "@/components/auth-context";
-import {
-  dashboardPresentation,
-  familyDisclosureId,
-  initialExpandedWorkspaceIds,
-  toggleDisclosure,
-  workspaceDisclosureId,
-} from "@/lib/dashboard-hierarchy";
-
-type PaceStatus = "on-track" | "at-risk" | "over-pace";
-interface PaceResult {
-  status: PaceStatus;
-  projectedUsd: number;
-  daysRemaining: number;
-}
-
-function calcPace(
-  spendUsd: number,
-  budgetUsd: number,
-  periodStart: string,
-  periodEnd: string,
-): PaceResult | null {
-  if (budgetUsd <= 0 || spendUsd == null) return null;
-  const now = Date.now();
-  const startMs = new Date(periodStart).getTime();
-  const endMs = new Date(periodEnd).getTime();
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs)
-    return null;
-  const daysElapsed = (now - startMs) / 86_400_000;
-  if (daysElapsed <= 0) return null;
-  const daysRemaining = Math.max(0, (endMs - now) / 86_400_000);
-  const projectedUsd =
-    (spendUsd / daysElapsed) * ((endMs - startMs) / 86_400_000);
-  const ratio = projectedUsd / budgetUsd;
-  const status: PaceStatus =
-    ratio <= 1.0 ? "on-track" : ratio <= 1.15 ? "at-risk" : "over-pace";
-  return { status, projectedUsd, daysRemaining };
-}
-
-function PaceCell({
-  spendUsd,
-  budgetUsd,
-  semibold,
-  periodStart,
-  periodEnd,
-  periodLabel,
-  isFallback,
-}: {
-  spendUsd: number;
-  budgetUsd: number | null;
-  semibold?: boolean;
-  periodStart: string;
-  periodEnd: string;
-  periodLabel: string;
-  isFallback: boolean;
-}) {
-  if (budgetUsd == null || budgetUsd <= 0)
-    return <span className="text-sm text-muted-foreground">—</span>;
-  const pace = calcPace(spendUsd, budgetUsd, periodStart, periodEnd);
-  if (!pace) return <span className="text-sm text-muted-foreground">—</span>;
-  const cfg = {
-    "on-track": {
-      label: "On Track",
-      cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-    },
-    "at-risk": {
-      label: "At Risk",
-      cls: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
-    },
-    "over-pace": {
-      label: "Over Pace",
-      cls: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-    },
-  }[pace.status];
-  return (
-    <div
-      className="flex flex-col items-end gap-0.5"
-      title={`Pace period: ${periodLabel}${isFallback ? " (safe fallback)" : ""}`}
-    >
-      <span
-        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.cls} ${semibold ? "font-semibold" : ""}`}
-      >
-        {cfg.label}
-      </span>
-      <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
-        ${pace.projectedUsd.toFixed(0)} proj.
-      </span>
-    </div>
-  );
-}
-import {
-  useListGroups,
-  useGetSummary,
-  useGetTeamsBudgets,
-  useGetUserActivity,
-  getListGroupsQueryKey,
-  getGetSummaryQueryKey,
-  getGetTeamsBudgetsQueryKey,
-  getGetUserActivityQueryKey,
-  getListVisibleWorkspaceMembersQueryOptions,
-  getListVisibleWorkspaceMembersQueryKey,
-  type Group,
-  type GroupFamilyHierarchy,
+  useGetDashboard,
+  DashboardCard,
+  DashboardTrendBucket,
+  DashboardBreakdownItem,
+  DashboardResponseTrend
 } from "@workspace/api-client-react";
-import { ThresholdBadge } from "@/components/threshold-badge";
-import { BudgetInput } from "@/components/budget-input";
-import { useLocation } from "wouter";
+import { useAuthContext } from "@/components/auth-context";
 import { useRange } from "@/components/range-context";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { RangeFilter } from "@/components/range-filter";
-import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { roleBadgeClass, roleLabel } from "@/lib/hierarchy-presentation";
-import {
-  markDashboardMilestone,
-  reportDashboardMilestonePainted,
-  type DashboardPerformanceContext,
-} from "@/lib/client-performance";
-import {
-  allocateWorkspaceTeamBudgets,
-  indexWorkspaceTeamSpend,
-  workspaceTeamSpendKey,
-} from "@/lib/workspace-team-spend";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
-import {
-  InternalSpendExplanation,
-  InternalUserBadge,
-} from "@/components/internal-user-badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AlertTriangle, DollarSign, Wallet, User, Activity, PieChart, RefreshCw } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { reportDashboardMilestonePainted, markDashboardMilestone, DashboardPerformanceContext } from "@/lib/client-performance";
 
-type DashboardGroup = Group;
-
-function buildRangeQueryParams<T extends string>(
-  rangeType: T,
-  startDate: string | undefined,
-  endDate: string | undefined,
-) {
-  if (rangeType === "custom") return { rangeType, startDate, endDate };
-  return { rangeType };
-}
-
-function selectMemberName(
-  isPreview: boolean,
-  scopedMemberName: string,
-  accountUserName: string,
-) {
-  return isPreview ? scopedMemberName : accountUserName || scopedMemberName;
-}
-
-function selectAccountUserName(
-  firstName: string | null | undefined,
-  lastName: string | null | undefined,
-  email: string | null | undefined,
-) {
-  return (
-    [firstName, lastName].filter(Boolean).join(" ").trim() ||
-    email?.split("@")[0] ||
-    ""
-  );
-}
-
-function selectScopedMemberName(
-  cycleUsername: string | null | undefined,
-  termUsername: string | null | undefined,
-) {
-  return cycleUsername || termUsername || "";
-}
-
-function shouldShowReconciliation(
-  hasSummary: boolean,
-  isAccountWide: boolean,
-  spendUsd: number,
-) {
-  return hasSummary && (isAccountWide || spendUsd > 0);
-}
-
-function selectRangeLabel(
-  rangeSelection: string,
-  groupsBillingPeriodLabel: string | null | undefined,
-  summaryBillingPeriodLabel: string | null | undefined,
-  presetLabel: string,
-) {
-  if (rangeSelection === "full-term") return "May 20, 2026–present";
-  return groupsBillingPeriodLabel ?? summaryBillingPeriodLabel ?? presetLabel;
-}
-
-interface TeamSection {
-  workspaceId: string;
-  workspaceName: string;
-  teamName: string;
-  memberCount: number;
-  spendUsd: number;
-  spendLoaded: boolean;
-  paceSpendUsd: number;
-  paceSpendLoaded: boolean;
-  budgetUsd: number | null;
-  budgetIsShared: boolean;
-  budgetAllocationMethod: "full" | "proportional" | "equal";
-  remainingUsd: number | null;
-  percentUsed: number | null;
-  monthlyAgentLimitUsd: number | null;
-  cycleAgentSpendUsd: number;
-  agentRemainingUsd: number | null;
-  agentPercentUsed: number | null;
-  agentBlocked: boolean;
-  groups: DashboardGroup[];
-  families: GroupFamilyHierarchy[];
-}
-
-interface MemberLimit {
-  workspaceName: string;
-  budget: number | null;
-}
-
-interface MemberDashboardViewProps {
-  scopeLabel: string;
-  dashboardTitle: string;
-  cycleSpendUsd: number | null;
-  contractSpendUsd: number | null;
-  isInternal: boolean;
-  limits: MemberLimit[];
-  showLegacyGroups: boolean;
-  onToggleLegacyGroups: () => void;
-  groupsFetching: boolean;
-  groupsLoaded: boolean;
-  hasHierarchy: boolean;
-  familyRows: React.ReactNode;
-}
-
-interface DashboardTitleOptions {
-  role: string | null;
-  workspaceNames: string[];
-  teamNames: string[];
-  memberName: string;
-}
-
-function buildDashboardTitle({
-  role,
-  workspaceNames,
-  teamNames,
-  memberName,
-}: DashboardTitleOptions) {
-  if (role === "workspace_admin") {
-    if (workspaceNames.length === 1) {
-      return `${workspaceNames[0]} Workspace Dashboard`;
-    }
-    return workspaceNames.length > 1
-      ? `${workspaceNames.length} Workspaces Dashboard`
-      : "Workspace Dashboard";
-  }
-  if (role === "team_admin") {
-    if (teamNames.length === 1) return `${teamNames[0]} Group Dashboard`;
-    return teamNames.length > 1
-      ? `${teamNames.length} Groups Dashboard`
-      : "Group Dashboard";
-  }
-  if (role === "member") {
-    if (!memberName) return "My Dashboard";
-    return `${memberName}${memberName.endsWith("s") ? "'" : "'s"} Dashboard`;
-  }
-  return "Comcast Account Dashboard";
-}
-
-interface DashboardSummaryLike {
-  totalSpendUsd: number;
-  totalBudgetUsd: number;
-  totalRemainingUsd?: number | null;
-  budgetedGroups?: number;
-  groupsOver75: number;
-  groupsOver100?: number;
-  alertsSentThisPeriod: number;
-  billingPeriodLabel?: string | null;
-}
-
-interface GroupsDataLike {
-  billingPeriodLabel?: string | null;
-}
-
-function buildStatCards(
-  summary: DashboardSummaryLike | undefined,
-  groupsData: GroupsDataLike | undefined,
-  role: string | null,
-) {
-  const cards = [
-    {
-      title: "Total Spend",
-      value: summary ? `$${summary.totalSpendUsd.toFixed(2)}` : "—",
-      description:
-        summary?.billingPeriodLabel ??
-        groupsData?.billingPeriodLabel ??
-        "Current period",
-      icon: DollarSign,
-    },
-    {
-      title: "Total Budget",
-      value: summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : "—",
-      description: `${summary?.budgetedGroups ?? 0} visible groups budgeted`,
-      icon: TrendingUp,
-    },
-    {
-      title: "Remaining",
-      value:
-        summary?.totalRemainingUsd != null
-          ? `$${summary.totalRemainingUsd.toFixed(2)}`
-          : "—",
-      description: "Across visible budgeted pools",
-      icon: Wallet,
-      valueClassName:
-        (summary?.totalRemainingUsd ?? 0) < 0 ? "text-destructive" : "",
-    },
-    {
-      title: "Over Threshold",
-      value: summary ? summary.groupsOver75.toString() : "—",
-      description: `${summary?.groupsOver100 ?? 0} over budget`,
-      icon: AlertTriangle,
-    },
-    {
-      title: "Alerts Sent",
-      value: summary ? summary.alertsSentThisPeriod.toString() : "—",
-      description: "This billing period",
-      icon: RefreshCw,
-    },
-  ];
-  return cards.filter(
-    (card) => !(role === "workspace_admin" && card.title === "Alerts Sent"),
-  );
-}
-
-function MemberDashboardView({
-  scopeLabel,
-  dashboardTitle,
-  cycleSpendUsd,
-  contractSpendUsd,
-  isInternal,
-  limits,
-  showLegacyGroups,
-  onToggleLegacyGroups,
-  groupsFetching,
-  groupsLoaded,
-  hasHierarchy,
-  familyRows,
-}: MemberDashboardViewProps) {
-  return (
-    <div className="space-y-4 p-4 md:space-y-6 md:p-8">
-      <p
-        className="mx-auto max-w-3xl text-sm font-medium text-muted-foreground"
-        data-testid="text-summary-scope"
-      >
-        Yours · {scopeLabel}
-      </p>
-      <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <CardTitle data-testid="text-dashboard-title">
-              {dashboardTitle}
-            </CardTitle>
-            {isInternal && <InternalUserBadge />}
-          </div>
-          <CardDescription>
-            Your server-scoped usage, limits, and group memberships.
-          </CardDescription>
-          {isInternal && <InternalSpendExplanation />}
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div>
-              <p className="text-xs text-muted-foreground">
-                Current cycle Agent spend
-              </p>
-              <p
-                className="text-2xl font-bold font-mono tabular-nums"
-                data-testid="text-member-cycle-spend"
-              >
-                {cycleSpendUsd == null ? "—" : `$${cycleSpendUsd.toFixed(2)}`}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">
-                Contract-to-date spend
-              </p>
-              <p
-                className="text-2xl font-bold font-mono tabular-nums"
-                data-testid="text-member-contract-spend"
-              >
-                {contractSpendUsd == null
-                  ? "—"
-                  : `$${contractSpendUsd.toFixed(2)}`}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Per-user limit</p>
-              <div className="space-y-1" data-testid="text-member-limits">
-                {limits.length ? (
-                  limits.map((limit) => (
-                    <p key={limit.workspaceName} className="text-sm">
-                      <span className="font-mono font-semibold">
-                        {limit.budget == null
-                          ? "—"
-                          : `$${limit.budget.toFixed(2)}`}
-                      </span>
-                      {limits.length > 1 && (
-                        <span className="ml-1 text-muted-foreground">
-                          · {limit.workspaceName}
-                        </span>
-                      )}
-                    </p>
-                  ))
-                ) : (
-                  <p className="text-2xl font-bold">—</p>
-                )}
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      <Card data-testid="card-member-hierarchy">
-        <CardHeader>
-          <CardTitle>My families and groups</CardTitle>
-          <CardDescription>
-            Expand a family, then select a group to view its members.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-3 flex justify-end">
-            <button
-              type="button"
-              className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-pressed={showLegacyGroups}
-              data-testid="button-toggle-member-legacy-groups"
-              onClick={onToggleLegacyGroups}
-            >
-              {showLegacyGroups ? "Hide legacy groups" : "Show legacy groups"}
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table
-              className="w-full table-fixed"
-              data-testid="table-member-groups"
-            >
-              <caption className="sr-only">
-                Your authorized families and Replit role groups
-              </caption>
-              <colgroup>
-                <col className="w-[38%]" />
-                <col className="w-[10%]" />
-                <col className="w-[12%]" />
-                <col className="w-[10%]" />
-                <col className="w-[11%]" />
-                <col className="w-[9%]" />
-                <col className="w-[10%]" />
-              </colgroup>
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
-                    Hierarchy
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                    Members
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                    Spend
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                    Budget
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                    Remaining
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                    Usage
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">
-                    Pace
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {groupsFetching && !groupsLoaded ? (
-                  <tr>
-                    <td
-                      className="py-12 text-center text-sm text-muted-foreground"
-                      colSpan={7}
-                      role="status"
-                    >
-                      Loading your authorized hierarchy…
-                    </td>
-                  </tr>
-                ) : hasHierarchy ? (
-                  familyRows
-                ) : (
-                  <tr>
-                    <td
-                      className="py-12 text-center text-sm text-muted-foreground"
-                      colSpan={7}
-                    >
-                      No authorized groups found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function DashboardHeader({
-  dashboardTitle,
-  selectedRangeLabel,
-  usageIsEmpty,
-  hasSummary,
-  showBillingWindowBanner,
-  reportingRangeStart,
-}: {
-  dashboardTitle: string;
-  selectedRangeLabel: string;
-  usageIsEmpty: boolean;
-  hasSummary: boolean;
-  showBillingWindowBanner: boolean;
-  reportingRangeStart: string;
-}) {
-  return (
-    <>
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1
-            className="text-2xl md:text-3xl font-bold tracking-tight"
-            data-testid="text-dashboard-title"
-          >
-            {dashboardTitle}
-          </h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <RangeFilter selectedLabel={selectedRangeLabel} />
-        </div>
-      </div>
-      {usageIsEmpty && (
-        <p
-          className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
-          data-testid="empty-usage-data"
-        >
-          No usage data is available for this period.
-        </p>
-      )}
-      {hasSummary && (
-        <p className="text-xs text-muted-foreground">
-          Reporting period: {selectedRangeLabel}
-        </p>
-      )}
-      {showBillingWindowBanner && (
-        <div
-          className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm"
-          data-testid="billing-window-banner"
-        >
-          Total Spend uses the verified Enterprise billing window shown above,
-          beginning {new Date(reportingRangeStart).toLocaleDateString()}, rather
-          than the earlier data-availability cutoff.
-        </div>
-      )}
-    </>
-  );
-}
-
-function DashboardStatCards({
-  scopeLabel,
-  statCards,
-}: {
-  scopeLabel: string;
-  statCards: ReturnType<typeof buildStatCards>;
-}) {
-  return (
-    <div>
-      <p
-        className="mb-2 text-sm font-medium text-muted-foreground"
-        data-testid="text-summary-scope"
-      >
-        Yours · {scopeLabel}
-      </p>
-      <div className="flex flex-wrap gap-3 md:gap-4">
-        {statCards.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <Card
-              key={stat.title}
-              className="min-w-0 flex-[1_1_calc(50%-0.75rem)] md:flex-[1_1_calc(33.333%-1rem)] lg:flex-[1_1_calc(20%-1rem)]"
-              data-testid={`card-stat-${stat.title.toLowerCase().replace(/\s+/g, "-")}`}
-            >
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2 md:p-6 md:pb-2">
-                <CardTitle className="text-sm font-medium">
-                  {stat.title}
-                </CardTitle>
-                <Icon className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent className="px-4 pb-4 md:px-6 md:pb-6">
-                <div
-                  className={`text-xl sm:text-2xl font-bold font-mono tabular-nums ${stat.valueClassName || ""}`}
-                  data-testid={`text-stat-${stat.title.toLowerCase().replace(/\s+/g, "-")}`}
-                >
-                  {stat.value}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
-                  {stat.description}
-                </p>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ReconciliationRow({
-  isAccountWide,
-  spendUsd,
-}: {
-  isAccountWide: boolean;
-  spendUsd: number;
-}) {
-  return (
-    <tr
-      className="border-b border-border bg-muted/10"
-      data-testid={
-        isAccountWide
-          ? "row-account-reconciliation"
-          : "row-unattributed-projects"
-      }
-    >
-      <td className="py-3 px-4">
-        <div className="flex flex-col">
-          <span className="text-sm font-medium italic">
-            {isAccountWide
-              ? "True unattributed residual"
-              : "Unattributed project residual"}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {isAccountWide
-              ? "No group/project ID, missing creator, or creator no longer a member"
-              : "No project ID, missing creator, or creator no longer a member"}
-          </span>
-        </div>
-      </td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-      <td className="py-3 px-4 text-right">
-        <span className="text-sm font-mono tabular-nums">
-          ${spendUsd.toFixed(2)}
-        </span>
-      </td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-    </tr>
-  );
-}
-
-function DashboardTotals({
-  memberCount,
-  summary,
-}: {
-  memberCount: number;
-  summary: DashboardSummaryLike | undefined;
-}) {
-  const percentUsed =
-    summary && summary.totalBudgetUsd > 0
-      ? (summary.totalSpendUsd / summary.totalBudgetUsd) * 100
-      : null;
-  return (
-    <tfoot>
-      <tr className="border-t-2 border-border bg-muted/40 font-semibold">
-        <td className="py-3 px-4 text-sm">Total</td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm font-mono tabular-nums">{memberCount}</span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm font-mono tabular-nums">
-            {summary ? `$${summary.totalSpendUsd.toFixed(2)}` : "—"}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm font-mono tabular-nums">
-            {summary ? `$${summary.totalBudgetUsd.toFixed(2)}` : "—"}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span
-            className={`text-sm font-mono tabular-nums ${(summary?.totalRemainingUsd ?? 0) < 0 ? "text-destructive" : ""}`}
-          >
-            {summary?.totalRemainingUsd != null
-              ? `$${summary.totalRemainingUsd.toFixed(2)}`
-              : "—"}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          {percentUsed == null ? (
-            <span className="text-sm text-muted-foreground">—</span>
-          ) : (
-            <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-              <span
-                className={`text-xs font-mono tabular-nums ${percentUsed >= 100 ? "text-destructive" : ""}`}
-              >
-                {percentUsed.toFixed(1)}%
-              </span>
-              <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
-                <div
-                  className={`h-full transition-all duration-500 ${percentUsed >= 100 ? "bg-destructive" : "bg-primary"}`}
-                  style={{ width: `${Math.min(percentUsed, 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm text-muted-foreground">—</span>
-        </td>
-      </tr>
-    </tfoot>
-  );
-}
-
-function selectHierarchyRows(
-  hasHierarchy: boolean,
-  startsAtWorkspace: boolean,
-  workspaceRows: React.ReactNode,
-  familyRows: React.ReactNode,
-  fallbackRows: React.ReactNode,
-) {
-  if (!hasHierarchy) return fallbackRows;
-  return startsAtWorkspace ? workspaceRows : familyRows;
-}
-
-function DashboardTableRows({
-  loading,
-  rows,
-}: {
-  loading: boolean;
-  rows: React.ReactNode;
-}) {
-  if (!loading) return <>{rows}</>;
-  return (
-    <tr>
-      <td
-        className="py-12 text-center text-sm text-muted-foreground"
-        colSpan={7}
-        role="status"
-      >
-        Loading authorized hierarchy…
-      </td>
-    </tr>
-  );
-}
-
-function DashboardReconciliation({
-  visible,
-  isAccountWide,
-  spendUsd,
-}: {
-  visible: boolean;
-  isAccountWide: boolean;
-  spendUsd: number;
-}) {
-  if (!visible) return null;
-  return (
-    <ReconciliationRow isAccountWide={isAccountWide} spendUsd={spendUsd} />
-  );
-}
-
-function DashboardTableFooter({
-  visible,
-  memberCount,
-  summary,
-}: {
-  visible: boolean;
-  memberCount: number;
-  summary: DashboardSummaryLike | undefined;
-}) {
-  if (!visible) return null;
-  return <DashboardTotals memberCount={memberCount} summary={summary} />;
-}
-
-function DashboardEmptyState({ visible }: { visible: boolean }) {
-  if (!visible) return null;
-  return (
-    <div
-      className="text-center py-12 text-muted-foreground"
-      data-testid="text-no-groups"
-    >
-      No groups found
-    </div>
-  );
-}
+const TrendChart = lazy(() => import("./dashboard-chart"));
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
-  const { auth, isAccountWide, role, user, capabilities } = useAuthContext();
-  const { rangeSelection, rangeType, startDate, endDate } = useRange();
-  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const initialExpansionSignature = useRef("");
-  const [showLegacyGroups, setShowLegacyGroups] = useState(false);
-  const dashboardMeasurement = useRef<{
-    signature: string;
+  const searchString = useSearch();
+  const { role, isAccountAdmin, preview } = useAuthContext();
+  const { rangeType, startDate, endDate } = useRange();
+  const { toast } = useToast();
+
+  const searchParams = new URLSearchParams(searchString);
+  const granularity = searchParams.get('granularity') || undefined;
+  const trendMode = searchParams.get('trendMode') || undefined;
+  const viewScope = searchParams.get('viewScope') || undefined;
+
+  const queryParams = useMemo(() => {
+    const params: any = { rangeType };
+    if (rangeType === "custom") {
+      params.startDate = startDate;
+      params.endDate = endDate;
+    }
+    if (granularity) params.granularity = granularity;
+    if (trendMode) params.trendMode = trendMode;
+    if (viewScope) params.viewScope = viewScope;
+    return params;
+  }, [rangeType, startDate, endDate, granularity, trendMode, viewScope]);
+
+  const { data, isLoading, isError, error, isFetching } = useGetDashboard(queryParams);
+
+  const identityKey = `${preview ?? 'real'}:${role ?? 'signed-out'}`;
+  const querySignature = JSON.stringify(queryParams);
+  const prevIdentity = useRef(identityKey);
+  const prevData = useRef(data);
+  const generation = useRef(-1);
+  const previousQuerySignature = useRef<string | null>(null);
+  const paintedGeneration = useRef<number | null>(null);
+  const phaseRef = useRef<{
     context: DashboardPerformanceContext;
-    phaseStartMark: string;
-    isRangeChange: boolean;
-    requiredRequestsComplete: boolean;
-    firstUsefulPainted: boolean;
-    allRequiredPainted: boolean;
-    refreshStartMark: string | null;
-    cleanupPaints: Array<() => void>;
+    kind: 'initial' | 'range';
+    startMark: string;
+  } | null>(null);
+  const backgroundRefreshRef = useRef<{
+    context: DashboardPerformanceContext;
+    startMark: string;
   } | null>(null);
 
-  const queryParams = useMemo(
-    () => buildRangeQueryParams(rangeType, startDate, endDate),
-    [rangeType, startDate, endDate],
-  );
-
-  const {
-    data: groupsData,
-    isError: groupsError,
-    isFetched: groupsFetched,
-    isFetching: groupsFetching,
-    isPlaceholderData: groupsPlaceholder,
-  } = useListGroups(
-    queryParams,
-    {
-      query: {
-        queryKey: getListGroupsQueryKey(queryParams),
-        placeholderData: (previousData) => previousData,
-      },
-    },
-  );
-
-  const {
-    data: summary,
-    isError: summaryError,
-    isFetched: summaryFetched,
-    isFetching: summaryFetching,
-    isPlaceholderData: summaryPlaceholder,
-  } = useGetSummary(
-    queryParams,
-    {
-      query: {
-        queryKey: getGetSummaryQueryKey(queryParams),
-        placeholderData: (previousData) => previousData,
-      },
-    },
-  );
-  const {
-    data: teamBudgetsData,
-    isError: teamBudgetsError,
-    isFetched: teamBudgetsFetched,
-    isFetching: teamBudgetsFetching,
-  } = useGetTeamsBudgets({
-      query: {
-        queryKey: getGetTeamsBudgetsQueryKey(),
-      },
-    });
-  const {
-    data: memberCycleActivity,
-    isError: memberCycleError,
-    isFetched: memberCycleFetched,
-    isFetching: memberCycleFetching,
-  } = useGetUserActivity(
-    { rangeType: "billing" },
-    {
-      query: {
-        enabled: role === "member",
-        queryKey: getGetUserActivityQueryKey({ rangeType: "billing" }),
-      },
-    },
-  );
-  const {
-    data: memberTermActivity,
-    isError: memberTermError,
-    isFetched: memberTermFetched,
-    isFetching: memberTermFetching,
-  } = useGetUserActivity(
-    { rangeType: "full-term" },
-    {
-      query: {
-        enabled: role === "member",
-        queryKey: getGetUserActivityQueryKey({ rangeType: "full-term" }),
-      },
-    },
-  );
-
-  const usageAvailable = groupsData?.usageHealth.status !== "empty";
-  const groups = useMemo(
-    () =>
-      (groupsData?.groups ?? [])
-        .filter((group) => showLegacyGroups || !group.isLegacy)
-        .map((group) => {
-          return {
-            ...group,
-            spendUsd: group.rollupSpendUsd,
-            spendLoaded: usageAvailable,
-            paceSpendLoaded: usageAvailable,
-          };
-        }),
-    [groupsData?.groups, usageAvailable, showLegacyGroups],
-  );
-  const memberWorkspaceIds = [
-    ...new Set(groups.map((group) => group.workspaceId)),
-  ];
-  const memberLimitQueries = useQueries({
-    queries: memberWorkspaceIds.map((workspaceId) =>
-      getListVisibleWorkspaceMembersQueryOptions(workspaceId, {
-        query: {
-          enabled: role === "member",
-          queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId),
-        },
-      }),
-    ),
-  });
-
-  const scopeKey = JSON.stringify({
-    userId: user?.id ?? null,
-    role,
-    preview: auth?.isPreview ?? false,
-    workspaceIds: auth?.workspaceIds ?? [],
-    teamNames: auth?.teamNames ?? [],
-    groupIds: auth?.groupIds ?? [],
-    userIds: auth?.userIds ?? [],
-  });
-  const rangeKey = JSON.stringify(queryParams);
-  const measurementSignature = `${scopeKey}|${rangeKey}`;
-  const memberLimitsFetching = memberLimitQueries.some((query) => query.isFetching);
-  const memberLimitsSettled = role !== "member" || (
-    groupsData !== undefined &&
-    memberLimitQueries.every((query) => query.isFetched || query.isError) &&
-    !memberLimitsFetching
-  );
-  const memberLimitValuesReady = role !== "member" || (
-    groupsData !== undefined &&
-    memberLimitQueries.every((query) => query.data !== undefined)
-  );
-  const memberRequestsSettled = role !== "member" || (
-    (memberCycleFetched || memberCycleError) &&
-    (memberTermFetched || memberTermError) &&
-    !memberCycleFetching &&
-    !memberTermFetching &&
-    memberLimitsSettled
-  );
-  const memberValuesReady = role !== "member" || (
-    memberCycleActivity !== undefined &&
-    memberTermActivity !== undefined &&
-    memberLimitValuesReady
-  );
-  const requiredRequestsFetching =
-    groupsFetching ||
-    summaryFetching ||
-    teamBudgetsFetching ||
-    memberCycleFetching ||
-    memberTermFetching ||
-    memberLimitsFetching;
-  const requiredRequestsSettled =
-    (groupsFetched || groupsError) &&
-    (summaryFetched || summaryError) &&
-    (teamBudgetsFetched || teamBudgetsError) &&
-    memberRequestsSettled &&
-    !requiredRequestsFetching;
-  const currentRangeValuesReady =
-    groupsData !== undefined &&
-    summary !== undefined &&
-    !groupsPlaceholder &&
-    !summaryPlaceholder;
-  const firstUsefulValuesReady = currentRangeValuesReady && memberValuesReady;
-  const allRequiredValuesReady =
-    firstUsefulValuesReady &&
-    teamBudgetsData !== undefined &&
-    requiredRequestsSettled;
-
-  useLayoutEffect(() => {
-    const previous = dashboardMeasurement.current;
-    if (!previous || previous.signature !== measurementSignature) {
-      previous?.cleanupPaints.forEach((cleanup) => cleanup());
-      const generation = (previous?.context.generation ?? 0) + 1;
-      const context = { generation, scopeKey, rangeKey };
-      const isRangeChange = Boolean(
-        previous &&
-        previous.context.scopeKey === scopeKey &&
-        previous.context.rangeKey !== rangeKey,
-      );
-      const phaseStartMark = markDashboardMilestone(
-        isRangeChange ? "range-change-start" : "initial-load-start",
-        context,
-      );
-      dashboardMeasurement.current = {
-        signature: measurementSignature,
-        context,
-        phaseStartMark,
-        isRangeChange,
-        requiredRequestsComplete: false,
-        firstUsefulPainted: false,
-        allRequiredPainted: false,
-        refreshStartMark: null,
-        cleanupPaints: [],
-      };
-    }
-
-    const measurement = dashboardMeasurement.current;
-    if (!measurement) return;
-
-    if (
-      measurement.allRequiredPainted &&
-      requiredRequestsFetching &&
-      !measurement.refreshStartMark
-    ) {
-      measurement.refreshStartMark = markDashboardMilestone(
-        "background-refresh-start",
-        measurement.context,
-      );
-    }
-
-    if (requiredRequestsSettled && !measurement.requiredRequestsComplete) {
-      markDashboardMilestone("required-requests-complete", measurement.context);
-      measurement.requiredRequestsComplete = true;
-    }
-
-    if (firstUsefulValuesReady && !measurement.firstUsefulPainted) {
-      const readyMark = markDashboardMilestone(
-        "first-useful-values-ready",
-        measurement.context,
-      );
-      measurement.cleanupPaints.push(reportDashboardMilestonePainted(
-        "first-useful-values",
-        measurement.context,
-        readyMark,
-        measurement.isRangeChange ? measurement.phaseStartMark : undefined,
-      ));
-      measurement.firstUsefulPainted = true;
-    }
-
-    if (allRequiredValuesReady && !measurement.allRequiredPainted) {
-      const readyMark = markDashboardMilestone(
-        "all-required-values-ready",
-        measurement.context,
-      );
-      measurement.cleanupPaints.push(reportDashboardMilestonePainted(
-        "all-required-values",
-        measurement.context,
-        readyMark,
-        measurement.phaseStartMark,
-      ));
-      if (measurement.isRangeChange) {
-        measurement.cleanupPaints.push(reportDashboardMilestonePainted(
-          "range-change-complete",
-          measurement.context,
-          readyMark,
-          measurement.phaseStartMark,
-        ));
-      }
-      measurement.allRequiredPainted = true;
-    }
-
-    if (
-      measurement.refreshStartMark &&
-      requiredRequestsSettled &&
-      allRequiredValuesReady
-    ) {
-      const readyMark = markDashboardMilestone(
-        "background-refresh-ready",
-        measurement.context,
-      );
-      measurement.cleanupPaints.push(reportDashboardMilestonePainted(
-        "background-refresh-complete",
-        measurement.context,
-        readyMark,
-        measurement.refreshStartMark,
-      ));
-      measurement.refreshStartMark = null;
-    }
-  }, [
-    allRequiredValuesReady,
-    firstUsefulValuesReady,
-    measurementSignature,
-    rangeKey,
-    requiredRequestsFetching,
-    requiredRequestsSettled,
-    scopeKey,
-  ]);
-
-  useEffect(() => () => {
-    dashboardMeasurement.current?.cleanupPaints.forEach((cleanup) => cleanup());
-  }, []);
-
-  // Build team budget map
-  const teamBudgetMap = useMemo(() => {
-    const m = new Map<string, number | null>();
-    for (const tb of teamBudgetsData?.budgets ?? []) {
-      m.set(tb.teamName, tb.amountUsd);
-    }
-    return m;
-  }, [teamBudgetsData]);
-  const teamAgentStateMap = useMemo(
-    () => new Map(
-      (teamBudgetsData?.budgets ?? []).map((team) => [team.teamName, team]),
-    ),
-    [teamBudgetsData],
-  );
-  const workspaceTeamSpendMap = useMemo(
-    () => indexWorkspaceTeamSpend(groupsData?.workspaceTeamRawSpend ?? []),
-    [groupsData?.workspaceTeamRawSpend],
-  );
-  const visibleNonlegacyWorkspaceTeams = useMemo(() => {
-    return (groupsData?.hierarchy ?? []).flatMap((workspace) =>
-      workspace.teams.flatMap((team) => {
-        if (
-          !team.teamName ||
-          !team.families.some((family) => !family.isLegacy)
-        ) {
-          return [];
-        }
-        const key = workspaceTeamSpendKey(workspace.workspaceId, team.teamName);
-        return [{
-          workspaceId: workspace.workspaceId,
-          teamName: team.teamName,
-          spendUsd: workspaceTeamSpendMap.get(key) ?? 0,
-        }];
-      }),
-    );
-  }, [groupsData?.hierarchy, workspaceTeamSpendMap]);
-  const workspaceTeamBudgetMap = useMemo(
-    () =>
-      allocateWorkspaceTeamBudgets(
-        visibleNonlegacyWorkspaceTeams,
-        teamBudgetMap,
-      ),
-    [visibleNonlegacyWorkspaceTeams, teamBudgetMap],
-  );
-  const visibleNonlegacyTeamNames = useMemo(
-    () =>
-      new Set(
-        visibleNonlegacyWorkspaceTeams.map((section) => section.teamName),
-      ),
-    [visibleNonlegacyWorkspaceTeams],
-  );
-
-  // Compute team sections
-  const teamSections = useMemo(() => {
-    const teamSections: TeamSection[] = [];
-    for (const workspace of groupsData?.hierarchy ?? []) {
-      for (const team of workspace.teams) {
-        const families = team.families.filter(
-          (family) => showLegacyGroups || !family.isLegacy,
-        );
-        const teamGroups = families.flatMap((family) => family.groups);
-        if (teamGroups.length === 0) continue;
-        if (!team.teamName) {
-          continue;
-        }
-        const teamName = team.teamName;
-        const memberCount = families.reduce(
-          (total, family) => total + family.memberCount,
-          0,
-        );
-      // Financial values remain server-owned. Provisional server values stay
-      // visible while canonical data refreshes in the background.
-        const spendUsd =
-          workspaceTeamSpendMap.get(
-            workspaceTeamSpendKey(workspace.workspaceId, teamName),
-          ) ?? 0;
-        const spendLoaded = usageAvailable;
-        const paceSpendLoaded = teamGroups.every(
-          (group) => group.paceSpendLoaded,
-        );
-        const paceSpendUsd = teamGroups.reduce(
-          (sum, group) => sum + (group.paceSpendUsd ?? 0),
-          0,
-        );
-        const budgetAllocation = workspaceTeamBudgetMap.get(
-          workspaceTeamSpendKey(workspace.workspaceId, teamName),
-        );
-        const budgetUsd = budgetAllocation?.budgetUsd ?? null;
-        const hasBudget = budgetUsd !== null && budgetUsd > 0;
-        const remainingUsd = hasBudget ? budgetUsd! - spendUsd : null;
-        const percentUsed = hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
-        const agentState = teamAgentStateMap.get(teamName);
-
-        teamSections.push({
-          workspaceId: workspace.workspaceId,
-          workspaceName: workspace.workspaceName ?? workspace.workspaceId,
-          teamName,
-          memberCount,
-          spendUsd,
-          spendLoaded,
-          paceSpendUsd,
-          paceSpendLoaded,
-          budgetUsd: budgetUsd ?? null,
-          budgetIsShared: budgetAllocation?.isShared ?? false,
-          budgetAllocationMethod: budgetAllocation?.method ?? "full",
-          remainingUsd,
-          percentUsed,
-          monthlyAgentLimitUsd: agentState?.monthlyAgentLimitUsd ?? null,
-          cycleAgentSpendUsd: agentState?.cycleAgentSpendUsd ?? 0,
-          agentRemainingUsd: agentState?.agentRemainingUsd ?? null,
-          agentPercentUsed: agentState?.agentPercentUsed ?? null,
-          agentBlocked: agentState?.agentBlocked ?? false,
-          groups: teamGroups,
-          families,
-        });
-      }
-    }
-
-    // Canonical budgets may exist before any Replit group is assigned. Keep
-    // those teams visible with zero spend so dashboard totals reconcile.
-    if (isAccountWide) {
-      for (const [teamName, budgetUsd] of teamBudgetMap) {
-        if (visibleNonlegacyTeamNames.has(teamName)) continue;
-        teamSections.push({
-          workspaceId: "__budget_only__",
-          workspaceName: "Unallocated Budgets",
-          teamName,
-          memberCount: 0,
-          spendUsd: 0,
-          spendLoaded: true,
-          paceSpendUsd: 0,
-          paceSpendLoaded: true,
-          budgetUsd,
-          budgetIsShared: false,
-          budgetAllocationMethod: "full",
-          remainingUsd: budgetUsd != null && budgetUsd > 0 ? budgetUsd : null,
-          percentUsed: budgetUsd != null && budgetUsd > 0 ? 0 : null,
-          monthlyAgentLimitUsd:
-            teamAgentStateMap.get(teamName)?.monthlyAgentLimitUsd ?? null,
-          cycleAgentSpendUsd:
-            teamAgentStateMap.get(teamName)?.cycleAgentSpendUsd ?? 0,
-          agentRemainingUsd:
-            teamAgentStateMap.get(teamName)?.agentRemainingUsd ?? null,
-          agentPercentUsed:
-            teamAgentStateMap.get(teamName)?.agentPercentUsed ?? null,
-          agentBlocked: teamAgentStateMap.get(teamName)?.agentBlocked ?? false,
-          groups: [],
-          families: [],
-        });
-      }
-    }
-
-    return teamSections;
-  }, [
-    groups,
-    teamBudgetMap,
-    teamAgentStateMap,
-    groupsData,
-    usageAvailable,
-    isAccountWide,
-    workspaceTeamSpendMap,
-    workspaceTeamBudgetMap,
-    visibleNonlegacyTeamNames,
-    showLegacyGroups,
-  ]);
-
-  const presentation = dashboardPresentation(role);
-  const toggleTeam = (teamKey: string) => {
-    setExpandedTeams((previous) => toggleDisclosure(previous, teamKey));
-  };
-
-  const statCards = buildStatCards(summary, groupsData, role);
-
-  const renderGroupRow = (group: (typeof groups)[0]) => {
-    const hasBudget = group.budgetUsd != null && group.budgetUsd > 0;
-    const displaySpend = group.spendUsd ?? 0;
-    const displayRemaining = hasBudget
-      ? (group.remainingUsd ?? group.budgetUsd! - displaySpend)
-      : null;
-    const displayPercentUsed = hasBudget
-      ? (group.percentUsed ?? (displaySpend / group.budgetUsd!) * 100)
-      : null;
-
-    return (
-      <tr
-        key={group.groupId}
-        className={`border-b border-border transition-colors group ${
-          group.isSynthetic ? "bg-muted/10" : "hover:bg-muted/50 cursor-pointer"
-        }`}
-        data-testid={`row-group-${group.groupId}`}
-        tabIndex={group.isSynthetic ? undefined : 0}
-        onClick={(e) => {
-          if (group.isSynthetic) return;
-          if ((e.target as HTMLElement).closest("button, input, a")) return;
-          setLocation(`/groups/${group.groupId}`);
-        }}
-        onKeyDown={(e) => {
-          if (group.isSynthetic || (e.key !== "Enter" && e.key !== " ")) return;
-          e.preventDefault();
-          setLocation(`/groups/${group.groupId}`);
-        }}
-      >
-        <td className="py-3 px-4 pl-14">
-          <div className="flex flex-col">
-            <span
-              className="text-sm font-medium"
-              data-testid={`text-group-name-${group.groupId}`}
-            >
-              {group.name}
-            </span>
-            <span className="flex items-center gap-1">
-              <Badge
-                variant="outline"
-                className={`text-[9px] h-4 px-1 ${roleBadgeClass(group.role)}`}
-              >
-                {roleLabel(group.role)}
-              </Badge>
-              {group.isLegacy && (
-                <Badge variant="outline" className="text-[9px] h-4 px-1">
-                  Legacy
-                </Badge>
-              )}
-            </span>
-          </div>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span
-            className="text-sm font-mono tabular-nums"
-            data-testid={`text-members-${group.groupId}`}
-          >
-            {group.memberCount ?? "—"}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span
-            className="text-sm font-mono tabular-nums"
-            data-testid={`text-spend-${group.groupId}`}
-          >
-            ${displaySpend.toFixed(2)}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <div className="flex flex-col items-end gap-1">
-            {capabilities.canWriteGroupLimits ? (
-              <BudgetInput
-                groupId={group.groupId}
-                currentBudget={group.budgetUsd ?? null}
-              />
-            ) : (
-              <span
-                className="text-sm font-mono tabular-nums"
-                data-testid={`text-budget-${group.groupId}`}
-              >
-                {group.budgetUsd !== null && group.budgetUsd !== undefined
-                  ? `$${group.budgetUsd.toFixed(2)}`
-                  : "—"}
-              </span>
-            )}
-            {group.budgetSource && (
-              <Badge
-                variant="secondary"
-                className="text-[9px] h-4 px-1 py-0 uppercase bg-muted/50"
-                title={`Budget source: ${group.budgetSource}`}
-              >
-                {group.budgetSource}
-              </Badge>
-            )}
-          </div>
-        </td>
-        <td className="py-3 px-4 text-right">
-          {displayRemaining === null ? (
-            <span className="text-sm text-muted-foreground">—</span>
-          ) : (
-            <span
-              className={`text-sm font-mono tabular-nums ${displayRemaining < 0 ? "text-destructive font-bold" : ""}`}
-            >
-              ${displayRemaining.toFixed(2)}
-            </span>
-          )}
-        </td>
-        <td className="py-3 px-4 text-right">
-          <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-            {displayPercentUsed === null ? (
-              <span className="text-sm text-muted-foreground">—</span>
-            ) : (
-              <>
-                <div className="flex items-center gap-2">
-                  {group.agentBlocked && (
-                    <Badge
-                      variant="destructive"
-                      className="uppercase text-[10px]"
-                      data-testid={`badge-blocked-group-${group.groupId}`}
-                      title={`Agent spend ${group.cycleAgentSpendUsd == null ? "unavailable" : `$${group.cycleAgentSpendUsd.toFixed(2)}`} of ${group.monthlyAgentLimitUsd == null ? "no limit" : `$${group.monthlyAgentLimitUsd.toFixed(2)}`}`}
-                    >
-                      Blocked
-                    </Badge>
-                  )}
-                  <ThresholdBadge
-                    percentUsed={displayPercentUsed}
-                    thresholdsFired={group.thresholdsFired}
-                  />
-                </div>
-                <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
-                  <div
-                    className={`h-full transition-all duration-500 ${displayPercentUsed >= 100 ? "bg-destructive" : "bg-primary"}`}
-                    style={{ width: `${Math.min(displayPercentUsed, 100)}%` }}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <PaceCell
-            spendUsd={group.paceSpendUsd ?? 0}
-            budgetUsd={group.budgetUsd ?? null}
-            periodStart={summary?.pacePeriodStart ?? ""}
-            periodEnd={summary?.pacePeriodEnd ?? ""}
-            periodLabel={summary?.pacePeriodLabel ?? ""}
-            isFallback={summary?.pacePeriodIsFallback ?? true}
-          />
-        </td>
-      </tr>
-    );
-  };
-
-  const renderClusterRow = (
-    family: GroupFamilyHierarchy,
-    workspaceName: string,
-  ) => {
-    const uniqueRoles = [...new Set(family.groups.map((group) => group.role))];
-    const groupIds = family.groups.map((group) => group.groupId);
-    const clusterUrl = `/clusters?ids=${encodeURIComponent(groupIds.join(","))}`;
-    return (
-      <tr
-        key={family.familyKey}
-        className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
-        tabIndex={0}
-        onClick={() => setLocation(clusterUrl)}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault();
-          setLocation(clusterUrl);
-        }}
-      >
-        <td className="py-3 px-4 pl-10">
-          <div className="flex flex-col gap-1">
-            <span className="text-sm font-medium">{family.familyName}</span>
-            {family.isLegacy && (
-              <Badge variant="outline" className="w-fit text-[9px] h-4 px-1">
-                Legacy
-              </Badge>
-            )}
-            <div className="flex items-center gap-1">
-              <Layers className="h-3 w-3 text-muted-foreground" />
-              <div className="flex gap-1">
-                {uniqueRoles.map((r) => (
-                  <span
-                    key={r}
-                    className={`inline-flex items-center border rounded px-1.5 py-0 text-[9px] font-medium ${roleBadgeClass(r)}`}
-                  >
-                    {roleLabel(r)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        </td>
-        <td className="py-3 px-4">
-          <span className="text-sm text-muted-foreground">
-            {workspaceName || "—"}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm font-mono tabular-nums">
-            {family.memberCount}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span
-            className="text-sm font-mono tabular-nums"
-          >
-            ${family.spendUsd.toFixed(2)}
-          </span>
-        </td>
-        {/* Budget, Remaining, Usage, Pace — not applicable at cluster level */}
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm text-muted-foreground">—</span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm text-muted-foreground">—</span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm text-muted-foreground">—</span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm text-muted-foreground">—</span>
-        </td>
-      </tr>
-    );
-  };
-
-  const renderTeamGroups = (team: TeamSection) => {
-    return team.families.flatMap((family) => [
-      renderClusterRow(family, team.workspaceName),
-      ...family.groups.map((group) => renderGroupRow(group)),
-    ]);
-  };
-
-  const renderTeamHeader = (team: TeamSection) => {
-    const isBudgetOnlyWorkspace = team.workspaceId === "__budget_only__";
-    const teamKey = `${team.workspaceId}::${team.teamName}`;
-    const expanded = expandedTeams.has(teamKey);
-    const hasBudget = team.budgetUsd !== null && team.budgetUsd > 0;
-    const displayRemaining = hasBudget ? team.budgetUsd! - team.spendUsd : null;
-    const displayPercentUsed = hasBudget
-      ? (team.spendUsd / team.budgetUsd!) * 100
-      : null;
-    const clusterCount = team.families.length;
-
-    if (isBudgetOnlyWorkspace) {
-      return (
-        <tr
-          key={`team-${teamKey}`}
-          className="border-b border-border transition-colors group select-none hover:bg-muted/50"
-          data-testid={`row-team-${team.teamName}`}
-        >
-          <td className="py-3 px-4 text-sm" colSpan={1}>
-            <div className="flex items-center gap-2">
-              <span className="w-4" aria-hidden="true" />
-              <span className="font-medium text-muted-foreground">
-                {team.teamName}
-              </span>
-            </div>
-          </td>
-          <td className="py-3 px-4">
-            <span className="text-sm text-muted-foreground opacity-50">—</span>
-          </td>
-          <td className="py-3 px-4 text-right">
-            <span className="text-sm font-mono tabular-nums text-muted-foreground opacity-50">
-              0
-            </span>
-          </td>
-          <td className="py-3 px-4 text-right">
-            <span className="text-sm font-mono tabular-nums text-muted-foreground opacity-50">
-              $0.00
-            </span>
-          </td>
-          <td className="py-3 px-4 text-right">
-            <span className="text-sm font-mono tabular-nums font-semibold">
-              {team.budgetUsd !== null && team.budgetUsd !== undefined
-                ? `$${team.budgetUsd.toFixed(2)}`
-                : "—"}
-            </span>
-          </td>
-          <td className="py-3 px-4 text-right">
-            <span className="text-sm font-mono tabular-nums text-muted-foreground">
-              {team.budgetUsd !== null && team.budgetUsd !== undefined
-                ? `$${team.budgetUsd.toFixed(2)}`
-                : "—"}
-            </span>
-          </td>
-          <td className="py-3 px-4 text-right">
-            <span className="text-sm font-mono tabular-nums text-muted-foreground opacity-50">
-              0.0%
-            </span>
-          </td>
-          <td className="py-3 px-4 text-right">
-            <span className="text-sm text-muted-foreground opacity-50">—</span>
-          </td>
-        </tr>
-      );
-    }
-
-    return (
-      <tr
-        key={`team-${teamKey}`}
-        className={`border-b border-border bg-muted/30 transition-colors group select-none ${
-          clusterCount > 0 ? "hover:bg-muted/50 cursor-pointer" : ""
-        }`}
-        data-testid={`row-team-${team.teamName}`}
-        tabIndex={clusterCount > 0 ? 0 : undefined}
-        onClick={() => {
-          if (clusterCount > 0) toggleTeam(teamKey);
-        }}
-        onKeyDown={(e) => {
-          if (clusterCount === 0 || (e.key !== "Enter" && e.key !== " "))
-            return;
-          e.preventDefault();
-          toggleTeam(teamKey);
-        }}
-      >
-        <td className="py-3 px-4 font-semibold text-sm" colSpan={1}>
-          <div className="flex items-center gap-2">
-            {clusterCount > 0 ? (
-              expanded ? (
-                <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              ) : (
-                <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              )
-            ) : (
-              <span className="w-4" aria-hidden="true" />
-            )}
-            <span>{team.teamName}</span>
-            {team.agentBlocked && (
-              <Badge
-                variant="destructive"
-                className="uppercase text-[9px] h-4 px-1"
-                data-testid={`badge-blocked-team-${team.teamName}`}
-                title={`Agent spend $${team.cycleAgentSpendUsd.toFixed(2)} of ${team.monthlyAgentLimitUsd == null ? "no limit" : `$${team.monthlyAgentLimitUsd.toFixed(2)}`}`}
-              >
-                Blocked
-              </Badge>
-            )}
-            {team.budgetIsShared && (
-              <Badge
-                variant="outline"
-                className="text-[9px] h-4 px-1 ml-1 font-normal"
-                title={
-                  team.budgetAllocationMethod === "equal"
-                    ? "Workspace share of a shared team budget, split equally because current visible spend is zero."
-                    : "Workspace share of a shared team budget, allocated by current visible spend."
-                }
-              >
-                Shared budget share
-              </Badge>
-            )}
-            <Badge
-              variant="outline"
-              className="text-[9px] h-4 px-1 ml-1 font-normal"
-            >
-              {clusterCount > 0
-                ? `${clusterCount} famil${clusterCount !== 1 ? "ies" : "y"}`
-                : "Budget only"}
-            </Badge>
-          </div>
-        </td>
-        <td className="py-3 px-4">
-          {/* workspace col — blank for team header */}
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span className="text-sm font-mono tabular-nums font-semibold">
-            {team.memberCount}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span
-            className="text-sm font-mono tabular-nums font-semibold"
-          >
-            ${team.spendUsd.toFixed(2)}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <span
-            className="text-sm font-mono tabular-nums font-semibold"
-            data-testid={`text-team-budget-${team.workspaceId}-${team.teamName}`}
-            title={
-              team.budgetIsShared
-                ? team.budgetAllocationMethod === "equal"
-                  ? "Workspace share of a shared team budget, split equally because current visible spend is zero."
-                  : "Workspace share of a shared team budget, allocated by current visible spend."
-                : undefined
-            }
-          >
-            {team.budgetUsd !== null && team.budgetUsd !== undefined
-              ? `$${team.budgetUsd.toFixed(2)}`
-              : "—"}
-          </span>
-        </td>
-        <td className="py-3 px-4 text-right">
-          {displayRemaining === null ? (
-            <span className="text-sm text-muted-foreground">—</span>
-          ) : (
-            <span
-              className={`text-sm font-mono tabular-nums font-semibold ${displayRemaining < 0 ? "text-destructive" : ""}`}
-            >
-              ${displayRemaining.toFixed(2)}
-            </span>
-          )}
-        </td>
-        <td className="py-3 px-4 text-right">
-          <div className="flex flex-col gap-1.5 items-end w-32 ml-auto">
-            {displayPercentUsed === null ? (
-              <span className="text-sm text-muted-foreground">—</span>
-            ) : (
-              <>
-                <span
-                  className={`text-xs font-mono tabular-nums font-semibold ${displayPercentUsed >= 100 ? "text-destructive" : displayPercentUsed >= 75 ? "text-yellow-600" : ""}`}
-                >
-                  {displayPercentUsed.toFixed(1)}%
-                </span>
-                <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
-                  <div
-                    className={`h-full transition-all duration-500 ${displayPercentUsed >= 100 ? "bg-destructive" : "bg-primary"}`}
-                    style={{ width: `${Math.min(displayPercentUsed, 100)}%` }}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </td>
-        <td className="py-3 px-4 text-right">
-          <PaceCell
-            spendUsd={team.paceSpendUsd}
-            budgetUsd={team.budgetUsd}
-            semibold
-            periodStart={summary?.pacePeriodStart ?? ""}
-            periodEnd={summary?.pacePeriodEnd ?? ""}
-            periodLabel={summary?.pacePeriodLabel ?? ""}
-            isFallback={summary?.pacePeriodIsFallback ?? true}
-          />
-        </td>
-      </tr>
-    );
-  };
-
-  const workspaceSections = useMemo(() => {
-    const sections = (groupsData?.hierarchy ?? []).map((workspace) => ({
-      workspaceId: workspace.workspaceId,
-      workspaceName: workspace.workspaceName ?? workspace.workspaceId,
-      teams: teamSections.filter(
-        (team) => team.workspaceId === workspace.workspaceId,
-      ),
-      unassigned: role === "team_admin"
-        ? []
-        : workspace.teams
-            .filter((team) => team.teamName === null)
-            .flatMap((team) =>
-              team.families
-                .filter((family) => showLegacyGroups || !family.isLegacy)
-                .flatMap((family) => family.groups),
-            ),
-    })).filter(
-      (workspace) =>
-        workspace.teams.length > 0 || workspace.unassigned.length > 0,
-    );
-    const budgetOnlyTeams = teamSections.filter(
-      (team) => team.workspaceId === "__budget_only__",
-    );
-    if (budgetOnlyTeams.length > 0) {
-      sections.push({
-        workspaceId: "__budget_only__",
-        workspaceName: "Unallocated Budgets",
-        teams: budgetOnlyTeams,
-        unassigned: [],
-      });
-    }
-    return sections;
-  }, [groupsData?.hierarchy, role, showLegacyGroups, teamSections]);
-
-  const renderWorkspaceHeader = (
-    workspace: (typeof workspaceSections)[number],
-  ) => {
-    const unassignedTotals = workspace.unassigned.reduce(
-      (total, group) => ({
-        memberCount: total.memberCount + group.rollupMemberCount,
-        spendUsd: total.spendUsd + group.rollupSpendUsd,
-      }),
-      { memberCount: 0, spendUsd: 0 },
-    );
-    const memberCount = workspace.teams.reduce(
-      (sum, team) => sum + team.memberCount,
-      unassignedTotals.memberCount,
-    );
-    const spendUsd = workspace.teams.reduce(
-      (sum, team) => sum + team.spendUsd,
-      unassignedTotals.spendUsd,
-    );
-    const budgetUsd =
-      workspace.teams.reduce((sum, team) => sum + (team.budgetUsd ?? 0), 0) +
-      workspace.unassigned.reduce(
-        (sum, group) => sum + (group.budgetUsd ?? 0),
-        0,
-      );
-    const isBudgetOnlyWorkspace = workspace.workspaceId === "__budget_only__";
-
-    return (
-      <tr
-        key={`workspace-${workspace.workspaceId}`}
-        className="border-b border-border bg-muted/60"
-      >
-        <th className="py-3 px-4 text-left text-sm font-bold" colSpan={2}>
-          {isBudgetOnlyWorkspace
-            ? "Unallocated Budgets"
-            : workspace.workspaceName}
-          {!isBudgetOnlyWorkspace && (
-            <Badge variant="outline" className="ml-2 text-[9px]">
-              Workspace
-            </Badge>
-          )}
-        </th>
-        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
-          {isBudgetOnlyWorkspace ? (
-            <span className="text-muted-foreground font-sans font-normal">
-              —
-            </span>
-          ) : (
-            memberCount
-          )}
-        </td>
-        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
-          {isBudgetOnlyWorkspace ? (
-            <span className="text-muted-foreground font-sans font-normal">
-              —
-            </span>
-          ) : (
-            `$${spendUsd.toFixed(2)}`
-          )}
-        </td>
-        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
-          {budgetUsd > 0 ? `$${budgetUsd.toFixed(2)}` : "—"}
-        </td>
-        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
-          {budgetUsd > 0
-            ? `$${(budgetUsd - (isBudgetOnlyWorkspace ? 0 : spendUsd)).toFixed(2)}`
-            : "—"}
-        </td>
-        <td className="py-3 px-4 text-right text-sm font-mono font-bold">
-          {budgetUsd > 0 && !isBudgetOnlyWorkspace ? (
-            `${((spendUsd / budgetUsd) * 100).toFixed(1)}%`
-          ) : (
-            <span className="text-muted-foreground font-sans font-normal">
-              —
-            </span>
-          )}
-        </td>
-        <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-          —
-        </td>
-      </tr>
-    );
-  };
-
-  const hierarchySections = useMemo(() => {
-    const sections = (groupsData?.hierarchy ?? [])
-      .map((workspace) => ({
-        workspaceId: workspace.workspaceId,
-        workspaceName: workspace.workspaceName ?? workspace.workspaceId,
-        families: workspace.teams.flatMap((team) =>
-          team.families
-            .filter((family) => showLegacyGroups || !family.isLegacy)
-            .map((family) => ({
-              family,
-              teamName: team.teamName,
-            })),
-        ),
-        budgetOnlyTeams: [] as TeamSection[],
-      }))
-      .filter((workspace) => workspace.families.length > 0);
-
-    const budgetOnlyTeams = teamSections.filter(
-      (team) => team.workspaceId === "__budget_only__",
-    );
-    if (budgetOnlyTeams.length > 0) {
-      sections.push({
-        workspaceId: "__budget_only__",
-        workspaceName: "Unallocated Budgets",
-        families: [],
-        budgetOnlyTeams,
-      });
-    }
-    return sections;
-  }, [groupsData?.hierarchy, showLegacyGroups, teamSections]);
-
-  const expansionSignature = `${role ?? "unknown"}:${hierarchySections
-    .map((workspace) => workspace.workspaceId)
-    .join("|")}`;
   useEffect(() => {
-    if (initialExpansionSignature.current === expansionSignature) return;
-    initialExpansionSignature.current = expansionSignature;
-    setExpandedWorkspaces(
-      initialExpandedWorkspaceIds(role, hierarchySections),
-    );
-    setExpandedFamilies(new Set());
-  }, [expansionSignature, hierarchySections, role]);
+    if (identityKey !== prevIdentity.current) {
+      prevData.current = undefined;
+      prevIdentity.current = identityKey;
+    }
+  }, [identityKey]);
 
-  const renderBudgetOnlyTeam = (team: TeamSection) => (
-    <tr
-      key={`budget-only-${team.teamName}`}
-      className="border-b border-border bg-muted/10"
-      data-testid={`row-budget-only-${team.teamName}`}
-    >
-      <td className="py-3 px-4 pl-10 text-sm font-medium text-muted-foreground">
-        {team.teamName}
-      </td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-      <td className="py-3 px-4 text-right font-mono text-sm">$0.00</td>
-      <td className="py-3 px-4 text-right font-mono text-sm">
-        {team.budgetUsd == null ? "—" : `$${team.budgetUsd.toFixed(2)}`}
-      </td>
-      <td className="py-3 px-4 text-right font-mono text-sm">
-        {team.budgetUsd == null ? "—" : `$${team.budgetUsd.toFixed(2)}`}
-      </td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-      <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-    </tr>
-  );
+  useEffect(() => {
+    generation.current += 1;
+    const context: DashboardPerformanceContext = {
+      generation: generation.current,
+      scopeKey: viewScope ?? role ?? 'unknown',
+      rangeKey: querySignature,
+    };
+    const kind = previousQuerySignature.current === null ? 'initial' : 'range';
+    const startMark = markDashboardMilestone(
+      kind === 'initial' ? 'initial-load-start' : 'range-change-start',
+      context,
+    );
+    previousQuerySignature.current = querySignature;
+    paintedGeneration.current = null;
+    backgroundRefreshRef.current = null;
+    phaseRef.current = { context, kind, startMark };
+  }, [querySignature, role, viewScope]);
 
-  const renderFamilyDisclosure = (
-    workspace: (typeof hierarchySections)[number],
-    entry: (typeof hierarchySections)[number]["families"][number],
-  ) => {
-    const { family, teamName } = entry;
-    const familyId = familyDisclosureId(
-      workspace.workspaceId,
-      family.familyKey,
-      family.isLegacy,
-    );
-    const expanded = expandedFamilies.has(familyId);
-    return (
-      <React.Fragment key={familyId}>
-        <tr
-          className="border-b border-border bg-muted/20"
-          data-testid={`row-family-${familyId}`}
-        >
-          <th className="py-3 px-4 text-left text-sm font-semibold" scope="row">
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-expanded={expanded}
-              aria-label={`${expanded ? "Collapse" : "Expand"} ${family.familyName} family`}
-              data-testid={`button-family-${familyId}`}
-              onClick={() =>
-                setExpandedFamilies((previous) =>
-                  toggleDisclosure(previous, familyId),
-                )
-              }
-            >
-              {expanded ? (
-                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-              )}
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate">{family.familyName}</span>
-                <span className="font-normal text-xs text-muted-foreground">
-                  {workspace.workspaceName}
-                  {teamName ? ` · ${teamName}` : " · Unassigned"}
-                </span>
-              </span>
-              {family.isLegacy && (
-                <Badge variant="outline" className="text-[9px]">
-                  Legacy
-                </Badge>
-              )}
-              <Badge variant="outline" className="ml-auto text-[9px]">
-                {family.groups.length} group
-                {family.groups.length === 1 ? "" : "s"}
-              </Badge>
-            </button>
-          </th>
-          <td className="py-3 px-4 text-right font-mono text-sm">
-            {family.memberCount}
-          </td>
-          <td className="py-3 px-4 text-right font-mono text-sm">
-            ${family.spendUsd.toFixed(2)}
-          </td>
-          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-            —
-          </td>
-          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-            —
-          </td>
-          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-            —
-          </td>
-          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-            —
-          </td>
-        </tr>
-        {expanded && family.groups.map((group) => renderGroupRow(group))}
-      </React.Fragment>
-    );
-  };
+  useEffect(() => {
+    const phase = phaseRef.current;
+    if (!data || !phase || paintedGeneration.current === phase.context.generation) {
+      return undefined;
+    }
 
-  const renderWorkspaceDisclosure = (
-    workspace: (typeof hierarchySections)[number],
-  ) => {
-    const disclosureId = workspaceDisclosureId(workspace.workspaceId);
-    const expanded = expandedWorkspaces.has(disclosureId);
-    const workspaceTeams = teamSections.filter(
-      (team) => team.workspaceId === workspace.workspaceId,
-    );
-    const unassignedFamilies = workspace.families.filter(
-      (entry) => entry.teamName == null,
-    );
-    const memberCount =
-      workspaceTeams.reduce((sum, team) => sum + team.memberCount, 0) +
-      unassignedFamilies.reduce(
-        (sum, entry) => sum + entry.family.memberCount,
-        0,
-      );
-    const spendUsd =
-      workspaceTeams.reduce((sum, team) => sum + team.spendUsd, 0) +
-      unassignedFamilies.reduce(
-        (sum, entry) => sum + entry.family.spendUsd,
-        0,
-      );
-    const budgetUsd = workspaceTeams.reduce(
-      (sum, team) => sum + (team.budgetUsd ?? 0),
-      0,
-    ) + unassignedFamilies.reduce(
-      (sum, entry) =>
-        sum +
-        entry.family.groups.reduce(
-          (familyTotal, group) => familyTotal + (group.budgetUsd ?? 0),
-          0,
-        ),
-      0,
-    );
-
-    return (
-      <React.Fragment key={disclosureId}>
-        <tr
-          className="border-b border-border bg-muted/60"
-          data-testid={`row-workspace-${workspace.workspaceId}`}
-        >
-          <th className="py-3 px-4 text-left text-sm font-bold" scope="row">
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-expanded={expanded}
-              aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.workspaceName} workspace`}
-              data-testid={`button-workspace-${workspace.workspaceId}`}
-              onClick={() =>
-                setExpandedWorkspaces((previous) =>
-                  toggleDisclosure(previous, disclosureId),
-                )
-              }
-            >
-              {expanded ? (
-                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-              )}
-              <span>{workspace.workspaceName}</span>
-              <Badge variant="outline" className="text-[9px]">
-                Workspace
-              </Badge>
-            </button>
-          </th>
-          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
-            {workspace.workspaceId === "__budget_only__" ? "—" : memberCount}
-          </td>
-          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
-            {workspace.workspaceId === "__budget_only__"
-              ? "—"
-              : `$${spendUsd.toFixed(2)}`}
-          </td>
-          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
-            {budgetUsd > 0 ? `$${budgetUsd.toFixed(2)}` : "—"}
-          </td>
-          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
-            {budgetUsd > 0 ? `$${(budgetUsd - spendUsd).toFixed(2)}` : "—"}
-          </td>
-          <td className="py-3 px-4 text-right font-mono text-sm font-bold">
-            {budgetUsd > 0 && workspace.workspaceId !== "__budget_only__"
-              ? `${((spendUsd / budgetUsd) * 100).toFixed(1)}%`
-              : "—"}
-          </td>
-          <td className="py-3 px-4 text-right text-sm text-muted-foreground">
-            —
-          </td>
-        </tr>
-        {expanded &&
-          workspace.families.map((entry) =>
-            renderFamilyDisclosure(workspace, entry),
-          )}
-        {expanded && workspace.budgetOnlyTeams.map(renderBudgetOnlyTeam)}
-      </React.Fragment>
-    );
-  };
-
-  const hasHierarchy = hierarchySections.length > 0;
-  const scopedWorkspaceNames = [
-    ...new Set(
-      groups
-        .map((group) => group.workspaceName?.trim())
-        .filter((name): name is string => Boolean(name)),
-    ),
-  ];
-  const scopedTeamNames = [
-    ...new Set(
-      (auth?.teamNames.length
-        ? auth.teamNames
-        : groups.map((group) => group.teamName)
-      )
-        .map((name) => name?.trim())
-        .filter((name): name is string => Boolean(name)),
-    ),
-  ];
-  const accountUserName = selectAccountUserName(
-    user?.firstName,
-    user?.lastName,
-    user?.email,
-  );
-  const scopedMemberName = selectScopedMemberName(
-    memberCycleActivity?.users[0]?.username,
-    memberTermActivity?.users[0]?.username,
-  );
-  const memberName = selectMemberName(
-    Boolean(auth?.isPreview),
-    scopedMemberName,
-    accountUserName,
-  );
-  const dashboardTitle = buildDashboardTitle({
-    role,
-    workspaceNames: scopedWorkspaceNames,
-    teamNames: scopedTeamNames,
-    memberName,
-  });
-  const rangePresetLabel = {
-    "full-term": "Full term",
-    billing: "Billing period",
-    mtd: "Month to date",
-    ytd: "Year to date",
-    custom: "Custom range",
-  }[rangeSelection];
-  const selectedRangeLabel = selectRangeLabel(
-    rangeSelection,
-    groupsData?.billingPeriodLabel,
-    summary?.billingPeriodLabel,
-    rangePresetLabel,
-  );
-  const hierarchyRows = selectHierarchyRows(
-    hasHierarchy,
-    presentation.startingLevel === "workspace",
-    hierarchySections.map(renderWorkspaceDisclosure),
-    hierarchySections.flatMap((workspace) =>
-      workspace.families.map((entry) =>
-        renderFamilyDisclosure(workspace, entry),
+    const context: DashboardPerformanceContext = {
+      ...phase.context,
+      scopeKey: data.scope?.viewScope || phase.context.scopeKey,
+      rangeKey: data.period?.label || phase.context.rangeKey,
+    };
+    markDashboardMilestone('required-requests-complete', context);
+    const firstReadyMark = markDashboardMilestone('first-useful-values-ready', context);
+    const allReadyMark = markDashboardMilestone('all-required-values-ready', context);
+    const cleanups = [
+      reportDashboardMilestonePainted(
+        'first-useful-values',
+        context,
+        firstReadyMark,
+        phase.startMark,
       ),
-    ),
-    [...groups]
-      .sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-      )
-      .map((group) => renderGroupRow(group)),
-  );
-  const totalMemberCount = groups.reduce(
-    (sum, group) => sum + group.rollupMemberCount,
-    0,
-  );
-  const reconciliationSpendUsd =
-    summary?.usageHealth.accountWorkspaceUnreconciledUsd ?? 0;
-  const showReconciliation = shouldShowReconciliation(
-    Boolean(summary),
-    isAccountWide,
-    reconciliationSpendUsd,
-  );
+      reportDashboardMilestonePainted(
+        'all-required-values',
+        context,
+        allReadyMark,
+        phase.startMark,
+      ),
+    ];
+    if (phase.kind === 'range') {
+      cleanups.push(reportDashboardMilestonePainted(
+        'range-change-complete',
+        context,
+        allReadyMark,
+        phase.startMark,
+      ));
+    }
+    paintedGeneration.current = phase.context.generation;
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [data]);
 
-  if (role === "member") {
-    const cycleUser = memberCycleActivity?.users[0];
-    const termUser = memberTermActivity?.users[0];
-    const effectiveUserId = cycleUser?.userId ?? termUser?.userId ?? user?.id;
-    const limits = memberLimitQueries
-      .map((query) => query.data)
-      .filter((response) => response)
-      .map((response) => ({
-        workspaceName: response!.workspaceName,
-        budget:
-          response!.members.find((member) => member.userId === effectiveUserId)
-            ?.budgetUsd ?? null,
-      }));
+  useEffect(() => {
+    if (data) prevData.current = data;
+  }, [data]);
 
+  useEffect(() => {
+    const phase = phaseRef.current;
+    if (!phase || paintedGeneration.current !== phase.context.generation) return undefined;
+    if (isFetching && !backgroundRefreshRef.current) {
+      const context = {
+        ...phase.context,
+        scopeKey: data?.scope?.viewScope || phase.context.scopeKey,
+        rangeKey: data?.period?.label || phase.context.rangeKey,
+      };
+      backgroundRefreshRef.current = {
+        context,
+        startMark: markDashboardMilestone('background-refresh-start', context),
+      };
+      return undefined;
+    }
+    if (!isFetching && data && backgroundRefreshRef.current) {
+      const refresh = backgroundRefreshRef.current;
+      const readyMark = markDashboardMilestone('background-refresh-ready', refresh.context);
+      const cleanup = reportDashboardMilestonePainted(
+        'background-refresh-complete',
+        refresh.context,
+        readyMark,
+        refresh.startMark,
+      );
+      backgroundRefreshRef.current = null;
+      return cleanup;
+    }
+    return undefined;
+  }, [data, isFetching]);
+
+  useEffect(() => {
+    if (isError) {
+      toast({
+        title: "Error loading dashboard",
+        description: "Failed to load dashboard data. Please try again.",
+        variant: "destructive"
+      });
+    }
+  }, [isError, toast]);
+
+  const displayData = data || prevData.current;
+
+  if (isLoading && !displayData) {
+    return <DashboardSkeleton />;
+  }
+
+  if (!displayData) {
     return (
-      <MemberDashboardView
-        scopeLabel={presentation.scopeLabel}
-        dashboardTitle={dashboardTitle}
-        cycleSpendUsd={cycleUser?.aiSpendUsd ?? null}
-        contractSpendUsd={termUser?.spendUsd ?? null}
-        isInternal={Boolean(cycleUser?.isInternal || termUser?.isInternal)}
-        limits={limits}
-        showLegacyGroups={showLegacyGroups}
-        onToggleLegacyGroups={() =>
-          setShowLegacyGroups((visible) => !visible)
-        }
-        groupsFetching={groupsFetching}
-        groupsLoaded={Boolean(groupsData)}
-        hasHierarchy={hasHierarchy}
-        familyRows={hierarchySections.flatMap((workspace) =>
-          workspace.families.map((entry) =>
-            renderFamilyDisclosure(workspace, entry),
-          ),
-        )}
-      />
+      <div className="p-8 text-center text-muted-foreground flex flex-col items-center justify-center h-[50vh]">
+        <AlertTriangle className="h-10 w-10 text-destructive mb-4" />
+        <p>No dashboard data available.</p>
+      </div>
     );
   }
 
-  return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
-      <DashboardHeader
-        dashboardTitle={dashboardTitle}
-        selectedRangeLabel={selectedRangeLabel}
-        usageIsEmpty={groupsData?.usageHealth.status === "empty"}
-        hasSummary={Boolean(summary)}
-        showBillingWindowBanner={Boolean(
-          rangeType === "billing" &&
-            summary?.billingPeriodDiffersFromReportingCutoff,
-        )}
-        reportingRangeStart={summary?.reportingRangeStart ?? ""}
-      />
-      <DashboardStatCards
-        scopeLabel={presentation.scopeLabel}
-        statCards={statCards}
-      />
+  const { scope, period, cards, trend, breakdown, accounting, metadata } = displayData;
 
-      <Tabs defaultValue="groups" className="space-y-4">
-        <TabsContent value="groups">
-          <Card>
-            <CardContent>
-              <div className="flex justify-end pt-4">
-                <button
-                  type="button"
-                  className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-pressed={showLegacyGroups}
-                  data-testid="button-toggle-legacy-groups"
-                  onClick={() => setShowLegacyGroups((visible) => !visible)}
-                >
-                  {showLegacyGroups ? "Hide legacy groups" : "Show legacy groups"}
-                </button>
+  const navigateToSpend = (filter?: Record<string, string>) => {
+    const params = new URLSearchParams(searchString);
+    if (filter) {
+      Object.entries(filter).forEach(([k, v]) => params.set(k, v));
+    }
+    setLocation(`/spend?${params.toString()}`);
+  };
+
+  const updateUrlParam = (key: string, value: string) => {
+    const params = new URLSearchParams(searchString);
+    params.set(key, value);
+    setLocation(`/?${params.toString()}`);
+  };
+
+  return (
+    <div className="p-4 md:p-8 space-y-6 md:space-y-8 max-w-[100vw] overflow-x-hidden">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+              {scope.label || 'Dashboard'}
+            </h1>
+            {isFetching && displayData && (
+              <Badge variant="outline" className="border-muted text-muted-foreground bg-muted/20 animate-pulse">
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Updating
+              </Badge>
+            )}
+            {metadata.status === 'partial' && (
+              <Badge variant="outline" className="border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/30" title="Data for this period is incomplete">
+                Partial Data
+              </Badge>
+            )}
+            {metadata.stale && (
+              <Badge variant="outline" className="border-blue-500 text-blue-600 bg-blue-50 dark:bg-blue-950/30" title="Using cached snapshot">
+                Stale
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
+            <span>{period.label}</span>
+            <span className="text-muted-foreground/50">•</span>
+            <span>Yours · {scope.viewScope.replace('_', ' ')}</span>
+            {metadata.dataAsOf && (
+              <>
+                <span className="text-muted-foreground/50">•</span>
+                <span title="Data as of">As of {new Date(metadata.dataAsOf).toLocaleDateString()}</span>
+              </>
+            )}
+          </p>
+        </div>
+        <div className="flex w-full flex-wrap items-center gap-3 md:w-auto md:shrink-0">
+          <RangeFilter selectedLabel={period.label} />
+        </div>
+      </div>
+
+      {/* Headline Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map((card, i) => (
+          <DashboardMetricCard key={card.key + i} card={card} onClick={() => navigateToSpend()} />
+        ))}
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2 shadow-sm border-border overflow-hidden flex flex-col">
+          <CardHeader className="border-b bg-muted/10 pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-muted-foreground" />
+                  Spend Trend
+                </CardTitle>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full table-fixed" data-testid="table-groups">
-                  <caption className="sr-only">
-                    Authorized workspace, family, and Replit role group hierarchy
-                  </caption>
-                  <colgroup>
-                    <col className="w-[38%]" />
-                    <col className="w-[10%]" />
-                    <col className="w-[11%]" />
-                    <col className="w-[10%]" />
-                    <col className="w-[11%]" />
-                    <col className="w-[10%]" />
-                    <col className="w-[10%]" />
-                  </colgroup>
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">
-                        Hierarchy
-                      </th>
-                      <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
-                        Members
-                      </th>
-                      <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
-                        Spend
-                      </th>
-                      <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
-                        Budget
-                      </th>
-                      <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
-                        Remaining
-                      </th>
-                      <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
-                        Usage
-                      </th>
-                      <th
-                        className="whitespace-nowrap text-right text-xs font-medium text-muted-foreground py-3 px-4"
-                        title="Projected total spend by May 17 2027 vs budget"
-                      >
-                        Pace <span className="font-normal opacity-60">→ May '27</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <DashboardTableRows
-                      loading={groupsFetching && !groupsData}
-                      rows={hierarchyRows}
-                    />
-                    <DashboardReconciliation
-                      visible={showReconciliation}
-                      isAccountWide={isAccountWide}
-                      spendUsd={reconciliationSpendUsd}
-                    />
-                  </tbody>
-                  <DashboardTableFooter
-                    visible={groups.length > 0}
-                    memberCount={totalMemberCount}
-                    summary={summary}
-                  />
-                </table>
-                <DashboardEmptyState visible={groups.length === 0} />
+              <div className="flex items-center gap-2">
+                <Select value={trend.granularity} onValueChange={(val) => updateUrlParam('granularity', val)}>
+                  <SelectTrigger className="h-8 w-[100px] text-xs">
+                    <SelectValue placeholder="Daily" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="day">Daily</SelectItem>
+                    <SelectItem value="week">Weekly</SelectItem>
+                    <SelectItem value="month">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={trend.mode} onValueChange={(val) => updateUrlParam('trendMode', val)}>
+                  <SelectTrigger className="h-8 w-[130px] text-xs">
+                    <SelectValue placeholder="Period spend" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="period">Period spend</SelectItem>
+                    <SelectItem value="cumulative">Cumulative</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-6 pb-2 px-2 sm:px-6 flex-1 min-h-[300px]">
+            <Suspense fallback={<div className="h-full w-full flex items-center justify-center"><Skeleton className="h-[90%] w-[95%]" /></div>}>
+              <TrendChart trend={trend} onClick={() => navigateToSpend()} />
+            </Suspense>
+          </CardContent>
+        </Card>
+
+        {breakdown && breakdown.length > 0 && (
+          <Card className="shadow-sm border-border overflow-hidden flex flex-col">
+            <CardHeader className="border-b bg-muted/10 pb-4">
+              <CardTitle className="flex items-center gap-2">
+                <PieChart className="h-4 w-4 text-muted-foreground" />
+                Breakdown
+              </CardTitle>
+              <CardDescription className="mt-1">
+                Top entities by spend
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6 pb-4 px-4 flex-1">
+              <BreakdownList breakdown={breakdown} onClick={(item) => {
+                if (item.drillThrough) {
+                   setLocation(item.drillThrough);
+                } else {
+                   const tab = item.kind === 'workspace' ? 'groups' : item.kind === 'group' ? 'groups' : 'projects';
+                   navigateToSpend({ tab, search: item.label });
+                }
+              }} />
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
+
+      {/* Accounting Meta */}
+      {isAccountAdmin && accounting && (
+        <div className="rounded-lg border bg-muted/10 p-4 text-xs text-muted-foreground flex flex-wrap gap-x-6 gap-y-2">
+          <div><strong>Gross Spend:</strong> ${accounting.grossSpendUsd.toFixed(2)}</div>
+          <div><strong>Eligible:</strong> ${accounting.eligibleSpendUsd.toFixed(2)}</div>
+          <div><strong>Excluded:</strong> ${accounting.internalExcludedUsd.toFixed(2)}</div>
+          <div><strong>Unbudgeted:</strong> ${accounting.unbudgetedUsd.toFixed(2)}</div>
+          <div><strong>Unattributed:</strong> ${accounting.unattributedUsd.toFixed(2)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DashboardMetricCard({ card, onClick }: { card: DashboardCard, onClick: () => void }) {
+  const isCurrency = card.unit === 'usd';
+  const val = card.value === null ? '—' : isCurrency ? `$${card.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : card.value.toLocaleString();
+
+  let Icon = DollarSign;
+  if (card.key.includes('limit') || card.key.includes('budget')) Icon = Wallet;
+  if (card.key.includes('attention')) Icon = AlertTriangle;
+  if (card.key.includes('members')) Icon = User;
+
+  const isWarning = card.key.includes('attention') && card.value !== null && card.value > 0;
+
+  return (
+    <Card
+      className={`shadow-sm transition-all hover:shadow-md hover:border-primary/30 cursor-pointer group ${isWarning ? 'border-amber-500/50 bg-amber-50/10' : ''}`}
+      onClick={onClick}
+    >
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2 md:p-6 md:pb-2">
+        <CardTitle className={`text-sm font-medium ${isWarning ? 'text-amber-700 dark:text-amber-400' : ''}`}>
+          {card.label}
+        </CardTitle>
+        <Icon className={`h-4 w-4 ${isWarning ? 'text-amber-500' : 'text-muted-foreground'} group-hover:text-primary transition-colors`} />
+      </CardHeader>
+      <CardContent className="px-4 pb-4 md:px-6 md:pb-6">
+        <div className={`text-2xl font-bold font-mono tabular-nums ${isWarning ? 'text-amber-600 dark:text-amber-400' : ''}`}>
+          {val}
+        </div>
+        {card.qualification && (
+          <p className="text-xs text-muted-foreground mt-1 truncate" title={card.qualification}>
+            {card.qualification}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+function BreakdownList({ breakdown, onClick }: { breakdown: DashboardBreakdownItem[], onClick: (item: DashboardBreakdownItem) => void }) {
+  const maxSpend = Math.max(...breakdown.map(b => b.spendUsd));
+
+  return (
+    <div className="space-y-4">
+      {breakdown.map((item, i) => {
+        const pct = maxSpend > 0 ? (item.spendUsd / maxSpend) * 100 : 0;
+        const isOther = item.kind === 'other' || item.kind === 'unattributed' || item.kind === 'reconciliation';
+
+        return (
+          <div
+            key={item.id + i}
+            className="group cursor-pointer flex flex-col gap-1.5"
+            onClick={() => onClick(item)}
+          >
+            <div className="flex justify-between items-end text-sm">
+              <span className={`font-medium truncate pr-4 ${isOther ? 'text-muted-foreground italic' : ''}`}>
+                {item.label}
+              </span>
+              <span className="font-mono tabular-nums font-semibold">
+                ${item.spendUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${isOther ? 'bg-muted-foreground/30' : 'bg-primary'}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="p-4 md:p-8 space-y-6 md:space-y-8 max-w-[100vw]">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-4 w-32" />
+        </div>
+        <Skeleton className="h-10 w-64" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[1, 2, 3, 4].map(i => (
+          <Card key={i} className="shadow-sm">
+            <CardHeader className="p-6 pb-2"><Skeleton className="h-4 w-24" /></CardHeader>
+            <CardContent className="p-6 pt-0 space-y-2">
+              <Skeleton className="h-8 w-32" />
+              <Skeleton className="h-3 w-40" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2 shadow-sm"><CardContent className="h-[400px] flex items-center justify-center"><Skeleton className="h-[90%] w-[95%]" /></CardContent></Card>
+        <Card className="shadow-sm"><CardContent className="h-[400px] flex items-center justify-center"><Skeleton className="h-[90%] w-[90%]" /></CardContent></Card>
+      </div>
     </div>
   );
 }

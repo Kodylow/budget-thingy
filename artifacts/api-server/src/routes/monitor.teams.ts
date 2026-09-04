@@ -106,7 +106,7 @@ function serializeTeamBudgetHistoryTeam(
   };
 }
 
-router.get("/admin/team-budgets/history", requireRole("account"), async (req, res): Promise<void> => {
+router.get("/admin/team-budgets/history", requireCapability("canViewAccountUsage"), async (req, res): Promise<void> => {
   const snapshot = await getEffectiveTeamBudgets();
   const visible = req.authz!.isTrueAccountAdmin
     ? snapshot.teams
@@ -128,11 +128,14 @@ router.get("/admin/team-budgets/history", requireRole("account"), async (req, re
 
 router.get(
   "/admin/team-budgets/audit",
-  requireTrueAccountAdmin,
-  async (_req, res): Promise<void> => {
+  requireCapability("canEditAllocations"),
+  async (req, res): Promise<void> => {
     const changes = await getTeamAllocationAudits();
+    const visibleChanges = req.authz!.isTrueAccountAdmin
+      ? changes
+      : changes.filter((change) => change.field === "annualAllocationUsd");
     res.json(GetTeamAllocationAuditResponse.parse({
-      changes: changes.map((change) => ({
+      changes: visibleChanges.map((change) => ({
         id: change.id,
         teamName: change.teamName,
         field: change.field,
@@ -147,7 +150,7 @@ router.get(
 
 router.patch(
   "/admin/team-budgets/:teamName/allocation",
-  requireTrueAccountAdmin,
+  requireCapability("canEditAllocations"),
   async (req, res): Promise<void> => {
     const params = UpdateTeamAnnualAllocationParams.safeParse(req.params);
     const body = UpdateTeamAnnualAllocationBody.safeParse(req.body);
@@ -427,7 +430,7 @@ router.post(
   },
 );
 
-router.post("/admin/team-budgets/refresh", requireRole("account"), async (_req, res): Promise<void> => {
+router.post("/admin/team-budgets/refresh", requireCapability("canManageSystem"), async (_req, res): Promise<void> => {
   const result = await refreshTeamBudgetSnapshot();
   res.status(result.ok ? 200 : 502).json(RefreshTeamBudgetsResponse.parse({
     sourceTable: TEAM_BUDGET_SOURCE_TABLE,

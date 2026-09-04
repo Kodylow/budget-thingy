@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { test, expect, beforeAll, afterAll } from "vitest";
+import { test, expect, beforeAll, afterAll, afterEach } from "vitest";
 import express from "express";
 import { eq, inArray } from "drizzle-orm";
 import {
@@ -129,9 +129,12 @@ beforeAll(async () => {
         role: "account", roles: ["account"], userId, workspaceIds: [],
         teamNames: [], groupIds: [], userIds: [userId], isTrueAccountAdmin: false,
         capabilities: {
-          canManageAccess: true, canEditAllocations: true,
+          canViewAccountUsage: true,
+          canManageAccess: false, canEditAllocations: true,
+          canManageNotifications: false, canManageSystem: false,
           canPreviewRoles: false,
-          canWriteGroupLimits: false, canWriteUserLimitsIn: ["task158-ws"],
+          canWriteGroupLimits: false, canWriteUserLimitsIn: [],
+          canRunChecks: false, canSendTestEmail: false,
         },
       });
     }
@@ -140,9 +143,12 @@ beforeAll(async () => {
         role: "account", roles: ["account"], userId, workspaceIds: [],
         teamNames: [], groupIds: [], userIds: [userId], isTrueAccountAdmin: false,
         capabilities: {
-          canManageAccess: true, canEditAllocations: true,
+          canViewAccountUsage: true,
+          canManageAccess: false, canEditAllocations: true,
+          canManageNotifications: false, canManageSystem: false,
           canPreviewRoles: false,
-          canWriteGroupLimits: false, canWriteUserLimitsIn: ["task158-ws"],
+          canWriteGroupLimits: false, canWriteUserLimitsIn: [],
+          canRunChecks: false, canSendTestEmail: false,
         },
       });
     }
@@ -430,6 +436,21 @@ test("budget audit and sync status reject workspace-scoped users", async () => {
   }
 });
 
+afterEach(async () => {
+  await request(
+    `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/visibility`,
+    "task158-account",
+    "PATCH",
+    { isHidden: false },
+  );
+  await request(
+    `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/allocation`,
+    "task158-account",
+    "PATCH",
+    { annualAllocationUsd: 100 },
+  );
+});
+
 test("sync status identifies the approval-only Finance Approval feed", async () => {
   const { status, json } = await request(
     "/admin/team-budgets/sync",
@@ -466,15 +487,26 @@ test("history orders months and exposes hidden teams only to true admins", async
   expect(budgetOnly.effectiveAmountUsd).toBe(60);
 });
 
-test("true admins atomically edit annual allocations and visibility with newest-first audit", async () => {
+test("editors edit planning while true admins edit visibility with newest-first audit", async () => {
   const allocationPath =
     `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/allocation`;
   const visibilityPath =
     `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/visibility`;
 
-  expect((await request(allocationPath, "task158-delegate", "PATCH", {
+  const editorAllocation = await request(allocationPath, "task158-delegate", "PATCH", {
     annualAllocationUsd: 240,
-  })).status).toBe(403);
+  });
+  expect(editorAllocation.status).toBe(200);
+  expect(editorAllocation.json).toMatchObject({
+    originalAmountUsd: 240,
+    effectiveAmountUsd: 265,
+    annualAllocationUsd: 265,
+    monthlyLimitUsd: 22.08,
+  });
+  // Keep this test isolated: subsequent assertions start from the fixture's baseline.
+  expect((await request(allocationPath, "task158-delegate", "PATCH", {
+    annualAllocationUsd: 100,
+  })).status).toBe(200);
   expect((await request(allocationPath, "task158-account", "PATCH", {
     annualAllocationUsd: -1,
   })).status).toBe(400);
@@ -518,7 +550,14 @@ test("true admins atomically edit annual allocations and visibility with newest-
         actor: "task158-account",
       }),
     ]);
-  expect((await request("/admin/team-budgets/audit", "task158-delegate")).status).toBe(403);
+  const editorAudit = await request(
+    "/admin/team-budgets/audit",
+    "task158-delegate",
+  );
+  expect(editorAudit.status).toBe(200);
+  expect(editorAudit.json.changes.every(
+    (change) => change.field === "annualAllocationUsd",
+  )).toBe(true);
 
   const concurrent = await Promise.all([
     request(allocationPath, "task158-account", "PATCH", { annualAllocationUsd: 300 }),

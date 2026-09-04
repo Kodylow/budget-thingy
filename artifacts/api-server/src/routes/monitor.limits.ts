@@ -29,7 +29,7 @@ router.get("/budgets", async (req, res): Promise<void> => {
   );
 });
 
-router.put("/groups/:groupId/budget", requireCapability("canWriteGroupLimits"), async (req, res): Promise<void> => {
+router.put("/groups/:groupId/budget", requireCapability("canEditAllocations"), async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const parsed = SetGroupBudgetBody.safeParse(req.body);
   if (!parsed.success) {
@@ -57,7 +57,7 @@ router.put("/groups/:groupId/budget", requireCapability("canWriteGroupLimits"), 
   );
 });
 
-router.delete("/groups/:groupId/budget", requireCapability("canWriteGroupLimits"), async (req, res): Promise<void> => {
+router.delete("/groups/:groupId/budget", requireCapability("canEditAllocations"), async (req, res): Promise<void> => {
   const groupId = String(req.params["groupId"]);
   const deleted = await db
     .delete(groupBudgetsTable)

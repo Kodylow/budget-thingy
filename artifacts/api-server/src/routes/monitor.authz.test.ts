@@ -103,10 +103,15 @@ function authorization(
     userId, role, roles, groupIds, userIds, workspaceIds, teamNames,
     isTrueAccountAdmin: account,
     capabilities: {
+      canViewAccountUsage: account,
       canManageAccess: account,
       canEditAllocations: account,
+      canManageNotifications: account,
+      canManageSystem: account,
       canPreviewRoles: false,
       canWriteGroupLimits: account,
+      canRunChecks: account,
+      canSendTestEmail: account,
       canWriteUserLimitsIn: account ? [GROWTH, PLATFORM] : workspaceIds,
     },
   };
@@ -350,7 +355,7 @@ describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
     const entities = alerts
       .filter((alert) => alert.entityId.startsWith(PREFIX))
       .map((alert) => `${alert.entityType}:${alert.entityId}`).sort();
-    const expected = [`group:${GM}`];
+    const expected = fixture.id === "member" ? [] : [`group:${GM}`];
     if (fixture.id === "account" || fixture.id === "both") {
       expected.push(`team:${TEAM}`);
     }
@@ -403,6 +408,56 @@ it("ignores a forged preview header from an ordinary account admin", async () =>
   expect(body.groups
     .filter((group) => !group.isSynthetic)
     .map((group) => group.groupId).sort()).toEqual([...allGroups].sort());
+});
+
+it("enforces the editor action matrix on direct mutation routes", async () => {
+  const editor: Authorization = {
+    ...authorization("budget-editor", "account", allGroups, allUsers),
+    isTrueAccountAdmin: false,
+    capabilities: {
+      canViewAccountUsage: true,
+      canEditAllocations: true,
+      canManageAccess: false,
+      canManageNotifications: false,
+      canManageSystem: false,
+      canPreviewRoles: false,
+      canWriteGroupLimits: false,
+      canWriteUserLimitsIn: [],
+      canRunChecks: false,
+      canSendTestEmail: false,
+    },
+  };
+  setAuthorizationResolver(async (id) =>
+    id === "budget-editor" ? editor : fixtureResolver(id)
+  );
+  try {
+    const caller = { id: "budget-editor" };
+    // Invalid bodies establish that the planning guard passed without committing writes.
+    expect((await request(`/groups/${GM}/budget`, caller, {
+      method: "PUT",
+      body: JSON.stringify({}),
+    })).status).toBe(400);
+    expect((await request(`/admin/team-budgets/${encodeURIComponent(TEAM)}/allocation`, caller, {
+      method: "PATCH",
+      body: JSON.stringify({}),
+    })).status).toBe(400);
+
+    for (const [path, method, body] of [
+      ["/app-admins", "POST", { userId: "member" }],
+      ["/settings/email", "PATCH", { automatedEmailEnabled: true }],
+      ["/alerts/check", "POST", {}],
+      ["/alerts/test-email", "POST", { entityType: "group", threshold: 50 }],
+      [`/admin/team-budgets/${encodeURIComponent(TEAM)}/limit`, "PATCH", { monthlyLimitUsd: 10 }],
+      [`/directory/workspaces/${GROWTH}/members/${WRITE_USER}/budget`, "PUT", { amountUsd: 10 }],
+    ] as const) {
+      expect((await request(path, caller, {
+        method,
+        body: JSON.stringify(body),
+      })).status).toBe(403);
+    }
+  } finally {
+    setAuthorizationResolver(fixtureResolver);
+  }
 });
 
 it("rejects individual and bulk usage-limit targeting of internal members", async () => {

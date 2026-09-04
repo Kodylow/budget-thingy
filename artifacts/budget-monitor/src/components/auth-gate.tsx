@@ -1,16 +1,9 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { ShieldAlert, LogIn, Loader2, RefreshCw, Wallet, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthContext } from '@/components/auth-context';
 
-/**
- * Gates the application behind authentication and authorization. Renders:
- * - a loading shell while the session is being resolved,
- * - a signed-out login shell for anonymous visitors,
- * - an access-denied shell for signed-in users who are not enabled admins,
- * - the authenticated app (children) for account or workspace admins.
- */
 export function AuthGate({ children }: { children: ReactNode }) {
   const {
     isLoading,
@@ -21,7 +14,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
     login,
     logout,
     retryAuthorization,
+    isPreviewing,
+    resetPreview
   } = useAuthContext();
+
+  useEffect(() => {
+    if (isAuthenticated && !isDenied) {
+      // Preload dashboard and chart chunk after successful authorization
+      import('@/pages/dashboard');
+      import('@/pages/dashboard-chart');
+    }
+  }, [isAuthenticated, isDenied]);
 
   if (isLoading) {
     return <LoadingShell />;
@@ -41,7 +44,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (isDenied) {
-    return <DeniedShell userId={user?.id ?? null} onLogout={logout} />;
+    return <DeniedShell
+             userId={user?.id ?? null}
+             onLogout={logout}
+             isPreviewing={isPreviewing}
+             onResetPreview={resetPreview}
+           />;
   }
 
   return <>{children}</>;
@@ -132,7 +140,17 @@ function SignedOutShell({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function DeniedShell({ userId, onLogout }: { userId: string | null; onLogout: () => void }) {
+function DeniedShell({
+  userId,
+  onLogout,
+  isPreviewing,
+  onResetPreview
+}: {
+  userId: string | null;
+  onLogout: () => void;
+  isPreviewing?: boolean;
+  onResetPreview?: () => void;
+}) {
   return (
     <CenteredShell>
       <Card data-testid="auth-denied">
@@ -142,7 +160,7 @@ function DeniedShell({ userId, onLogout }: { userId: string | null; onLogout: ()
           </div>
           <CardTitle>Access denied</CardTitle>
           <CardDescription>
-            Your account isn&apos;t an enabled administrator for this account or any
+            Your account isn&apos;t an enabled member for this account or any
             workspace, so there&apos;s no budget data to show. Contact your account
             administrator if you believe this is a mistake.
           </CardDescription>
@@ -160,6 +178,16 @@ function DeniedShell({ userId, onLogout }: { userId: string | null; onLogout: ()
                 {userId}
               </code>
             </div>
+          )}
+          {isPreviewing && onResetPreview && (
+            <Button
+              variant="default"
+              className="w-full"
+              onClick={onResetPreview}
+              data-testid="button-reset-preview-denied"
+            >
+              Reset to your real view
+            </Button>
           )}
           <Button
             variant="outline"

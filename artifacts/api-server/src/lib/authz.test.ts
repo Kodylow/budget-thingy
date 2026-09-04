@@ -5,6 +5,7 @@ import { inArray } from "drizzle-orm";
 
 import {
   BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
+  buildAuthorization,
   canSeeGroup,
   canSeeWorkspace,
   isPersistedAppAdmin,
@@ -36,16 +37,100 @@ function authz(
     userIds: values.userIds ?? ["user"],
     isTrueAccountAdmin: account,
     capabilities: {
+      canViewAccountUsage: account,
       canManageAccess: account,
       canEditAllocations: account,
+      canManageNotifications: account,
+      canManageSystem: account,
       canPreviewRoles: false,
       canWriteGroupLimits: account,
+      canRunChecks: account,
+      canSendTestEmail: account,
       canWriteUserLimitsIn: values.workspaceIds ?? [],
     },
   };
 }
 
 describe("authorization scopes", () => {
+  it.each([
+    {
+      persona: "true account admin",
+      input: { roles: ["account"] as AuthzRole[], isTrueAccountAdmin: true },
+      expected: [true, true, true, true, true, true, true, true],
+    },
+    {
+      persona: "persisted budget editor",
+      input: { roles: ["account"] as AuthzRole[], isTrueAccountAdmin: false },
+      expected: [true, true, false, false, false, false, false, false],
+    },
+    {
+      persona: "workspace admin",
+      input: { roles: ["workspace_admin"] as AuthzRole[], workspaceIds: ["a"] },
+      expected: [false, false, false, false, false, false, false, false],
+    },
+    {
+      persona: "family admin",
+      input: { roles: ["team_admin"] as AuthzRole[] },
+      expected: [false, false, false, false, false, false, false, false],
+    },
+    {
+      persona: "ordinary member",
+      input: { roles: ["member"] as AuthzRole[] },
+      expected: [false, false, false, false, false, false, false, false],
+    },
+  ])("applies the independent capability matrix for $persona", ({ input, expected }) => {
+    const resolved = buildAuthorization({ userId: "user", ...input });
+    expect([
+      resolved.capabilities.canViewAccountUsage,
+      resolved.capabilities.canEditAllocations,
+      resolved.capabilities.canManageAccess,
+      resolved.capabilities.canManageNotifications,
+      resolved.capabilities.canManageSystem,
+      resolved.capabilities.canWriteGroupLimits,
+      resolved.capabilities.canRunChecks,
+      resolved.capabilities.canSendTestEmail,
+    ]).toEqual(expected);
+    expect(resolved.capabilities.canWriteUserLimitsIn).toEqual(
+      input.roles.includes("workspace_admin") ? ["a"] : [],
+    );
+  });
+
+  it("keeps editor and workspace-admin grants additive and workspace-qualified", () => {
+    const resolved = buildAuthorization({
+      userId: "user",
+      roles: ["account", "workspace_admin"],
+      workspaceIds: ["managed-a"],
+      allWorkspaceIds: ["managed-a", "member-b"],
+    });
+    expect(resolved.capabilities.canEditAllocations).toBe(true);
+    expect(resolved.capabilities.canManageAccess).toBe(false);
+    expect(resolved.capabilities.canWriteGroupLimits).toBe(false);
+    expect(resolved.capabilities.canWriteUserLimitsIn).toEqual(["managed-a"]);
+  });
+
+  it("removes every mutation capability from preview authorization", () => {
+    const preview = buildAuthorization({
+      userId: "user",
+      roles: ["account", "workspace_admin"],
+      workspaceIds: ["a"],
+      allWorkspaceIds: ["a"],
+      isTrueAccountAdmin: true,
+      canPreviewRoles: true,
+      isPreview: true,
+    });
+    expect(preview.capabilities).toMatchObject({
+      canManageAccess: false,
+      canEditAllocations: false,
+      canManageNotifications: false,
+      canManageSystem: false,
+      canWriteGroupLimits: false,
+      canWriteUserLimitsIn: [],
+      canRunChecks: false,
+      canPreviewRoles: false,
+      canSendTestEmail: false,
+    });
+  });
+
   it("returns all for account access", () => {
     expect(scopeFor(authz(["account"]))).toEqual({ kind: "all" });
   });
@@ -65,6 +150,8 @@ describe("authorization scopes", () => {
       teamNames: new Set(["Growth MDU"]),
       groupIds: new Set(["growth-members", "legacy-growth-members"]),
       userIds: new Set(["one", "two"]),
+      managedGroupIds: new Set(["growth-members", "legacy-growth-members"]),
+      groupUserIds: new Map(),
     });
   });
 
@@ -204,6 +291,57 @@ describe("designated account-admin bootstrap", () => {
     expect((await resolveAuthorization(OTHER_USER_ID))?.role).toBe("workspace_admin");
   });
 
+  it("keeps same-named family and mixed workspace scopes workspace-qualified", async () => {
+    const workspaceA = WORKSPACE_IDS[0]!;
+    const workspaceB = WORKSPACE_IDS[1]!;
+    const adminA = "authz-finance-a-admin";
+    const memberA = "authz-finance-a-member";
+    const adminB = "authz-finance-b-admin";
+    const memberB = "authz-finance-b-member";
+    const coworker = "authz-cross-workspace-coworker";
+    __setDirectoryCacheForTests({
+      workspaces: new Map([
+        [workspaceA, { id: workspaceA, name: "A", slug: "a", memberCount: 2 }],
+        [workspaceB, { id: workspaceB, name: "B", slug: "b", memberCount: 2 }],
+      ]),
+      groups: [
+        { id: adminA, workspaceId: workspaceA, name: "Finance - Admin", type: "custom" },
+        { id: memberA, workspaceId: workspaceA, name: "Finance - Member", type: "custom" },
+        { id: adminB, workspaceId: workspaceB, name: "Finance - Admin", type: "custom" },
+        { id: memberB, workspaceId: workspaceB, name: "Finance - Member", type: "custom" },
+      ],
+      groupMembers: new Map([
+        [adminA, [OTHER_USER_ID]],
+        [memberA, [OTHER_USER_ID, coworker]],
+        [adminB, []],
+        [memberB, [OTHER_USER_ID, coworker]],
+      ]),
+      members: new Map([
+        [OTHER_USER_ID, {
+          ...directoryMember(OTHER_USER_ID),
+          workspaces: new Map([
+            [workspaceA, { role: "admin", isDisabled: false }],
+            [workspaceB, { role: "member", isDisabled: false }],
+          ]),
+        }],
+        [coworker, {
+          ...directoryMember(coworker),
+          workspaces: new Map([
+            [workspaceA, { role: "member", isDisabled: false }],
+            [workspaceB, { role: "member", isDisabled: false }],
+          ]),
+        }],
+      ]),
+    });
+
+    const resolved = (await resolveAuthorization(OTHER_USER_ID))!;
+    expect(resolved.workspaceIds).toEqual([workspaceA]);
+    expect(resolved.groupUserIds?.[memberA]).toEqual([OTHER_USER_ID, coworker].sort());
+    expect(resolved.groupUserIds?.[memberB]).toEqual([OTHER_USER_ID]);
+    expect(resolved.managedGroupIds).toContain(memberA);
+    expect(resolved.managedGroupIds).not.toContain(memberB);
+  });
+
   it("atomically pins concurrent first callbacks to one stable subject", async () => {
     const results = await Promise.all([
       maybeBootstrapAppAdmin({
@@ -292,7 +430,7 @@ describe("designated account-admin bootstrap", () => {
       role: "account",
       isTrueAccountAdmin: false,
       capabilities: {
-        canManageAccess: true,
+          canManageAccess: false,
         canEditAllocations: true,
         canPreviewRoles: false,
         canWriteGroupLimits: false,
@@ -322,11 +460,11 @@ describe("designated account-admin bootstrap", () => {
         userId: detachedUserId,
         isTrueAccountAdmin: false,
         capabilities: {
-          canManageAccess: true,
+          canManageAccess: false,
           canEditAllocations: true,
           canPreviewRoles: false,
           canWriteGroupLimits: false,
-          canWriteUserLimitsIn: [...WORKSPACE_IDS].sort(),
+          canWriteUserLimitsIn: [],
         },
       });
     } finally {
@@ -365,7 +503,7 @@ describe("designated account-admin bootstrap", () => {
         canEditAllocations: false,
         canPreviewRoles: false,
         canWriteGroupLimits: false,
-        canWriteUserLimitsIn: [WORKSPACE_IDS[0]],
+        canWriteUserLimitsIn: [],
       },
     });
 
@@ -392,9 +530,10 @@ describe("designated account-admin bootstrap", () => {
       },
     });
 
-    await expect(resolvePreviewAuthorization(real, "not-a-preview")).resolves.toBe(real);
+    await expect(resolvePreviewAuthorization(real, "not-a-preview"))
+      .rejects.toThrow("Preview target is invalid");
     await expect(
       resolvePreviewAuthorization(real, `workspace_admin:missing-workspace`),
-    ).resolves.toBe(real);
+    ).rejects.toThrow("Preview target is invalid");
   });
 });

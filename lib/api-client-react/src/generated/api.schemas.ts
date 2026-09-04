@@ -5,6 +5,317 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface ReportingPeriod {
+  start: string;
+  endExclusive: string;
+  timezone: 'UTC';
+  label: string;
+}
+
+export type AccountingMetadataCostBasis = typeof AccountingMetadataCostBasis[keyof typeof AccountingMetadataCostBasis];
+
+
+export const AccountingMetadataCostBasis = {
+  allocation_eligible_committed: 'allocation_eligible_committed',
+} as const;
+
+export type AccountingMetadataStatus = typeof AccountingMetadataStatus[keyof typeof AccountingMetadataStatus];
+
+
+export const AccountingMetadataStatus = {
+  complete: 'complete',
+  stale: 'stale',
+  partial: 'partial',
+  empty: 'empty',
+} as const;
+
+export type AccountingMetadataCoverage = {
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  ratio: number;
+  /** @minimum 0 */
+  requestedDays: number;
+  missingDays: string[];
+  failedWorkspaceDays: string[];
+};
+
+export interface AccountingMetadata {
+  generationId: string;
+  costBasis: AccountingMetadataCostBasis;
+  status: AccountingMetadataStatus;
+  /** @nullable */
+  dataAsOf: string | null;
+  /** @nullable */
+  directoryDataAsOf: string | null;
+  stale: boolean;
+  coverage: AccountingMetadataCoverage;
+  qualifications: string[];
+}
+
+export type DashboardScopeViewScope = typeof DashboardScopeViewScope[keyof typeof DashboardScopeViewScope];
+
+
+export const DashboardScopeViewScope = {
+  managed: 'managed',
+  my: 'my',
+  all_authorized: 'all_authorized',
+} as const;
+
+export interface DashboardScope {
+  viewScope: DashboardScopeViewScope;
+  label: string;
+  workspaceIds: string[];
+  groupIds: string[];
+  isPersonal: boolean;
+}
+
+export type DashboardCardKey = typeof DashboardCardKey[keyof typeof DashboardCardKey];
+
+
+export const DashboardCardKey = {
+  eligible_spend: 'eligible_spend',
+  allocated_budget: 'allocated_budget',
+  allocation_remaining: 'allocation_remaining',
+  pools_attention: 'pools_attention',
+  spend: 'spend',
+  agent_spend: 'agent_spend',
+  other_services: 'other_services',
+  members_with_spend: 'members_with_spend',
+  your_agent_spend: 'your_agent_spend',
+  monthly_agent_limit: 'monthly_agent_limit',
+  agent_limit_remaining: 'agent_limit_remaining',
+} as const;
+
+export type DashboardCardUnit = typeof DashboardCardUnit[keyof typeof DashboardCardUnit];
+
+
+export const DashboardCardUnit = {
+  usd: 'usd',
+  count: 'count',
+} as const;
+
+export interface DashboardCard {
+  key: DashboardCardKey;
+  label: string;
+  /** @nullable */
+  value: number | null;
+  unit: DashboardCardUnit;
+  /** @nullable */
+  qualification: string | null;
+}
+
+export interface DashboardTrendBucket {
+  start: string;
+  endExclusive: string;
+  /** @nullable */
+  spendUsd: number | null;
+  /** @nullable */
+  valueUsd: number | null;
+  isPartial: boolean;
+  isMissing: boolean;
+}
+
+export type DashboardBreakdownItemKind = typeof DashboardBreakdownItemKind[keyof typeof DashboardBreakdownItemKind];
+
+
+export const DashboardBreakdownItemKind = {
+  workspace: 'workspace',
+  group: 'group',
+  other: 'other',
+  unattributed: 'unattributed',
+  reconciliation: 'reconciliation',
+} as const;
+
+export interface DashboardBreakdownItem {
+  id: string;
+  label: string;
+  spendUsd: number;
+  kind: DashboardBreakdownItemKind;
+  /** @nullable */
+  drillThrough: string | null;
+}
+
+export interface DashboardAccounting {
+  eligibleSpendUsd: number;
+  grossSpendUsd: number;
+  internalExcludedUsd: number;
+  unbudgetedUsd: number;
+  unattributedUsd: number;
+  reconciliationUsd: number;
+}
+
+export type DashboardResponseCardVariant = typeof DashboardResponseCardVariant[keyof typeof DashboardResponseCardVariant];
+
+
+export const DashboardResponseCardVariant = {
+  budget_health: 'budget_health',
+  usage_analysis: 'usage_analysis',
+  personal_limit: 'personal_limit',
+  personal_usage: 'personal_usage',
+} as const;
+
+export type DashboardResponseTrendGranularity = typeof DashboardResponseTrendGranularity[keyof typeof DashboardResponseTrendGranularity];
+
+
+export const DashboardResponseTrendGranularity = {
+  day: 'day',
+  week: 'week',
+  month: 'month',
+} as const;
+
+export type DashboardResponseTrendMode = typeof DashboardResponseTrendMode[keyof typeof DashboardResponseTrendMode];
+
+
+export const DashboardResponseTrendMode = {
+  period: 'period',
+  cumulative: 'cumulative',
+} as const;
+
+export type DashboardResponseTrend = {
+  granularity: DashboardResponseTrendGranularity;
+  mode: DashboardResponseTrendMode;
+  /** @maxItems 62 */
+  buckets: DashboardTrendBucket[];
+};
+
+export interface DashboardResponse {
+  scope: DashboardScope;
+  period: ReportingPeriod;
+  cardVariant: DashboardResponseCardVariant;
+  /**
+     * @minItems 3
+     * @maxItems 4
+     */
+  cards: DashboardCard[];
+  trend: DashboardResponseTrend;
+  /** @maxItems 8 */
+  breakdown: DashboardBreakdownItem[];
+  accounting: DashboardAccounting;
+  metadata: AccountingMetadata;
+}
+
+export type SpendTableRowKind = typeof SpendTableRowKind[keyof typeof SpendTableRowKind];
+
+
+export const SpendTableRowKind = {
+  pool: 'pool',
+  group: 'group',
+  person: 'person',
+  project: 'project',
+  unattributed: 'unattributed',
+  reconciliation: 'reconciliation',
+} as const;
+
+export type SpendTableRowLimitState = typeof SpendTableRowLimitState[keyof typeof SpendTableRowLimitState];
+
+
+export const SpendTableRowLimitState = {
+  not_applicable: 'not_applicable',
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+/**
+ * Durable observation result; failed and never-observed snapshots remain distinct.
+ */
+export type SpendTableRowLimitObservationStatus = typeof SpendTableRowLimitObservationStatus[keyof typeof SpendTableRowLimitObservationStatus];
+
+
+export const SpendTableRowLimitObservationStatus = {
+  not_applicable: 'not_applicable',
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+} as const;
+
+export interface SpendTableRow {
+  id: string;
+  kind: SpendTableRowKind;
+  name: string;
+  /** @nullable */
+  workspaceId: string | null;
+  /** @nullable */
+  workspaceName: string | null;
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  /** @nullable */
+  allocationUsd: number | null;
+  /** @nullable */
+  remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  status: string;
+  /** @nullable */
+  memberCount: number | null;
+  /** @nullable */
+  ownerName: string | null;
+  limitState: SpendTableRowLimitState;
+  /** Durable observation result; failed and never-observed snapshots remain distinct. */
+  limitObservationStatus: SpendTableRowLimitObservationStatus;
+  sharedPool: boolean;
+}
+
+export type SpendTableResponseView = typeof SpendTableResponseView[keyof typeof SpendTableResponseView];
+
+
+export const SpendTableResponseView = {
+  pools: 'pools',
+  groups: 'groups',
+  people: 'people',
+  projects: 'projects',
+} as const;
+
+export type SpendTableResponseTotals = {
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  allocationUsd: number;
+  internalExcludedUsd: number;
+  unbudgetedUsd: number;
+  unattributedUsd: number;
+  reconciliationUsd: number;
+};
+
+export type SpendTableResponseFacetsStatuses = {[key: string]: number};
+
+export type SpendTableResponseFacetsWorkspacesItem = {
+  id: string;
+  name: string;
+  /** @minimum 0 */
+  count: number;
+};
+
+export type SpendTableResponseFacets = {
+  statuses: SpendTableResponseFacetsStatuses;
+  workspaces: SpendTableResponseFacetsWorkspacesItem[];
+};
+
+export interface SpendTableResponse {
+  view: SpendTableResponseView;
+  scope: DashboardScope;
+  period: ReportingPeriod;
+  rows: SpendTableRow[];
+  /** @minimum 1 */
+  page: number;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  pageSize: number;
+  /** @minimum 0 */
+  totalRows: number;
+  /** @minimum 0 */
+  filteredRows: number;
+  totals: SpendTableResponseTotals;
+  facets: SpendTableResponseFacets;
+  metadata: AccountingMetadata;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -76,6 +387,18 @@ export const AuthAuthorizationRolesItem = {
 } as const;
 
 /**
+ * Server-selected default presentation scope.
+ */
+export type AuthAuthorizationViewScope = typeof AuthAuthorizationViewScope[keyof typeof AuthAuthorizationViewScope];
+
+
+export const AuthAuthorizationViewScope = {
+  managed: 'managed',
+  my: 'my',
+  all_authorized: 'all_authorized',
+} as const;
+
+/**
  * Resolved roles and the union of their server-derived scopes.
  */
 export interface AuthAuthorization {
@@ -87,15 +410,25 @@ export interface AuthAuthorization {
   groupIds: string[];
   userIds: string[];
   isPreview: boolean;
+  /** Server-selected default presentation scope. */
+  viewScope?: AuthAuthorizationViewScope;
+  /** True when mutations must be rejected for the effective preview. */
+  previewReadOnly?: boolean;
 }
 
 export interface AuthCapabilities {
   canManageAccess: boolean;
+  canViewAccountUsage?: boolean;
   canEditAllocations: boolean;
+  canManageNotifications?: boolean;
+  canManageSystem?: boolean;
   /** Server-derived builder capability for entering role-scoped previews. */
   canPreviewRoles: boolean;
   canWriteGroupLimits: boolean;
+  /** Workspace IDs in which the caller may write a user limit. */
   canWriteUserLimitsIn: string[];
+  canRunChecks?: boolean;
+  canSendTestEmail?: boolean;
 }
 
 export interface AuthUserEnvelope {
@@ -1507,6 +1840,11 @@ export interface UsageIngestCycleResult {
 }
 
 /**
+ * CSV containing exactly the authorized filtered rows in server sort order.
+ */
+export type SpendCsvResponse = string;
+
+/**
  * Authentication required — no valid session.
  */
 export type UnauthorizedResponse = ApiError;
@@ -1526,6 +1864,66 @@ export const RangeTypeParameter = {
   ytd: 'ytd',
   custom: 'custom',
 } as const;
+
+export type ViewScopeParameter = typeof ViewScopeParameter[keyof typeof ViewScopeParameter];
+
+
+export const ViewScopeParameter = {
+  managed: 'managed',
+  my: 'my',
+  all_authorized: 'all_authorized',
+} as const;
+
+export type TrendGranularityParameter = typeof TrendGranularityParameter[keyof typeof TrendGranularityParameter];
+
+
+export const TrendGranularityParameter = {
+  day: 'day',
+  week: 'week',
+  month: 'month',
+} as const;
+
+export type TrendModeParameter = typeof TrendModeParameter[keyof typeof TrendModeParameter];
+
+
+export const TrendModeParameter = {
+  period: 'period',
+  cumulative: 'cumulative',
+} as const;
+
+export type SpendSearchParameter = string;
+
+export type SpendStatusParameter = typeof SpendStatusParameter[keyof typeof SpendStatusParameter];
+
+
+export const SpendStatusParameter = {
+  all: 'all',
+  over: 'over',
+  attention: 'attention',
+  budgeted: 'budgeted',
+  unbudgeted: 'unbudgeted',
+  no_allocation: 'no_allocation',
+  shared: 'shared',
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+export type SpendSortParameter = typeof SpendSortParameter[keyof typeof SpendSortParameter];
+
+
+export const SpendSortParameter = {
+  status: 'status',
+  spend_desc: 'spend_desc',
+  spend_asc: 'spend_asc',
+  name_asc: 'name_asc',
+  name_desc: 'name_desc',
+} as const;
+
+export type SpendPageParameter = number;
+
+export type SpendPageSizeParameter = number;
 
 /**
  * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
@@ -1661,6 +2059,263 @@ startDate?: StartDateParameter;
  * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
  */
 endDate?: EndDateParameter;
+};
+
+export type GetDashboardParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+granularity?: TrendGranularityParameter;
+trendMode?: TrendModeParameter;
+};
+
+export type ListSpendPoolsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
+/**
+ * @minimum 1
+ */
+page?: SpendPageParameter;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+pageSize?: SpendPageSizeParameter;
+};
+
+export type ListSpendGroupsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
+/**
+ * @minimum 1
+ */
+page?: SpendPageParameter;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+pageSize?: SpendPageSizeParameter;
+};
+
+export type ListSpendPeopleParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
+/**
+ * @minimum 1
+ */
+page?: SpendPageParameter;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+pageSize?: SpendPageSizeParameter;
+};
+
+export type ListSpendProjectsParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
+/**
+ * @minimum 1
+ */
+page?: SpendPageParameter;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+pageSize?: SpendPageSizeParameter;
+};
+
+export type ExportSpendPoolsCsvParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
+};
+
+export type ExportSpendGroupsCsvParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
+};
+
+export type ExportSpendPeopleCsvParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
+};
+
+export type ExportSpendProjectsTableCsvParams = {
+/**
+ * Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+status?: SpendStatusParameter;
+sort?: SpendSortParameter;
 };
 
 export type GetTrendsParams = {

@@ -23,6 +23,7 @@ import {
   BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
   isPersistedAppAdmin,
   asAuthorizationUnavailable,
+  InvalidPreviewError,
   maybeBootstrapAppAdmin,
   normalizeEmail,
   resolveCurrentAuthorization,
@@ -125,11 +126,16 @@ router.get('/auth/user', async (req: Request, res: Response) => {
       user: null,
       auth: null,
       capabilities: {
+        canViewAccountUsage: false,
         canManageAccess: false,
         canEditAllocations: false,
+        canManageNotifications: false,
+        canManageSystem: false,
         canPreviewRoles: false,
         canWriteGroupLimits: false,
         canWriteUserLimitsIn: [],
+        canRunChecks: false,
+        canSendTestEmail: false,
       },
     }));
     return;
@@ -142,6 +148,10 @@ router.get('/auth/user', async (req: Request, res: Response) => {
       ? await resolvePreviewAuthorization(realAuth, req.header('X-Preview-As'))
       : null;
   } catch (err) {
+    if (err instanceof InvalidPreviewError) {
+      res.status(400).json({ error: err.message, previewInvalid: true });
+      return;
+    }
     const unavailable = asAuthorizationUnavailable(err, 'authorization');
     req.log.error(
       { errorName: unavailable.name, source: unavailable.source },
@@ -173,11 +183,16 @@ router.get('/auth/user', async (req: Request, res: Response) => {
             canPreviewRoles: realAuth?.capabilities.canPreviewRoles === true,
           }
         : {
+            canViewAccountUsage: false,
             canManageAccess: false,
             canEditAllocations: false,
+            canManageNotifications: false,
+            canManageSystem: false,
             canPreviewRoles: false,
             canWriteGroupLimits: false,
             canWriteUserLimitsIn: [],
+            canRunChecks: false,
+            canSendTestEmail: false,
           },
     }),
   );

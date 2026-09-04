@@ -9,7 +9,7 @@ const router = Router();
 router.get("/alerts", async (req, res): Promise<void> => {
   const authz = req.authz!;
   const accountWide = isAccountWide(authz);
-  const canSeeRecipients = authz.capabilities.canManageAccess;
+  const canSeeRecipients = authz.capabilities.canManageNotifications;
   const parsed = ListAlertsQueryParams.safeParse(req.query);
   const limit = parsed.success && parsed.data.limit ? parsed.data.limit : 100;
   let allowedIds = new Set<string>();
@@ -108,7 +108,7 @@ router.get("/alerts", async (req, res): Promise<void> => {
   res.json(ListAlertsResponse.parse(scoped));
 });
 
-router.post("/alerts/check", requireRole("account"), async (req, res): Promise<void> => {
+router.post("/alerts/check", requireCapability("canRunChecks"), async (req, res): Promise<void> => {
   if (!isConfigured()) {
     res.status(503).json({ error: "REPLIT_ENTERPRISE_API_KEY is not configured" });
     return;
@@ -135,7 +135,7 @@ router.post("/alerts/check", requireRole("account"), async (req, res): Promise<v
 
 router.post(
   "/alerts/:alertId/test",
-  requireCapability("canManageAccess"),
+  requireCapability("canSendTestEmail"),
   async (req, res): Promise<void> => {
     const alertId = Number(req.params["alertId"]);
     if (!Number.isInteger(alertId) || alertId <= 0) {
@@ -183,7 +183,7 @@ router.post(
 
 router.post(
   "/alerts/test-email",
-  requireCapability("canManageAccess"),
+  requireCapability("canSendTestEmail"),
   async (req, res): Promise<void> => {
     const selection = SendEmailTestExampleBody.safeParse(req.body);
     const allowedKeys = new Set(["entityType", "threshold"]);
@@ -231,7 +231,7 @@ router.post(
 
 router.get(
   "/settings/email",
-  requireCapability("canManageAccess"),
+  requireCapability("canManageNotifications"),
   async (_req, res): Promise<void> => {
     const settings = await getNotificationSettings();
     res.json(GetEmailSettingsResponse.parse({
@@ -243,7 +243,7 @@ router.get(
 
 router.patch(
   "/settings/email",
-  requireCapability("canManageAccess"),
+  requireCapability("canManageNotifications"),
   async (req, res): Promise<void> => {
     const update = UpdateEmailSettingsBody.safeParse(req.body);
     if (!update.success) {

@@ -194,7 +194,10 @@ export function visibleGroupMembers(
   return new Map(
     [...members].map(([id, userIds]) => [
       id,
-      userIds.filter((userId) => scope.userIds.has(userId)),
+      userIds.filter((userId) => {
+        const qualified = scope.groupUserIds.get(id);
+        return qualified ? qualified.has(userId) : scope.userIds.has(userId);
+      }),
     ]),
   );
 }
@@ -211,7 +214,10 @@ export function visibleRosterMembers(
       new Map(
         [...byGroup].map(([groupId, userIds]) => [
           groupId,
-          userIds.filter((userId) => scope.userIds.has(userId)),
+          userIds.filter((userId) => {
+            const qualified = scope.groupUserIds.get(groupId);
+            return qualified ? qualified.has(userId) : scope.userIds.has(userId);
+          }),
         ]),
       ),
     ]),
@@ -256,7 +262,8 @@ export function canSeeAlertEntity(
   const scope = scopeFor(authz);
   if ("kind" in scope) return true;
   if (alert.entityType !== "team") {
-    return visibleGroupIds.has(alert.entityId || alert.groupId);
+    return visibleGroupIds.has(alert.entityId || alert.groupId) &&
+      scope.managedGroupIds.has(alert.entityId || alert.groupId);
   }
   if (alert.workspaceIds.length === 0) return false;
   if (
@@ -267,14 +274,13 @@ export function canSeeAlertEntity(
   }
   const teamByWorkspace = canonicalTeamScope.get(alert.entityId || alert.groupId);
   if (!teamByWorkspace) return false;
-  const requiresWholeFamily = authz.roles.includes("team_admin");
   return alert.workspaceIds.every((workspaceId) => {
     if (scope.workspaceIds.has(workspaceId)) return true;
     const canonicalGroupIds = teamByWorkspace.get(workspaceId);
     if (!canonicalGroupIds || canonicalGroupIds.size === 0) return false;
-    return requiresWholeFamily
-      ? [...canonicalGroupIds].every((groupId) => scope.groupIds.has(groupId))
-      : [...canonicalGroupIds].some((groupId) => scope.groupIds.has(groupId));
+    return [...canonicalGroupIds].every((groupId) =>
+      scope.managedGroupIds.has(groupId)
+    );
   });
 }
 
@@ -446,6 +452,8 @@ export async function dailyUsageRollups(
     usage.authz.teamNames,
     usage.authz.groupIds,
     usage.authz.userIds,
+    usage.authz.managedGroupIds,
+    usage.authz.groupUserIds,
     usage.groups.map((group) => group.id),
     getDirectoryFreshness().dataAsOf,
     currentUtcDay,

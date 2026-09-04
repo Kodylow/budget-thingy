@@ -1,3 +1,4 @@
+import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { useRange } from '@/components/range-context';
@@ -15,12 +16,12 @@ export function RangeFilter({ selectedLabel }: { selectedLabel?: string }) {
   } = useRange();
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
       <Select
         value={rangeSelection}
         onValueChange={(val: string) => setRangeSelection(val as RangeSelection)}
       >
-        <SelectTrigger className={selectedLabel ? 'w-[220px] h-9' : 'w-[160px] h-9'}>
+        <SelectTrigger className={selectedLabel ? 'h-9 w-full sm:w-[260px]' : 'h-9 w-full sm:w-[160px]'}>
           <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
           <SelectValue placeholder="Select range">
             {selectedLabel}
@@ -40,19 +41,19 @@ export function RangeFilter({ selectedLabel }: { selectedLabel?: string }) {
         </span>
       )}
       {rangeSelection === 'custom' && (
-        <div className="flex items-center gap-1">
-          <Input 
-            type="date" 
-            value={startDate || ''} 
+        <div className="flex flex-wrap items-center gap-1">
+          <Input
+            type="date"
+            value={startDate || ''}
             onChange={e => setStartDate(e.target.value)}
-            className="w-36 h-9 text-xs"
+            className="h-9 min-w-32 flex-1 text-xs sm:w-36 sm:flex-none"
           />
           <span className="text-muted-foreground text-xs mx-1">to</span>
-          <Input 
-            type="date" 
-            value={endDate || ''} 
+          <Input
+            type="date"
+            value={endDate || ''}
             onChange={e => setEndDate(e.target.value)}
-            className="w-36 h-9 text-xs"
+            className="h-9 min-w-32 flex-1 text-xs sm:w-36 sm:flex-none"
           />
         </div>
       )}

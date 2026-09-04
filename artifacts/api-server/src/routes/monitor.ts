@@ -10,6 +10,8 @@ import adminRouter from "./monitor.admin";
 import directoryRouter from "./monitor.directory";
 import projectExportsRouter from "./monitor.exports-projects";
 import userExportsRouter from "./monitor.exports-users";
+import dashboardRouter from "./monitor.dashboard";
+import spendTablesRouter from "./monitor.spend-tables";
 
 const router: IRouter = Router();
 router.use(requireAuth);
@@ -23,6 +25,8 @@ router.use(adminRouter);
 router.use(directoryRouter);
 router.use(projectExportsRouter);
 router.use(userExportsRouter);
+router.use(dashboardRouter);
+router.use(spendTablesRouter);
 
 export { canSeeAlertEntity };
 export default router;

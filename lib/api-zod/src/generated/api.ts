@@ -35,14 +35,21 @@ export const GetCurrentAuthUserResponse = zod.object({
   "teamNames": zod.array(zod.string()),
   "groupIds": zod.array(zod.string()),
   "userIds": zod.array(zod.string()),
-  "isPreview": zod.boolean()
+  "isPreview": zod.boolean(),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-selected default presentation scope.'),
+  "previewReadOnly": zod.boolean().optional().describe('True when mutations must be rejected for the effective preview.')
 }).describe('Resolved roles and the union of their server-derived scopes.\n'),zod.null()]).describe('Resolved authorization, or null when the user is unauthenticated or is not an active Enterprise directory member (access denied).\n'),
   "capabilities": zod.object({
   "canManageAccess": zod.boolean(),
+  "canViewAccountUsage": zod.boolean().optional(),
   "canEditAllocations": zod.boolean(),
+  "canManageNotifications": zod.boolean().optional(),
+  "canManageSystem": zod.boolean().optional(),
   "canPreviewRoles": zod.boolean().describe('Server-derived builder capability for entering role-scoped previews.'),
   "canWriteGroupLimits": zod.boolean(),
-  "canWriteUserLimitsIn": zod.array(zod.string())
+  "canWriteUserLimitsIn": zod.array(zod.string()).describe('Workspace IDs in which the caller may write a user limit.'),
+  "canRunChecks": zod.boolean().optional(),
+  "canSendTestEmail": zod.boolean().optional()
 })
 })
 
@@ -658,6 +665,651 @@ export const GetSummaryResponse = zod.object({
   "accountWorkspaceUnreconciledUsd": zod.number().describe('Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.')
 })
 })
+
+
+/**
+ * Returns one committed, stored-data dashboard generation. Period boundaries and trend buckets are UTC and end-exclusive. This endpoint never refreshes upstream limits and does not include people, project, or hierarchy tables.
+ * @summary Compact scoped dashboard cards and charts
+ */
+export const GetDashboardQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "granularity": zod.enum(['day', 'week', 'month']).optional(),
+  "trendMode": zod.enum(['period', 'cumulative']).optional()
+})
+
+export const getDashboardHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetDashboardHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getDashboardHeaderXPreviewAsRegExp).optional().describe('Builder-only synthetic authorization view.')
+})
+
+export const getDashboardResponseCardsMin = 3;
+export const getDashboardResponseCardsMax = 4;
+
+export const getDashboardResponseTrendBucketsMax = 62;
+
+export const getDashboardResponseBreakdownMax = 8;
+
+export const getDashboardResponseMetadataCoverageRatioMin = 0;
+export const getDashboardResponseMetadataCoverageRatioMax = 1;
+
+export const getDashboardResponseMetadataCoverageRequestedDaysMin = 0;
+
+
+
+export const GetDashboardResponse = zod.object({
+  "scope": zod.object({
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
+  "label": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "isPersonal": zod.boolean()
+}),
+  "period": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}),
+  "cardVariant": zod.enum(['budget_health', 'usage_analysis', 'personal_limit', 'personal_usage']),
+  "cards": zod.array(zod.object({
+  "key": zod.enum(['eligible_spend', 'allocated_budget', 'allocation_remaining', 'pools_attention', 'spend', 'agent_spend', 'other_services', 'members_with_spend', 'your_agent_spend', 'monthly_agent_limit', 'agent_limit_remaining']),
+  "label": zod.string(),
+  "value": zod.number().nullable(),
+  "unit": zod.enum(['usd', 'count']),
+  "qualification": zod.string().nullable()
+})).min(getDashboardResponseCardsMin).max(getDashboardResponseCardsMax),
+  "trend": zod.object({
+  "granularity": zod.enum(['day', 'week', 'month']),
+  "mode": zod.enum(['period', 'cumulative']),
+  "buckets": zod.array(zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "spendUsd": zod.number().nullable(),
+  "valueUsd": zod.number().nullable(),
+  "isPartial": zod.boolean(),
+  "isMissing": zod.boolean()
+})).max(getDashboardResponseTrendBucketsMax)
+}),
+  "breakdown": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "spendUsd": zod.number(),
+  "kind": zod.enum(['workspace', 'group', 'other', 'unattributed', 'reconciliation']),
+  "drillThrough": zod.string().nullable()
+})).max(getDashboardResponseBreakdownMax),
+  "accounting": zod.object({
+  "eligibleSpendUsd": zod.number(),
+  "grossSpendUsd": zod.number(),
+  "internalExcludedUsd": zod.number(),
+  "unbudgetedUsd": zod.number(),
+  "unattributedUsd": zod.number(),
+  "reconciliationUsd": zod.number()
+}),
+  "metadata": zod.object({
+  "generationId": zod.string(),
+  "costBasis": zod.enum(['allocation_eligible_committed']),
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "stale": zod.boolean(),
+  "coverage": zod.object({
+  "ratio": zod.number().min(getDashboardResponseMetadataCoverageRatioMin).max(getDashboardResponseMetadataCoverageRatioMax),
+  "requestedDays": zod.number().min(getDashboardResponseMetadataCoverageRequestedDaysMin),
+  "missingDays": zod.array(zod.string()),
+  "failedWorkspaceDays": zod.array(zod.string())
+}),
+  "qualifications": zod.array(zod.string())
+})
+})
+
+
+/**
+ * @summary List authorized canonical budget pools
+ */
+export const listSpendPoolsQuerySearchMax = 200;
+
+export const listSpendPoolsQueryPageDefault = 1;
+
+export const listSpendPoolsQueryPageSizeDefault = 25;
+export const listSpendPoolsQueryPageSizeMax = 100;
+
+
+
+export const ListSpendPoolsQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(listSpendPoolsQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
+  "page": zod.coerce.number().min(1).default(listSpendPoolsQueryPageDefault),
+  "pageSize": zod.coerce.number().min(1).max(listSpendPoolsQueryPageSizeMax).default(listSpendPoolsQueryPageSizeDefault)
+})
+
+
+export const listSpendPoolsResponsePageSizeMax = 100;
+
+export const listSpendPoolsResponseTotalRowsMin = 0;
+
+export const listSpendPoolsResponseFilteredRowsMin = 0;
+
+export const listSpendPoolsResponseFacetsStatusesMinOne = 0;
+
+export const listSpendPoolsResponseFacetsWorkspacesItemCountMin = 0;
+
+export const listSpendPoolsResponseMetadataCoverageRatioMin = 0;
+export const listSpendPoolsResponseMetadataCoverageRatioMax = 1;
+
+export const listSpendPoolsResponseMetadataCoverageRequestedDaysMin = 0;
+
+
+
+export const ListSpendPoolsResponse = zod.object({
+  "view": zod.enum(['pools', 'groups', 'people', 'projects']),
+  "scope": zod.object({
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
+  "label": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "isPersonal": zod.boolean()
+}),
+  "period": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}),
+  "rows": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
+  "name": zod.string(),
+  "workspaceId": zod.string().nullable(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "status": zod.string(),
+  "memberCount": zod.number().nullable(),
+  "ownerName": zod.string().nullable(),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "sharedPool": zod.boolean()
+})),
+  "page": zod.number().min(1),
+  "pageSize": zod.number().min(1).max(listSpendPoolsResponsePageSizeMax),
+  "totalRows": zod.number().min(listSpendPoolsResponseTotalRowsMin),
+  "filteredRows": zod.number().min(listSpendPoolsResponseFilteredRowsMin),
+  "totals": zod.object({
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number(),
+  "internalExcludedUsd": zod.number(),
+  "unbudgetedUsd": zod.number(),
+  "unattributedUsd": zod.number(),
+  "reconciliationUsd": zod.number()
+}),
+  "facets": zod.object({
+  "statuses": zod.record(zod.string(), zod.number().min(listSpendPoolsResponseFacetsStatusesMinOne)),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "count": zod.number().min(listSpendPoolsResponseFacetsWorkspacesItemCountMin)
+}))
+}),
+  "metadata": zod.object({
+  "generationId": zod.string(),
+  "costBasis": zod.enum(['allocation_eligible_committed']),
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "stale": zod.boolean(),
+  "coverage": zod.object({
+  "ratio": zod.number().min(listSpendPoolsResponseMetadataCoverageRatioMin).max(listSpendPoolsResponseMetadataCoverageRatioMax),
+  "requestedDays": zod.number().min(listSpendPoolsResponseMetadataCoverageRequestedDaysMin),
+  "missingDays": zod.array(zod.string()),
+  "failedWorkspaceDays": zod.array(zod.string())
+}),
+  "qualifications": zod.array(zod.string())
+})
+})
+
+
+/**
+ * @summary List authorized workspace-qualified groups
+ */
+export const listSpendGroupsQuerySearchMax = 200;
+
+export const listSpendGroupsQueryPageDefault = 1;
+
+export const listSpendGroupsQueryPageSizeDefault = 25;
+export const listSpendGroupsQueryPageSizeMax = 100;
+
+
+
+export const ListSpendGroupsQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(listSpendGroupsQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
+  "page": zod.coerce.number().min(1).default(listSpendGroupsQueryPageDefault),
+  "pageSize": zod.coerce.number().min(1).max(listSpendGroupsQueryPageSizeMax).default(listSpendGroupsQueryPageSizeDefault)
+})
+
+
+export const listSpendGroupsResponsePageSizeMax = 100;
+
+export const listSpendGroupsResponseTotalRowsMin = 0;
+
+export const listSpendGroupsResponseFilteredRowsMin = 0;
+
+export const listSpendGroupsResponseFacetsStatusesMinOne = 0;
+
+export const listSpendGroupsResponseFacetsWorkspacesItemCountMin = 0;
+
+export const listSpendGroupsResponseMetadataCoverageRatioMin = 0;
+export const listSpendGroupsResponseMetadataCoverageRatioMax = 1;
+
+export const listSpendGroupsResponseMetadataCoverageRequestedDaysMin = 0;
+
+
+
+export const ListSpendGroupsResponse = zod.object({
+  "view": zod.enum(['pools', 'groups', 'people', 'projects']),
+  "scope": zod.object({
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
+  "label": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "isPersonal": zod.boolean()
+}),
+  "period": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}),
+  "rows": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
+  "name": zod.string(),
+  "workspaceId": zod.string().nullable(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "status": zod.string(),
+  "memberCount": zod.number().nullable(),
+  "ownerName": zod.string().nullable(),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "sharedPool": zod.boolean()
+})),
+  "page": zod.number().min(1),
+  "pageSize": zod.number().min(1).max(listSpendGroupsResponsePageSizeMax),
+  "totalRows": zod.number().min(listSpendGroupsResponseTotalRowsMin),
+  "filteredRows": zod.number().min(listSpendGroupsResponseFilteredRowsMin),
+  "totals": zod.object({
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number(),
+  "internalExcludedUsd": zod.number(),
+  "unbudgetedUsd": zod.number(),
+  "unattributedUsd": zod.number(),
+  "reconciliationUsd": zod.number()
+}),
+  "facets": zod.object({
+  "statuses": zod.record(zod.string(), zod.number().min(listSpendGroupsResponseFacetsStatusesMinOne)),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "count": zod.number().min(listSpendGroupsResponseFacetsWorkspacesItemCountMin)
+}))
+}),
+  "metadata": zod.object({
+  "generationId": zod.string(),
+  "costBasis": zod.enum(['allocation_eligible_committed']),
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "stale": zod.boolean(),
+  "coverage": zod.object({
+  "ratio": zod.number().min(listSpendGroupsResponseMetadataCoverageRatioMin).max(listSpendGroupsResponseMetadataCoverageRatioMax),
+  "requestedDays": zod.number().min(listSpendGroupsResponseMetadataCoverageRequestedDaysMin),
+  "missingDays": zod.array(zod.string()),
+  "failedWorkspaceDays": zod.array(zod.string())
+}),
+  "qualifications": zod.array(zod.string())
+})
+})
+
+
+/**
+ * @summary List authorized workspace-qualified people usage
+ */
+export const listSpendPeopleQuerySearchMax = 200;
+
+export const listSpendPeopleQueryPageDefault = 1;
+
+export const listSpendPeopleQueryPageSizeDefault = 25;
+export const listSpendPeopleQueryPageSizeMax = 100;
+
+
+
+export const ListSpendPeopleQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(listSpendPeopleQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
+  "page": zod.coerce.number().min(1).default(listSpendPeopleQueryPageDefault),
+  "pageSize": zod.coerce.number().min(1).max(listSpendPeopleQueryPageSizeMax).default(listSpendPeopleQueryPageSizeDefault)
+})
+
+
+export const listSpendPeopleResponsePageSizeMax = 100;
+
+export const listSpendPeopleResponseTotalRowsMin = 0;
+
+export const listSpendPeopleResponseFilteredRowsMin = 0;
+
+export const listSpendPeopleResponseFacetsStatusesMinOne = 0;
+
+export const listSpendPeopleResponseFacetsWorkspacesItemCountMin = 0;
+
+export const listSpendPeopleResponseMetadataCoverageRatioMin = 0;
+export const listSpendPeopleResponseMetadataCoverageRatioMax = 1;
+
+export const listSpendPeopleResponseMetadataCoverageRequestedDaysMin = 0;
+
+
+
+export const ListSpendPeopleResponse = zod.object({
+  "view": zod.enum(['pools', 'groups', 'people', 'projects']),
+  "scope": zod.object({
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
+  "label": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "isPersonal": zod.boolean()
+}),
+  "period": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}),
+  "rows": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
+  "name": zod.string(),
+  "workspaceId": zod.string().nullable(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "status": zod.string(),
+  "memberCount": zod.number().nullable(),
+  "ownerName": zod.string().nullable(),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "sharedPool": zod.boolean()
+})),
+  "page": zod.number().min(1),
+  "pageSize": zod.number().min(1).max(listSpendPeopleResponsePageSizeMax),
+  "totalRows": zod.number().min(listSpendPeopleResponseTotalRowsMin),
+  "filteredRows": zod.number().min(listSpendPeopleResponseFilteredRowsMin),
+  "totals": zod.object({
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number(),
+  "internalExcludedUsd": zod.number(),
+  "unbudgetedUsd": zod.number(),
+  "unattributedUsd": zod.number(),
+  "reconciliationUsd": zod.number()
+}),
+  "facets": zod.object({
+  "statuses": zod.record(zod.string(), zod.number().min(listSpendPeopleResponseFacetsStatusesMinOne)),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "count": zod.number().min(listSpendPeopleResponseFacetsWorkspacesItemCountMin)
+}))
+}),
+  "metadata": zod.object({
+  "generationId": zod.string(),
+  "costBasis": zod.enum(['allocation_eligible_committed']),
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "stale": zod.boolean(),
+  "coverage": zod.object({
+  "ratio": zod.number().min(listSpendPeopleResponseMetadataCoverageRatioMin).max(listSpendPeopleResponseMetadataCoverageRatioMax),
+  "requestedDays": zod.number().min(listSpendPeopleResponseMetadataCoverageRequestedDaysMin),
+  "missingDays": zod.array(zod.string()),
+  "failedWorkspaceDays": zod.array(zod.string())
+}),
+  "qualifications": zod.array(zod.string())
+})
+})
+
+
+/**
+ * @summary List authorized workspace-qualified project usage
+ */
+export const listSpendProjectsQuerySearchMax = 200;
+
+export const listSpendProjectsQueryPageDefault = 1;
+
+export const listSpendProjectsQueryPageSizeDefault = 25;
+export const listSpendProjectsQueryPageSizeMax = 100;
+
+
+
+export const ListSpendProjectsQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(listSpendProjectsQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
+  "page": zod.coerce.number().min(1).default(listSpendProjectsQueryPageDefault),
+  "pageSize": zod.coerce.number().min(1).max(listSpendProjectsQueryPageSizeMax).default(listSpendProjectsQueryPageSizeDefault)
+})
+
+
+export const listSpendProjectsResponsePageSizeMax = 100;
+
+export const listSpendProjectsResponseTotalRowsMin = 0;
+
+export const listSpendProjectsResponseFilteredRowsMin = 0;
+
+export const listSpendProjectsResponseFacetsStatusesMinOne = 0;
+
+export const listSpendProjectsResponseFacetsWorkspacesItemCountMin = 0;
+
+export const listSpendProjectsResponseMetadataCoverageRatioMin = 0;
+export const listSpendProjectsResponseMetadataCoverageRatioMax = 1;
+
+export const listSpendProjectsResponseMetadataCoverageRequestedDaysMin = 0;
+
+
+
+export const ListSpendProjectsResponse = zod.object({
+  "view": zod.enum(['pools', 'groups', 'people', 'projects']),
+  "scope": zod.object({
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
+  "label": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "isPersonal": zod.boolean()
+}),
+  "period": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}),
+  "rows": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
+  "name": zod.string(),
+  "workspaceId": zod.string().nullable(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "status": zod.string(),
+  "memberCount": zod.number().nullable(),
+  "ownerName": zod.string().nullable(),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable']).describe('Durable observation result; failed and never-observed snapshots remain distinct.'),
+  "sharedPool": zod.boolean()
+})),
+  "page": zod.number().min(1),
+  "pageSize": zod.number().min(1).max(listSpendProjectsResponsePageSizeMax),
+  "totalRows": zod.number().min(listSpendProjectsResponseTotalRowsMin),
+  "filteredRows": zod.number().min(listSpendProjectsResponseFilteredRowsMin),
+  "totals": zod.object({
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number(),
+  "internalExcludedUsd": zod.number(),
+  "unbudgetedUsd": zod.number(),
+  "unattributedUsd": zod.number(),
+  "reconciliationUsd": zod.number()
+}),
+  "facets": zod.object({
+  "statuses": zod.record(zod.string(), zod.number().min(listSpendProjectsResponseFacetsStatusesMinOne)),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "count": zod.number().min(listSpendProjectsResponseFacetsWorkspacesItemCountMin)
+}))
+}),
+  "metadata": zod.object({
+  "generationId": zod.string(),
+  "costBasis": zod.enum(['allocation_eligible_committed']),
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "stale": zod.boolean(),
+  "coverage": zod.object({
+  "ratio": zod.number().min(listSpendProjectsResponseMetadataCoverageRatioMin).max(listSpendProjectsResponseMetadataCoverageRatioMax),
+  "requestedDays": zod.number().min(listSpendProjectsResponseMetadataCoverageRequestedDaysMin),
+  "missingDays": zod.array(zod.string()),
+  "failedWorkspaceDays": zod.array(zod.string())
+}),
+  "qualifications": zod.array(zod.string())
+})
+})
+
+
+/**
+ * @summary Export the authorized filtered canonical pool rows
+ */
+export const exportSpendPoolsCsvQuerySearchMax = 200;
+
+
+
+export const ExportSpendPoolsCsvQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(exportSpendPoolsCsvQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
+})
+
+export const ExportSpendPoolsCsvResponse = zod.unknown()
+
+
+/**
+ * @summary Export the authorized filtered group rows
+ */
+export const exportSpendGroupsCsvQuerySearchMax = 200;
+
+
+
+export const ExportSpendGroupsCsvQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(exportSpendGroupsCsvQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
+})
+
+export const ExportSpendGroupsCsvResponse = zod.unknown()
+
+
+/**
+ * @summary Export the authorized filtered people rows
+ */
+export const exportSpendPeopleCsvQuerySearchMax = 200;
+
+
+
+export const ExportSpendPeopleCsvQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(exportSpendPeopleCsvQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
+})
+
+export const ExportSpendPeopleCsvResponse = zod.unknown()
+
+
+/**
+ * @summary Export the authorized filtered project rows
+ */
+export const exportSpendProjectsTableCsvQuerySearchMax = 200;
+
+
+
+export const ExportSpendProjectsTableCsvQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. billing = current billing cycle (default), full-term = rolling May 20, 2026 through today, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(exportSpendProjectsTableCsvQuerySearchMax).optional(),
+  "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional()
+})
+
+export const ExportSpendProjectsTableCsvResponse = zod.unknown()
 
 
 /**

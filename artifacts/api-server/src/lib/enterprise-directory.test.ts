@@ -457,10 +457,15 @@ describe("canonical team-admin scope", () => {
       userIds: ["admin"],
       isTrueAccountAdmin: true,
       capabilities: {
+        canViewAccountUsage: true,
         canManageAccess: true,
         canEditAllocations: true,
+        canManageNotifications: true,
+        canManageSystem: true,
         canPreviewRoles: true,
         canWriteGroupLimits: true,
+        canRunChecks: true,
+        canSendTestEmail: true,
         canWriteUserLimitsIn: [],
       },
     };
@@ -516,13 +521,19 @@ describe("canonical team-admin scope", () => {
       userIds: ["admin"],
       isTrueAccountAdmin: true,
       capabilities: {
+        canViewAccountUsage: true,
         canManageAccess: true,
         canEditAllocations: true,
+        canManageNotifications: true,
+        canManageSystem: true,
         canPreviewRoles: true,
         canWriteGroupLimits: true,
+        canRunChecks: true,
+        canSendTestEmail: true,
         canWriteUserLimitsIn: [],
       },
     };
-    expect(await resolvePreviewAuthorization(real, "team_admin:Growth MDU")).toBe(real);
+    await expect(resolvePreviewAuthorization(real, "team_admin:Growth MDU"))
+      .rejects.toThrow("Preview target is invalid or no longer available");
   });
 });

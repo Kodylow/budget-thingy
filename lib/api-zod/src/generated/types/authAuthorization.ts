@@ -7,6 +7,7 @@
  */
 import type { AuthAuthorizationRole } from './authAuthorizationRole';
 import type { AuthAuthorizationRolesItem } from './authAuthorizationRolesItem';
+import type { AuthAuthorizationViewScope } from './authAuthorizationViewScope';
 
 /**
  * Resolved roles and the union of their server-derived scopes.
@@ -20,4 +21,8 @@ export interface AuthAuthorization {
   groupIds: string[];
   userIds: string[];
   isPreview: boolean;
+  /** Server-selected default presentation scope. */
+  viewScope?: AuthAuthorizationViewScope;
+  /** True when mutations must be rejected for the effective preview. */
+  previewReadOnly?: boolean;
 }

@@ -3,6 +3,7 @@ import {
   asAuthorizationUnavailable,
   hasCapability,
   hasRole,
+  InvalidPreviewError,
   resolveCurrentAuthorization,
   resolvePreviewAuthorization,
   type Authorization,
@@ -38,6 +39,10 @@ export async function requireAuth(
     req.authz = await resolvePreviewAuthorization(real, req.header("X-Preview-As"));
     next();
   } catch (err) {
+    if (err instanceof InvalidPreviewError) {
+      res.status(400).json({ error: err.message, previewInvalid: true });
+      return;
+    }
     const unavailable = asAuthorizationUnavailable(err, "authorization");
     req.log.error(
       { errorName: unavailable.name, source: unavailable.source },

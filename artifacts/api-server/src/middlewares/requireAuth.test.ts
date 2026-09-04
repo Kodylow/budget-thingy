@@ -31,10 +31,15 @@ const authorization: Authorization = {
   userIds: ["caller"],
   isTrueAccountAdmin: false,
   capabilities: {
+    canViewAccountUsage: false,
     canManageAccess: false,
     canEditAllocations: false,
+    canManageNotifications: false,
+    canManageSystem: false,
     canPreviewRoles: false,
     canWriteGroupLimits: false,
+    canRunChecks: false,
+    canSendTestEmail: false,
     canWriteUserLimitsIn: [],
   },
 };

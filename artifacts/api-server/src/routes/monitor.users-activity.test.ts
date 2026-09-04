@@ -66,8 +66,8 @@ describe("monitor usage snapshot cutover", () => {
   test("true-admin ingest endpoints use persisted runs", () => {
     expect(routeSource).toContain('"/admin/usage/ingest/cycle"');
     expect(routeSource).toContain('"/admin/usage/ingest/runs/recent"');
-    expect(routeSource).toMatch(/ingest\/cycle"[\s\S]*requireCapability\("canWriteGroupLimits"\)/);
-    expect(routeSource).toMatch(/runs\/recent"[\s\S]*requireCapability\("canWriteGroupLimits"\)/);
+    expect(routeSource).toMatch(/ingest\/cycle"[\s\S]*requireCapability\("canRunChecks"\)/);
+    expect(routeSource).toMatch(/runs\/recent"[\s\S]*requireCapability\("canManageSystem"\)/);
     expect(routeSource).toContain("await runCycle()");
     expect(routeSource).toContain("from ingest_run order by started_at desc");
   });
