@@ -1,8 +1,8 @@
 # Current authenticated read-path benchmark
 
-This benchmark covers the product's current initial read paths: generated
-Dashboard, all active Spend JSON and CSV views, group detail, and group
-projects. It measures the durable Postgres store; it is not a production
+This benchmark covers all 12 paths in the current runner: generated Dashboard,
+all active Spend JSON and CSV views, full-term and billing group detail, and
+group projects. It measures the durable Postgres store; it is not a production
 capacity claim.
 
 ## Reproduce
@@ -20,75 +20,73 @@ HTTP loopback URL ending in `/api`. Each endpoint records:
 - one route-cache-cold request (lower-level process caches may already be warm);
 - two unrecorded warmups and 20 sequential requests;
 - one batch of eight concurrent requests;
-- decoded and wire-reported bytes, content encoding, Cache-Control,
-  Server-Timing, and process event-loop delay.
+- decoded bytes and `Content-Length` when present, content encoding,
+  Cache-Control, and every distinct Server-Timing value;
+- process event-loop delay for the complete run (not per endpoint).
 
 The optional ingestion-active profile runs the same eight-request batches while
-`ingest:once` is active. A true process-cold measurement requires restarting the
-API immediately before the runner.
+`ingest:once` is active. Before measurement, the runner requests the full-term
+group list and candidate group detail paths to select an authorized
+representative fixture. Paths are then measured serially, so route-cache-cold
+samples are order-dependent and are not process-cold. A true process-cold
+measurement requires restarting the API immediately before the runner.
 
 ## Fixture and method
 
-Measured September 4, 2026 against the development snapshot:
+Measured September 4, 2026 at 15:27:22 UTC against the current development
+snapshot:
 
 - reporting range: Full term, all-authorized scope;
 - representative group: `KBE16XLQ`;
 - representative workspace: `ntcqubwqvl`;
-- baseline: clean detached pre-change process on port 8091;
-- result: managed post-change workflow after startup ingestion settled;
-- identical authenticated session, database, runner, request counts, and
-  nearest-rank percentile method.
+- managed API workflow restarted immediately before measurement;
+- ingestion-active profile disabled, although Dashboard Server-Timing values
+  show repeated persisted-accounting rebuilds during the run;
+- 1 recorded route-cache-cold request, 2 unrecorded warmups, 20 recorded
+  sequential requests, and 8 recorded concurrent requests per endpoint;
+- nearest-rank percentile method.
 
-The persisted fixture had 20 workspaces in the representative query-plan scope,
-about 2,160 workspace-day rows and 62,928 required project-day rows. Payload
-sizes ranged from 8,238 bytes for Dashboard to 577,431 bytes for project CSV.
+Payload sizes ranged from 8,159 bytes for Dashboard to 577,431 bytes for
+project CSV. Every response supplied `Content-Length`, matching the decoded
+size, and reported identity encoding.
 
-## Before and after: warm sequential
+## Current result
 
-| Endpoint | Bytes | Before p50 / p95 | After p50 / p95 |
-| --- | ---: | ---: | ---: |
-| Dashboard | 8,238 | 32.2 / 35.7 ms | 25.5 / 27.8 ms |
-| Spend pools JSON | 14,717 | 3.6 / 4.6 ms | 3.9 / 4.3 ms |
-| Spend groups JSON | 14,864 | 3.6 / 4.0 ms | 3.9 / 4.4 ms |
-| Spend people JSON | 15,025 | 3.2 / 3.9 ms | 4.1 / 5.0 ms |
-| Spend projects JSON | 16,315 | 2.6 / 4.0 ms | 3.9 / 5.2 ms |
-| Pools CSV | 11,107 | 29.6 / 31.2 ms | 3.7 / 4.9 ms |
-| Groups CSV | 21,761 | 28.7 / 31.0 ms | 3.7 / 4.3 ms |
-| People CSV | 117,160 | 35.0 / 47.7 ms | 5.5 / 9.8 ms |
-| Projects CSV | 577,431 | 230.0 / 241.7 ms | 13.2 / 14.6 ms |
-| Group detail | 51,781 | 28.4 / 31.8 ms | 29.1 / 44.4 ms |
-| Group projects | 70,258 | 16.5 / 18.7 ms | 16.7 / 26.1 ms |
+| Endpoint | Decoded bytes | Warm requests | Warm p50 / p95 | Concurrent requests | Concurrent p50 / p95 | Server-Timing |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Dashboard | 8,159–8,236 | 20 | 848.9 / 943.0 ms | 8 | 102.8 / 178.2 ms | `accounting` |
+| Spend pools JSON | 14,719 | 20 | 4.1 / 4.9 ms | 8 | 15.0 / 23.9 ms | `spend` |
+| Spend groups JSON | 14,864 | 20 | 3.7 / 4.4 ms | 8 | 12.0 / 20.8 ms | `spend` |
+| Spend people JSON | 15,019 | 20 | 4.8 / 15.7 ms | 8 | 13.0 / 22.4 ms | `spend` |
+| Spend projects JSON | 16,315 | 20 | 3.8 / 4.4 ms | 8 | 13.1 / 27.6 ms | `spend` |
+| Pools CSV | 11,110 | 20 | 4.1 / 4.6 ms | 8 | 11.9 / 21.3 ms | `spend` |
+| Groups CSV | 21,773 | 20 | 3.8 / 4.5 ms | 8 | 11.4 / 19.5 ms | `spend` |
+| People CSV | 117,162 | 20 | 5.7 / 6.4 ms | 8 | 17.9 / 33.6 ms | `spend` |
+| Projects CSV | 577,431 | 20 | 12.9 / 15.0 ms | 8 | 45.8 / 83.2 ms | `spend` |
+| Group detail, full term | 51,553–51,554 | 20 | 32.3 / 38.1 ms | 8 | 128.2 / 215.7 ms | `group` |
+| Group detail, billing | 46,624–46,627 | 20 | 17.2 / 20.6 ms | 8 | 84.8 / 127.9 ms | `group` |
+| Group projects, full term | 70,274 | 20 | 16.8 / 20.1 ms | 8 | 80.9 / 147.9 ms | **missing** |
 
-The small JSON differences are runner noise around an already-hot result cache.
-The material gain is that CSV now uses the same bounded, authorized cache
-implementation as JSON. JSON and CSV keep distinct entries because their parsed
-pagination contracts differ. Historical daily facts remain loaded so
-membership changes retain their established per-day attribution. Group
-detail's warm median is unchanged; its full-term p95 varied in this run, so no
-latency improvement is claimed for that cell. Billing detail additionally
-reuses its selected usage generation rather than rebuilding the same billing
-window.
+Spend remains close to the previous September 4 reference: warm medians are
+3.7–12.9 ms, and project CSV remains the largest payload. Full-term and billing
+group detail are both reported now; the prior table omitted billing detail even
+though the runner measured it. Group projects still does not emit
+Server-Timing, and the table marks that miss rather than treating it as zero.
 
-## Cold, concurrent, and ingestion-active evidence
+Dashboard does not reproduce the prior 25.5 / 27.8 ms warm reference. Fifteen
+of 20 sequential responses reported `accounting` durations around 798–933 ms,
+then five were around 19–22 ms. This produces 848.9 / 943.0 ms and indicates
+generation invalidation or overlapping startup work despite the optional
+ingestion profile being disabled. No capacity or regression-cause claim is made
+from this run; it is the current observed result and should be investigated
+separately rather than hidden by reusing the older number.
 
 Route-cache-cold results are reported by the runner but are sensitive to which
-lower-level usage snapshot was warmed by the preceding endpoint. They are not
-used as an optimization claim. Process-cold behavior is represented only by a
-fresh server process and should be compared separately from route-cache misses.
-
-Representative eight-request concurrent p95 changes:
-
-- Dashboard: 245.1 ms to 191.1 ms;
-- pools CSV: 209.2 ms to 21.0 ms;
-- people CSV: 265.4 ms to 34.7 ms;
-- projects CSV: 1,878.4 ms to 94.8 ms.
-
-A managed-workflow run overlapping startup ingestion recorded Dashboard p50
-924.3 ms / p95 1,019.5 ms while snapshots were repeatedly invalidated. After
-the cycle settled, the same Dashboard cell was 25.5 / 27.8 ms. This is retained
-as honest ingestion-active evidence rather than blended into the idle result.
-Idle event-loop delay was mean 20.1 ms, p95 20.8 ms, max 21.2 ms; the
-ingestion-active run reached a 36.3 ms maximum.
+lower-level snapshot was warmed by the preceding endpoint. They are not used as
+an optimization claim. Aggregate event-loop delay for the complete run was mean
+20.1 ms, p95 20.5 ms, and max 26.8 ms. This is process-wide evidence, not an
+endpoint-specific attribution. The ingestion-active profile was not run and no
+ingestion-active number is claimed.
 
 ## Storage plans and delivery policy
 

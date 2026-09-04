@@ -10,3 +10,4 @@
 - [Isolated API test baselines](isolated-api-test-baselines.md) — fresh test storage must receive canonical seed data; never let integration tests inherit development fixtures.
 - [Scoped spend reconciliation](scoped-spend-reconciliation.md) — gross, excluded, and eligible values must share one authorization and filter scope; never mix workspace totals with group-scoped rows.
 - [Migration clock repairs](migration-clock-repairs.md) — repair skipped additive migrations with replay-safe DDL newer than every recorded baseline.
+- [Auth transition cleanup](auth-transition-cleanup.md) — temporary empty auth state during preview resolution must not be mistaken for logout or access loss.

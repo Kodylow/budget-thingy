@@ -47,16 +47,8 @@ connection details, or data for unrelated users.
 
 ## Validation
 
-- API typecheck: passed
-- API tests: 25 files, 327 tests passed
-- API production build: passed
-- Database package typecheck: passed
-- Shared auth library declaration build: passed
-- Group Budget Monitor typecheck: passed
-- Group Budget Monitor tests: 21 files, 94 tests passed
-- Group Budget Monitor production build: passed with `PORT` and `BASE_PATH`
-  supplied as required by its Vite configuration
-- Development workflows: restarted successfully; API logged that it began
-  listening after directory hydration
-- Anonymous `/api/auth/user`: HTTP 200 signed-out envelope
-- Browser preview: signed-out gate rendered with no current console errors
+The original repair evidence has been superseded by the whole-tree,
+role-complete matrix in [`final-acceptance.md`](./final-acceptance.md). That
+matrix retains the anonymous, denied, unavailable, valid-preview, and
+invalid-preview distinctions while testing the current Dashboard and Spend
+contracts rather than the pre-merge page composition.

@@ -14,3 +14,17 @@ mtime_ms = 1788508814361
 storage_uri = "gcs://replit-rams-assets-comcast-use5/rams/assets/repl:a7ac41b7-3a2d-440f-a090-f5b717499315/79869e6c-9f42-4b1d-8d28-b37ad6d6f70a/b200f9c6-8fbc-47a4-9160-9e09ee1797f7"
 storage_version_token = "1788508843803068"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "DjhsZr6GluYK46veBC3ob"
+uri = "file://screenshots/final-acceptance.jpg"
+type = "image"
+title = "Final acceptance preview"
+description = "Live signed-out Budget Monitor gate after both managed workflows restarted cleanly."
+logical_id = "3628af34-b7a8-4b8a-9ddb-3669d585527f"
+content_hash = "sha256:243987bae7bd6aa74db6513b1be3bee50c1db76132d3e4ef33a8c89c73c91da8"
+size = 18752
+mtime_ms = 1788535817482
+storage_uri = "gcs://replit-rams-assets-comcast-use5/rams/assets/repl:a7ac41b7-3a2d-440f-a090-f5b717499315/3628af34-b7a8-4b8a-9ddb-3669d585527f/508c4caf-d7b0-40f5-af08-2586ff85e42b"
+storage_version_token = "1788535859021795"
+content_type = "image/jpeg"

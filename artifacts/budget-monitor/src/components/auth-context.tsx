@@ -121,6 +121,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [logout, queryClient]);
   const identityRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
+    if (
+      availability === 'loading' ||
+      availability === 'unavailable' ||
+      availability === 'invalid-preview'
+    ) {
+      return;
+    }
     const identity = user?.id ?? null;
     if (identityRef.current !== undefined && identityRef.current !== identity) {
       ++previewTransitionRef.current;
@@ -130,7 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       queryClient.clear();
     }
     identityRef.current = identity;
-  }, [queryClient, user?.id]);
+  }, [availability, queryClient, user?.id]);
   useLayoutEffect(() => {
     if (availability === 'authorized') return;
     void queryClient.cancelQueries();
@@ -150,8 +157,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [authorizationFingerprint, availability, queryClient]);
   useEffect(() => {
-    if (availability === 'authorized' && preview && !canPreviewRbac) resetPreview();
-  }, [availability, canPreviewRbac, preview, resetPreview]);
+    if (
+      !isLoading &&
+      availability === 'authorized' &&
+      auth?.isPreview === true &&
+      preview &&
+      !canPreviewRbac
+    ) {
+      resetPreview();
+    }
+  }, [auth?.isPreview, availability, canPreviewRbac, isLoading, preview, resetPreview]);
 
   const value = useMemo<AuthContextValue>(() => {
     // `auth === null` while signed in means access-denied.

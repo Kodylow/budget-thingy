@@ -13,7 +13,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'PORT=4173 BASE_PATH=/ pnpm run dev',
+    command: 'NODE_ENV=production PORT=4173 BASE_PATH=/ pnpm run build && NODE_ENV=production PORT=4173 BASE_PATH=/ pnpm run serve',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: false,
     timeout: 60_000,

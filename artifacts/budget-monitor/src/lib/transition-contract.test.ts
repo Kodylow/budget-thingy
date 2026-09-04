@@ -89,6 +89,10 @@ describe('protected query transition contract', () => {
       /void queryClient\.cancelQueries\(\);\s+queryClient\.clear\(\);\s+setPreviewState\(next\)/,
     );
     expect(authSource).toContain("useLayoutEffect(() => {\n    if (availability === 'authorized') return;");
+    expect(authSource).toContain(
+      "auth?.isPreview === true",
+    );
+    expect(authSource).toContain("availability === 'invalid-preview'");
     expect(authSource).toContain("previous && previous !== authorizationFingerprint");
     expect(appSource).toContain('<Router key={authorizationKey} />');
     expect(appSource).toContain('setForbiddenHandler(() => {');
