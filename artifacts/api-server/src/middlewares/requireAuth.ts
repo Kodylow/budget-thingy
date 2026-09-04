@@ -67,7 +67,7 @@ export function requireTrueAccountAdmin(
   res: Response,
   next: NextFunction,
 ): void {
-  if (!req.authz?.isTrueAccountAdmin) {
+  if (req.authz?.isTrueAccountAdmin !== true) {
     res.status(403).json({ error: "Access denied" });
     return;
   }

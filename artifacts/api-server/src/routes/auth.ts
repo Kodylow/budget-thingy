@@ -13,6 +13,7 @@ import {
   createSession,
   deleteSession,
   getOidcConfig,
+  getRequestOrigin,
   getSessionId,
   ISSUER_URL,
   setSessionCookie,
@@ -29,14 +30,6 @@ import { getDirectory } from '../lib/enterprise';
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
 const router: IRouter = Router();
-
-function getOrigin(req: Request): string {
-  const proto = req.headers['x-forwarded-proto'] || 'https';
-  const host =
-    req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost';
-  return `${proto}://${host}`;
-}
-
 function setOidcCookie(res: Response, name: string, value: string) {
   res.cookie(name, value, {
     httpOnly: true,
@@ -47,15 +40,16 @@ function setOidcCookie(res: Response, name: string, value: string) {
   });
 }
 
-function getSafeReturnTo(value: unknown): string {
-  if (
-    typeof value !== 'string' ||
-    !value.startsWith('/') ||
-    value.startsWith('//')
-  ) {
+export function getSafeReturnTo(value: unknown, origin: string): string {
+  if (typeof value !== 'string' || !value.startsWith('/')) return '/';
+
+  try {
+    const resolved = new URL(value, origin);
+    if (resolved.origin !== origin) return '/';
+    return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  } catch {
     return '/';
   }
-  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -165,9 +159,10 @@ router.get('/auth/user', async (req: Request, res: Response) => {
 
 router.get('/login', async (req: Request, res: Response) => {
   const config = await getOidcConfig();
-  const callbackUrl = `${getOrigin(req)}/api/callback`;
+  const origin = getRequestOrigin(req);
+  const callbackUrl = `${origin}/api/callback`;
 
-  const returnTo = getSafeReturnTo(req.query.returnTo);
+  const returnTo = getSafeReturnTo(req.query.returnTo, origin);
 
   const state = oidc.randomState();
   const nonce = oidc.randomNonce();
@@ -196,7 +191,8 @@ router.get('/login', async (req: Request, res: Response) => {
 // parameters not expressed in the schema.
 router.get('/callback', async (req: Request, res: Response) => {
   const config = await getOidcConfig();
-  const callbackUrl = `${getOrigin(req)}/api/callback`;
+  const origin = getRequestOrigin(req);
+  const callbackUrl = `${origin}/api/callback`;
 
   const codeVerifier = req.cookies?.code_verifier;
   const nonce = req.cookies?.nonce;
@@ -224,7 +220,7 @@ router.get('/callback', async (req: Request, res: Response) => {
     return;
   }
 
-  const returnTo = getSafeReturnTo(req.cookies?.return_to);
+  const returnTo = getSafeReturnTo(req.cookies?.return_to, origin);
 
   res.clearCookie('code_verifier', { path: '/' });
   res.clearCookie('nonce', { path: '/' });
@@ -239,9 +235,6 @@ router.get('/callback', async (req: Request, res: Response) => {
 
   const claimsRecord = claims as unknown as Record<string, unknown>;
   const dbUser = await upsertUser(claimsRecord);
-  // Bootstrap the designated account-wide editor from their verified Replit
-  // identity. This is a no-op unless the claims present a verified, exactly
-  // matching email; the row is keyed by the stable `sub` claim.
   await maybeBootstrapAppAdmin(claimsRecord).catch((err) => {
     req.log.error({ err }, 'app admin bootstrap failed');
   });
@@ -303,10 +296,10 @@ router.get('/auth/me/debug', async (req: Request, res: Response) => {
   });
 });
 
-router.get('/logout', async (req: Request, res: Response) => {
+router.post('/logout', async (req: Request, res: Response) => {
   const config = await getOidcConfig();
-  const origin = getOrigin(req);
-  const returnTo = getSafeReturnTo(req.query.returnTo);
+  const origin = getRequestOrigin(req);
+  const returnTo = getSafeReturnTo(req.query.returnTo, origin);
   const postLogoutRedirectUrl = new URL(returnTo, `${origin}/`).href;
 
   const sid = getSessionId(req);

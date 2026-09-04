@@ -100,7 +100,11 @@ export function useAuth(previewAs: string | null = null): AuthState {
 
   const logout = useCallback(() => {
     const base = getBasePath();
-    window.location.href = `/api/logout?returnTo=${encodeURIComponent(base)}`;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/api/logout?returnTo=${encodeURIComponent(base)}`;
+    document.body.appendChild(form);
+    form.submit();
   }, []);
 
   return {

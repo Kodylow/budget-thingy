@@ -30,6 +30,16 @@ async function requestProtected(sid: string) {
   });
 }
 
+async function requestProtectedCrossSite(sid: string) {
+  return fetch(`${baseUrl}/protected`, {
+    headers: {
+      cookie: `${SESSION_COOKIE}=${sid}`,
+      origin: 'https://attacker.replit.app',
+      'sec-fetch-site': 'cross-site',
+    },
+  });
+}
+
 beforeAll(async () => {
   // Keep this focused test compatible with shared databases that have not yet
   // run the additive sliding-expiry migration.
@@ -134,4 +144,27 @@ test('an expired database session returns 401 and is deleted', async () => {
     .from(sessionsTable)
     .where(eq(sessionsTable.sid, sid));
   expect(rows).toEqual([]);
+});
+
+test('a cross-site GET cannot extend a cookie session', async () => {
+  const sid = randomUUID();
+  sessionIds.push(sid);
+  const originalExpire = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+
+  await db.insert(sessionsTable).values({
+    sid,
+    sess: { user: testUser('cross-site-user') },
+    expire: originalExpire,
+    lastExtendedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+  });
+
+  const response = await requestProtectedCrossSite(sid);
+  expect(response.status).toBe(200);
+  expect(response.headers.get('set-cookie')).toBeNull();
+
+  const [unchanged] = await db
+    .select()
+    .from(sessionsTable)
+    .where(eq(sessionsTable.sid, sid));
+  expect(unchanged.expire.getTime()).toBe(originalExpire.getTime());
 });

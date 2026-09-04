@@ -4,6 +4,7 @@ import { type NextFunction, type Request, type Response } from 'express';
 import {
   getSession,
   getSessionId,
+  mayExtendCookieSession,
   SESSION_COOKIE,
   setSessionCookie,
 } from '../lib/auth';
@@ -39,7 +40,12 @@ export async function authMiddleware(
     return;
   }
 
-  const session = await getSession(sid);
+  const usesSessionCookie =
+    req.headers.authorization?.startsWith('Bearer ') !== true &&
+    req.cookies?.[SESSION_COOKIE] === sid;
+  const session = await getSession(sid, {
+    extend: !usesSessionCookie || mayExtendCookieSession(req),
+  });
   if (!session) {
     next();
     return;

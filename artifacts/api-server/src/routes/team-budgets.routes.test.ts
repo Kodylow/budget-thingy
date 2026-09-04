@@ -359,14 +359,14 @@ test("budget audit and sync status reject workspace-scoped users", async () => {
 });
 
 test("sync status identifies the approval-only Finance Approval feed", async () => {
-  const { status, json } = await request("/teams/budgets", "task158-workspace");
+  const { status, json } = await request("/admin/team-budgets/sync", "task158-account");
   expect(status).toBe(200);
   expect(json.sourceTable).toBe("Replit Finance Approval");
   expect(json.requiredApprovalStatus).toBe("Approved");
 });
 
 test("history orders months and exposes hidden teams only to true admins", async () => {
-  const { status, json } = await request("/teams/budgets", "task158-workspace");
+  const { status, json } = await request("/admin/team-budgets/history", "task158-account");
   expect(status).toBe(200);
   expect(json.teams.find((team) => team.teamName === HIDDEN)).toMatchObject({
     isHidden: true,

@@ -36,11 +36,11 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       retry: shouldRetryRequest,
       retryDelay: 1_000,
+      queryKeyHashFn: previewScopedQueryHash,
     },
     mutations: {
       retry: shouldRetryRequest,
       retryDelay: pollingRetryDelay,
-      queryKeyHashFn: previewScopedQueryHash,
     },
   },
 });
