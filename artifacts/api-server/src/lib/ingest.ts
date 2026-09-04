@@ -32,6 +32,7 @@ type UsageGroup = {
   metrics?: Metrics;
 };
 type UsagePayload = {
+  interval?: { startTime?: string; endTime?: string };
   totalCostUsd?: number;
   attributableTotalCostUsd?: number;
   unattributableTotalCostUsd?: number;
@@ -516,9 +517,44 @@ async function fetchTotal(
   endTime: string,
   workspaceId: string | undefined,
   stats: { calls: number },
-): Promise<number> {
+): Promise<{ totalCostUsd: number; intervalStart: string; intervalEnd: string }> {
   const response = await retry(() => requestUsage({ startTime, endTime, workspaceId }, stats));
-  return Number(response.data.totalCostUsd ?? 0);
+  return {
+    totalCostUsd: Number(response.data.totalCostUsd ?? 0),
+    intervalStart: response.data.interval?.startTime ?? startTime,
+    intervalEnd: response.data.interval?.endTime ?? endTime,
+  };
+}
+
+async function recordAccountObservation(input: {
+  billingPeriodStart: string;
+  totalCostUsd: number | null;
+  intervalStart: string;
+  intervalEnd: string;
+  sourceStatus: "complete" | "failed";
+  error?: string;
+}): Promise<void> {
+  await pool.query(
+    `insert into usage_account_observation
+       (billing_period_start,total_cost_usd,interval_start,interval_end,
+        fetched_at,source_status,error)
+     values ($1::date,$2,$3::timestamptz,$4::timestamptz,now(),$5,$6)
+     on conflict (billing_period_start) do update set
+       total_cost_usd=excluded.total_cost_usd,
+       interval_start=excluded.interval_start,
+       interval_end=excluded.interval_end,
+       fetched_at=excluded.fetched_at,
+       source_status=excluded.source_status,
+       error=excluded.error`,
+    [
+      input.billingPeriodStart,
+      input.totalCostUsd,
+      input.intervalStart,
+      input.intervalEnd,
+      input.sourceStatus,
+      input.error?.slice(0, 2000) ?? null,
+    ],
+  );
 }
 
 async function shouldReconcile(today: string, now: Date): Promise<boolean> {
@@ -543,7 +579,28 @@ async function reconcile(
     const { effectiveStart, effectiveEnd } = bounds;
     const startTime = `${effectiveStart}T00:00:00.000Z`;
     const endTime = `${effectiveEnd}T00:00:00.000Z`;
-    const accountUpstream = await fetchTotal(startTime, endTime, undefined, stats);
+    let accountUpstream: Awaited<ReturnType<typeof fetchTotal>>;
+    try {
+      accountUpstream = await fetchTotal(startTime, endTime, undefined, stats);
+      await recordAccountObservation({
+        billingPeriodStart: monthStart,
+        totalCostUsd: accountUpstream.totalCostUsd,
+        intervalStart: accountUpstream.intervalStart,
+        intervalEnd: accountUpstream.intervalEnd,
+        sourceStatus: "complete",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await recordAccountObservation({
+        billingPeriodStart: monthStart,
+        totalCostUsd: null,
+        intervalStart: startTime,
+        intervalEnd: endTime,
+        sourceStatus: "failed",
+        error: message,
+      });
+      throw error;
+    }
     const accountStoredResult = await pool.query(
       `select coalesce(sum(total_cost_usd),0)::float8 as total
        from usage_account_day where usage_date >= $1::date and usage_date < $2::date`,
@@ -552,8 +609,8 @@ async function reconcile(
     const accountStored = Number(accountStoredResult.rows[0]?.total ?? 0);
     reconciliations.push({
       monthStart, scope: "account", scopeId: "enterprise",
-      upstreamUsd: accountUpstream, storedUsd: accountStored,
-      deltaUsd: accountUpstream - accountStored,
+      upstreamUsd: accountUpstream.totalCostUsd, storedUsd: accountStored,
+      deltaUsd: accountUpstream.totalCostUsd - accountStored,
     });
     for (const workspaceId of workspaceIds) {
       const upstream = await fetchTotal(startTime, endTime, workspaceId, stats);
@@ -565,10 +622,10 @@ async function reconcile(
         [workspaceId, effectiveStart, effectiveEnd],
       );
       const stored = Number(storedResult.rows[0]?.total ?? 0);
-      const delta = upstream - stored;
+      const delta = upstream.totalCostUsd - stored;
       reconciliations.push({
         monthStart, scope: "workspace", scopeId: workspaceId,
-        upstreamUsd: upstream, storedUsd: stored, deltaUsd: delta,
+        upstreamUsd: upstream.totalCostUsd, storedUsd: stored, deltaUsd: delta,
       });
       if (Math.abs(delta) > 0.01) {
         await pool.query(

@@ -509,6 +509,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /usage/account-observation/export:
+    get:
+      operationId: getAccountUsageObservationExport
+      tags: [status]
+      summary: Export the latest scheduler-owned account usage observation
+      description: >
+        Account-admin-only. Reads the latest durable ungrouped Enterprise usage
+        observation for the requested billing period. This endpoint never
+        triggers ingestion, retry, reconciliation, refresh, or an Enterprise API
+        request.
+      parameters:
+        - name: billingPeriodStart
+          in: query
+          required: true
+          description: Billing-period start date used by scheduled reconciliation
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+      responses:
+        "200":
+          description: Downloadable scheduler-owned account usage observation
+          headers:
+            Content-Disposition:
+              description: JSON attachment filename
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountUsageObservationExport"
+        "400":
+          description: Invalid billing-period start date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No scheduler-owned observation exists for the billing period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /budgets:
     get:
       operationId: listBudgets
@@ -1674,6 +1720,33 @@ components:
       properties:
         error:
           type: string
+    AccountUsageObservationExport:
+      type: object
+      required:
+        - billingPeriodStart
+        - totalCostUsd
+        - upstreamInterval
+        - fetchedAt
+        - sourceStatus
+      properties:
+        billingPeriodStart:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        totalCostUsd:
+          type: [number, 'null']
+        upstreamInterval:
+          type: object
+          required: [startTime, endTime]
+          properties:
+            startTime:
+              type: string
+            endTime:
+              type: string
+        fetchedAt:
+          type: string
+        sourceStatus:
+          type: string
+          enum: [complete, failed]
     ErrorEnvelope:
       type: object
       required: [error]

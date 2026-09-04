@@ -79,6 +79,8 @@ import {
   BulkSetWorkspaceMemberBudgetsResponse,
   ListWorkspaceUsageLimitAuditsResponse,
   GetUserActivityResponse,
+  GetAccountUsageObservationExportQueryParams,
+  GetAccountUsageObservationExportResponse,
 } from "@workspace/api-zod";
 import {
   isConfigured,
@@ -2520,6 +2522,47 @@ router.get("/status", requireAccountAdmin, async (_req, res): Promise<void> => {
       },
     }));
 });
+
+router.get(
+  "/usage/account-observation/export",
+  requireAccountAdmin,
+  async (req, res): Promise<void> => {
+    const parsed = GetAccountUsageObservationExportQueryParams.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: "A valid billingPeriodStart date is required" });
+      return;
+    }
+    const result = await pool.query(
+      `select billing_period_start::text,total_cost_usd,interval_start,interval_end,
+              fetched_at,source_status
+       from usage_account_observation
+       where billing_period_start=$1::date`,
+      [parsed.data.billingPeriodStart],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      res.status(404).json({
+        error: "No scheduler-owned account usage observation exists for this billing period",
+      });
+      return;
+    }
+    const payload = GetAccountUsageObservationExportResponse.parse({
+      billingPeriodStart: String(row.billing_period_start),
+      totalCostUsd: row.total_cost_usd == null ? null : Number(row.total_cost_usd),
+      upstreamInterval: {
+        startTime: new Date(row.interval_start).toISOString(),
+        endTime: new Date(row.interval_end).toISOString(),
+      },
+      fetchedAt: new Date(row.fetched_at).toISOString(),
+      sourceStatus: String(row.source_status),
+    });
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="account-usage-observation-${payload.billingPeriodStart}.json"`,
+    );
+    res.json(payload);
+  },
+);
 
 router.post(
   "/admin/usage/ingest/cycle",

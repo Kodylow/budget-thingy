@@ -11,6 +11,7 @@ import {
   editorBootstrapStateTable,
   firedThresholdsTable,
   groupBudgetsTable,
+  pool,
   teamLimitTargetsTable,
   teamBudgetsTable,
   usersTable,
@@ -339,6 +340,69 @@ test("unauthenticated request to a protected endpoint returns 401", async () => 
 test("authenticated but unauthorized user returns 403", async () => {
   const { status } = await req("/groups", { user: "plain" });
   expect(status).toBe(403);
+});
+
+test("account usage observation export is admin-only and cache-only", async () => {
+  const billingPeriodStart = "2098-11-01";
+  const fetchedAt = new Date("2098-11-29T08:15:00.000Z");
+  let enterpriseRequests = 0;
+  await pool.query(
+    `insert into usage_account_observation
+       (billing_period_start,total_cost_usd,interval_start,interval_end,
+        fetched_at,source_status,error)
+     values ($1::date,123.45,$2::timestamptz,$3::timestamptz,$4,'complete',null)
+     on conflict (billing_period_start) do update set
+       total_cost_usd=excluded.total_cost_usd,
+       interval_start=excluded.interval_start,
+       interval_end=excluded.interval_end,
+       fetched_at=excluded.fetched_at,
+       source_status=excluded.source_status,
+       error=excluded.error`,
+    [
+      billingPeriodStart,
+      "2098-11-01T00:00:00.000Z",
+      "2098-11-29T00:00:00.000Z",
+      fetchedAt,
+    ],
+  );
+  setEnterpriseFetchForTests(async () => {
+    enterpriseRequests++;
+    throw new Error("export must not call Enterprise");
+  });
+
+  try {
+    const forbidden = await req(
+      `/usage/account-observation/export?billingPeriodStart=${billingPeriodStart}`,
+      { user: "ws1admin" },
+    );
+    expect(forbidden.status).toBe(403);
+
+    const response = await fetch(
+      `${baseUrl}/api/usage/account-observation/export?billingPeriodStart=${billingPeriodStart}`,
+      { headers: { "x-test-user": "acct" } },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="account-usage-observation-${billingPeriodStart}.json"`,
+    );
+    expect(await response.json()).toEqual({
+      billingPeriodStart,
+      totalCostUsd: 123.45,
+      upstreamInterval: {
+        startTime: "2098-11-01T00:00:00.000Z",
+        endTime: "2098-11-29T00:00:00.000Z",
+      },
+      fetchedAt: fetchedAt.toISOString(),
+      sourceStatus: "complete",
+    });
+    expect(enterpriseRequests).toBe(0);
+  } finally {
+    setEnterpriseFetchForTests(null);
+    await pool.query(
+      "delete from usage_account_observation where billing_period_start=$1::date",
+      [billingPeriodStart],
+    );
+  }
 });
 
 test("account admin sees every group", async () => {

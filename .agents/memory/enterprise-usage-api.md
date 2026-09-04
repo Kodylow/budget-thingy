@@ -7,7 +7,9 @@ description: Rate-limit and query semantics of api.replit.com/v1 usage/groups en
 - **Why:** one serial queue made user work wait behind long synchronizations, while unconstrained workers trip 429s. Per-request admission preserves responsiveness without overspending.
 - **How to apply:** classify queued work explicitly, keep all Enterprise requests behind shared admission, and honor the strictest reset/Retry-After boundary across out-of-order responses.
 - `groupId` filter on `/usage` requires `workspaceId`; `billingPeriod=current|previous` resolves the account's real billing interval (use the returned `interval.startTime` as the period key).
-- Orval + zod v3: avoid `format: email` in the OpenAPI spec — generates `zod.email()` which fails typecheck.
+- Orval + zod v3: avoid `format: email` because it generates unsupported `zod.email()`. Avoid `format: date`/`date-time` when handlers need ISO strings because generated schemas convert them to `Date`.
+- **Why:** query validation rejected valid ISO date strings, while response parsing silently changed date-only values into timestamps.
+- **How to apply:** use string patterns for date-only parameters and plain strings for serialized timestamps unless the handler explicitly accepts and returns `Date` objects.
 - Per-user usage: one `/usage?groupBy=member` call per group returns all members (paginated — pace the pages like queue tasks). `/budgets` exposes platform budgets: account controls, workspace default user limits, `workspace_group_limit`, `workspace_user_limit` (all per billing_cycle). `/members` gives username/email/name + per-workspace role/isDisabled.
 - `/usage` can return `hasMore: true` with no cursor. **Why:** unbounded time-bisection of a multi-month range can monopolize the serial queue for thousands of calls. **How to apply:** cap shard depth/request count and commit the bounded result as partial.
 - Sync ledgers persist terminal outcomes, not running state. **Why:** crashes and replica races can strand/overwrite `syncing`. **How to apply:** publish outcomes under a per-scope lock and reject stale failures.

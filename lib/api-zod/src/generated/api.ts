@@ -636,6 +636,32 @@ export const ExportUsersCsvResponse = zod.unknown()
 
 
 /**
+ * Account-admin-only. Reads the latest durable ungrouped Enterprise usage observation for the requested billing period. This endpoint never triggers ingestion, retry, reconciliation, refresh, or an Enterprise API request.
+ * @summary Export the latest scheduler-owned account usage observation
+ */
+export const getAccountUsageObservationExportQueryBillingPeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetAccountUsageObservationExportQueryParams = zod.object({
+  "billingPeriodStart": zod.coerce.string().regex(getAccountUsageObservationExportQueryBillingPeriodStartRegExp).describe('Billing-period start date used by scheduled reconciliation')
+})
+
+export const getAccountUsageObservationExportResponseBillingPeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetAccountUsageObservationExportResponse = zod.object({
+  "billingPeriodStart": zod.string().regex(getAccountUsageObservationExportResponseBillingPeriodStartRegExp),
+  "totalCostUsd": zod.number().nullable(),
+  "upstreamInterval": zod.object({
+  "startTime": zod.string(),
+  "endTime": zod.string()
+}),
+  "fetchedAt": zod.string(),
+  "sourceStatus": zod.enum(['complete', 'failed'])
+})
+
+
+/**
  * @summary List all configured group budgets
  */
 export const ListBudgetsResponseItem = zod.object({

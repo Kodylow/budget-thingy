@@ -13,6 +13,29 @@ export interface ApiError {
   error: string;
 }
 
+export type AccountUsageObservationExportUpstreamInterval = {
+  startTime: string;
+  endTime: string;
+};
+
+export type AccountUsageObservationExportSourceStatus = typeof AccountUsageObservationExportSourceStatus[keyof typeof AccountUsageObservationExportSourceStatus];
+
+
+export const AccountUsageObservationExportSourceStatus = {
+  complete: 'complete',
+  failed: 'failed',
+} as const;
+
+export interface AccountUsageObservationExport {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  billingPeriodStart: string;
+  /** @nullable */
+  totalCostUsd: number | null;
+  upstreamInterval: AccountUsageObservationExportUpstreamInterval;
+  fetchedAt: string;
+  sourceStatus: AccountUsageObservationExportSourceStatus;
+}
+
 export interface ErrorEnvelope {
   error: string;
 }
@@ -1391,6 +1414,14 @@ startDate?: StartDateParameter;
  * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
  */
 endDate?: EndDateParameter;
+};
+
+export type GetAccountUsageObservationExportParams = {
+/**
+ * Billing-period start date used by scheduled reconciliation
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+billingPeriodStart: string;
 };
 
 export type ListDirectoryMembersParams = {

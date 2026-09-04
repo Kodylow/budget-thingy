@@ -8,6 +8,9 @@
 
 export * from './accountEditor';
 export * from './accountEditorInput';
+export * from './accountUsageObservationExport';
+export * from './accountUsageObservationExportSourceStatus';
+export * from './accountUsageObservationExportUpstreamInterval';
 export * from './adminEmail';
 export * from './adminEmailInput';
 export * from './alert';
@@ -36,6 +39,7 @@ export * from './endDateParameter';
 export * from './errorEnvelope';
 export * from './exportUsersCsvParams';
 export * from './forbiddenResponse';
+export * from './getAccountUsageObservationExportParams';
 export * from './getCanonicalClusterHeadlineParams';
 export * from './getClusterProjectsParams';
 export * from './getGroupDetailParams';

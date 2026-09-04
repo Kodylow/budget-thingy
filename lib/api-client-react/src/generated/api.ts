@@ -22,6 +22,7 @@ import type {
 import type {
   AccountEditor,
   AccountEditorInput,
+  AccountUsageObservationExport,
   AdminEmail,
   AdminEmailInput,
   Alert,
@@ -37,6 +38,7 @@ import type {
   ErrorEnvelope,
   ExportUsersCsvParams,
   ForbiddenResponse,
+  GetAccountUsageObservationExportParams,
   GetCanonicalClusterHeadlineParams,
   GetClusterProjectsParams,
   GetGroupDetailParams,
@@ -767,7 +769,7 @@ export const getGetGroupDetailUrl = (groupId: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/groups/${groupId}?${stringifiedParams}` : `/api/groups/${groupId}`
+  return stringifiedParams.length > 0 ? `/api/groups/${encodeURIComponent(String(groupId))}?${stringifiedParams}` : `/api/groups/${encodeURIComponent(String(groupId))}`
 }
 
 /**
@@ -857,7 +859,7 @@ export const getGetGroupProjectsUrl = (groupId: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/groups/${groupId}/projects?${stringifiedParams}` : `/api/groups/${groupId}/projects`
+  return stringifiedParams.length > 0 ? `/api/groups/${encodeURIComponent(String(groupId))}/projects?${stringifiedParams}` : `/api/groups/${encodeURIComponent(String(groupId))}/projects`
 }
 
 /**
@@ -947,7 +949,7 @@ export const getGetClusterProjectsUrl = (clusterKey: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/clusters/${clusterKey}/projects?${stringifiedParams}` : `/api/clusters/${clusterKey}/projects`
+  return stringifiedParams.length > 0 ? `/api/clusters/${encodeURIComponent(String(clusterKey))}/projects?${stringifiedParams}` : `/api/clusters/${encodeURIComponent(String(clusterKey))}/projects`
 }
 
 /**
@@ -1037,7 +1039,7 @@ export const getGetCanonicalClusterHeadlineUrl = (clusterKey: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/clusters/${clusterKey}/headline?${stringifiedParams}` : `/api/clusters/${clusterKey}/headline`
+  return stringifiedParams.length > 0 ? `/api/clusters/${encodeURIComponent(String(clusterKey))}/headline?${stringifiedParams}` : `/api/clusters/${encodeURIComponent(String(clusterKey))}/headline`
 }
 
 /**
@@ -1462,6 +1464,91 @@ export function useExportUsersCsv<TData = Awaited<ReturnType<typeof exportUsersC
 
 
 
+export const getGetAccountUsageObservationExportUrl = (params: GetAccountUsageObservationExportParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/usage/account-observation/export?${stringifiedParams}` : `/api/usage/account-observation/export`
+}
+
+/**
+ * Account-admin-only. Reads the latest durable ungrouped Enterprise usage observation for the requested billing period. This endpoint never triggers ingestion, retry, reconciliation, refresh, or an Enterprise API request.
+ * @summary Export the latest scheduler-owned account usage observation
+ */
+export const getAccountUsageObservationExport = async (params: GetAccountUsageObservationExportParams, options?: RequestInit): Promise<AccountUsageObservationExport> => {
+
+  return customFetch<AccountUsageObservationExport>(getGetAccountUsageObservationExportUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountUsageObservationExportQueryKey = (params?: GetAccountUsageObservationExportParams,) => {
+    return [
+    `/api/usage/account-observation/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAccountUsageObservationExportQueryOptions = <TData = Awaited<ReturnType<typeof getAccountUsageObservationExport>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params: GetAccountUsageObservationExportParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountUsageObservationExport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountUsageObservationExportQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountUsageObservationExport>>> = ({ signal }) => getAccountUsageObservationExport(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountUsageObservationExport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountUsageObservationExportQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountUsageObservationExport>>>
+export type GetAccountUsageObservationExportQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Export the latest scheduler-owned account usage observation
+ */
+
+export function useGetAccountUsageObservationExport<TData = Awaited<ReturnType<typeof getAccountUsageObservationExport>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ params: GetAccountUsageObservationExportParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountUsageObservationExport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountUsageObservationExportQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getListBudgetsUrl = () => {
 
 
@@ -1544,7 +1631,7 @@ export const getSetGroupBudgetUrl = (groupId: string,) => {
 
 
 
-  return `/api/groups/${groupId}/budget`
+  return `/api/groups/${encodeURIComponent(String(groupId))}/budget`
 }
 
 /**
@@ -1616,7 +1703,7 @@ export const getDeleteGroupBudgetUrl = (groupId: string,) => {
 
 
 
-  return `/api/groups/${groupId}/budget`
+  return `/api/groups/${encodeURIComponent(String(groupId))}/budget`
 }
 
 /**
@@ -1920,7 +2007,7 @@ export const getUpdateTeamAnnualAllocationUrl = (teamName: string,) => {
 
 
 
-  return `/api/admin/team-budgets/${encodeURIComponent(teamName)}/allocation`
+  return `/api/admin/team-budgets/${encodeURIComponent(String(teamName))}/allocation`
 }
 
 /**
@@ -1993,7 +2080,7 @@ export const getUpdateTeamVisibilityUrl = (teamName: string,) => {
 
 
 
-  return `/api/admin/team-budgets/${encodeURIComponent(teamName)}/visibility`
+  return `/api/admin/team-budgets/${encodeURIComponent(String(teamName))}/visibility`
 }
 
 /**
@@ -2216,7 +2303,7 @@ export const getUpdateTeamBudgetLimitUrl = (teamName: string,) => {
 
 
 
-  return `/api/admin/team-budgets/${teamName}/limit`
+  return `/api/admin/team-budgets/${encodeURIComponent(String(teamName))}/limit`
 }
 
 /**
@@ -2438,7 +2525,7 @@ export const getUpdateTeamBudgetTargetUrl = (workspaceId: string,
 
 
 
-  return `/api/admin/team-budgets/targets/${workspaceId}/${groupId}`
+  return `/api/admin/team-budgets/targets/${encodeURIComponent(String(workspaceId))}/${encodeURIComponent(String(groupId))}`
 }
 
 /**
@@ -2874,7 +2961,7 @@ export const getDeleteAdminUrl = (adminId: number,) => {
 
 
 
-  return `/api/admins/${adminId}`
+  return `/api/admins/${encodeURIComponent(String(adminId))}`
 }
 
 /**
@@ -3095,7 +3182,7 @@ export const getDeleteEditorUrl = (userId: string,) => {
 
 
 
-  return `/api/editors/${userId}`
+  return `/api/editors/${encodeURIComponent(String(userId))}`
 }
 
 /**
@@ -3330,7 +3417,7 @@ export const getListVisibleWorkspaceMembersUrl = (workspaceId: string,) => {
 
 
 
-  return `/api/directory/workspaces/${workspaceId}/members`
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/members`
 }
 
 /**
@@ -3408,7 +3495,7 @@ export const getListWorkspaceUsageLimitAuditsUrl = (workspaceId: string,) => {
 
 
 
-  return `/api/directory/workspaces/${workspaceId}/usage-limit-audits`
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/usage-limit-audits`
 }
 
 /**
@@ -3486,7 +3573,7 @@ export const getBulkSetWorkspaceMemberBudgetsUrl = (workspaceId: string,) => {
 
 
 
-  return `/api/directory/workspaces/${workspaceId}/members/budget`
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/members/budget`
 }
 
 /**
@@ -3560,7 +3647,7 @@ export const getSetWorkspaceMemberBudgetUrl = (workspaceId: string,
 
 
 
-  return `/api/directory/workspaces/${workspaceId}/members/${userId}/budget`
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/members/${encodeURIComponent(String(userId))}/budget`
 }
 
 /**
@@ -3635,7 +3722,7 @@ export const getClearWorkspaceMemberBudgetUrl = (workspaceId: string,
 
 
 
-  return `/api/directory/workspaces/${workspaceId}/members/${userId}/budget`
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/members/${encodeURIComponent(String(userId))}/budget`
 }
 
 /**
@@ -4021,7 +4108,7 @@ export const getSendTestAlertUrl = (alertId: number,) => {
 
 
 
-  return `/api/alerts/${alertId}/test`
+  return `/api/alerts/${encodeURIComponent(String(alertId))}/test`
 }
 
 /**

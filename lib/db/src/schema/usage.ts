@@ -73,6 +73,25 @@ export const usageAccountDayTable = pgTable("usage_account_day", {
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
 });
 
+export const usageAccountObservationTable = pgTable(
+  "usage_account_observation",
+  {
+    billingPeriodStart: date("billing_period_start", { mode: "string" }).primaryKey(),
+    totalCostUsd: doublePrecision("total_cost_usd"),
+    intervalStart: timestamp("interval_start", { withTimezone: true }).notNull(),
+    intervalEnd: timestamp("interval_end", { withTimezone: true }).notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+    sourceStatus: text("source_status").notNull(),
+    error: text("error"),
+  },
+  (t) => [
+    check(
+      "usage_account_observation_source_status_check",
+      sql`${t.sourceStatus} in ('complete', 'failed')`,
+    ),
+  ],
+);
+
 export const ingestRunTable = pgTable(
   "ingest_run",
   {
@@ -111,6 +130,8 @@ export type UsageMemberDay = typeof usageMemberDayTable.$inferSelect;
 export type UsageProjectDay = typeof usageProjectDayTable.$inferSelect;
 export type UsageWorkspaceDay = typeof usageWorkspaceDayTable.$inferSelect;
 export type UsageAccountDay = typeof usageAccountDayTable.$inferSelect;
+export type UsageAccountObservation =
+  typeof usageAccountObservationTable.$inferSelect;
 export type IngestRun = typeof ingestRunTable.$inferSelect;
 export type IngestReconciliation =
   typeof ingestReconciliationTable.$inferSelect;
