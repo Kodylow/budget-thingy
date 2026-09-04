@@ -7,6 +7,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { UnassignedSummaryRow } from "@/components/unassigned-summary-row";
 import {
   RefreshCw,
   AlertTriangle,
@@ -953,49 +954,6 @@ export default function Dashboard() {
     );
   };
 
-  const renderUnassignedHeader = (
-    workspaceId: string,
-    workspaceGroups: typeof groups,
-  ) => {
-    const key = `${workspaceId}::__unassigned__`;
-    const expanded = expandedTeams.has(key);
-    return (
-      <tr
-        key={`team-unassigned-${workspaceId}`}
-        className="border-b border-border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer select-none"
-        data-testid="row-team-unassigned"
-        tabIndex={0}
-        onClick={() => toggleTeam(key)}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault();
-          toggleTeam(key);
-        }}
-      >
-        <td
-          className="py-3 px-4 font-semibold text-sm text-muted-foreground"
-          colSpan={8}
-        >
-          <div className="flex items-center gap-2">
-            {expanded ? (
-              <ChevronDown className="h-4 w-4 flex-shrink-0" />
-            ) : (
-              <ChevronRight className="h-4 w-4 flex-shrink-0" />
-            )}
-            <span>Unassigned</span>
-            <Badge
-              variant="outline"
-              className="text-[9px] h-4 px-1 ml-1 font-normal"
-            >
-              {workspaceGroups.length} group
-              {workspaceGroups.length !== 1 ? "s" : ""}
-            </Badge>
-          </div>
-        </td>
-      </tr>
-    );
-  };
-
   const workspaceSections = useMemo(() => {
     const map = new Map<
       string,
@@ -1403,25 +1361,11 @@ export default function Dashboard() {
                               );
                             })}
                             {workspace.unassigned.length > 0 && (
-                              <React.Fragment
+                              <UnassignedSummaryRow
                                 key={`team-section-unassigned-${workspace.workspaceId}`}
-                              >
-                                {renderUnassignedHeader(
-                                  workspace.workspaceId,
-                                  workspace.unassigned,
-                                )}
-                                {expandedTeams.has(
-                                  `${workspace.workspaceId}::__unassigned__`,
-                                ) &&
-                                  buildGroupClusters(
-                                    workspace.unassigned as any[],
-                                  ).flatMap((cluster) => [
-                                    renderClusterRow(cluster),
-                                    ...cluster.groups.map((group) =>
-                                      renderGroupRow(group as any),
-                                    ),
-                                  ])}
-                              </React.Fragment>
+                                workspaceId={workspace.workspaceId}
+                                groups={workspace.unassigned}
+                              />
                             )}
                           </React.Fragment>
                         ))}
