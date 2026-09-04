@@ -479,7 +479,7 @@ describe("team budget synchronization schedule", () => {
   });
 });
 
-describe.sequential("effective team budget persistence", () => {
+describe("effective team budget persistence", () => {
   let priorAdjustments: Array<typeof teamBudgetAdjustmentsTable.$inferSelect> = [];
   let priorSyncState: Array<typeof teamBudgetSyncStateTable.$inferSelect> = [];
 
@@ -732,7 +732,7 @@ describe.sequential("effective team budget persistence", () => {
   });
 });
 
-describe.sequential("team budget upstream reconciliation", () => {
+describe("team budget upstream reconciliation", () => {
   const TEAM_CLEAR = `${PREFIX} Upstream Clear`;
   const TEAM_SAME = `${PREFIX} Upstream Same`;
   const TEAM_ONE = `${PREFIX} Upstream One`;

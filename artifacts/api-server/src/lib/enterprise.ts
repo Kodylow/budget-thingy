@@ -504,9 +504,6 @@ export function getUsageOperationalDiagnostics(): UsageOperationalDiagnostics {
 }
 
 const CANONICAL_RESIDUAL_USER_KEY = "\u0001canonical-residual";
-export function __getEnterpriseBudgetForTests() {
-  return enterpriseBudget.snapshot();
-}
 interface UsageMetricEntry {
   id: string;
   name: string;
@@ -2468,13 +2465,6 @@ async function paginate<T>(
   logger.warn({ path }, "Pagination truncated at maxPages — results may be incomplete");
   return out;
 }
-
-export async function __paginateEnterpriseForTests<T>(
-  path: string,
-  params: Record<string, string | undefined> = {},
-): Promise<T[]> {
-  return workloadContext.run("interactive", () => paginate<T>(path, params));
-}
 export interface EnterpriseWorkspace {
   id: string;
   name: string;
@@ -2932,6 +2922,7 @@ export interface StoredBudgetEvaluationSnapshot {
 }
 let directoryCache: DirectoryCache | null = null;
 let directoryPromise: Promise<DirectoryCache> | null = null;
+
 function setSuccessfulSyncMetadataForTests(
   mode: UsageSyncMode,
   rangeKey: string,
@@ -5531,208 +5522,6 @@ export function getDedupedMemberCounts(
   return computeDedupedMemberCounts(groups, membersByGroup);
 }
 
-/** Test-only seam for simulating a process restart before calling initCache(). */
-export function __resetDurableUsageCachesForTests(): void {
-  accountUsageCache.clear();
-  spendCache.clear();
-  memberUsageCache.clear();
-  wsSpendCache.clear();
-  wsSpendCachedAt.clear();
-  projectUsageCache.clear();
-  projectInfoCache.clear();
-  canonicalMonthlyRows.clear();
-  canonicalMonthlyFingerprints.clear();
-  canonicalMonthlyBounds.clear();
-  canonicalCandidateMonths.clear();
-  canonicalMonthRebuilds.clear();
-  canonicalMonthsNeedingRebuild.clear();
-  preparedCanonicalRanges.clear();
-  canonicalRangeLoads.clear();
-  resolvedUsageRanges.clear();
-  syncMetadata.clear();
-  billingPeriodCache = null;
-  billingPeriodObservation = null;
-  accountTotalVerificationState = null;
-  if (accountVerificationRetryTimer) clearTimeout(accountVerificationRetryTimer);
-  accountVerificationRetryTimer = null;
-  accountVerificationFailureCount = 0;
-  accountUsageRetryAt.clear();
-  accountUsageFailureCount.clear();
-  for (const timer of accountUsageRetryTimers.values()) clearTimeout(timer);
-  accountUsageRetryTimers.clear();
-  dailyFactCache.clear();
-  materializedFactScopes.clear();
-  dailyFactRangeCache.clear();
-  verifiedDailyFactScopes.clear();
-  dailyFactParityReady = false;
-  historicalDailyFactBatches.clear();
-  historicalDailyFactBatchTotal = 0;
-  historicalDailyFactBatchCompleted = 0;
-  if (historicalDailyFactRetryTimer) clearTimeout(historicalDailyFactRetryTimer);
-  historicalDailyFactRetryTimer = null;
-  historicalDailyFactRetryAt = 0;
-}
-
-export function __getDailyFactRangeCacheSizeForTests(): number {
-  return dailyFactRangeCache.size;
-}
-
-export function __getHistoricalDailyFactPlannerForTests(): {
-  remainingBatches: number;
-  queuedBatches: number;
-  completedBatches: number;
-  failedBatches: number;
-  remainingDays: number;
-  totalBatches: number;
-} {
-  return {
-    remainingBatches: historicalDailyFactBatches.size,
-    queuedBatches: historicalDailyFactQueueDepth(),
-    completedBatches: historicalDailyFactBatchCompleted,
-    failedBatches: historicalDailyFactFailedCount(),
-    remainingDays: historicalDailyFactRemainingDays(),
-    totalBatches: historicalDailyFactBatchTotal,
-  };
-}
-
-export function __seedHistoricalDailyFactBatchesForTests(
-  count: number,
-  options: {
-    delayMs?: number;
-    daysPerBatch?: number;
-    failFirstBatchOnce?: boolean;
-  } = {},
-): void {
-  historicalDailyFactBatches.clear();
-  historicalDailyFactBatchCompleted = 0;
-  historicalDailyFactBatchTotal = count;
-  for (let index = 0; index < count; index++) {
-    const scopeKey = `planner-test-${index}`;
-    const key = `daily-facts-batch:test-${index}`;
-    let failuresRemaining = index === 0 && options.failFirstBatchOnce ? 1 : 0;
-    historicalDailyFactBatches.set(key, {
-      key,
-      monthStart: "2026-06-01",
-      scope: { mode: "account_total", scopeKey, params: {} },
-      usageDates: Array.from(
-        { length: options.daysPerBatch ?? 0 },
-        (_, day) => `2026-06-${String(day + 1).padStart(2, "0")}`,
-      ),
-      priority: 2,
-      attempts: 0,
-      failed: false,
-      nextAttemptAt: 0,
-      run: async () => {
-        if (options.delayMs && options.delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, options.delayMs));
-        }
-        if (failuresRemaining > 0) {
-          failuresRemaining--;
-          throw new Error("simulated historical batch failure");
-        }
-      },
-    });
-  }
-  refillHistoricalDailyFactQueue();
-}
-
-export function __canonicalInputFingerprintForTests(monthStart: string): string {
-  if (!directoryCache) throw new Error("Directory fixture is required");
-  return canonicalInputFingerprint(monthStart, directoryCache);
-}
-export function __setDailyFactsForTests(
-  facts: UsageDailyFact[],
-  parityReady = true,
-): void {
-  dailyFactCache.clear();
-  materializedFactScopes.clear();
-  dailyFactRangeCache.clear();
-  for (const fact of facts) {
-    dailyFactCache.set(
-      dailyFactId(fact.mode as UsageSyncMode, fact.scopeKey, fact.usageDate),
-      fact,
-    );
-  }
-  dailyFactParityReady = parityReady;
-}
-
-export function __dateRangeDaysForTests(start: string, end: string): string[] {
-  return dateRangeDays(new Date(start), new Date(end));
-}
-
-export function __finalizeMissingFactMonthForTests(
-  monthStart: string,
-  scopeKey: string,
-  now: Date,
-): Promise<void> {
-  return finalizeDailyFactMonth(
-    monthStart,
-    { mode: "account_total", scopeKey, params: {} },
-    now,
-  );
-}
-
-export function __setBillingPeriodForTests(period: StoredBillingPeriod | null): void {
-  billingPeriodCache = period;
-}
-
-export async function __observeBillingPeriodForTests(
-  period: StoredBillingPeriod,
-  persistenceId: string,
-): Promise<StoredBillingPeriod | null> {
-  return observeBillingPeriod(period, true, persistenceId);
-}
-export function __planSyncChunksForTests(
-  range: UsageRange,
-  previous: SyncMetadata | undefined,
-  now: number,
-): { replacementStart: string; chunks: Array<{ start: string; end: string }>; isClosed: boolean } {
-  const plan = planSyncChunks(range, previous, now);
-  return {
-    replacementStart: plan.replacementStart.toISOString(),
-    chunks: plan.chunks.map((chunk) => ({
-      start: chunk.start.toISOString(),
-      end: chunk.end.toISOString(),
-    })),
-    isClosed: plan.isClosed,
-  };
-}
-
-export function __rebuildAccountUsageForTests(range: UsageRange): Promise<UsageSyncChunk[]> {
-  return rebuildUsageRangeAtomically(range, [{
-    mode: "account_total",
-    scopeKey: ACCOUNT_USAGE_SCOPE,
-    params: {},
-  }]).then(([result]) => result?.rows ?? []);
-}
-
-export async function __verifyAccountTotalForTests(range: UsageRange): Promise<void> {
-  await verifyAccountTotal(range, false, false);
-}
-
-export function __rebuildAccountAndWorkspaceUsageForTests(
-  range: UsageRange,
-  workspaceId: string,
-): Promise<FullRebuildResult[]> {
-  return rebuildUsageRangeAtomically(range, [
-    { mode: "account_total", scopeKey: ACCOUNT_USAGE_SCOPE, params: {} },
-    { mode: "workspace_member", scopeKey: workspaceId, params: { workspaceId } },
-  ]);
-}
-
-export async function __getDurableRangeRowsForTests(
-  rangeKey: string,
-): Promise<UsageSyncChunk[]> {
-  return db.select()
-    .from(usageSyncChunksTable)
-    .where(eq(usageSyncChunksTable.rangeKey, rangeKey))
-    .orderBy(
-      usageSyncChunksTable.mode,
-      usageSyncChunksTable.scopeKey,
-      usageSyncChunksTable.chunkStart,
-    );
-}
-
 const INTERACTIVE_RESERVATION_RATIO = 0.2;
 
 /**
@@ -6007,35 +5796,6 @@ class EnterpriseRateBudget {
 
 const enterpriseBudget = new EnterpriseRateBudget();
 
-export function __observeEnterpriseRateLimitForTests(
-  values: Record<string, string>,
-  status = 200,
-): void {
-  enterpriseBudget.observe(new Headers(values), status);
-}
-
-export async function __admitEnterpriseRequestForTests(
-  workload: EnterpriseWorkload,
-  isUsage = false,
-): Promise<void> {
-  await enterpriseBudget.admit(workload, isUsage);
-}
-
-export function __resetEnterpriseSchedulerForTests(
-  snapshot?: Partial<RateBudgetSnapshot>,
-): void {
-  enterpriseBudget.resetForTests(snapshot);
-}
-
-export function __enqueueEnterpriseTaskForTests(
-  key: string,
-  workload: EnterpriseWorkload,
-  run: () => Promise<void>,
-): boolean {
-  const priority = workload === "interactive" ? 0 : workload === "scheduled" ? 1 : 2;
-  return enqueueUsage(key, priority, run, workload);
-}
-
 function isFullDirectoryCanonicalScope(
   groups: readonly EnterpriseGroup[],
   workspaceIds: ReadonlySet<string> | undefined,
@@ -6304,30 +6064,6 @@ const canonicalMonthlyBounds = new Map<string, { start: number; end: number }>()
 const canonicalMonthRebuilds = new Map<string, Promise<boolean>>();
 
 const canonicalMonthlyFingerprints = new Map<string, string>();
-
-export function __setCanonicalMonthlyRollupsForTests(
-  entries: Array<{
-    monthStart: string;
-    startTime: string;
-    endTime: string;
-    rows: CanonicalMonthlyGroupUserRollup[];
-  }>,
-): void {
-  for (const entry of entries) {
-    canonicalCandidateMonths.add(entry.monthStart);
-    canonicalMonthlyRows.set(entry.monthStart, entry.rows);
-    canonicalMonthlyBounds.set(entry.monthStart, {
-      start: new Date(entry.startTime).getTime(),
-      end: new Date(entry.endTime).getTime(),
-    });
-    canonicalMonthlyFingerprints.set(
-      entry.monthStart,
-      directoryCache
-        ? canonicalInputFingerprint(entry.monthStart, directoryCache)
-        : "missing-directory",
-    );
-  }
-}
 
 function materializedCanonicalRollup(
   monthStart: string,
@@ -6607,39 +6343,7 @@ function invalidateDailyFactRangeEntries(
   }
 }
 
-export function __setDailyFactReadsForTests(enabled: boolean | null): void {
-  dailyFactReadsOverrideForTests = enabled;
-}
-
 export const DAILY_FACT_RANGE_CACHE_MAX = 24;
-
-export async function __hydrateBillingPeriodStateForTests(
-  persistenceId: string,
-): Promise<void> {
-  const [adoptedRow, observedRow] = await Promise.all([
-    db.query.apiBillingPeriodCacheTable.findFirst({
-      where: eq(apiBillingPeriodCacheTable.id, persistenceId),
-    }),
-    db.query.apiBillingPeriodObservationTable.findFirst({
-      where: eq(apiBillingPeriodObservationTable.id, persistenceId),
-    }),
-  ]);
-  billingPeriodCache = adoptedRow
-    ? {
-        start: adoptedRow.periodStart.toISOString(),
-        end: adoptedRow.periodEnd.toISOString(),
-        fetchedAt: adoptedRow.fetchedAt.getTime(),
-      }
-    : null;
-  billingPeriodObservation = observedRow
-    ? {
-        start: observedRow.periodStart.toISOString(),
-        end: observedRow.periodEnd.toISOString(),
-        count: observedRow.consecutiveCount,
-        observedAt: observedRow.observedAt.getTime(),
-      }
-    : null;
-}
 
 function evictMaterializedFactRange(rangeKey: string): void {
   for (const id of materializedFactScopes) {
@@ -6660,8 +6364,4 @@ function evictMaterializedFactRange(rangeKey: string): void {
   for (const id of syncMetadata.keys()) {
     if (id.includes(`|${rangeKey}|`)) syncMetadata.delete(id);
   }
-}
-
-export function __getDailyFactHotRowCountForTests(): number {
-  return dailyFactCache.size;
 }
