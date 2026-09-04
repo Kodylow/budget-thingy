@@ -23,6 +23,7 @@ import {
   formatTestEmailLabel,
   getTestEmailResultView,
 } from '@/lib/test-email-helpers';
+import { getEnterpriseApiStatusPresentation } from '@/lib/enterprise-api-status';
 import {
   Dialog,
   DialogContent,
@@ -59,6 +60,9 @@ export default function Settings() {
   const addEditor = useAddEditor();
   const deleteEditor = useDeleteEditor();
   const sendEmailTest = useSendEmailTestExample();
+  const enterpriseApi = status
+    ? getEnterpriseApiStatusPresentation(status)
+    : null;
 
   const handleAddEditor = () => {
     const userId = newEditorUserId.trim();
@@ -164,24 +168,37 @@ export default function Settings() {
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg border border-border" data-testid="status-enterprise-api">
                 <div className="flex items-start sm:items-center gap-3">
-                  {status.enterpriseApiConfigured && status.enterpriseApiOk ? (
+                  {enterpriseApi?.state === 'connected' ? (
                     <CheckCircle className="h-5 w-5 text-chart-1 shrink-0 mt-0.5 sm:mt-0" />
+                  ) : enterpriseApi?.state === 'pending' ? (
+                    <AlertCircle className="h-5 w-5 text-chart-2 shrink-0 mt-0.5 sm:mt-0" />
                   ) : (
                     <XCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5 sm:mt-0" />
                   )}
                   <div>
                     <p className="text-sm font-medium">Enterprise API</p>
-                    {!status.enterpriseApiConfigured ? (
-                      <p className="text-xs text-muted-foreground">Not configured</p>
-                    ) : status.enterpriseApiOk ? (
-                      <p className="text-xs text-chart-1">Connected</p>
-                    ) : (
-                      <p className="text-xs text-destructive">{status.enterpriseApiError || 'Connection failed'}</p>
-                    )}
+                    <p className={
+                      enterpriseApi?.state === 'connected'
+                        ? 'text-xs text-chart-1'
+                        : enterpriseApi?.state === 'failed'
+                          ? 'text-xs text-destructive'
+                          : 'text-xs text-muted-foreground'
+                    }>
+                      {enterpriseApi?.detail}
+                    </p>
                   </div>
                 </div>
-                <Badge className="w-fit" variant={status.enterpriseApiConfigured && status.enterpriseApiOk ? 'default' : 'destructive'}>
-                  {status.enterpriseApiConfigured && status.enterpriseApiOk ? 'OK' : 'Error'}
+                <Badge
+                  className="w-fit"
+                  variant={
+                    enterpriseApi?.state === 'connected'
+                      ? 'default'
+                      : enterpriseApi?.state === 'failed'
+                        ? 'destructive'
+                        : 'secondary'
+                  }
+                >
+                  {enterpriseApi?.badge}
                 </Badge>
               </div>
 
@@ -378,13 +395,27 @@ export default function Settings() {
                 )}
               </div>
 
-              {(!status.enterpriseApiConfigured || !status.enterpriseApiOk) && (
-                <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+              {enterpriseApi?.guidance && (
+                <div className={
+                  enterpriseApi.state === 'failed' || enterpriseApi.state === 'missing'
+                    ? 'p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-3'
+                    : 'p-4 rounded-lg bg-muted border border-border flex items-start gap-3'
+                }>
+                  <AlertCircle className={
+                    enterpriseApi.state === 'failed' || enterpriseApi.state === 'missing'
+                      ? 'h-5 w-5 text-destructive mt-0.5'
+                      : 'h-5 w-5 text-chart-2 mt-0.5'
+                  } />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-destructive">Action Required</p>
+                    <p className={
+                      enterpriseApi.state === 'failed' || enterpriseApi.state === 'missing'
+                        ? 'text-sm font-medium text-destructive'
+                        : 'text-sm font-medium'
+                    }>
+                      {enterpriseApi.calloutTitle}
+                    </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Set the REPLIT_ENTERPRISE_API_KEY environment variable to enable usage tracking.
+                      {enterpriseApi.guidance}
                     </p>
                   </div>
                 </div>
