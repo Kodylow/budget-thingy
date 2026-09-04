@@ -1,8 +1,8 @@
 ALTER TABLE "team_budgets"
-  ADD COLUMN "monthly_limit_usd" double precision,
-  ADD COLUMN "monthly_limit_source" text DEFAULT 'derived' NOT NULL;
+  ADD COLUMN IF NOT EXISTS "monthly_limit_usd" double precision,
+  ADD COLUMN IF NOT EXISTS "monthly_limit_source" text DEFAULT 'derived' NOT NULL;
 
-CREATE TABLE "team_limit_targets" (
+CREATE TABLE IF NOT EXISTS "team_limit_targets" (
   "team_name" text NOT NULL,
   "workspace_id" text NOT NULL,
   "group_id" text NOT NULL,
@@ -40,7 +40,7 @@ VALUES
   ('Wireless', 'hyjfq2n04a', 'mEEk0Sgn', 'AZ-Replit - Wireless - Member')
 ON CONFLICT ("workspace_id", "group_id") DO NOTHING;
 
-CREATE TABLE "workspace_default_limit_targets" (
+CREATE TABLE IF NOT EXISTS "workspace_default_limit_targets" (
   "workspace_id" text PRIMARY KEY NOT NULL,
   "display_name" text NOT NULL,
   "monthly_limit_usd" double precision DEFAULT 1 NOT NULL,
@@ -52,11 +52,13 @@ VALUES ('1awqan', 'Legacy workspace per-user cap', 1)
 ON CONFLICT ("workspace_id") DO NOTHING;
 
 ALTER TABLE "team_budget_upstream_sync"
-  DROP CONSTRAINT "team_budget_upstream_sync_pkey";
+  DROP CONSTRAINT IF EXISTS "team_budget_upstream_sync_pkey";
 ALTER TABLE "team_budget_upstream_sync"
-  ADD COLUMN "id" integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY;
+  ADD COLUMN IF NOT EXISTS "id" integer GENERATED ALWAYS AS IDENTITY;
 ALTER TABLE "team_budget_upstream_sync"
-  ADD COLUMN "target_type" text DEFAULT 'group' NOT NULL;
+  ADD CONSTRAINT "team_budget_upstream_sync_pkey" PRIMARY KEY ("id");
+ALTER TABLE "team_budget_upstream_sync"
+  ADD COLUMN IF NOT EXISTS "target_type" text DEFAULT 'group' NOT NULL;
 UPDATE "team_budget_upstream_sync"
   SET "status" = 'drift'
   WHERE "status" = 'pending';
@@ -65,13 +67,29 @@ UPDATE "team_budget_upstream_sync"
   WHERE "status" = 'unresolved';
 ALTER TABLE "team_budget_upstream_sync"
   ALTER COLUMN "status" SET DEFAULT 'failed';
--- Legacy reconciliation rows were keyed only by team name and can have no
--- upstream target identity. They are derived status rows and will be rebuilt
--- from the configured targets after migration.
-DELETE FROM "team_budget_upstream_sync"
-  WHERE "workspace_id" IS NULL;
-CREATE UNIQUE INDEX "team_budget_upstream_sync_target_idx"
+-- This table stores the latest state for each upstream target rather than an
+-- append-only history. A partially upgraded database can contain more than one
+-- legacy row for the same all-null target identity. Retain the newest state
+-- deterministically and remove only the superseded states before installing
+-- the exact-target uniqueness constraint.
+WITH "ranked_target_states" AS (
+  SELECT
+    "id",
+    row_number() OVER (
+      PARTITION BY "workspace_id", "target_type", "target_group_id"
+      ORDER BY
+        "last_attempt_at" DESC NULLS LAST,
+        "updated_at" DESC,
+        "id" DESC
+    ) AS "target_state_rank"
+  FROM "team_budget_upstream_sync"
+)
+DELETE FROM "team_budget_upstream_sync" AS "sync"
+USING "ranked_target_states" AS "ranked"
+WHERE "sync"."id" = "ranked"."id"
+  AND "ranked"."target_state_rank" > 1;
+CREATE UNIQUE INDEX IF NOT EXISTS "team_budget_upstream_sync_target_idx"
   ON "team_budget_upstream_sync" ("workspace_id", "target_type", "target_group_id")
   NULLS NOT DISTINCT;
 
-DROP TABLE "group_teams";
+DROP TABLE IF EXISTS "group_teams";
