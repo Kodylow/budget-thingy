@@ -1246,8 +1246,7 @@ export default function Dashboard() {
       )}
       {summary && (
         <p className="text-xs text-muted-foreground">
-          Pace period: {summary.pacePeriodLabel}
-          {summary.pacePeriodIsFallback ? " (safe fallback)" : ""}
+          Reporting period: {selectedRangeLabel}
         </p>
       )}
       {rangeType === "billing" &&
