@@ -539,14 +539,6 @@ export default function Dashboard() {
             </span>
           </div>
         </td>
-        <td className="py-3 px-4">
-          <span
-            className="text-sm"
-            data-testid={`text-workspace-${group.groupId}`}
-          >
-            {group.workspaceName || "—"}
-          </span>
-        </td>
         <td className="py-3 px-4 text-right">
           <span
             className="text-sm font-mono tabular-nums"
@@ -681,11 +673,6 @@ export default function Dashboard() {
             </div>
           </div>
         </td>
-        <td className="py-3 px-4">
-          <span className="text-sm text-muted-foreground">
-            {cluster.workspaceName || "—"}
-          </span>
-        </td>
         <td className="py-3 px-4 text-right">
           <span className="text-sm font-mono tabular-nums">
             {cluster.memberCount}
@@ -753,9 +740,6 @@ export default function Dashboard() {
                 {formatTeamName(team.teamName)}
               </span>
             </div>
-          </td>
-          <td className="py-3 px-4">
-            <span className="text-sm text-muted-foreground opacity-50">—</span>
           </td>
           <td className="py-3 px-4 text-right">
             <span className="text-sm font-mono tabular-nums text-muted-foreground opacity-50">
@@ -845,9 +829,6 @@ export default function Dashboard() {
                 : "Budget only"}
             </Badge>
           </div>
-        </td>
-        <td className="py-3 px-4">
-          {/* workspace col — blank for team header */}
         </td>
         <td className="py-3 px-4 text-right">
           <span className="text-sm font-mono tabular-nums font-semibold">
@@ -962,7 +943,7 @@ export default function Dashboard() {
       >
         <td
           className="py-3 px-4 font-semibold text-sm text-muted-foreground"
-          colSpan={8}
+          colSpan={7}
         >
           <div className="flex items-center gap-2">
             {expanded ? (
@@ -1046,7 +1027,7 @@ export default function Dashboard() {
         key={`workspace-${workspace.workspaceId}`}
         className="border-b border-border bg-muted/60"
       >
-        <th className="py-3 px-4 text-left text-sm font-bold" colSpan={2}>
+        <th className="py-3 px-4 text-left text-sm font-bold">
           {isBudgetOnlyWorkspace
             ? "Unallocated Budgets"
             : workspace.workspaceName}
@@ -1387,7 +1368,6 @@ export default function Dashboard() {
                   <thead>
                     <tr className="border-b border-border">
                       <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4"></th>
-                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4"></th>
                       <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
                         Members
                       </th>
@@ -1414,7 +1394,7 @@ export default function Dashboard() {
                       </th>
                     </tr>
                   </thead>
-                  <VirtualizedTableRows columnCount={8}>
+                  <VirtualizedTableRows columnCount={7}>
                     {hasTeams ? (
                       <>
                         {workspaceSections.map((workspace) => (
@@ -1491,9 +1471,6 @@ export default function Dashboard() {
                               </span>
                             </div>
                           </td>
-                          <td className="py-3 px-4 text-sm text-muted-foreground">
-                            —
-                          </td>
                           <td className="py-3 px-4 text-right text-sm text-muted-foreground">
                             —
                           </td>
@@ -1524,7 +1501,6 @@ export default function Dashboard() {
                     <tfoot>
                       <tr className="border-t-2 border-border bg-muted/40 font-semibold">
                         <td className="py-3 px-4 text-sm">Total</td>
-                        <td className="py-3 px-4" />
                         <td className="py-3 px-4 text-right">
                           <span className="text-sm font-mono tabular-nums">
                             {groups.reduce(
