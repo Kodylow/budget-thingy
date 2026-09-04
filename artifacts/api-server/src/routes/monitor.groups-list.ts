@@ -120,6 +120,92 @@ router.get("/groups", async (req, res): Promise<void> => {
         projectedSpendUsd: null,
       });
     }
+    const roleOrder = { admin: 0, member: 1, viewer: 2, guest: 3, unsuffixed: 4 };
+    type ResponseGroup = (typeof groups)[number];
+    type FamilyNode = {
+      familyKey: string;
+      familyName: string;
+      isLegacy: boolean;
+      memberCount: number;
+      spendUsd: number;
+      spendLoaded: boolean;
+      groups: ResponseGroup[];
+    };
+    type TeamNode = { teamName: string | null; families: FamilyNode[] };
+    type WorkspaceNode = {
+      workspaceId: string;
+      workspaceName: string | null;
+      teams: TeamNode[];
+    };
+    const workspaceNodes = new Map<string, WorkspaceNode>();
+    for (const group of groups) {
+      const workspace = workspaceNodes.get(group.workspaceId) ?? {
+        workspaceId: group.workspaceId,
+        workspaceName: group.workspaceName,
+        teams: [],
+      };
+      if (!workspaceNodes.has(group.workspaceId)) {
+        workspaceNodes.set(group.workspaceId, workspace);
+      }
+      let team = workspace.teams.find((item) => item.teamName === group.teamName);
+      if (!team) {
+        team = { teamName: group.teamName, families: [] };
+        workspace.teams.push(team);
+      }
+      let family = team.families.find((item) => item.familyKey === group.familyKey);
+      if (!family) {
+        family = {
+          familyKey: group.familyKey,
+          familyName: group.familyName,
+          isLegacy: group.isLegacy,
+          memberCount: 0,
+          spendUsd: 0,
+          spendLoaded: true,
+          groups: [],
+        };
+        team.families.push(family);
+      }
+      family.groups.push(group);
+      family.memberCount += group.rollupMemberCount;
+      family.spendUsd += group.rollupSpendUsd;
+      family.spendLoaded &&= group.rollupSpendLoaded;
+    }
+    const hierarchy = [...workspaceNodes.values()]
+      .map((workspace) => ({
+        ...workspace,
+        teams: workspace.teams
+          .map((team) => ({
+            ...team,
+            families: team.families
+              .map((family) => ({
+                ...family,
+                groups: family.groups.sort(
+                  (a, b) =>
+                    roleOrder[a.role] - roleOrder[b.role] ||
+                    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+                ),
+              }))
+              .sort(
+                (a, b) =>
+                  a.familyName.localeCompare(b.familyName, undefined, { sensitivity: "base" }) ||
+                  a.familyKey.localeCompare(b.familyKey),
+              ),
+          }))
+          .sort((a, b) =>
+            (a.teamName ?? "Unassigned").localeCompare(
+              b.teamName ?? "Unassigned",
+              undefined,
+              { sensitivity: "base" },
+            )),
+      }))
+      .sort(
+        (a, b) =>
+          (a.workspaceName ?? a.workspaceId).localeCompare(
+            b.workspaceName ?? b.workspaceId,
+            undefined,
+            { sensitivity: "base" },
+          ) || a.workspaceId.localeCompare(b.workspaceId),
+      );
     const teamRawSpend: Record<string, { spendUsd: number; spendLoaded: boolean }> = {};
     for (const group of displayGroups) {
       const team = teamByGroup.get(groupTeamKey(group));
@@ -153,7 +239,7 @@ router.get("/groups", async (req, res): Promise<void> => {
       a.workspaceId.localeCompare(b.workspaceId) || a.teamName.localeCompare(b.teamName)
     );
     res.json(ListGroupsResponse.parse({
-      groups, isComplete: complete, syncStatus: usage.snapshot.status,
+      groups, hierarchy, isComplete: complete, syncStatus: usage.snapshot.status,
       syncError: null, pendingCount: usage.rollup.pendingCount,
       failedCount: usage.snapshot.coverage.failedWorkspaceDays.length,
       partialCount: usage.snapshot.coverage.missingWorkspaceDays.length,

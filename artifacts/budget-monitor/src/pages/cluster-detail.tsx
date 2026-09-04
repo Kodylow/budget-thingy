@@ -17,6 +17,7 @@ import {
   getListWorkspaceUsageLimitAuditsQueryKey,
   useGetWorkspaceLimitPolicies,
   getGetWorkspaceLimitPoliciesQueryKey,
+  type DirectoryRole,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -25,12 +26,9 @@ import { ChevronLeft, DollarSign, Users, AlertCircle } from 'lucide-react';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import {
-  higherRole,
-  normalizeRole,
   roleBadgeClass,
   roleLabel,
-  ROLE_PRIORITY,
-} from '@/lib/group-clusters';
+} from '@/lib/hierarchy-presentation';
 import { GroupUserExport } from '@/components/group-user-export';
 import { useAuthContext } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
@@ -45,7 +43,6 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
-import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 import { UsageLimitDialog } from '@/components/usage-limit-dialog';
 import { invalidateBudgetCaches } from '@/components/member-budget-input';
 import { WorkspacePolicyControl } from '@/components/policy-control';
@@ -55,8 +52,8 @@ interface MergedMember {
   username: string | null;
   email: string | null;
   name: string | null;
-  role: string;
-  allRoles: string[];
+  role: DirectoryRole;
+  allRoles: DirectoryRole[];
   spendUsd: number;
   spendLoaded: boolean;
 }
@@ -81,7 +78,6 @@ export default function ClusterDetail() {
   const search = useSearch();
   const params = new URLSearchParams(search);
   const rawIds = params.get('ids') ?? '';
-  const clusterName = params.get('name') ?? 'Group Cluster';
   const groupIds = rawIds ? rawIds.split(',').filter(Boolean) : [];
 
   const { role, capabilities } = useAuthContext();
@@ -107,7 +103,6 @@ export default function ClusterDetail() {
       getGetGroupDetailQueryOptions(id, queryParams, {
         query: {
           queryKey: getGetGroupDetailQueryKey(id, queryParams),
-          refetchInterval: DATA_REFRESH_INTERVAL_MS,
         },
       }),
     ),
@@ -118,7 +113,6 @@ export default function ClusterDetail() {
     getGetClusterProjectsQueryOptions(clusterKey, queryParams, {
       query: {
         queryKey: getGetClusterProjectsQueryKey(clusterKey, queryParams),
-        refetchInterval: DATA_REFRESH_INTERVAL_MS,
         enabled: groupIds.length > 0,
       },
     }),
@@ -127,14 +121,13 @@ export default function ClusterDetail() {
   const { data: clusterHeadline } = useGetCanonicalClusterHeadline(clusterKey, queryParams, {
     query: {
       queryKey: getGetCanonicalClusterHeadlineQueryKey(clusterKey, queryParams),
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
       enabled: groupIds.length > 0,
     },
   });
   const allLoaded = results.every((r) => !r.isLoading);
   // The API owns family and role classification; names are presentation only.
   const groupRoleMap = useMemo(() => {
-    const m: Record<string, string> = {};
+    const m: Record<string, DirectoryRole> = {};
     for (const r of results) {
       if (!r.data) continue;
       const { group } = r.data;
@@ -160,7 +153,7 @@ export default function ClusterDetail() {
         if (!r.data) continue;
         const { members, unattributedSpendUsd } = r.data;
         rangeLabel = r.data.rangeLabel ?? '';
-        const subRole = groupRoleMap[r.data.group.groupId] ?? 'Member';
+        const subRole = groupRoleMap[r.data.group.groupId] ?? 'unsuffixed';
 
         totalUnattributedSpend += unattributedSpendUsd ?? 0;
 
@@ -183,7 +176,11 @@ export default function ClusterDetail() {
           } else {
             // Update to highest-privilege role; spend is NOT added again —
             // the same person's usage is already reflected from their first sub-group.
-            const bestRole = higherRole(existing.role, subRole);
+            const roleOrder = clusterHeadline?.roles ?? [];
+            const bestRole =
+              roleOrder.indexOf(subRole) < roleOrder.indexOf(existing.role)
+                ? subRole
+                : existing.role;
             if (!existing.allRoles.includes(subRole)) existing.allRoles.push(subRole);
             existing.role = bestRole;
             existing.spendLoaded = existing.spendLoaded || spendLoaded;
@@ -203,17 +200,12 @@ export default function ClusterDetail() {
         totalUnattributedSpend,
         rangeLabel,
       };
-    }, [results, groupRoleMap]);
+    }, [results, groupRoleMap, clusterHeadline?.roles]);
 
   const clusterAttributedTotal = clusterHeadline?.spendUsd ?? 0;
   const clusterSpendLoaded = typeof clusterHeadline?.spendUsd === 'number';
 
-  const sortedRoleLabels = useMemo(() => {
-    const roles = new Set(Object.values(groupRoleMap));
-    return [...roles].sort(
-      (a, b) => ROLE_PRIORITY[normalizeRole(a)] - ROLE_PRIORITY[normalizeRole(b)],
-    );
-  }, [groupRoleMap]);
+  const sortedRoleLabels = clusterHeadline?.roles ?? [];
 
   // Project data comes directly from the cluster-projects endpoint (creator-attributed, no scaling).
   const mergedProjects: ClusterProject[] = clusterProjectsData?.projects ?? [];
@@ -227,7 +219,6 @@ export default function ClusterDetail() {
     query: {
       enabled: !!workspaceId,
       queryKey: workspaceId ? getListVisibleWorkspaceMembersQueryKey(workspaceId) : ['workspaceMembers', ''],
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
   const workspaceMembersData = workspaceMembersQuery.data;
@@ -282,7 +273,6 @@ export default function ClusterDetail() {
     query: {
       enabled: Boolean(workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId)),
       queryKey: workspaceId ? getGetWorkspaceLimitPoliciesQueryKey(workspaceId) : ['getWorkspaceLimitPolicies', ''],
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     }
   });
 
@@ -387,7 +377,7 @@ export default function ClusterDetail() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3 flex-wrap">
-             {results.find(r => r.data)?.data?.group.familyName ?? clusterName}
+             {clusterHeadline?.familyName ?? 'Group Cluster'}
             <div className="flex gap-1.5">
               {sortedRoleLabels.map((r) => (
                 <span

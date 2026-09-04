@@ -239,6 +239,58 @@ test("derives snapshot totals with overlap, creator ownership, and residual spen
   ).toBe(result.totalSpendUsd);
 });
 
+test("does not attribute owning-workspace spend to a legacy-copy family", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["owning-workspace", "legacy-workspace"],
+      members: new Map([
+        ["owning-workspace", new Map([
+          ["shared-user", { totalCostUsd: 18, aiCostUsd: 18 }],
+        ])],
+        ["legacy-workspace", new Map()],
+      ]),
+      workspaces: new Map([
+        ["owning-workspace", {
+          totalCostUsd: 18,
+          memberAttributableUsd: 18,
+          memberUnattributableUsd: 0,
+        }],
+        ["legacy-workspace", {
+          totalCostUsd: 0,
+          memberAttributableUsd: 0,
+          memberUnattributableUsd: 0,
+        }],
+      ]),
+      accountTotalUsd: 18,
+    }),
+    groups: [
+      {
+        id: "owning-family",
+        workspaceId: "owning-workspace",
+        name: "Finance - Members",
+      },
+      {
+        id: "legacy-copy-family",
+        workspaceId: "legacy-workspace",
+        name: "Finance - Members",
+      },
+    ],
+    membersByGroup: new Map([
+      ["owning-family", ["shared-user"]],
+      ["legacy-copy-family", ["shared-user"]],
+    ]),
+    projectInfoByWorkspace: new Map([
+      ["owning-workspace", new Map()],
+      ["legacy-workspace", new Map()],
+    ]),
+  });
+
+  expect(result.byGroup.get("owning-family")?.spendUsd).toBe(18);
+  expect(result.byGroup.get("legacy-copy-family")?.spendUsd).toBe(0);
+  expect(result.byUser.get("shared-user")).toBe(18);
+  expect(result.totalSpendUsd).toBe(18);
+});
+
 test("keeps identical project IDs isolated by workspace", () => {
   const result = computeSnapshotUsageRollup({
     snapshot: snapshot({

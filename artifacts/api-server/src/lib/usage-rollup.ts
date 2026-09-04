@@ -92,11 +92,6 @@ export interface DedupedUsageRollup {
   byUser: Map<string, number>;
   /** Workspace usage that cannot be assigned to a custom group in that workspace. */
   ungroupedByWorkspace: Map<string, DedupedGroupRollup>;
-  /** Users whose spend was structurally assigned across workspace boundaries.
-   * Canonical member attribution uses this to retain the complete workspace
-   * amount when the destination group's member-usage API only contains the
-   * source-workspace portion. */
-  crossWorkspaceAttributedUsersByGroup?: ReadonlyMap<string, ReadonlySet<string>>;
   totalSpendUsd: number;
   totalMemberCount: number;
   pendingCount: number;

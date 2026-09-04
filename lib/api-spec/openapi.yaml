@@ -1545,9 +1545,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/DirectoryGroup"
+                $ref: "#/components/schemas/DirectoryGroupsResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2079,7 +2077,7 @@ components:
           type: number
     Group:
       type: object
-      required: [groupId, workspaceId, workspaceName, name, familyKey, familyName, role, isLegacy, teamName, type, spendUsd, paceSpendUsd, projectSpendUsd, rollupSpendUsd, rollupMemberCount, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentPercentUsed, agentRemainingUsd, agentBlocked, thresholdsFired, history]
+      required: [groupId, workspaceId, workspaceName, name, familyKey, familyName, role, isLegacy, teamName, type, spendLoaded, spendUsd, paceSpendLoaded, paceSpendUsd, projectSpendUsd, rollupSpendLoaded, rollupSpendUsd, rollupMemberCount, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentPercentUsed, agentRemainingUsd, agentBlocked, thresholdsFired, history]
       properties:
         groupId:
           type: string
@@ -2122,15 +2120,21 @@ components:
         spendUsd:
           type: number
           description: Raw per-group spend represented by the stored usage snapshot
+        spendLoaded:
+          type: boolean
         paceSpendUsd:
           type: number
           description: Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
+        paceSpendLoaded:
+          type: boolean
         projectSpendUsd:
           type: number
           description: Deduplicated project spend attributed to this group
         rollupSpendUsd:
           type: number
           description: Member-deduplicated spend attributed to this group for team and org rollups
+        rollupSpendLoaded:
+          type: boolean
         spendUpdatedAt:
           type: ["string", "null"]
           description: ISO timestamp when spend was last fetched
@@ -2174,12 +2178,17 @@ components:
           description: Linear projection of end-of-period spend, null while loading or too early in the period
     GroupsResponse:
       type: object
-      required: [groups, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, workspaceTeamRawSpend, teamBudgets]
+      required: [groups, hierarchy, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, workspaceTeamRawSpend, teamBudgets]
       properties:
         groups:
           type: array
           items:
             $ref: "#/components/schemas/Group"
+        hierarchy:
+          type: array
+          description: Server-owned ordered workspace, team, and canonical family hierarchy.
+          items:
+            $ref: "#/components/schemas/GroupWorkspaceHierarchy"
         usageHealth:
           $ref: "#/components/schemas/UsageHealth"
         billingPeriodLabel:
@@ -2219,6 +2228,49 @@ components:
         spendUsd:
           type: number
           description: Member-deduped rollup spend attributed to this team within this workspace.
+    GroupFamilyHierarchy:
+      type: object
+      required: [familyKey, familyName, isLegacy, memberCount, spendUsd, spendLoaded, groups]
+      properties:
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        isLegacy:
+          type: boolean
+        memberCount:
+          type: integer
+        spendUsd:
+          type: number
+        spendLoaded:
+          type: boolean
+        groups:
+          type: array
+          description: Canonical role groups in server-defined role order.
+          items:
+            $ref: "#/components/schemas/Group"
+    GroupTeamHierarchy:
+      type: object
+      required: [teamName, families]
+      properties:
+        teamName:
+          type: ["string", "null"]
+        families:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupFamilyHierarchy"
+    GroupWorkspaceHierarchy:
+      type: object
+      required: [workspaceId, workspaceName, teams]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: ["string", "null"]
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupTeamHierarchy"
     TrendSeries:
       type: object
       required: [name, type, data]
@@ -2270,8 +2322,16 @@ components:
           $ref: "#/components/schemas/UsageHealth"
     ClusterHeadline:
       type: object
-      required: [spendUsd, usageHealth]
+      required: [familyName, roles, spendUsd, usageHealth]
       properties:
+        familyName:
+          type: string
+          description: Canonical family presentation name for the requested cluster.
+        roles:
+          type: array
+          description: Canonical roles present in the cluster, in server-defined role order.
+          items:
+            $ref: "#/components/schemas/DirectoryRole"
         spendUsd:
           type: number
           description: Canonical member-deduped cluster spend
@@ -3276,6 +3336,52 @@ components:
           type: boolean
         teamName:
           type: ["string", "null"]
+    DirectoryFamilyHierarchy:
+      type: object
+      required: [familyKey, familyName, isLegacy, groups]
+      properties:
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        isLegacy:
+          type: boolean
+        groups:
+          type: array
+          description: Canonical role groups in server-defined role order.
+          items:
+            $ref: "#/components/schemas/DirectoryGroup"
+    DirectoryTeamHierarchy:
+      type: object
+      required: [teamName, families]
+      properties:
+        teamName:
+          type: ["string", "null"]
+        families:
+          type: array
+          items:
+            $ref: "#/components/schemas/DirectoryFamilyHierarchy"
+    DirectoryWorkspaceHierarchy:
+      type: object
+      required: [workspaceId, workspaceName, teams]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/DirectoryTeamHierarchy"
+    DirectoryGroupsResponse:
+      type: object
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          description: Server-owned ordered workspace, team, and canonical family hierarchy.
+          items:
+            $ref: "#/components/schemas/DirectoryWorkspaceHierarchy"
     DirectoryRole:
       type: string
       enum: [admin, member, viewer, guest, unsuffixed]

@@ -7,7 +7,6 @@ import {
   useGetUserActivity,
   getGetUserActivityQueryKey,
 } from '@workspace/api-client-react';
-import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 import type { DirectoryMember, DirectoryMemberWorkspace } from '@workspace/api-client-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -22,8 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChevronDown, Download, Search, ShieldCheck } from 'lucide-react';
 import { useRange } from '@/components/range-context';
 import { buildCsv } from '@/lib/csv';
-import { buildDirectoryHierarchy } from '@/lib/workspace-directory-groups';
-import { roleBadgeClass, roleLabel } from '@/lib/group-clusters';
+import { roleBadgeClass, roleLabel } from '@/lib/hierarchy-presentation';
 
 // ---------- helpers ----------
 
@@ -358,7 +356,6 @@ export default function WorkspaceDirectory() {
   const { data: members, isLoading: membersLoading } = useListDirectoryMembers(rangeParams, {
     query: {
       queryKey: getListDirectoryMembersQueryKey(rangeParams),
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 
@@ -368,7 +365,6 @@ export default function WorkspaceDirectory() {
   } = useListDirectoryGroups({
     query: {
       queryKey: getListDirectoryGroupsQueryKey(),
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 
@@ -376,7 +372,6 @@ export default function WorkspaceDirectory() {
   const { data: activity, isLoading: activityLoading } = useGetUserActivity(activityParams, {
     query: {
       queryKey: getGetUserActivityQueryKey(activityParams),
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
 
@@ -408,11 +403,33 @@ export default function WorkspaceDirectory() {
     );
   }, [members, debouncedSearch]);
 
-  const groupedWorkspaces = useMemo(
-    () => buildDirectoryHierarchy(directoryGroups ?? [], {
-      showLegacy: showLegacyGroups,
-      search: groupSearch,
-    }),
+  const groupedWorkspaces = useMemo(() => {
+    const query = groupSearch.trim().toLocaleLowerCase();
+    return (directoryGroups?.workspaces ?? [])
+      .map((workspace) => ({
+        ...workspace,
+        teams: workspace.teams
+          .map((team) => ({
+            ...team,
+            families: team.families
+              .filter((family) => showLegacyGroups || !family.isLegacy)
+              .map((family) => ({
+                ...family,
+                groups: family.groups.filter((group) =>
+                  !query || [
+                    workspace.workspaceName,
+                    team.teamName,
+                    family.familyName,
+                    group.groupName,
+                    group.role,
+                  ].some((value) => value?.toLocaleLowerCase().includes(query))),
+              }))
+              .filter((family) => family.groups.length > 0),
+          }))
+          .filter((team) => team.families.length > 0),
+      }))
+      .filter((workspace) => workspace.teams.length > 0);
+  },
     [directoryGroups, groupSearch, showLegacyGroups],
   );
   const visibleGroupCount = useMemo(

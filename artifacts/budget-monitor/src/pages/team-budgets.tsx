@@ -22,7 +22,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthContext } from '@/components/auth-context';
-import { formatTeamName } from '@/lib/team-names';
 
 const currency = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -61,12 +60,11 @@ export default function TeamBudgets() {
   const [optimisticVisibility, setOptimisticVisibility] = useState<Record<string, boolean>>({});
 
   const historyQuery = useGetTeamBudgetHistory({
-    query: { queryKey: getGetTeamBudgetHistoryQueryKey(), staleTime: 60_000, refetchOnMount: 'always' },
+    query: { queryKey: getGetTeamBudgetHistoryQueryKey(), refetchOnMount: 'always' },
   });
   const auditQuery = useGetTeamAllocationAudit({
     query: {
       queryKey: getGetTeamAllocationAuditQueryKey(),
-      staleTime: 30_000,
       refetchOnMount: 'always',
       enabled: canEditAllocations,
     },
@@ -84,7 +82,7 @@ export default function TeamBudgets() {
 
   const teams = useMemo(
     () => [...(history?.teams ?? [])].sort((a, b) =>
-      formatTeamName(a.teamName).localeCompare(formatTeamName(b.teamName), 'en', { sensitivity: 'base' })),
+      a.teamName.localeCompare(b.teamName, 'en', { sensitivity: 'base' })),
     [history?.teams],
   );
   const displayAllocation = (team: (typeof teams)[number]) =>
@@ -218,7 +216,7 @@ export default function TeamBudgets() {
                 <tbody>
                   {teams.map((team) => (
                     <tr key={team.teamName} className={`border-t ${displayHidden(team) ? 'bg-muted/30 text-muted-foreground' : ''}`}>
-                      <th className="px-6 py-4 text-left font-medium">{formatTeamName(team.teamName)}{displayHidden(team) && <Badge variant="secondary" className="ml-2">Hidden</Badge>}</th>
+                      <th className="px-6 py-4 text-left font-medium">{team.teamName}{displayHidden(team) && <Badge variant="secondary" className="ml-2">Hidden</Badge>}</th>
                       <td className="px-6 py-4 text-right tabular-nums">
                         {canEditAllocations ? (
                           <Input
@@ -240,7 +238,7 @@ export default function TeamBudgets() {
                               }
                             }}
                             disabled={updateAllocation.isPending}
-                            aria-label={`Annual baseline allocation for ${formatTeamName(team.teamName)}`}
+                            aria-label={`Annual baseline allocation for ${team.teamName}`}
                             data-testid={`input-team-annual-allocation-${team.teamName}`}
                           />
                         ) : currency.format(displayAllocation(team))}
@@ -298,7 +296,7 @@ export default function TeamBudgets() {
                     {auditQuery.data?.changes.map((change) => (
                       <tr key={change.id} className="border-t">
                         <td className="px-5 py-4 whitespace-nowrap">{new Date(change.timestamp).toLocaleString()}</td>
-                        <td className="px-5 py-4 font-medium">{formatTeamName(change.teamName)}</td>
+                        <td className="px-5 py-4 font-medium">{change.teamName}</td>
                         <td className="px-5 py-4">{change.field === 'annualAllocationUsd' ? 'Baseline allocation' : 'Visibility'}</td>
                         <td className="px-5 py-4 tabular-nums">
                           {change.field === 'annualAllocationUsd'

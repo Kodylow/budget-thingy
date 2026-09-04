@@ -1,4 +1,4 @@
-import { sumAttributedRollup } from "@/lib/group-clusters";
+import React from "react";
 
 type AttributedRollup = {
   rollupMemberCount?: number;
@@ -13,7 +13,13 @@ export function UnassignedSummaryRow({
   workspaceId: string;
   groups: AttributedRollup[];
 }) {
-  const totals = sumAttributedRollup(groups);
+  const totals = groups.reduce(
+    (total, group) => ({
+      memberCount: total.memberCount + (group.rollupMemberCount ?? 0),
+      spendUsd: total.spendUsd + (group.rollupSpendUsd ?? 0),
+    }),
+    { memberCount: 0, spendUsd: 0 },
+  );
 
   return (
     <tr

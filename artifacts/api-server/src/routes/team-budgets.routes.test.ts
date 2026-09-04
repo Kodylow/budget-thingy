@@ -359,14 +359,14 @@ test("budget audit and sync status reject workspace-scoped users", async () => {
 });
 
 test("sync status identifies the approval-only Finance Approval feed", async () => {
-  const { status, json } = await request("/admin/team-budgets/sync", "task158-account");
+  const { status, json } = await request("/teams/budgets", "task158-workspace");
   expect(status).toBe(200);
   expect(json.sourceTable).toBe("Replit Finance Approval");
   expect(json.requiredApprovalStatus).toBe("Approved");
 });
 
 test("history orders months and exposes hidden teams only to true admins", async () => {
-  const { status, json } = await request("/admin/team-budgets/history", "task158-account");
+  const { status, json } = await request("/teams/budgets", "task158-workspace");
   expect(status).toBe(200);
   expect(json.teams.find((team) => team.teamName === HIDDEN)).toMatchObject({
     isHidden: true,
@@ -487,6 +487,22 @@ test("effective totals agree across pool, group, and summary surfaces", async ()
 
   const assignedGroup = groups.json.groups.find((group) => group.groupId === GROUP_ID);
   expect(assignedGroup.teamName).toBe(ASSIGNED);
+  const assignedWorkspace = groups.json.hierarchy.find(
+    (workspace) => workspace.workspaceId === assignedGroup.workspaceId,
+  );
+  const assignedTeam = assignedWorkspace.teams.find(
+    (team) => team.teamName === ASSIGNED,
+  );
+  const assignedFamily = assignedTeam.families.find(
+    (family) => family.familyKey === assignedGroup.familyKey,
+  );
+  expect(assignedFamily.groups.map((group) => group.groupId)).toContain(GROUP_ID);
+  expect(assignedFamily.spendUsd).toBe(
+    assignedFamily.groups.reduce(
+      (sum, group) => sum + group.rollupSpendUsd,
+      0,
+    ),
+  );
   expect(groups.json.teamBudgets[ASSIGNED]).toBe(125);
   expect(groups.json.teamBudgets[BUDGET_ONLY]).toBe(60);
   expect(groups.json.teamBudgets[ORIGINAL_ONLY]).toBe(75);
@@ -529,6 +545,21 @@ test("workspace-qualified team spend keeps the same team separate by workspace",
     await db.delete(teamLimitTargetsTable)
       .where(eq(teamLimitTargetsTable.groupId, SECOND_GROUP_ID));
   }
+});
+
+test("directory groups are returned in server-owned hierarchy order", async () => {
+  const response = await request("/directory/groups", "task158-account");
+  expect(response.status).toBe(200);
+  expect(Array.isArray(response.json.workspaces)).toBe(true);
+  const groupIds = response.json.workspaces.flatMap((workspace) =>
+    workspace.teams.flatMap((team) =>
+      team.families.flatMap((family) =>
+        family.groups.map((group) => group.groupId),
+      ),
+    ),
+  );
+  expect(groupIds).toContain(GROUP_ID);
+  expect(new Set(groupIds).size).toBe(groupIds.length);
 });
 
 test("project detail survives restart and isolates duplicate IDs by workspace", async () => {
@@ -585,7 +616,7 @@ test("project detail survives restart and isolates duplicate IDs by workspace", 
     status: expect.any(String),
     coverage: expect.objectContaining({ ratio: expect.any(Number) }),
   }));
-});
+  });
 
 test("project export neutralizes formula-leading metadata", async () => {
   const formula = "=HYPERLINK(\"https://attacker.invalid\",\"Open\")";
@@ -625,6 +656,14 @@ test("true admins can edit and reset monthly team and target limits", async () =
   let response = await request(path, "task158-account", "PATCH", {
     monthlyLimitUsd: 9,
   });
+
+  const groupIds = response.json.workspaces.flatMap((workspace) =>
+    workspace.teams.flatMap((team) =>
+      team.families.flatMap((family) =>
+        family.groups.map((group) => group.groupId),
+      ),
+    ),
+  );
   expect(response.status).toBe(200);
   expect(response.json).toMatchObject({
     monthlyLimitUsd: 9,

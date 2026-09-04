@@ -5,9 +5,14 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { DirectoryRole } from './directoryRole';
 import type { UsageHealth } from './usageHealth';
 
 export interface ClusterHeadline {
+  /** Canonical family presentation name for the requested cluster. */
+  familyName: string;
+  /** Canonical roles present in the cluster, in server-defined role order. */
+  roles: DirectoryRole[];
   /** Canonical member-deduped cluster spend */
   spendUsd: number;
   usageHealth: UsageHealth;

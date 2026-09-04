@@ -572,14 +572,82 @@ router.get("/directory/groups", requireRole("account"), async (req, res): Promis
         teamName: canonical.teamName,
       };
     });
-    groups.sort(
-      (a, b) =>
-        a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: "base" }) ||
-        a.groupName.localeCompare(b.groupName, undefined, { sensitivity: "base" }) ||
-        a.groupId.localeCompare(b.groupId),
-    );
+    const roleOrder = { admin: 0, member: 1, viewer: 2, guest: 3, unsuffixed: 4 };
+    type DirectoryGroup = (typeof groups)[number];
+    type FamilyNode = {
+      familyKey: string;
+      familyName: string;
+      isLegacy: boolean;
+      groups: DirectoryGroup[];
+    };
+    type TeamNode = { teamName: string | null; families: FamilyNode[] };
+    type WorkspaceNode = {
+      workspaceId: string;
+      workspaceName: string;
+      teams: TeamNode[];
+    };
+    const workspaceNodes = new Map<string, WorkspaceNode>();
+    for (const group of groups) {
+      const workspace = workspaceNodes.get(group.workspaceId) ?? {
+        workspaceId: group.workspaceId,
+        workspaceName: group.workspaceName,
+        teams: [],
+      };
+      if (!workspaceNodes.has(group.workspaceId)) {
+        workspaceNodes.set(group.workspaceId, workspace);
+      }
+      let team = workspace.teams.find((item) => item.teamName === group.teamName);
+      if (!team) {
+        team = { teamName: group.teamName, families: [] };
+        workspace.teams.push(team);
+      }
+      let family = team.families.find((item) => item.familyKey === group.familyKey);
+      if (!family) {
+        family = {
+          familyKey: group.familyKey,
+          familyName: group.familyName,
+          isLegacy: group.isLegacy,
+          groups: [],
+        };
+        team.families.push(family);
+      }
+      family.groups.push(group);
+    }
+    const workspaces = [...workspaceNodes.values()]
+      .map((workspace) => ({
+        ...workspace,
+        teams: workspace.teams
+          .map((team) => ({
+            ...team,
+            families: team.families
+              .map((family) => ({
+                ...family,
+                groups: family.groups.sort(
+                  (a, b) =>
+                    roleOrder[a.role] - roleOrder[b.role] ||
+                    a.groupName.localeCompare(b.groupName, undefined, { sensitivity: "base" }),
+                ),
+              }))
+              .sort(
+                (a, b) =>
+                  a.familyName.localeCompare(b.familyName, undefined, { sensitivity: "base" }) ||
+                  a.familyKey.localeCompare(b.familyKey),
+              ),
+          }))
+          .sort((a, b) =>
+            (a.teamName ?? "Unassigned").localeCompare(
+              b.teamName ?? "Unassigned",
+              undefined,
+              { sensitivity: "base" },
+            )),
+      }))
+      .sort(
+        (a, b) =>
+          a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: "base" }) ||
+          a.workspaceId.localeCompare(b.workspaceId),
+      );
 
-    res.json(ListDirectoryGroupsResponse.parse(groups));
+    res.json(ListDirectoryGroupsResponse.parse({ workspaces }));
   } catch (err) {
     req.log.error({ err }, "listDirectoryGroups failed");
     res.status(503).json({ error: "Directory unavailable" });

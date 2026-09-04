@@ -41,12 +41,15 @@ export interface Group {
   rollupMemberCount: number;
   /** Raw per-group spend represented by the stored usage snapshot */
   spendUsd: number;
+  spendLoaded: boolean;
   /** Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend */
   paceSpendUsd: number;
+  paceSpendLoaded: boolean;
   /** Deduplicated project spend attributed to this group */
   projectSpendUsd: number;
   /** Member-deduplicated spend attributed to this group for team and org rollups */
   rollupSpendUsd: number;
+  rollupSpendLoaded: boolean;
   /**
      * ISO timestamp when spend was last fetched
      * @nullable

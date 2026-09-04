@@ -15,6 +15,13 @@
       "when": 1788519481445,
       "tag": "0001_smiling_bloodstorm",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788521806896,
+      "tag": "0002_purple_supreme_intelligence",
+      "breakpoints": true
     }
   ]
 }

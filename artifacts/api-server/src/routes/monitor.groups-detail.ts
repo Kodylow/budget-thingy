@@ -15,10 +15,9 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     }
     const usage = await usageForRequest(
       req.authz!, dir, req.query as Record<string, unknown>, true);
-    const [dailyRollups, cycleUsage] = await Promise.all([
-      dailyUsageRollups(dir, usage),
-      usageForRequest(req.authz!, dir, { rangeType: "billing" }, true),
-    ]);
+    const cycleUsage = await usageForRequest(
+      req.authz!, dir, { rangeType: "billing" }, true);
+    const dailyRollups = await dailyUsageRollups(dir, usage);
     const mergePlan = buildCanonicalGroupMergePlan(usage.groups, dir.workspaces);
     if (mergePlan.hiddenGroupIds.has(group.id)) {
       res.status(404).json({ error: "Group not found" });
@@ -70,16 +69,6 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     const mergedBudget = resolveCanonicalMergedGroupBudget(group.id, mergePlan, budgetMap);
     const budget = effectiveGroupBudget(mergedBudget?.amountUsd);
     const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
-    const monthlyAgentLimitUsd =
-      dir.budgets.groupLimits.get(group.workspaceId)?.get(group.id) ?? null;
-    const cycleAgentSpendUsd = sourceIds.reduce(
-      (sum, id) =>
-        sum + [...(cycleUsage.rollup.aiSpendByGroup.get(id)?.values() ?? [])]
-          .reduce((subtotal, amount) => subtotal + amount, 0),
-      0,
-    );
-    const cycleAgentSpendLoaded = cycleUsage.rollup.isComplete;
-    const hasAgentLimit = monthlyAgentLimitUsd != null && monthlyAgentLimitUsd > 0;
     const billingPeriodStart = getBillingPeriod().start;
     const fired =
       billingPeriodStart && budget.amountUsd != null
@@ -172,6 +161,15 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       (sum, id) => sum + (rollupMemberCounts.get(id) ?? 0),
       0,
     );
+    const monthlyAgentLimitUsd =
+      dir.budgets.groupLimits.get(group.workspaceId)?.get(group.id) ?? null;
+    const cycleAgentSpendUsd = sourceIds.reduce(
+      (sum, id) =>
+        sum + [...(cycleUsage.rollup.aiSpendByGroup.get(id)?.values() ?? [])]
+          .reduce((subtotal, amount) => subtotal + amount, 0),
+      0,
+    );
+    const hasAgentLimit = monthlyAgentLimitUsd != null && monthlyAgentLimitUsd > 0;
 
     res.json(
       GetGroupDetailResponse.parse({
@@ -202,16 +200,14 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           remainingUsd: combinedLoaded && hasBudget ? budget.amountUsd! - combinedSpend : null,
           percentUsed: combinedLoaded && hasBudget ? (combinedSpend / budget.amountUsd!) * 100 : null,
           monthlyAgentLimitUsd,
-          cycleAgentSpendUsd: cycleAgentSpendLoaded ? cycleAgentSpendUsd : null,
-          agentRemainingUsd: cycleAgentSpendLoaded && hasAgentLimit
+          cycleAgentSpendUsd,
+          agentRemainingUsd: hasAgentLimit
             ? monthlyAgentLimitUsd! - cycleAgentSpendUsd
             : null,
-          agentPercentUsed: cycleAgentSpendLoaded && hasAgentLimit
+          agentPercentUsed: hasAgentLimit
             ? (cycleAgentSpendUsd / monthlyAgentLimitUsd!) * 100
             : null,
-          agentBlocked: cycleAgentSpendLoaded
-            ? hasAgentLimit && cycleAgentSpendUsd >= monthlyAgentLimitUsd!
-            : null,
+          agentBlocked: hasAgentLimit && cycleAgentSpendUsd >= monthlyAgentLimitUsd!,
           thresholdsFired: fired,
           history: detailHistoryArr,
           projectedSpendUsd: combinedLoaded
@@ -314,6 +310,13 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
       res.status(404).json({ error: "No matching groups found" });
       return;
     }
+    const roleOrder = { admin: 0, member: 1, viewer: 2, guest: 3, unsuffixed: 4 };
+    const requestedFamilies = requested.map(
+      (group) => dir.account.roleGroupsById.get(group!.id)!,
+    );
+    const familyName = requestedFamilies[0]!.familyName;
+    const roles = [...new Set(requestedFamilies.map((family) => family.role))]
+      .sort((a, b) => roleOrder[a] - roleOrder[b]);
     const usage = await usageForRequest(req.authz!, dir, req.query as Record<string, unknown>);
     const visible = usage.groups;
     const accountMergePlan = buildCanonicalGroupMergePlan(visible, dir.workspaces);
@@ -333,6 +336,8 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
       0,
     );
     res.json(GetCanonicalClusterHeadlineResponse.parse({
+      familyName,
+      roles,
       spendUsd,
       isComplete: canonical.isComplete,
       pendingCount: canonical.pendingCount,

@@ -10,6 +10,7 @@ import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
 import { AuthGate } from '@/components/auth-gate';
 import {
+  DATA_REFRESH_INTERVAL_MS,
   pollingRetryDelay,
   QUERY_STALE_TIME_MS,
 } from '@/lib/client-performance';
@@ -33,6 +34,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: QUERY_STALE_TIME_MS,
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
       refetchOnWindowFocus: false,
       retry: shouldRetryRequest,
       retryDelay: 1_000,

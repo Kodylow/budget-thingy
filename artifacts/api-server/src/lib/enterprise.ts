@@ -56,6 +56,7 @@ import {
   USAGE_DATA_CUTOFF_MS,
   type UsageWindowSelection,
 } from "./usage-window";
+import { ENTERPRISE_USAGE_REQUESTS_PER_MINUTE } from "./enterprise-rate-limit";
 
 const BASE_URL = "https://api.replit.com/v1";
 const DIRECTORY_TTL_MS = 15 * 60_000;
@@ -63,7 +64,6 @@ const BILLING_PERIOD_REFRESH_MS = 24 * 60 * 60_000;
 const PROJECT_INFO_TTL_MS = 15 * 60_000;
 const DEFAULT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT = 100;
-const LOCAL_USAGE_REQUESTS_PER_MINUTE = 170;
 
 export const ENTERPRISE_REQUEST_TIMEOUT_MS = 30_000;
 export const SPEND_DATA_CUTOFF_ISO = USAGE_DATA_CUTOFF_ISO;
@@ -145,7 +145,7 @@ class EnterpriseRateBudget {
         now >= this.embargoUntil &&
         this.remaining > 0 &&
         this.localTotalUsed < 600 &&
-        (!isUsage || this.localUsageUsed < LOCAL_USAGE_REQUESTS_PER_MINUTE)
+        (!isUsage || this.localUsageUsed < ENTERPRISE_USAGE_REQUESTS_PER_MINUTE)
       ) {
         this.remaining--;
         this.localTotalUsed++;

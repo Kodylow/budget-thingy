@@ -10,6 +10,7 @@ import {
   type DirectoryCache,
   withEnterpriseIngestAccess,
 } from "./enterprise";
+import { ENTERPRISE_USAGE_REQUESTS_PER_MINUTE } from "./enterprise-rate-limit";
 import { hasDailyRosterSnapshot, recordDailyRosters } from "./history";
 import { logger } from "./logger";
 import { invalidateUsageSnapshotMemo } from "./usage-store";
@@ -28,7 +29,6 @@ const WORKERS = 3;
 const UNIT_ATTEMPTS = 3;
 const BATCH_SIZE = 500;
 
-const LOCAL_USAGE_REQUESTS_PER_MINUTE = 150;
 export const BACKGROUND_CYCLE_INTERVAL_MINUTES = 10;
 
 type Metrics = Array<{ id: string; name: string; category: string; costUsd: number }>;
@@ -137,7 +137,7 @@ export class LocalUsageRateLimiter {
   private gate: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly limit = LOCAL_USAGE_REQUESTS_PER_MINUTE,
+    private readonly limit = ENTERPRISE_USAGE_REQUESTS_PER_MINUTE,
     private readonly intervalMs = 60_000,
     private readonly now: () => number = Date.now,
     private readonly sleep: (delayMs: number) => Promise<void> =

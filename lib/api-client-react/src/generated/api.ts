@@ -31,7 +31,7 @@ import type {
   BeginBrowserLoginParams,
   CheckResult,
   ClusterHeadline,
-  DirectoryGroup,
+  DirectoryGroupsResponse,
   DirectoryMember,
   EmailSettings,
   EmailSettingsUpdate,
@@ -4111,9 +4111,9 @@ export const getListDirectoryGroupsUrl = () => {
  * Returns every custom/SCIM group from the directory cache together with its owning workspace. Available only to account administrators and independent of usage loading or the selected reporting range.
  * @summary List enterprise groups with their owning workspaces
  */
-export const listDirectoryGroups = async ( options?: RequestInit): Promise<DirectoryGroup[]> => {
+export const listDirectoryGroups = async ( options?: RequestInit): Promise<DirectoryGroupsResponse> => {
 
-  return customFetch<DirectoryGroup[]>(getListDirectoryGroupsUrl(),
+  return customFetch<DirectoryGroupsResponse>(getListDirectoryGroupsUrl(),
   {
     ...options,
     method: 'GET'

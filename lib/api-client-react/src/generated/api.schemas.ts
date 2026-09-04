@@ -188,12 +188,15 @@ export interface Group {
   rollupMemberCount: number;
   /** Raw per-group spend represented by the stored usage snapshot */
   spendUsd: number;
+  spendLoaded: boolean;
   /** Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend */
   paceSpendUsd: number;
+  paceSpendLoaded: boolean;
   /** Deduplicated project spend attributed to this group */
   projectSpendUsd: number;
   /** Member-deduplicated spend attributed to this group for team and org rollups */
   rollupSpendUsd: number;
+  rollupSpendLoaded: boolean;
   /**
      * ISO timestamp when spend was last fetched
      * @nullable
@@ -262,6 +265,16 @@ export type GroupsResponseTeamRawSpend = {[key: string]: {
  */
 export type GroupsResponseTeamBudgets = {[key: string]: number};
 
+export interface GroupFamilyHierarchy {
+  familyKey: string;
+  familyName: string;
+  isLegacy: boolean;
+  memberCount: number;
+  spendUsd: number;
+  spendLoaded: boolean;
+  /** Canonical role groups in server-defined role order. */
+  groups: Group[];
+}
 export type UsageHealthStatus = typeof UsageHealthStatus[keyof typeof UsageHealthStatus];
 
 
@@ -310,6 +323,8 @@ export interface WorkspaceTeamSpend {
 
 export interface GroupsResponse {
   groups: Group[];
+  /** Server-owned ordered workspace, team, and canonical family hierarchy. */
+  hierarchy: GroupWorkspaceHierarchy[];
   usageHealth: UsageHealth;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;
@@ -356,6 +371,10 @@ export interface TrendsResponse {
 }
 
 export interface ClusterHeadline {
+  /** Canonical family presentation name for the requested cluster. */
+  familyName: string;
+  /** Canonical roles present in the cluster, in server-defined role order. */
+  roles: DirectoryRole[];
   /** Canonical member-deduped cluster spend */
   spendUsd: number;
   usageHealth: UsageHealth;
@@ -1155,6 +1174,13 @@ export interface DirectoryGroup {
   teamName: string | null;
 }
 
+export interface DirectoryFamilyHierarchy {
+  familyKey: string;
+  familyName: string;
+  isLegacy: boolean;
+  /** Canonical role groups in server-defined role order. */
+  groups: DirectoryGroup[];
+}
 export interface GroupAdminsItem {
   groupId: string;
   groupName: string;
@@ -1687,3 +1713,33 @@ export type ListRecentUsageIngestRunsParams = {
 limit?: number;
 };
 
+
+export interface DirectoryGroupsResponse {
+  /** Server-owned ordered workspace, team, and canonical family hierarchy. */
+  workspaces: DirectoryWorkspaceHierarchy[];
+}
+
+export interface GroupTeamHierarchy {
+  /** @nullable */
+  teamName: string | null;
+  families: GroupFamilyHierarchy[];
+}
+
+export interface DirectoryTeamHierarchy {
+  /** @nullable */
+  teamName: string | null;
+  families: DirectoryFamilyHierarchy[];
+}
+
+export interface DirectoryWorkspaceHierarchy {
+  workspaceId: string;
+  workspaceName: string;
+  teams: DirectoryTeamHierarchy[];
+}
+
+export interface GroupWorkspaceHierarchy {
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  teams: GroupTeamHierarchy[];
+}

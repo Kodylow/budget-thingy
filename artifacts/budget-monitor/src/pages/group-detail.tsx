@@ -28,7 +28,6 @@ import { MemberBudgetInput } from '@/components/member-budget-input';
 import { GroupPolicyControl } from '@/components/policy-control';
 import { indexMemberBudgets } from '@/lib/member-budgets';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
-import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 
 export default function GroupDetail() {
   const [match, params] = useRoute('/groups/:groupId');
@@ -53,14 +52,12 @@ export default function GroupDetail() {
   const { data, isLoading, isError } = useGetGroupDetail(groupId, queryParams, {
     query: {
       queryKey: getGetGroupDetailQueryKey(groupId, queryParams),
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     }
   });
 
   const { data: projectsData } = useGetGroupProjects(groupId, queryParams, {
     query: {
       queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
       enabled: !!groupId,
     }
   });
@@ -74,7 +71,6 @@ export default function GroupDetail() {
       queryKey: workspaceId
         ? getListVisibleWorkspaceMembersQueryKey(workspaceId)
         : ['workspaceMembers', ''],
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
   const workspaceMembersMap = useMemo(
@@ -89,7 +85,6 @@ export default function GroupDetail() {
     query: {
       enabled: !!workspaceId && canWriteUserLimits,
       queryKey: workspaceId ? getGetWorkspaceLimitPoliciesQueryKey(workspaceId) : ['getWorkspaceLimitPolicies', ''],
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     }
   });
 

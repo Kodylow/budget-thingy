@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -7,6 +7,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { UnassignedSummaryRow } from "@/components/unassigned-summary-row";
 import {
   RefreshCw,
   AlertTriangle,
@@ -54,7 +55,6 @@ function calcPace(
 function PaceCell({
   spendUsd,
   budgetUsd,
-  spendLoaded,
   semibold,
   periodStart,
   periodEnd,
@@ -63,7 +63,6 @@ function PaceCell({
 }: {
   spendUsd: number;
   budgetUsd: number | null;
-  spendLoaded: boolean;
   semibold?: boolean;
   periodStart: string;
   periodEnd: string;
@@ -90,12 +89,8 @@ function PaceCell({
   }[pace.status];
   return (
     <div
-      className={`flex flex-col items-end gap-0.5${!spendLoaded ? " opacity-60" : ""}`}
-      title={
-        !spendLoaded
-          ? `Latest available pace; background sync is still running. Pace period: ${periodLabel}${isFallback ? " (safe fallback)" : ""}`
-          : `Pace period: ${periodLabel}${isFallback ? " (safe fallback)" : ""}`
-      }
+      className="flex flex-col items-end gap-0.5"
+      title={`Pace period: ${periodLabel}${isFallback ? " (safe fallback)" : ""}`}
     >
       <span
         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.cls} ${semibold ? "font-semibold" : ""}`}
@@ -119,6 +114,8 @@ import {
   getGetUserActivityQueryKey,
   getListVisibleWorkspaceMembersQueryOptions,
   getListVisibleWorkspaceMembersQueryKey,
+  type Group,
+  type GroupFamilyHierarchy,
 } from "@workspace/api-client-react";
 import { ThresholdBadge } from "@/components/threshold-badge";
 import { BudgetInput } from "@/components/budget-input";
@@ -126,27 +123,18 @@ import { useLocation } from "wouter";
 import { useRange } from "@/components/range-context";
 import { RangeFilter } from "@/components/range-filter";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { roleBadgeClass, roleLabel } from "@/lib/hierarchy-presentation";
 import {
-  buildGroupClusters,
-  roleBadgeClass,
-  roleLabel,
-  sumAttributedRollup,
-  type GroupCluster,
-} from "@/lib/group-clusters";
-import { compareTeamNames, formatTeamName } from "@/lib/team-names";
-import { VirtualizedTableRows } from "@/components/virtualized-table-rows";
-import { dashboardPollInterval } from "@/lib/client-performance";
+  reportDashboardNumbersPainted,
+} from "@/lib/client-performance";
 import {
   allocateWorkspaceTeamBudgets,
   indexWorkspaceTeamSpend,
   workspaceTeamSpendKey,
 } from "@/lib/workspace-team-spend";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
+
+type DashboardGroup = Group;
 
 interface TeamSection {
   workspaceId: string;
@@ -162,21 +150,25 @@ interface TeamSection {
   budgetAllocationMethod: "full" | "proportional" | "equal";
   remainingUsd: number | null;
   percentUsed: number | null;
-  groups: ReturnType<typeof useListGroups>["data"] extends { groups: infer G }
-    ? G
-    : never[];
+  monthlyAgentLimitUsd: number | null;
+  cycleAgentSpendUsd: number;
+  agentRemainingUsd: number | null;
+  agentPercentUsed: number | null;
+  agentBlocked: boolean;
+  groups: DashboardGroup[];
+  families: GroupFamilyHierarchy[];
 }
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const canWrite = useCanWrite();
-  const { isAccountWide, role, user, capabilities } = useAuthContext();
-  const { rangeType, startDate, endDate } = useRange();
+  const { auth, isAccountWide, role, user, capabilities } = useAuthContext();
+  const { rangeSelection, rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(
     () => new Set(),
   );
   const [showLegacyGroups, setShowLegacyGroups] = useState(false);
-  const [coverageOpen, setCoverageOpen] = useState(false);
+  const dashboardReadyMeasured = useRef(false);
 
   const queryParams = useMemo(
     () => ({
@@ -186,49 +178,30 @@ export default function Dashboard() {
     [rangeType, startDate, endDate],
   );
 
-  const { data: groupsData, isError: groupsRequestFailed } = useListGroups(
+  const { data: groupsData, isFetching: groupsFetching } = useListGroups(
     queryParams,
     {
       query: {
         queryKey: getListGroupsQueryKey(queryParams),
         placeholderData: (previousData) => previousData,
-        refetchInterval: (query) =>
-          dashboardPollInterval(
-            query.state.data,
-            query.state.dataUpdateCount,
-            query.state.status,
-          ),
       },
     },
   );
 
-  const { data: summary, isError: summaryRequestFailed } = useGetSummary(
+  const { data: summary, isFetching: summaryFetching } = useGetSummary(
     queryParams,
     {
       query: {
         queryKey: getGetSummaryQueryKey(queryParams),
         placeholderData: (previousData) => previousData,
-        refetchInterval: (query) => {
-          return dashboardPollInterval(
-            query.state.data,
-            query.state.dataUpdateCount,
-            query.state.status,
-          );
-        },
       },
     },
   );
-  const usageDataAsOf = groupsData?.usageHealth.dataAsOf
-    ? new Date(groupsData.usageHealth.dataAsOf).toLocaleString("en-US", {
-        timeZone: "UTC",
-        dateStyle: "medium",
-        timeStyle: "medium",
-      })
-    : null;
-
   const { data: teamBudgetsData, isLoading: teamBudgetsLoading } =
     useGetTeamsBudgets({
-      query: { queryKey: getGetTeamsBudgetsQueryKey() },
+      query: {
+        queryKey: getGetTeamsBudgetsQueryKey(),
+      },
     });
   const { data: memberCycleActivity } = useGetUserActivity(
     { rangeType: "billing" },
@@ -278,6 +251,18 @@ export default function Dashboard() {
     ),
   });
 
+  useLayoutEffect(() => {
+    if (
+      dashboardReadyMeasured.current ||
+      !groupsData ||
+      !summary ||
+      groupsFetching ||
+      summaryFetching
+    ) return;
+    dashboardReadyMeasured.current = true;
+    return reportDashboardNumbersPainted();
+  }, [groupsData, groupsFetching, summary, summaryFetching]);
+
   // Build team budget map
   const teamBudgetMap = useMemo(() => {
     const m = new Map<string, number | null>();
@@ -286,30 +271,34 @@ export default function Dashboard() {
     }
     return m;
   }, [teamBudgetsData]);
+  const teamAgentStateMap = useMemo(
+    () => new Map(
+      (teamBudgetsData?.budgets ?? []).map((team) => [team.teamName, team]),
+    ),
+    [teamBudgetsData],
+  );
   const workspaceTeamSpendMap = useMemo(
     () => indexWorkspaceTeamSpend(groupsData?.workspaceTeamRawSpend ?? []),
     [groupsData?.workspaceTeamRawSpend],
   );
   const visibleNonlegacyWorkspaceTeams = useMemo(() => {
-    const visibleSections = new Map<
-      string,
-      {
-        workspaceId: string;
-        teamName: string;
-        spendUsd: number;
-      }
-    >();
-    for (const group of groupsData?.groups ?? []) {
-      if (group.isLegacy || !group.teamName) continue;
-      const key = workspaceTeamSpendKey(group.workspaceId, group.teamName);
-      visibleSections.set(key, {
-        workspaceId: group.workspaceId,
-        teamName: group.teamName,
-        spendUsd: workspaceTeamSpendMap.get(key) ?? 0,
-      });
-    }
-    return [...visibleSections.values()];
-  }, [groupsData?.groups, workspaceTeamSpendMap]);
+    return (groupsData?.hierarchy ?? []).flatMap((workspace) =>
+      workspace.teams.flatMap((team) => {
+        if (
+          !team.teamName ||
+          !team.families.some((family) => !family.isLegacy)
+        ) {
+          return [];
+        }
+        const key = workspaceTeamSpendKey(workspace.workspaceId, team.teamName);
+        return [{
+          workspaceId: workspace.workspaceId,
+          teamName: team.teamName,
+          spendUsd: workspaceTeamSpendMap.get(key) ?? 0,
+        }];
+      }),
+    );
+  }, [groupsData?.hierarchy, workspaceTeamSpendMap]);
   const workspaceTeamBudgetMap = useMemo(
     () =>
       allocateWorkspaceTeamBudgets(
@@ -327,64 +316,69 @@ export default function Dashboard() {
   );
 
   // Compute team sections
-  const { teamSections, unassigned } = useMemo(() => {
-    const teamMap = new Map<string, typeof groups>();
-    const unassigned: typeof groups = [];
-
-    for (const g of groups) {
-      if (g.teamName) {
-        const key = `${g.workspaceId}::${g.teamName}`;
-        const existing = teamMap.get(key) ?? [];
-        existing.push(g);
-        teamMap.set(key, existing);
-      } else if (role !== "team_admin") {
-        unassigned.push(g);
-      }
-    }
-
+  const teamSections = useMemo(() => {
     const teamSections: TeamSection[] = [];
-    for (const [, teamGroups] of teamMap) {
-      const firstGroup = teamGroups[0]!;
-      const teamName = firstGroup.teamName!;
-      const { memberCount } = sumAttributedRollup(teamGroups);
+    for (const workspace of groupsData?.hierarchy ?? []) {
+      for (const team of workspace.teams) {
+        const families = team.families.filter(
+          (family) => showLegacyGroups || !family.isLegacy,
+        );
+        const teamGroups = families.flatMap((family) => family.groups);
+        if (teamGroups.length === 0) continue;
+        if (!team.teamName) {
+          continue;
+        }
+        const teamName = team.teamName;
+        const memberCount = families.reduce(
+          (total, family) => total + family.memberCount,
+          0,
+        );
       // Financial values remain server-owned. Provisional server values stay
       // visible while canonical data refreshes in the background.
-      const spendUsd =
-        workspaceTeamSpendMap.get(
-          workspaceTeamSpendKey(firstGroup.workspaceId, teamName),
-        ) ?? 0;
-      const spendLoaded = usageAvailable;
-      const paceSpendLoaded = teamGroups.every(
-        (group) => group.paceSpendLoaded,
-      );
-      const paceSpendUsd = teamGroups.reduce(
-        (sum, group) => sum + (group.paceSpendUsd ?? 0),
-        0,
-      );
-      const budgetAllocation = workspaceTeamBudgetMap.get(
-        workspaceTeamSpendKey(firstGroup.workspaceId, teamName),
-      );
-      const budgetUsd = budgetAllocation?.budgetUsd ?? null;
-      const hasBudget = budgetUsd !== null && budgetUsd > 0;
-      const remainingUsd = hasBudget ? budgetUsd! - spendUsd : null;
-      const percentUsed = hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
+        const spendUsd =
+          workspaceTeamSpendMap.get(
+            workspaceTeamSpendKey(workspace.workspaceId, teamName),
+          ) ?? 0;
+        const spendLoaded = usageAvailable;
+        const paceSpendLoaded = teamGroups.every(
+          (group) => group.paceSpendLoaded,
+        );
+        const paceSpendUsd = teamGroups.reduce(
+          (sum, group) => sum + (group.paceSpendUsd ?? 0),
+          0,
+        );
+        const budgetAllocation = workspaceTeamBudgetMap.get(
+          workspaceTeamSpendKey(workspace.workspaceId, teamName),
+        );
+        const budgetUsd = budgetAllocation?.budgetUsd ?? null;
+        const hasBudget = budgetUsd !== null && budgetUsd > 0;
+        const remainingUsd = hasBudget ? budgetUsd! - spendUsd : null;
+        const percentUsed = hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
+        const agentState = teamAgentStateMap.get(teamName);
 
-      teamSections.push({
-        workspaceId: firstGroup.workspaceId,
-        workspaceName: firstGroup.workspaceName ?? firstGroup.workspaceId,
-        teamName,
-        memberCount,
-        spendUsd,
-        spendLoaded,
-        paceSpendUsd,
-        paceSpendLoaded,
-        budgetUsd: budgetUsd ?? null,
-        budgetIsShared: budgetAllocation?.isShared ?? false,
-        budgetAllocationMethod: budgetAllocation?.method ?? "full",
-        remainingUsd,
-        percentUsed,
-        groups: teamGroups as any,
-      });
+        teamSections.push({
+          workspaceId: workspace.workspaceId,
+          workspaceName: workspace.workspaceName ?? workspace.workspaceId,
+          teamName,
+          memberCount,
+          spendUsd,
+          spendLoaded,
+          paceSpendUsd,
+          paceSpendLoaded,
+          budgetUsd: budgetUsd ?? null,
+          budgetIsShared: budgetAllocation?.isShared ?? false,
+          budgetAllocationMethod: budgetAllocation?.method ?? "full",
+          remainingUsd,
+          percentUsed,
+          monthlyAgentLimitUsd: agentState?.monthlyAgentLimitUsd ?? null,
+          cycleAgentSpendUsd: agentState?.cycleAgentSpendUsd ?? 0,
+          agentRemainingUsd: agentState?.agentRemainingUsd ?? null,
+          agentPercentUsed: agentState?.agentPercentUsed ?? null,
+          agentBlocked: agentState?.agentBlocked ?? false,
+          groups: teamGroups,
+          families,
+        });
+      }
     }
 
     // Canonical budgets may exist before any Replit group is assigned. Keep
@@ -406,33 +400,33 @@ export default function Dashboard() {
           budgetAllocationMethod: "full",
           remainingUsd: budgetUsd != null && budgetUsd > 0 ? budgetUsd : null,
           percentUsed: budgetUsd != null && budgetUsd > 0 ? 0 : null,
-          groups: [] as any,
+          monthlyAgentLimitUsd:
+            teamAgentStateMap.get(teamName)?.monthlyAgentLimitUsd ?? null,
+          cycleAgentSpendUsd:
+            teamAgentStateMap.get(teamName)?.cycleAgentSpendUsd ?? 0,
+          agentRemainingUsd:
+            teamAgentStateMap.get(teamName)?.agentRemainingUsd ?? null,
+          agentPercentUsed:
+            teamAgentStateMap.get(teamName)?.agentPercentUsed ?? null,
+          agentBlocked: teamAgentStateMap.get(teamName)?.agentBlocked ?? false,
+          groups: [],
+          families: [],
         });
       }
     }
 
-    // Sort by the names shown in the table, not internal team keys.
-    teamSections.sort(
-      (a, b) =>
-        a.workspaceName.localeCompare(b.workspaceName, undefined, {
-          sensitivity: "base",
-        }) || compareTeamNames(a.teamName, b.teamName),
-    );
-    unassigned.sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-    );
-
-    return { teamSections, unassigned };
+    return teamSections;
   }, [
     groups,
     teamBudgetMap,
+    teamAgentStateMap,
     groupsData,
     usageAvailable,
     isAccountWide,
-    role,
     workspaceTeamSpendMap,
     workspaceTeamBudgetMap,
     visibleNonlegacyTeamNames,
+    showLegacyGroups,
   ]);
 
   const toggleTeam = (teamKey: string) => {
@@ -539,6 +533,14 @@ export default function Dashboard() {
             </span>
           </div>
         </td>
+        <td className="py-3 px-4">
+          <span
+            className="text-sm"
+            data-testid={`text-workspace-${group.groupId}`}
+          >
+            {group.workspaceName || "—"}
+          </span>
+        </td>
         <td className="py-3 px-4 text-right">
           <span
             className="text-sm font-mono tabular-nums"
@@ -549,13 +551,8 @@ export default function Dashboard() {
         </td>
         <td className="py-3 px-4 text-right">
           <span
-            className={`text-sm font-mono tabular-nums${!group.spendLoaded ? " text-muted-foreground" : ""}`}
+            className="text-sm font-mono tabular-nums"
             data-testid={`text-spend-${group.groupId}`}
-            title={
-              !group.spendLoaded
-                ? "Latest available value; background sync is still running"
-                : undefined
-            }
           >
             ${displaySpend.toFixed(2)}
           </span>
@@ -593,7 +590,7 @@ export default function Dashboard() {
             <span className="text-sm text-muted-foreground">—</span>
           ) : (
             <span
-              className={`text-sm font-mono tabular-nums ${displayRemaining < 0 ? "text-destructive font-bold" : ""}${!group.spendLoaded ? " text-muted-foreground" : ""}`}
+              className={`text-sm font-mono tabular-nums ${displayRemaining < 0 ? "text-destructive font-bold" : ""}`}
             >
               ${displayRemaining.toFixed(2)}
             </span>
@@ -605,10 +602,22 @@ export default function Dashboard() {
               <span className="text-sm text-muted-foreground">—</span>
             ) : (
               <>
-                <ThresholdBadge
-                  percentUsed={displayPercentUsed}
-                  thresholdsFired={group.thresholdsFired}
-                />
+                <div className="flex items-center gap-2">
+                  {group.agentBlocked && (
+                    <Badge
+                      variant="destructive"
+                      className="uppercase text-[10px]"
+                      data-testid={`badge-blocked-group-${group.groupId}`}
+                      title={`Agent spend $${group.cycleAgentSpendUsd.toFixed(2)} of ${group.monthlyAgentLimitUsd == null ? "no limit" : `$${group.monthlyAgentLimitUsd.toFixed(2)}`}`}
+                    >
+                      Blocked
+                    </Badge>
+                  )}
+                  <ThresholdBadge
+                    percentUsed={displayPercentUsed}
+                    thresholdsFired={group.thresholdsFired}
+                  />
+                </div>
                 <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
                   <div
                     className={`h-full transition-all duration-500 ${displayPercentUsed >= 100 ? "bg-destructive" : "bg-primary"}`}
@@ -623,7 +632,6 @@ export default function Dashboard() {
           <PaceCell
             spendUsd={group.paceSpendUsd ?? 0}
             budgetUsd={group.budgetUsd ?? null}
-            spendLoaded={group.paceSpendLoaded}
             periodStart={summary?.pacePeriodStart ?? ""}
             periodEnd={summary?.pacePeriodEnd ?? ""}
             periodLabel={summary?.pacePeriodLabel ?? ""}
@@ -634,13 +642,16 @@ export default function Dashboard() {
     );
   };
 
-  const renderClusterRow = (cluster: GroupCluster) => {
-    const roles = Object.values(cluster.groupRoles);
-    const uniqueRoles = [...new Set(roles)].sort((a, b) => a.localeCompare(b));
-    const clusterUrl = `/clusters?ids=${encodeURIComponent(cluster.groupIds.join(","))}&name=${encodeURIComponent(cluster.baseName)}`;
+  const renderClusterRow = (
+    family: GroupFamilyHierarchy,
+    workspaceName: string,
+  ) => {
+    const uniqueRoles = [...new Set(family.groups.map((group) => group.role))];
+    const groupIds = family.groups.map((group) => group.groupId);
+    const clusterUrl = `/clusters?ids=${encodeURIComponent(groupIds.join(","))}`;
     return (
       <tr
-        key={cluster.clusterKey}
+        key={family.familyKey}
         className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
         tabIndex={0}
         onClick={() => setLocation(clusterUrl)}
@@ -652,8 +663,8 @@ export default function Dashboard() {
       >
         <td className="py-3 px-4 pl-10">
           <div className="flex flex-col gap-1">
-            <span className="text-sm font-medium">{cluster.baseName}</span>
-            {cluster.isLegacy && (
+            <span className="text-sm font-medium">{family.familyName}</span>
+            {family.isLegacy && (
               <Badge variant="outline" className="w-fit text-[9px] h-4 px-1">
                 Legacy
               </Badge>
@@ -673,21 +684,21 @@ export default function Dashboard() {
             </div>
           </div>
         </td>
+        <td className="py-3 px-4">
+          <span className="text-sm text-muted-foreground">
+            {workspaceName || "—"}
+          </span>
+        </td>
         <td className="py-3 px-4 text-right">
           <span className="text-sm font-mono tabular-nums">
-            {cluster.memberCount}
+            {family.memberCount}
           </span>
         </td>
         <td className="py-3 px-4 text-right">
           <span
-            className={`text-sm font-mono tabular-nums${!cluster.spendLoaded ? " text-muted-foreground" : ""}`}
-            title={
-              !cluster.spendLoaded
-                ? "Latest available value; background sync is still running"
-                : undefined
-            }
+            className="text-sm font-mono tabular-nums"
           >
-            ${cluster.spendUsd.toFixed(2)}
+            ${family.spendUsd.toFixed(2)}
           </span>
         </td>
         {/* Budget, Remaining, Usage, Pace — not applicable at cluster level */}
@@ -708,10 +719,9 @@ export default function Dashboard() {
   };
 
   const renderTeamGroups = (team: TeamSection) => {
-    const clusters = buildGroupClusters(team.groups as any[]);
-    return clusters.flatMap((cluster) => [
-      renderClusterRow(cluster),
-      ...cluster.groups.map((group) => renderGroupRow(group as any)),
+    return team.families.flatMap((family) => [
+      renderClusterRow(family, team.workspaceName),
+      ...family.groups.map((group) => renderGroupRow(group)),
     ]);
   };
 
@@ -724,7 +734,7 @@ export default function Dashboard() {
     const displayPercentUsed = hasBudget
       ? (team.spendUsd / team.budgetUsd!) * 100
       : null;
-    const clusterCount = buildGroupClusters(team.groups as any[]).length;
+    const clusterCount = team.families.length;
 
     if (isBudgetOnlyWorkspace) {
       return (
@@ -737,9 +747,12 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <span className="w-4" aria-hidden="true" />
               <span className="font-medium text-muted-foreground">
-                {formatTeamName(team.teamName)}
+                {team.teamName}
               </span>
             </div>
+          </td>
+          <td className="py-3 px-4">
+            <span className="text-sm text-muted-foreground opacity-50">—</span>
           </td>
           <td className="py-3 px-4 text-right">
             <span className="text-sm font-mono tabular-nums text-muted-foreground opacity-50">
@@ -806,7 +819,17 @@ export default function Dashboard() {
             ) : (
               <span className="w-4" aria-hidden="true" />
             )}
-            <span>{formatTeamName(team.teamName)}</span>
+            <span>{team.teamName}</span>
+            {team.agentBlocked && (
+              <Badge
+                variant="destructive"
+                className="uppercase text-[9px] h-4 px-1"
+                data-testid={`badge-blocked-team-${team.teamName}`}
+                title={`Agent spend $${team.cycleAgentSpendUsd.toFixed(2)} of ${team.monthlyAgentLimitUsd == null ? "no limit" : `$${team.monthlyAgentLimitUsd.toFixed(2)}`}`}
+              >
+                Blocked
+              </Badge>
+            )}
             {team.budgetIsShared && (
               <Badge
                 variant="outline"
@@ -830,6 +853,9 @@ export default function Dashboard() {
             </Badge>
           </div>
         </td>
+        <td className="py-3 px-4">
+          {/* workspace col — blank for team header */}
+        </td>
         <td className="py-3 px-4 text-right">
           <span className="text-sm font-mono tabular-nums font-semibold">
             {team.memberCount}
@@ -837,12 +863,7 @@ export default function Dashboard() {
         </td>
         <td className="py-3 px-4 text-right">
           <span
-            className={`text-sm font-mono tabular-nums font-semibold${!team.spendLoaded ? " text-muted-foreground" : ""}`}
-            title={
-              !team.spendLoaded
-                ? "Latest available value; background sync is still running"
-                : undefined
-            }
+            className="text-sm font-mono tabular-nums font-semibold"
           >
             ${team.spendUsd.toFixed(2)}
           </span>
@@ -869,12 +890,7 @@ export default function Dashboard() {
             <span className="text-sm text-muted-foreground">—</span>
           ) : (
             <span
-              className={`text-sm font-mono tabular-nums font-semibold ${displayRemaining < 0 ? "text-destructive" : ""}${!team.spendLoaded ? " text-muted-foreground" : ""}`}
-              title={
-                !team.spendLoaded
-                  ? "Latest available value; background sync is still running"
-                  : undefined
-              }
+              className={`text-sm font-mono tabular-nums font-semibold ${displayRemaining < 0 ? "text-destructive" : ""}`}
             >
               ${displayRemaining.toFixed(2)}
             </span>
@@ -887,12 +903,7 @@ export default function Dashboard() {
             ) : (
               <>
                 <span
-                  className={`text-xs font-mono tabular-nums font-semibold ${displayPercentUsed >= 100 ? "text-destructive" : displayPercentUsed >= 75 ? "text-yellow-600" : ""}${!team.spendLoaded ? " text-muted-foreground" : ""}`}
-                  title={
-                    !team.spendLoaded
-                      ? "Latest available value; background sync is still running"
-                      : undefined
-                  }
+                  className={`text-xs font-mono tabular-nums font-semibold ${displayPercentUsed >= 100 ? "text-destructive" : displayPercentUsed >= 75 ? "text-yellow-600" : ""}`}
                 >
                   {displayPercentUsed.toFixed(1)}%
                 </span>
@@ -910,7 +921,6 @@ export default function Dashboard() {
           <PaceCell
             spendUsd={team.paceSpendUsd}
             budgetUsd={team.budgetUsd}
-            spendLoaded={team.paceSpendLoaded}
             semibold
             periodStart={summary?.pacePeriodStart ?? ""}
             periodEnd={summary?.pacePeriodEnd ?? ""}
@@ -922,90 +932,50 @@ export default function Dashboard() {
     );
   };
 
-  const renderUnassignedHeader = (
-    workspaceId: string,
-    workspaceGroups: typeof groups,
-  ) => {
-    const key = `${workspaceId}::__unassigned__`;
-    const expanded = expandedTeams.has(key);
-    return (
-      <tr
-        key={`team-unassigned-${workspaceId}`}
-        className="border-b border-border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer select-none"
-        data-testid="row-team-unassigned"
-        tabIndex={0}
-        onClick={() => toggleTeam(key)}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault();
-          toggleTeam(key);
-        }}
-      >
-        <td
-          className="py-3 px-4 font-semibold text-sm text-muted-foreground"
-          colSpan={7}
-        >
-          <div className="flex items-center gap-2">
-            {expanded ? (
-              <ChevronDown className="h-4 w-4 flex-shrink-0" />
-            ) : (
-              <ChevronRight className="h-4 w-4 flex-shrink-0" />
-            )}
-            <span>Unassigned</span>
-            <Badge
-              variant="outline"
-              className="text-[9px] h-4 px-1 ml-1 font-normal"
-            >
-              {workspaceGroups.length} group
-              {workspaceGroups.length !== 1 ? "s" : ""}
-            </Badge>
-          </div>
-        </td>
-      </tr>
-    );
-  };
-
   const workspaceSections = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        workspaceId: string;
-        workspaceName: string;
-        teams: TeamSection[];
-        unassigned: typeof groups;
-      }
-    >();
-    const ensure = (workspaceId: string, workspaceName: string) => {
-      const current = map.get(workspaceId) ?? {
-        workspaceId,
-        workspaceName,
-        teams: [],
+    const sections = (groupsData?.hierarchy ?? []).map((workspace) => ({
+      workspaceId: workspace.workspaceId,
+      workspaceName: workspace.workspaceName ?? workspace.workspaceId,
+      teams: teamSections.filter(
+        (team) => team.workspaceId === workspace.workspaceId,
+      ),
+      unassigned: role === "team_admin"
+        ? []
+        : workspace.teams
+            .filter((team) => team.teamName === null)
+            .flatMap((team) =>
+              team.families
+                .filter((family) => showLegacyGroups || !family.isLegacy)
+                .flatMap((family) => family.groups),
+            ),
+    })).filter(
+      (workspace) =>
+        workspace.teams.length > 0 || workspace.unassigned.length > 0,
+    );
+    const budgetOnlyTeams = teamSections.filter(
+      (team) => team.workspaceId === "__budget_only__",
+    );
+    if (budgetOnlyTeams.length > 0) {
+      sections.push({
+        workspaceId: "__budget_only__",
+        workspaceName: "Unallocated Budgets",
+        teams: budgetOnlyTeams,
         unassigned: [],
-      };
-      map.set(workspaceId, current);
-      return current;
-    };
-    teamSections.forEach((team) =>
-      ensure(team.workspaceId, team.workspaceName).teams.push(team),
-    );
-    unassigned.forEach((group) =>
-      ensure(
-        group.workspaceId,
-        group.workspaceName ?? group.workspaceId,
-      ).unassigned.push(group),
-    );
-    return [...map.values()].sort(
-      (a, b) =>
-        a.workspaceName.localeCompare(b.workspaceName, undefined, {
-          sensitivity: "base",
-        }) || a.workspaceId.localeCompare(b.workspaceId),
-    );
-  }, [teamSections, unassigned]);
+      });
+    }
+    return sections;
+  }, [groupsData?.hierarchy, role, showLegacyGroups, teamSections]);
 
   const renderWorkspaceHeader = (
     workspace: (typeof workspaceSections)[number],
   ) => {
-    const unassignedTotals = sumAttributedRollup(workspace.unassigned);
+    const unassignedTotals = workspace.unassigned.reduce(
+      (total, group) => ({
+        memberCount: total.memberCount + group.rollupMemberCount,
+        spendUsd: total.spendUsd + group.rollupSpendUsd,
+      }),
+      { memberCount: 0, spendUsd: 0 },
+    );
     const memberCount = workspace.teams.reduce(
       (sum, team) => sum + team.memberCount,
       unassignedTotals.memberCount,
@@ -1027,7 +997,7 @@ export default function Dashboard() {
         key={`workspace-${workspace.workspaceId}`}
         className="border-b border-border bg-muted/60"
       >
-        <th className="py-3 px-4 text-left text-sm font-bold">
+        <th className="py-3 px-4 text-left text-sm font-bold" colSpan={2}>
           {isBudgetOnlyWorkspace
             ? "Unallocated Budgets"
             : workspace.workspaceName}
@@ -1080,6 +1050,65 @@ export default function Dashboard() {
   };
 
   const hasTeams = workspaceSections.length > 0;
+  const scopedWorkspaceNames = [
+    ...new Set(
+      groups
+        .map((group) => group.workspaceName?.trim())
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+  const scopedTeamNames = [
+    ...new Set(
+      (auth?.teamNames.length
+        ? auth.teamNames
+        : groups.map((group) => group.teamName)
+      )
+        .map((name) => name?.trim())
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+  const accountUserName =
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
+    user?.email?.split("@")[0] ||
+    "";
+  const scopedMemberName =
+    memberCycleActivity?.users[0]?.username ||
+    memberTermActivity?.users[0]?.username ||
+    "";
+  const memberName = auth?.isPreview
+    ? scopedMemberName
+    : accountUserName || scopedMemberName;
+  const dashboardTitle =
+    role === "workspace_admin"
+      ? scopedWorkspaceNames.length === 1
+        ? `${scopedWorkspaceNames[0]} Workspace Dashboard`
+        : scopedWorkspaceNames.length > 1
+          ? `${scopedWorkspaceNames.length} Workspaces Dashboard`
+          : "Workspace Dashboard"
+      : role === "team_admin"
+        ? scopedTeamNames.length === 1
+          ? `${scopedTeamNames[0]} Group Dashboard`
+          : scopedTeamNames.length > 1
+            ? `${scopedTeamNames.length} Groups Dashboard`
+            : "Group Dashboard"
+        : role === "member"
+          ? memberName
+            ? `${memberName}${memberName.endsWith("s") ? "'" : "'s"} Dashboard`
+            : "My Dashboard"
+          : "Comcast Account Dashboard";
+  const rangePresetLabel = {
+    "full-term": "Full term",
+    billing: "Billing period",
+    mtd: "Month to date",
+    ytd: "Year to date",
+    custom: "Custom range",
+  }[rangeSelection];
+  const selectedRangeLabel =
+    rangeSelection === "full-term"
+      ? "May 20, 2026–present"
+      : groupsData?.billingPeriodLabel ??
+        summary?.billingPeriodLabel ??
+        rangePresetLabel;
 
   if (role === "member") {
     const cycleUser = memberCycleActivity?.users[0];
@@ -1099,7 +1128,9 @@ export default function Dashboard() {
       <div className="p-4 md:p-8">
         <Card className="mx-auto max-w-3xl" data-testid="card-member-dashboard">
           <CardHeader>
-            <CardTitle>My Agent usage</CardTitle>
+            <CardTitle data-testid="text-dashboard-title">
+              {dashboardTitle}
+            </CardTitle>
             <CardDescription>
               Your server-scoped usage, limits, and group memberships.
             </CardDescription>
@@ -1186,122 +1217,13 @@ export default function Dashboard() {
             className="text-2xl md:text-3xl font-bold tracking-tight"
             data-testid="text-dashboard-title"
           >
-            Dashboard
+            {dashboardTitle}
           </h1>
-          <p
-            className="text-muted-foreground mt-1"
-            data-testid="text-billing-period"
-          >
-            {groupsData?.billingPeriodLabel ??
-              summary?.billingPeriodLabel ??
-              "Current period"}
-          </p>
-          <p
-            className="text-[10px] md:text-xs text-muted-foreground mt-1"
-            data-testid="text-reconciliation-scope"
-          >
-            {role === "workspace_admin"
-              ? "Your authorized workspace scope · Custom dates use inclusive UTC days"
-              : "All workspaces you can access · Custom dates use inclusive UTC days"}
-          </p>
-          {groupsData?.usageHealth.status !== "empty" && (
-            <p
-              className="text-[10px] md:text-xs text-muted-foreground mt-1"
-              data-testid="text-usage-data-as-of"
-            >
-              Data as of{" "}
-              {usageDataAsOf ? `${usageDataAsOf} UTC` : "unavailable"}
-            </p>
-          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <RangeFilter />
-          {(groupsData?.usageHealth.status === "partial" ||
-            groupsData?.usageHealth.status === "stale") && (
-            <div
-              className="flex items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-800 dark:text-yellow-200"
-              role="status"
-              data-testid="notice-usage-health"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>
-                {groupsData.usageHealth.status === "partial"
-                  ? "Some usage data is still updating."
-                  : "Usage data may be out of date."}
-              </span>
-              <Popover open={coverageOpen} onOpenChange={setCoverageOpen}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className="font-medium underline underline-offset-2"
-                    data-testid="button-usage-coverage"
-                  >
-                    Details
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-80">
-                  <p className="font-medium">
-                    Usage coverage{" "}
-                    {Math.round(groupsData.usageHealth.coverage.ratio * 100)}%
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Failed workspace-days
-                  </p>
-                  {groupsData.usageHealth.coverage.failedWorkspaceDays.length >
-                  0 ? (
-                    <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs">
-                      {groupsData.usageHealth.coverage.failedWorkspaceDays.map(
-                        (item) => (
-                          <li
-                            key={`${item.workspaceId}-${item.usageDate}`}
-                            className="font-mono"
-                          >
-                            {item.workspaceId} · {item.usageDate}
-                          </li>
-                        ),
-                      )}
-                    </ul>
-                  ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      None reported.
-                    </p>
-                  )}
-                  {groupsData.usageHealth.coverage.missingWorkspaceDays.length >
-                    0 && (
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Missing workspace-days:{" "}
-                      {
-                        groupsData.usageHealth.coverage.missingWorkspaceDays
-                          .length
-                      }
-                    </p>
-                  )}
-                  {groupsData.usageHealth.coverage.missingAccountDays.length >
-                    0 && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Missing account-days:{" "}
-                      {
-                        groupsData.usageHealth.coverage.missingAccountDays
-                          .length
-                      }
-                    </p>
-                  )}
-                </PopoverContent>
-              </Popover>
-            </div>
-          )}
+          <RangeFilter selectedLabel={selectedRangeLabel} />
         </div>
       </div>
-      {(groupsRequestFailed || summaryRequestFailed) &&
-        !groupsData &&
-        !summary && (
-          <p
-            className="text-sm text-muted-foreground"
-            data-testid="empty-dashboard-failed"
-          >
-            Dashboard data is unavailable.
-          </p>
-        )}
       {groupsData?.usageHealth.status === "empty" && (
         <p
           className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
@@ -1312,8 +1234,7 @@ export default function Dashboard() {
       )}
       {summary && (
         <p className="text-xs text-muted-foreground">
-          Pace period: {summary.pacePeriodLabel}
-          {summary.pacePeriodIsFallback ? " (safe fallback)" : ""}
+          Reporting period: {selectedRangeLabel}
         </p>
       )}
       {rangeType === "billing" &&
@@ -1363,10 +1284,21 @@ export default function Dashboard() {
         <TabsContent value="groups">
           <Card>
             <CardContent>
-              <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
-                <table className="w-full" data-testid="table-groups">
+              <div className="overflow-x-auto">
+                <table className="w-full table-fixed" data-testid="table-groups">
+                  <colgroup>
+                    <col className="w-[26%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[13%]" />
+                  </colgroup>
                   <thead>
                     <tr className="border-b border-border">
+                      <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4"></th>
                       <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4"></th>
                       <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">
                         Members
@@ -1384,17 +1316,14 @@ export default function Dashboard() {
                         Usage
                       </th>
                       <th
-                        className="text-right text-xs font-medium text-muted-foreground py-3 px-4"
+                        className="whitespace-nowrap text-right text-xs font-medium text-muted-foreground py-3 px-4"
                         title="Projected total spend by May 17 2027 vs budget"
                       >
-                        Pace{" "}
-                        <span className="font-normal opacity-60">
-                          → May '27
-                        </span>
+                        Pace <span className="font-normal opacity-60">→ May '27</span>
                       </th>
                     </tr>
                   </thead>
-                  <VirtualizedTableRows columnCount={7}>
+                  <tbody>
                     {hasTeams ? (
                       <>
                         {workspaceSections.map((workspace) => (
@@ -1413,25 +1342,11 @@ export default function Dashboard() {
                               );
                             })}
                             {workspace.unassigned.length > 0 && (
-                              <React.Fragment
+                              <UnassignedSummaryRow
                                 key={`team-section-unassigned-${workspace.workspaceId}`}
-                              >
-                                {renderUnassignedHeader(
-                                  workspace.workspaceId,
-                                  workspace.unassigned,
-                                )}
-                                {expandedTeams.has(
-                                  `${workspace.workspaceId}::__unassigned__`,
-                                ) &&
-                                  buildGroupClusters(
-                                    workspace.unassigned as any[],
-                                  ).flatMap((cluster) => [
-                                    renderClusterRow(cluster),
-                                    ...cluster.groups.map((group) =>
-                                      renderGroupRow(group as any),
-                                    ),
-                                  ])}
-                              </React.Fragment>
+                                workspaceId={workspace.workspaceId}
+                                groups={workspace.unassigned}
+                              />
                             )}
                           </React.Fragment>
                         ))}
@@ -1471,6 +1386,9 @@ export default function Dashboard() {
                               </span>
                             </div>
                           </td>
+                          <td className="py-3 px-4 text-sm text-muted-foreground">
+                            —
+                          </td>
                           <td className="py-3 px-4 text-right text-sm text-muted-foreground">
                             —
                           </td>
@@ -1496,11 +1414,12 @@ export default function Dashboard() {
                           </td>
                         </tr>
                       )}
-                  </VirtualizedTableRows>
+                  </tbody>
                   {groups.length > 0 && (
                     <tfoot>
                       <tr className="border-t-2 border-border bg-muted/40 font-semibold">
                         <td className="py-3 px-4 text-sm">Total</td>
+                        <td className="py-3 px-4" />
                         <td className="py-3 px-4 text-right">
                           <span className="text-sm font-mono tabular-nums">
                             {groups.reduce(

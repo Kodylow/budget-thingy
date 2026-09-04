@@ -1,0 +1,1 @@
+DROP TABLE "recurring_job_claims" CASCADE;

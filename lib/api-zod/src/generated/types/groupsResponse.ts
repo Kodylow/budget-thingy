@@ -8,11 +8,14 @@
 import type { Group } from './group';
 import type { GroupsResponseTeamBudgets } from './groupsResponseTeamBudgets';
 import type { GroupsResponseTeamRawSpend } from './groupsResponseTeamRawSpend';
+import type { GroupWorkspaceHierarchy } from './groupWorkspaceHierarchy';
 import type { UsageHealth } from './usageHealth';
 import type { WorkspaceTeamSpend } from './workspaceTeamSpend';
 
 export interface GroupsResponse {
   groups: Group[];
+  /** Server-owned ordered workspace, team, and canonical family hierarchy. */
+  hierarchy: GroupWorkspaceHierarchy[];
   usageHealth: UsageHealth;
   /** Human label of the selected range, e.g. "Jul 2026" or "Year to date" */
   billingPeriodLabel: string;

@@ -9,6 +9,7 @@ import {
   reconciliationBounds,
   runBackgroundCycleOperations,
 } from "./ingest.ts";
+import { ENTERPRISE_USAGE_REQUESTS_PER_MINUTE } from "./enterprise-rate-limit.ts";
 
 test("reconciliation requires consecutive mismatches beyond the one-dollar tolerance", () => {
   expect(nextReconciliationMismatchCount(0, 1)).toBe(0);
@@ -33,6 +34,32 @@ test("local usage limiter never admits more than its cap in a rolling minute", a
     admittedAt.push(clock);
   }
   expect(admittedAt).toEqual([0, 0, 0, 60_000, 60_000, 60_000, 120_000]);
+});
+
+test("enterprise admission and ingest pacing share the 150 request usage cap", async () => {
+  expect(ENTERPRISE_USAGE_REQUESTS_PER_MINUTE).toBe(150);
+
+  let clock = 0;
+  const limiter = new LocalUsageRateLimiter(
+    undefined,
+    60_000,
+    () => clock,
+    async (delayMs) => {
+      clock += delayMs;
+    },
+  );
+  for (let index = 0; index < ENTERPRISE_USAGE_REQUESTS_PER_MINUTE; index++) {
+    await limiter.acquire();
+  }
+  expect(clock).toBe(0);
+  await limiter.acquire();
+  expect(clock).toBe(60_000);
+
+  const enterpriseSource = await readFile(new URL("./enterprise.ts", import.meta.url), "utf8");
+  expect(enterpriseSource).toContain(
+    "this.localUsageUsed < ENTERPRISE_USAGE_REQUESTS_PER_MINUTE",
+  );
+  expect(enterpriseSource).not.toMatch(/\b170\b/);
 });
 
 test("current-month reconciliation includes only finalized days", () => {
