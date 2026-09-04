@@ -14,6 +14,7 @@ import {
 } from "./enterprise";
 import { hasDailyRosterSnapshot, recordDailyRosters } from "./history";
 import { logger } from "./logger";
+import { invalidateUsageSnapshotMemo } from "./usage-store";
 
 const CUTOFF = "2026-05-20";
 const DAY_MS = 86_400_000;
@@ -315,6 +316,7 @@ export async function ingestWorkspaceDay(
         client.release();
       }
     });
+    invalidateUsageSnapshotMemo();
     const result = { ok: true, ...stats, durationMs: Date.now() - started };
     logger.info({ event: "usage_ingest_unit", workspaceId, usageDate, ...result, outcome: "complete" });
     return result;
@@ -329,6 +331,7 @@ export async function ingestWorkspaceDay(
           status='failed', error=excluded.error`,
       [workspaceId, usageDate, message.slice(0, 2000)],
     );
+    invalidateUsageSnapshotMemo();
     const result = { ok: false, ...stats, durationMs: Date.now() - started, error: message };
     logger.error({ event: "usage_ingest_unit", workspaceId, usageDate, ...result, outcome: "failed" });
     return result;
@@ -352,6 +355,7 @@ export async function ingestAccountDay(usageDate: string): Promise<UnitResult> {
         [usageDate, Number(response.data.totalCostUsd ?? 0)],
       );
     });
+    invalidateUsageSnapshotMemo();
     const result = { ok: true, ...stats, durationMs: Date.now() - started };
     logger.info({ event: "usage_ingest_unit", usageDate, ...result, outcome: "complete" });
     return result;
@@ -573,6 +577,7 @@ async function reconcile(
            where workspace_id=$1 and usage_date >= $2::date and usage_date < $3::date`,
           [workspaceId, effectiveStart, effectiveEnd],
         );
+        invalidateUsageSnapshotMemo();
       }
     }
   }

@@ -27,6 +27,12 @@ import {
   type DedupedUsageRollup,
 } from "./usage-rollup";
 import { updateJobClaimCursor, withJobClaim } from "./job-claims";
+import {
+  resolveUsageWindow,
+  USAGE_DATA_CUTOFF_ISO,
+  USAGE_DATA_CUTOFF_MS,
+  type UsageWindowSelection,
+} from "./usage-window";
 
 const BASE_URL = "https://api.replit.com/v1";
 
@@ -116,8 +122,8 @@ export async function fetchEnterpriseForIngest(
 // ---------- Date ranges ----------
 
 /** All spend data before this date is excluded from every query. */
-export const SPEND_DATA_CUTOFF_ISO = "2026-05-20T00:00:00.000Z";
-export const SPEND_DATA_CUTOFF_MS = new Date(SPEND_DATA_CUTOFF_ISO).getTime();
+export const SPEND_DATA_CUTOFF_ISO = USAGE_DATA_CUTOFF_ISO;
+export const SPEND_DATA_CUTOFF_MS = USAGE_DATA_CUTOFF_MS;
 export const SPEND_DATA_CUTOFF_LABEL = "May 2026-present";
 export const FULL_TERM_RANGE_KEY = "full-term:from-cutoff";
 export const PACE_FALLBACK_END_ISO = "2027-05-17T00:00:00.000Z";
@@ -714,6 +720,25 @@ export function getBillingPeriodMetadata(): BillingPeriodMetadata {
   };
 }
 
+/**
+ * New database-backed consumers resolve only UTC bounds. Legacy range keys
+ * remain isolated to the old cache path until its routes are cut over.
+ */
+export function resolvePostgresUsageWindow(
+  rangeType: string | undefined,
+  startDate?: string,
+  endDate?: string,
+  now = new Date(),
+): UsageWindowSelection {
+  const active = getActiveBillingPeriod(now.getTime());
+  return resolveUsageWindow({
+    rangeType,
+    startDate,
+    endDate,
+    now,
+    billingPeriod: active ? { start: active.start, end: active.end } : null,
+  });
+}
 export function resolvePaceUsageRange(): UsageRange | null {
   const period = getBillingPeriodMetadata();
   const now = new Date();
