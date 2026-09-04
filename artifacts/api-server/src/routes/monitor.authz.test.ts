@@ -43,6 +43,37 @@ function member(id, workspaces = {}, isAccountAdmin = false) {
   };
 }
 
+function installDefaultDirectory() {
+  const active = { role: "member", isDisabled: false };
+  __setDirectoryCacheForTests({
+    workspaces: new Map([
+      [GROWTH, { id: GROWTH, name: "Growth", slug: "growth", memberCount: 6 }],
+      [PLATFORM, { id: PLATFORM, name: "Platform", slug: "platform", memberCount: 2 }],
+    ]),
+    groups: [
+      { id: GM, workspaceId: GROWTH, name: `${TEAM} - Member`, type: "custom" },
+      { id: GA, workspaceId: GROWTH, name: `${TEAM} - Admins`, type: "custom" },
+      { id: GL, workspaceId: PLATFORM, name: `${TEAM} Legacy - Member`, type: "custom" },
+      { id: PM, workspaceId: PLATFORM, name: `${PREFIX} Platform - Member`, type: "custom" },
+    ],
+    members: new Map([
+      ["account", member("account", {}, true)],
+      ["workspace", member("workspace", { [GROWTH]: { role: "admin", isDisabled: false } })],
+      ["team", member("team", { [GROWTH]: active })],
+      ["both", member("both", { [GROWTH]: { role: "admin", isDisabled: false } })],
+      ["member", member("member", { [GROWTH]: active })],
+      ["other", member("other", { [GROWTH]: active })],
+      ["platform", member("platform", { [PLATFORM]: active })],
+    ]),
+    groupMembers: new Map([
+      [GM, ["workspace", "team", "both", "member", "other"]],
+      [GA, ["workspace", "both"]],
+      [GL, ["team", "both", "other"]],
+      [PM, ["platform"]],
+    ]),
+  });
+}
+
 function authorization(
   userId: string,
   role: AuthzRole,
@@ -142,34 +173,7 @@ async function request(path: string, fixture, init: RequestInit = {}) {
 
 beforeAll(async () => {
   process.env.REPLIT_ENTERPRISE_API_KEY = "test";
-  const active = { role: "member", isDisabled: false };
-  __setDirectoryCacheForTests({
-    workspaces: new Map([
-      [GROWTH, { id: GROWTH, name: "Growth", slug: "growth", memberCount: 6 }],
-      [PLATFORM, { id: PLATFORM, name: "Platform", slug: "platform", memberCount: 2 }],
-    ]),
-    groups: [
-      { id: GM, workspaceId: GROWTH, name: `${TEAM} - Member`, type: "custom" },
-      { id: GA, workspaceId: GROWTH, name: `${TEAM} - Admins`, type: "custom" },
-      { id: GL, workspaceId: PLATFORM, name: `${TEAM} Legacy - Member`, type: "custom" },
-      { id: PM, workspaceId: PLATFORM, name: `${PREFIX} Platform - Member`, type: "custom" },
-    ],
-    members: new Map([
-      ["account", member("account", {}, true)],
-      ["workspace", member("workspace", { [GROWTH]: { role: "admin", isDisabled: false } })],
-      ["team", member("team", { [GROWTH]: active })],
-      ["both", member("both", { [GROWTH]: { role: "admin", isDisabled: false } })],
-      ["member", member("member", { [GROWTH]: active })],
-      ["other", member("other", { [GROWTH]: active })],
-      ["platform", member("platform", { [PLATFORM]: active })],
-    ]),
-    groupMembers: new Map([
-      [GM, ["workspace", "team", "both", "member", "other"]],
-      [GA, ["workspace", "both"]],
-      [GL, ["team", "both", "other"]],
-      [PM, ["platform"]],
-    ]),
-  });
+  installDefaultDirectory();
   setAuthorizationResolver(fixtureResolver);
   setReplitBudgetTransportForTests(async () => Response.json({ ok: true }), true);
 
@@ -371,6 +375,139 @@ describe("usage endpoint performance", () => {
       expect(result.warmP95Ms).toBeLessThan(300);
     }
     process.stdout.write(`USAGE_ENDPOINT_PERFORMANCE ${JSON.stringify(report)}\n`);
+  });
+});
+
+describe("GET /workspace-admins", () => {
+  it("returns complete current family data, nullable admin fields, and families without an admin group", async () => {
+    const alpha = `${PREFIX}-admins-alpha`;
+    const beta = `${PREFIX}-admins-beta`;
+    const alphaAdminGroup = `${PREFIX}-alpha-admin`;
+    const alphaMemberGroup = `${PREFIX}-alpha-member`;
+    const betaMemberGroup = `${PREFIX}-beta-member`;
+    const nullableAdmin = {
+      ...member("nullable-admin"),
+      email: null,
+      name: null,
+    };
+    const namedAdmin = {
+      ...member("named-admin"),
+      name: "Named Admin",
+    };
+    __setDirectoryCacheForTests({
+      workspaces: new Map([
+        [alpha, { id: alpha, name: "Alpha Workspace", slug: "alpha", memberCount: 2 }],
+        [beta, { id: beta, name: "Beta Workspace", slug: "beta", memberCount: 0 }],
+      ]),
+      groups: [
+        { id: alphaMemberGroup, workspaceId: alpha, name: "Zeta - Member", type: "custom" },
+        { id: alphaAdminGroup, workspaceId: alpha, name: "Zeta - Admins", type: "custom" },
+        { id: betaMemberGroup, workspaceId: beta, name: "Lone - Member", type: "custom" },
+      ],
+      groupMembers: new Map([
+        [alphaAdminGroup, [nullableAdmin.userId, namedAdmin.userId]],
+      ]),
+      members: new Map([
+        [nullableAdmin.userId, nullableAdmin],
+        [namedAdmin.userId, namedAdmin],
+      ]),
+    });
+
+    try {
+      const response = await request("/workspace-admins", fixtures[0]);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual([
+        {
+          groupId: `${beta}:lone`,
+          groupName: "Lone",
+          workspaceId: beta,
+          workspaceName: "Beta Workspace",
+          familyKey: "lone",
+          familyName: "Lone",
+          isLegacy: false,
+          teamName: "Lone",
+          admins: [],
+        },
+        {
+          groupId: alphaAdminGroup,
+          groupName: "Zeta",
+          workspaceId: alpha,
+          workspaceName: "Alpha Workspace",
+          familyKey: "zeta",
+          familyName: "Zeta",
+          isLegacy: false,
+          teamName: "Zeta",
+          admins: [
+            {
+              userId: "nullable-admin",
+              username: "nullable-admin",
+              email: null,
+              name: null,
+            },
+            {
+              userId: "named-admin",
+              username: "named-admin",
+              email: "named-admin@example.test",
+              name: "Named Admin",
+            },
+          ],
+        },
+      ]);
+    } finally {
+      installDefaultDirectory();
+    }
+  });
+
+  it.each([
+    ["an empty directory", new Map()],
+    ["workspaces with no families", new Map([
+      [`${PREFIX}-empty-workspace`, {
+        id: `${PREFIX}-empty-workspace`,
+        name: "Empty Workspace",
+        slug: "empty",
+        memberCount: 0,
+      }],
+    ])],
+  ])("returns an empty list for %s", async (_label, workspaces) => {
+    __setDirectoryCacheForTests({ workspaces, groups: [], members: new Map() });
+    try {
+      const response = await request("/workspace-admins", fixtures[0]);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual([]);
+    } finally {
+      installDefaultDirectory();
+    }
+  });
+
+  it("keeps the endpoint account-only", async () => {
+    expect((await request("/workspace-admins", fixtures[0])).status).toBe(200);
+    for (const fixture of [fixtures[1], fixtures[2], fixtures[4]]) {
+      expect((await request("/workspace-admins", fixture)).status).toBe(403);
+    }
+  });
+
+  it("rejects unauthenticated requests", async () => {
+    const response = await fetch(`${baseUrl}/api/workspace-admins`);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Authentication required" });
+  });
+
+  it("turns malformed directory data into an error response", async () => {
+    __setDirectoryCacheForTests({
+      groups: [{
+        id: `${PREFIX}-malformed-admin`,
+        workspaceId: null,
+        name: "Malformed - Admin",
+        type: "custom",
+      }],
+      members: new Map(),
+    });
+    try {
+      const response = await request("/workspace-admins", fixtures[0]);
+      expect(response.status).toBe(500);
+    } finally {
+      installDefaultDirectory();
+    }
   });
 });
 

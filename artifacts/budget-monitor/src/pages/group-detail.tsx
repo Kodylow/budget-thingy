@@ -50,7 +50,7 @@ export default function GroupDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { data, isLoading } = useGetGroupDetail(groupId, queryParams, {
+  const { data, isLoading, isError } = useGetGroupDetail(groupId, queryParams, {
     query: {
       queryKey: getGetGroupDetailQueryKey(groupId, queryParams),
       refetchInterval: DATA_REFRESH_INTERVAL_MS,
@@ -97,6 +97,25 @@ export default function GroupDetail() {
     if (!workspacePoliciesQuery.data) return null;
     return workspacePoliciesQuery.data.groups.find(g => g.groupId === groupId) ?? null;
   }, [workspacePoliciesQuery.data, groupId]);
+
+  if (isError || (!groupId && !isLoading)) {
+    return (
+      <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="group-detail-unavailable">
+        <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+          <ChevronLeft className="h-4 w-4" /> Back to Dashboard
+        </Link>
+        <Card>
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <AlertCircle className="h-8 w-8 text-muted-foreground" />
+            <h1 className="text-xl font-semibold">Group unavailable</h1>
+            <p className="max-w-lg text-sm text-muted-foreground">
+              This group does not exist or is outside your authorized account scope.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!data) {
     return (
@@ -170,7 +189,7 @@ export default function GroupDetail() {
     canWriteUserLimits && connector?.status === 'available' && !connector.canWrite;
 
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="page-group-detail">
       <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
         <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
           <ChevronLeft className="h-4 w-4" /> Back to Dashboard

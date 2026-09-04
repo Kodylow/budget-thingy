@@ -86,7 +86,7 @@ function RouteLoading() {
 }
 
 function Router() {
-  const { capabilities } = useAuthContext();
+  const { capabilities, isAccountAdmin } = useAuthContext();
 
   function AccountAdminGuideRoute() {
     return capabilities.canManageAccess ? <UserGuide /> : <Redirect to="/" />;
@@ -106,6 +106,48 @@ function Router() {
     );
   }
 
+  function WorkspaceAdminsRoute() {
+    if (isAccountAdmin) return <WorkspaceAdmins />;
+    return (
+      <div className="p-4 md:p-8" data-testid="workspace-admins-forbidden">
+        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
+          403 · Access denied
+        </h1>
+        <p className="mt-2 text-muted-foreground">
+          Team Admins is only available to account administrators.
+        </p>
+      </div>
+    );
+  }
+
+  function WorkspaceDirectoryRoute() {
+    if (capabilities.canManageAccess) return <WorkspaceDirectory />;
+    return (
+      <div className="p-4 md:p-8" data-testid="workspace-directory-forbidden">
+        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
+          403 · Access denied
+        </h1>
+        <p className="mt-2 text-muted-foreground">
+          Workspace Directory is only available to account administrators.
+        </p>
+      </div>
+    );
+  }
+
+  function TeamBudgetsRoute() {
+    if (capabilities.canEditAllocations) return <TeamBudgets />;
+    return (
+      <div className="p-4 md:p-8" data-testid="team-budgets-forbidden">
+        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
+          403 · Access denied
+        </h1>
+        <p className="mt-2 text-muted-foreground">
+          Team allocations are only available to account administrators.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <AppShell>
       <Suspense fallback={<RouteLoading />}>
@@ -115,9 +157,9 @@ function Router() {
           <Route path="/alerts" component={Alerts} />
           <Route path="/trends" component={Trends} />
           <Route path="/settings" component={SettingsRoute} />
-          {capabilities.canManageAccess && <Route path="/workspace-admins" component={WorkspaceAdmins} />}
-          {capabilities.canManageAccess && <Route path="/workspace-directory" component={WorkspaceDirectory} />}
-          {capabilities.canEditAllocations && <Route path="/team-budgets" component={TeamBudgets} />}
+          <Route path="/workspace-admins" component={WorkspaceAdminsRoute} />
+          <Route path="/workspace-directory" component={WorkspaceDirectoryRoute} />
+          <Route path="/team-budgets" component={TeamBudgetsRoute} />
           <Route path="/groups/:groupId" component={GroupDetail} />
           <Route path="/clusters" component={ClusterDetail} />
           <Route component={NotFound} />

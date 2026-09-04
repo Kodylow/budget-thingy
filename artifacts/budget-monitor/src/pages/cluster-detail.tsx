@@ -336,6 +336,29 @@ export default function ClusterDetail() {
     });
   };
 
+  const clusterUnavailable =
+    groupIds.length === 0 ||
+    results.some((result) => result.isError);
+
+  if (clusterUnavailable) {
+    return (
+      <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="cluster-detail-unavailable">
+        <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+          <ChevronLeft className="h-4 w-4" /> Back to Dashboard
+        </Link>
+        <Card>
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <AlertCircle className="h-8 w-8 text-muted-foreground" />
+            <h1 className="text-xl font-semibold">Cluster unavailable</h1>
+            <p className="max-w-lg text-sm text-muted-foreground">
+              Choose a visible group cluster from the dashboard or check that the requested groups are in your scope.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (results.every((r) => !r.data)) {
     return (
       <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
@@ -354,7 +377,7 @@ export default function ClusterDetail() {
   }
 
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="page-cluster-detail">
       <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
         <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
           <ChevronLeft className="h-4 w-4" /> Back to Dashboard

@@ -1,19 +1,72 @@
-import { useState, useMemo } from 'react';
-import { useListWorkspaceAdmins, type GroupAdminsItem } from '@workspace/api-client-react';
+import React, { useState, useMemo } from 'react';
+import { useListWorkspaceAdmins } from '@workspace/api-client-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Search, ShieldCheck, Users } from 'lucide-react';
 
-type Admin = GroupAdminsItem['admins'][0];
+export interface WorkspaceAdmin {
+  userId: string;
+  username: string;
+  email: string | null;
+  name: string | null;
+}
+
+export interface WorkspaceAdminFamily {
+  workspaceId: string;
+  workspaceName: string;
+  familyKey: string;
+  familyName: string;
+  teamName: string | null;
+  isLegacy: boolean;
+  admins: WorkspaceAdmin[];
+}
+
+function readableString(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value : fallback;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+export function normalizeWorkspaceAdminFamilies(value: unknown): WorkspaceAdminFamily[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item, familyIndex) => {
+      const workspaceId = readableString(item.workspaceId, `unknown-workspace-${familyIndex + 1}`);
+      const familyKey = readableString(item.familyKey, `unknown-family-${familyIndex + 1}`);
+      const rawAdmins = Array.isArray(item.admins) ? item.admins : [];
+      const admins = rawAdmins
+        .filter((admin): admin is Record<string, unknown> => !!admin && typeof admin === 'object')
+        .map((admin, adminIndex) => ({
+          userId: readableString(admin.userId, `${workspaceId}-${familyKey}-admin-${adminIndex + 1}`),
+          username: readableString(admin.username, 'Unknown'),
+          email: optionalString(admin.email),
+          name: optionalString(admin.name),
+        }));
+
+      return {
+        workspaceId,
+        workspaceName: readableString(item.workspaceName, 'Unknown workspace'),
+        familyKey,
+        familyName: readableString(item.familyName, 'Unnamed family'),
+        teamName: optionalString(item.teamName),
+        isLegacy: item.isLegacy === true,
+        admins,
+      };
+    });
+}
 
 export default function GroupAdmins() {
-  const { data: groups, isLoading, isError } = useListWorkspaceAdmins();
+  const { data, isLoading, isError } = useListWorkspaceAdmins();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   const familyEntries = useMemo(() => {
-    if (!groups) return [] as GroupAdminsItem[];
+    const groups = normalizeWorkspaceAdminFamilies(data);
     const q = search.trim().toLowerCase();
     const entries = [...groups].sort((a, b) =>
       a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: 'base' }) ||
@@ -21,7 +74,7 @@ export default function GroupAdmins() {
       a.familyName.localeCompare(b.familyName, undefined, { sensitivity: 'base' })
     );
     if (!q) return entries;
-    const adminMatches = (a: Admin) =>
+    const adminMatches = (a: WorkspaceAdmin) =>
       (a.name ?? '').toLowerCase().includes(q) ||
       a.username.toLowerCase().includes(q) ||
       (a.email ?? '').toLowerCase().includes(q);
@@ -31,7 +84,7 @@ export default function GroupAdmins() {
       item.familyName.toLowerCase().includes(q) ||
       item.admins.some(adminMatches)
     );
-  }, [groups, search]);
+  }, [data, search]);
 
   const familyCount = familyEntries.length;
 
@@ -48,7 +101,7 @@ export default function GroupAdmins() {
 
   if (isLoading) {
     return (
-      <div className="p-4 md:p-8">
+      <div className="p-4 md:p-8" data-testid="workspace-admins-loading">
         <div className="animate-pulse space-y-4">
           <div className="h-8 w-48 bg-muted rounded" />
           <div className="h-64 bg-muted rounded" />
@@ -57,16 +110,19 @@ export default function GroupAdmins() {
     );
   }
 
-  if (isError || !groups) {
+  if (isError || !data) {
     return (
-      <div className="p-4 md:p-8">
-        <p className="text-sm text-destructive">Failed to load group admin data.</p>
+      <div className="p-4 md:p-8" data-testid="workspace-admins-error" role="alert">
+        <h1 className="text-2xl font-bold tracking-tight">Team Admins</h1>
+        <p className="mt-2 text-sm text-destructive">
+          Failed to load team admin data. Try refreshing the page.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-6" data-testid="page-workspace-admins">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Team Admins</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -98,8 +154,10 @@ export default function GroupAdmins() {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0 overflow-y-auto flex-1">
-               {familyCount === 0 ? (
-                 <p className="text-sm text-muted-foreground text-center py-8">No families match</p>
+                 {familyCount === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8" data-testid="workspace-admins-empty">
+                    {search ? 'No families match' : 'No team admin families found'}
+                  </p>
               ) : (
                 <ul>
                    {familyEntries.map((entry) => {
