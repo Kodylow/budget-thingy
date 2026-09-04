@@ -26,11 +26,14 @@ export const alertsTable = pgTable("alerts", {
   entityType: text("entity_type").notNull().default("group"), // "group" | "team"
   entityId: text("entity_id").notNull().default(""),
   entityName: text("entity_name").notNull().default(""),
+  // Member-limit alerts are independent of allocated-pool threshold alerts.
+  alertType: text("alert_type").notNull().default("allocation_threshold"),
   // Workspaces whose spend contributed to this pool evaluation, used for scoping.
   workspaceIds: text("workspace_ids").array().notNull().default([]),
   threshold: integer("threshold").notNull(),
   spendUsd: doublePrecision("spend_usd").notNull(),
   budgetUsd: doublePrecision("budget_usd").notNull(),
+  blockedMemberCount: integer("blocked_member_count").notNull().default(0),
   recipients: text("recipients").array().notNull(),
   status: text("status").notNull(), // "sent" | "failed"
   errorMessage: text("error_message"),
@@ -83,6 +86,7 @@ export const alertDeliveryClaimsTable = pgTable(
     id: serial("id").primaryKey(),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id").notNull(),
+    alertType: text("alert_type").notNull().default("allocation_threshold"),
     billingPeriod: text("billing_period").notNull(),
     threshold: integer("threshold").notNull(),
     status: text("status").notNull().default("claimed"), // claimed | sent | failed
@@ -93,6 +97,7 @@ export const alertDeliveryClaimsTable = pgTable(
     uniqueIndex("alert_delivery_claims_unique").on(
       t.entityType,
       t.entityId,
+      t.alertType,
       t.billingPeriod,
       t.threshold,
     ),

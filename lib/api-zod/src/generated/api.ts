@@ -176,6 +176,11 @@ export const ListGroupsResponse = zod.object({
   "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
   "remainingUsd": zod.number().nullish().describe('budget - spend, null if no budget or spend not loaded'),
   "percentUsed": zod.number().nullish().describe('spend \/ budget \* 100, null if no budget or spend not loaded'),
+  "monthlyAgentLimitUsd": zod.number().nullable().describe('Current upstream Replit Agent group limit.'),
+  "cycleAgentSpendUsd": zod.number().describe('Agent spend in the current Replit billing cycle.'),
+  "agentPercentUsed": zod.number().nullable(),
+  "agentRemainingUsd": zod.number().nullable(),
+  "agentBlocked": zod.boolean(),
   "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period'),
   "history": zod.array(zod.object({
   "date": zod.string().describe('UTC day of the snapshot (YYYY-MM-DD)'),
@@ -271,6 +276,11 @@ export const GetGroupDetailResponse = zod.object({
   "budgetSource": zod.string().nullish().describe('Where the effective budget comes from (\"app\"), null if no budget set'),
   "remainingUsd": zod.number().nullish().describe('budget - spend, null if no budget or spend not loaded'),
   "percentUsed": zod.number().nullish().describe('spend \/ budget \* 100, null if no budget or spend not loaded'),
+  "monthlyAgentLimitUsd": zod.number().nullable().describe('Current upstream Replit Agent group limit.'),
+  "cycleAgentSpendUsd": zod.number().describe('Agent spend in the current Replit billing cycle.'),
+  "agentPercentUsed": zod.number().nullable(),
+  "agentRemainingUsd": zod.number().nullable(),
+  "agentBlocked": zod.boolean(),
   "thresholdsFired": zod.array(zod.number()).describe('Thresholds (50, 75, 90, 100) already alerted this billing period'),
   "history": zod.array(zod.object({
   "date": zod.string().describe('UTC day of the snapshot (YYYY-MM-DD)'),
@@ -827,6 +837,11 @@ export const GetTeamsBudgetsResponse = zod.object({
   "budgets": zod.array(zod.object({
   "teamName": zod.string(),
   "amountUsd": zod.number().nullable(),
+  "monthlyAgentLimitUsd": zod.number().nullable(),
+  "cycleAgentSpendUsd": zod.number(),
+  "agentRemainingUsd": zod.number().nullable(),
+  "agentPercentUsed": zod.number().nullable(),
+  "agentBlocked": zod.boolean(),
   "workspaceIds": zod.array(zod.string()).describe('Visible workspaces containing groups assigned to this team.')
 }))
 })
@@ -1327,7 +1342,7 @@ export const ListVisibleWorkspacesResponse = zod.array(ListVisibleWorkspacesResp
 
 
 /**
- * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget connector failures are returned explicitly and never fall back to the Enterprise API key.
+ * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget failures are returned explicitly.
  * @summary List members and Agent budgets for a visible workspace
  */
 
@@ -1355,7 +1370,13 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
   "isDisabled": zod.boolean(),
   "budgetUsd": zod.number().nullable().describe('Desired Agent budget; null means unset.'),
   "usageUsd": zod.number().nullable().describe('Agent usage in the current billing cycle.'),
-  "remainingUsd": zod.number().nullable().describe('Budget minus current-cycle Agent usage; may be negative and is null when unset.')
+  "remainingUsd": zod.number().nullable().describe('Budget minus current-cycle Agent usage; may be negative and is null when unset.'),
+  "percentUsed": zod.number().nullable(),
+  "blocked": zod.boolean().describe('Current-cycle Agent usage is at or above the effective member limit.'),
+  "effectiveBaselineUsd": zod.number().nullable(),
+  "baselineSourceType": zod.union([zod.literal('group'),zod.literal('workspace_default'),zod.literal(null)]).nullable(),
+  "baselineSourceId": zod.string().nullable(),
+  "isHandSetOverride": zod.boolean()
 }))
 })
 
@@ -1391,7 +1412,113 @@ export const ListWorkspaceUsageLimitAuditsResponse = zod.array(ListWorkspaceUsag
 
 
 /**
- * Account-wide operators only. User IDs are deduplicated, every requested user must be a current member of the visible workspace, and each non-transactional Replit connector outcome is returned explicitly.
+ * @summary Read member-limit policy state for a workspace
+ */
+
+
+
+export const GetWorkspaceLimitPoliciesParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1)
+})
+
+export const GetWorkspaceLimitPoliciesResponse = zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string(),
+  "defaultAmountUsd": zod.number().nullable(),
+  "groups": zod.array(zod.object({
+  "groupId": zod.string(),
+  "groupName": zod.string(),
+  "amountUsd": zod.number().nullable(),
+  "isEnabled": zod.boolean()
+})),
+  "overrides": zod.array(zod.object({
+  "userId": zod.string(),
+  "name": zod.string().nullable(),
+  "amountUsd": zod.number()
+}))
+})
+
+
+/**
+ * Applies members serially and reports every verified upstream outcome.
+ * @summary Set or clear the workspace-default member Agent limit policy
+ */
+
+
+
+export const SetWorkspaceDefaultLimitPolicyParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1)
+})
+
+export const setWorkspaceDefaultLimitPolicyBodyAmountUsdExclusiveMin = 0;
+
+
+
+export const SetWorkspaceDefaultLimitPolicyBody = zod.object({
+  "amountUsd": zod.number().gt(setWorkspaceDefaultLimitPolicyBodyAmountUsdExclusiveMin).nullable()
+})
+
+export const SetWorkspaceDefaultLimitPolicyResponse = zod.object({
+  "workspaceId": zod.string(),
+  "sourceType": zod.enum(['group', 'workspace_default']),
+  "sourceId": zod.string(),
+  "amountUsd": zod.number().nullable(),
+  "outcomes": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "desiredAmountUsd": zod.number().nullable(),
+  "sourceType": zod.union([zod.literal('group'),zod.literal('workspace_default'),zod.literal(null)]).nullable(),
+  "sourceId": zod.string().nullable(),
+  "previousAmountUsd": zod.number().nullable(),
+  "state": zod.enum(['no_limit', 'policy_managed', 'hand_set_override']),
+  "status": zod.enum(['applied', 'cleared', 'unchanged', 'no_policy', 'override_preserved', 'failed']),
+  "error": zod.string().nullable()
+}))
+})
+
+
+/**
+ * The lowest applicable baseline wins; hand-set member overrides are preserved.
+ * @summary Set or clear a member-group Agent limit baseline
+ */
+
+
+
+
+export const SetGroupMemberLimitPolicyParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1),
+  "groupId": zod.coerce.string().min(1)
+})
+
+export const setGroupMemberLimitPolicyBodyAmountUsdExclusiveMin = 0;
+
+
+
+export const SetGroupMemberLimitPolicyBody = zod.object({
+  "amountUsd": zod.number().gt(setGroupMemberLimitPolicyBodyAmountUsdExclusiveMin).nullable()
+})
+
+export const SetGroupMemberLimitPolicyResponse = zod.object({
+  "workspaceId": zod.string(),
+  "sourceType": zod.enum(['group', 'workspace_default']),
+  "sourceId": zod.string(),
+  "amountUsd": zod.number().nullable(),
+  "outcomes": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "desiredAmountUsd": zod.number().nullable(),
+  "sourceType": zod.union([zod.literal('group'),zod.literal('workspace_default'),zod.literal(null)]).nullable(),
+  "sourceId": zod.string().nullable(),
+  "previousAmountUsd": zod.number().nullable(),
+  "state": zod.enum(['no_limit', 'policy_managed', 'hand_set_override']),
+  "status": zod.enum(['applied', 'cleared', 'unchanged', 'no_policy', 'override_preserved', 'failed']),
+  "error": zod.string().nullable()
+}))
+})
+
+
+/**
+ * Account-wide operators only. User IDs are deduplicated, every requested user must be a current member of the visible workspace, and each non-transactional Replit Budgets API outcome is returned explicitly.
  * @summary Set one Agent usage limit for multiple workspace members
  */
 
@@ -1426,7 +1553,7 @@ export const BulkSetWorkspaceMemberBudgetsResponse = zod.object({
 
 
 /**
- * Account-wide operators only. The Replit connector is the sole credential source.
+ * Authorized account and workspace administrators use the configured Enterprise budgets key.
  * @summary Set or replace a member's desired Agent budget
  */
 
@@ -1533,11 +1660,17 @@ export const ListAlertsHeader = zod.object({
   "X-Preview-As": zod.string().regex(listAlertsHeaderXPreviewAsRegExp).optional().describe('Account-only synthetic authorization view.')
 })
 
+export const listAlertsResponseBlockedMemberCountMin = 0;
+
+
+
 export const ListAlertsResponseItem = zod.object({
   "id": zod.number(),
   "entityType": zod.enum(['group', 'team']),
   "entityId": zod.string(),
   "entityName": zod.string(),
+  "alertType": zod.enum(['allocation_threshold', 'member_limit_reached']),
+  "blockedMemberCount": zod.number().min(listAlertsResponseBlockedMemberCountMin),
   "workspaceIds": zod.array(zod.string()),
   "threshold": zod.number().describe('Threshold percent crossed (50, 75, 90, 100)'),
   "spendUsd": zod.number().describe('Canonical spend snapshot captured when this delivery was attempted'),
@@ -1558,6 +1691,10 @@ export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
  * Evaluates stored daily usage facts and sends any due alert emails immediately without refreshing Enterprise usage.
  * @summary Run the budget threshold check now
  */
+export const runAlertCheckResponseAlertsItemBlockedMemberCountMin = 0;
+
+
+
 export const RunAlertCheckResponse = zod.object({
   "checkedGroups": zod.number(),
   "checkedTeams": zod.number(),
@@ -1567,6 +1704,8 @@ export const RunAlertCheckResponse = zod.object({
   "entityType": zod.enum(['group', 'team']),
   "entityId": zod.string(),
   "entityName": zod.string(),
+  "alertType": zod.enum(['allocation_threshold', 'member_limit_reached']),
+  "blockedMemberCount": zod.number().min(runAlertCheckResponseAlertsItemBlockedMemberCountMin),
   "workspaceIds": zod.array(zod.string()),
   "threshold": zod.number().describe('Threshold percent crossed (50, 75, 90, 100)'),
   "spendUsd": zod.number().describe('Canonical spend snapshot captured when this delivery was attempted'),

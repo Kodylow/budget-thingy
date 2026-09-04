@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { WorkspaceMemberBudgetBaselineSourceType } from './workspaceMemberBudgetBaselineSourceType';
 
 export interface WorkspaceMemberBudget {
   userId: string;
@@ -29,4 +30,15 @@ export interface WorkspaceMemberBudget {
      * @nullable
      */
   remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  /** Current-cycle Agent usage is at or above the effective member limit. */
+  blocked: boolean;
+  /** @nullable */
+  effectiveBaselineUsd: number | null;
+  /** @nullable */
+  baselineSourceType: WorkspaceMemberBudgetBaselineSourceType;
+  /** @nullable */
+  baselineSourceId: string | null;
+  isHandSetOverride: boolean;
 }

@@ -9,6 +9,8 @@ import {
   getGetSummaryQueryKey,
   useListVisibleWorkspaceMembers,
   getListVisibleWorkspaceMembersQueryKey,
+  useGetWorkspaceLimitPolicies,
+  getGetWorkspaceLimitPoliciesQueryKey,
   type WorkspaceMemberBudget,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -23,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GroupUserExport } from '@/components/group-user-export';
 import { useAuthContext } from '@/components/auth-context';
 import { MemberBudgetInput } from '@/components/member-budget-input';
+import { GroupPolicyControl } from '@/components/policy-control';
 import { indexMemberBudgets } from '@/lib/member-budgets';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
@@ -81,6 +84,19 @@ export default function GroupDetail() {
     ),
     [data?.members, workspaceMembersQuery.data],
   );
+
+  const workspacePoliciesQuery = useGetWorkspaceLimitPolicies(workspaceId as string, {
+    query: {
+      enabled: !!workspaceId && canWriteUserLimits,
+      queryKey: workspaceId ? getGetWorkspaceLimitPoliciesQueryKey(workspaceId) : ['getWorkspaceLimitPolicies', ''],
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
+    }
+  });
+
+  const groupPolicy = useMemo(() => {
+    if (!workspacePoliciesQuery.data) return null;
+    return workspacePoliciesQuery.data.groups.find(g => g.groupId === groupId) ?? null;
+  }, [workspacePoliciesQuery.data, groupId]);
 
   if (!data) {
     return (
@@ -238,20 +254,28 @@ export default function GroupDetail() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+          {canWriteUserLimits && workspaceId && (
+            <GroupPolicyControl
+              workspaceId={workspaceId}
+              groupId={groupId}
+              currentAmount={groupPolicy?.amountUsd ?? null}
+            />
+          )}
           <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Monthly limit</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">AI</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Hosting / Non-AI</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Remaining</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Usage</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Status</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Agent Limit</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Agent Spend</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Agent Remaining</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Overall Spend</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Overall AI</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Overall Non-AI</th>
                 </tr>
               </thead>
-              <VirtualizedTableRows columnCount={7} estimatedRowHeight={72}>
+              <VirtualizedTableRows columnCount={8} estimatedRowHeight={72}>
                 {sortedMembers.map(member => {
                   const budget = workspaceMembersMap.get(member.userId);
                   const hasConnector = connector?.status === 'available';
@@ -269,7 +293,14 @@ export default function GroupDetail() {
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3 px-4 align-middle">
+                      {budget?.budgetUsd != null && budget?.usageUsd != null && budget.usageUsd >= budget.budgetUsd ? (
+                        <Badge variant="destructive" className="uppercase text-[10px]" data-testid={`badge-blocked-${member.userId}`}>Blocked</Badge>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Active</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right w-32">
                       {workspaceMembersQuery.isLoading ? (
                         <div className="flex justify-end"><LoadingCell /></div>
                       ) : hasConnector && workspaceId ? (
@@ -282,6 +313,20 @@ export default function GroupDetail() {
                       ) : <span className="text-sm text-muted-foreground">—</span>}
                     </td>
                     <td className="py-3 px-4 text-right">
+                      {workspaceMembersQuery.isLoading ? <div className="flex justify-end"><LoadingCell /></div> : (
+                        budget?.usageUsd != null ? <span className="text-sm font-mono tabular-nums">${budget.usageUsd.toFixed(2)}</span> : <span className="text-sm text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {workspaceMembersQuery.isLoading ? <div className="flex justify-end"><LoadingCell /></div> : (
+                        budget?.remainingUsd != null ? (
+                          <span className={`text-sm font-mono tabular-nums ${budget.remainingUsd <= 0 ? 'text-destructive font-bold' : ''}`}>
+                             {budget.remainingUsd < 0 ? '-' : ''}${Math.abs(budget.remainingUsd).toFixed(2)}
+                          </span>
+                        ) : <span className="text-sm text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
                       {typeof member.spendUsd === 'number' ? (
                         <span className="text-sm font-mono tabular-nums">${member.spendUsd.toFixed(2)}</span>
                       ) : <div className="flex justify-end"><LoadingCell /></div>}
@@ -291,22 +336,6 @@ export default function GroupDetail() {
                     </td>
                     <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
                       {typeof member.nonAiSpendUsd === 'number' ? `$${member.nonAiSpendUsd.toFixed(2)}` : '—'}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {workspaceMembersQuery.isLoading ? (
-                        <div className="flex justify-end"><LoadingCell /></div>
-                      ) : !hasConnector || budget?.remainingUsd === null || budget?.remainingUsd === undefined ? <span className="text-sm text-muted-foreground">—</span> : (
-                        <span className={`text-sm font-mono tabular-nums ${budget.remainingUsd < 0 ? 'text-destructive font-bold' : ''}`}>
-                          {budget.remainingUsd < 0 ? '-' : ''}${Math.abs(budget.remainingUsd).toFixed(2)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex justify-end">
-                        {member.allocatedBudgetUsd === null || member.allocatedBudgetUsd === undefined ? <span className="text-sm text-muted-foreground">—</span> : (
-                          <ThresholdBadge percentUsed={member.percentUsed ?? null} thresholdsFired={[]} />
-                        )}
-                      </div>
                     </td>
                   </tr>
                   );
@@ -320,31 +349,29 @@ export default function GroupDetail() {
                         <span className="text-xs text-muted-foreground">No project ID, missing creator, or creator no longer a member</span>
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="text-sm text-muted-foreground">—</span>
-                    </td>
+                    <td className="py-3 px-4" /> {/* Status */}
+                    <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
+                    <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
+                    <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm font-mono tabular-nums">${unattributedSpendUsd.toFixed(2)}</span>
                     </td>
                     <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
                     <td className="py-3 px-4 text-right text-sm text-muted-foreground">—</td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="text-sm text-muted-foreground">—</span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="text-sm text-muted-foreground">—</span>
-                    </td>
                   </tr>
                 )}
               </VirtualizedTableRows>
               <tfoot>
                 <tr className="bg-muted/30 font-medium border-t border-border">
                   <td className="py-3 px-4 text-sm">Group Total</td>
+                  <td className="py-3 px-4" /> {/* Status */}
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
                       —
                     </span>
                   </td>
+                  <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
+                  <td className="py-3 px-4 text-right"><span className="text-sm text-muted-foreground">—</span></td>
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
                       {displaySpend !== null ? `$${displaySpend.toFixed(2)}` : '—'}
@@ -355,14 +382,6 @@ export default function GroupDetail() {
                   </td>
                   <td className="py-3 px-4 text-right font-mono tabular-nums text-sm">
                     ${members.reduce((sum, member) => sum + (member.nonAiSpendUsd ?? 0), 0).toFixed(2)}
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    <span className="text-sm text-muted-foreground">—</span>
-                  </td>
-                  <td className="py-3 px-4 text-right flex justify-end">
-                    {displaySpend !== null && group.budgetUsd !== null && group.budgetUsd !== undefined ? (
-                      <ThresholdBadge percentUsed={group.percentUsed ?? null} thresholdsFired={group.thresholdsFired} />
-                    ) : <span className="text-sm text-muted-foreground">—</span>}
                   </td>
                 </tr>
               </tfoot>

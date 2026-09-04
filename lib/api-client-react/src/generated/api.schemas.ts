@@ -219,6 +219,18 @@ export interface Group {
      * @nullable
      */
   percentUsed?: number | null;
+  /**
+     * Current upstream Replit Agent group limit.
+     * @nullable
+     */
+  monthlyAgentLimitUsd: number | null;
+  /** Agent spend in the current Replit billing cycle. */
+  cycleAgentSpendUsd: number;
+  /** @nullable */
+  agentPercentUsed: number | null;
+  /** @nullable */
+  agentRemainingUsd: number | null;
+  agentBlocked: boolean;
   /** Thresholds (50, 75, 90, 100) already alerted this billing period */
   thresholdsFired: number[];
   /** Daily spend snapshots for the current billing period, oldest first */
@@ -530,6 +542,17 @@ export interface BudgetConnectorState {
   error: string | null;
 }
 
+/**
+ * @nullable
+ */
+export type WorkspaceMemberBudgetBaselineSourceType = typeof WorkspaceMemberBudgetBaselineSourceType[keyof typeof WorkspaceMemberBudgetBaselineSourceType] | null;
+
+
+export const WorkspaceMemberBudgetBaselineSourceType = {
+  group: 'group',
+  workspace_default: 'workspace_default',
+} as const;
+
 export interface WorkspaceMemberBudget {
   userId: string;
   username: string;
@@ -553,6 +576,17 @@ export interface WorkspaceMemberBudget {
      * @nullable
      */
   remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  /** Current-cycle Agent usage is at or above the effective member limit. */
+  blocked: boolean;
+  /** @nullable */
+  effectiveBaselineUsd: number | null;
+  /** @nullable */
+  baselineSourceType: WorkspaceMemberBudgetBaselineSourceType;
+  /** @nullable */
+  baselineSourceId: string | null;
+  isHandSetOverride: boolean;
 }
 
 export type WorkspaceMembersResponseBillingPeriod = typeof WorkspaceMembersResponseBillingPeriod[keyof typeof WorkspaceMembersResponseBillingPeriod];
@@ -608,6 +642,104 @@ export interface WorkspaceMemberBulkBudgetResult {
   outcomes: WorkspaceMemberBulkBudgetOutcome[];
 }
 
+export interface MemberLimitPolicyInput {
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  amountUsd: number | null;
+}
+
+/**
+ * @nullable
+ */
+export type MemberLimitPolicyOutcomeSourceType = typeof MemberLimitPolicyOutcomeSourceType[keyof typeof MemberLimitPolicyOutcomeSourceType] | null;
+
+
+export const MemberLimitPolicyOutcomeSourceType = {
+  group: 'group',
+  workspace_default: 'workspace_default',
+} as const;
+
+export type MemberLimitPolicyOutcomeState = typeof MemberLimitPolicyOutcomeState[keyof typeof MemberLimitPolicyOutcomeState];
+
+
+export const MemberLimitPolicyOutcomeState = {
+  no_limit: 'no_limit',
+  policy_managed: 'policy_managed',
+  hand_set_override: 'hand_set_override',
+} as const;
+
+export type MemberLimitPolicyOutcomeStatus = typeof MemberLimitPolicyOutcomeStatus[keyof typeof MemberLimitPolicyOutcomeStatus];
+
+
+export const MemberLimitPolicyOutcomeStatus = {
+  applied: 'applied',
+  cleared: 'cleared',
+  unchanged: 'unchanged',
+  no_policy: 'no_policy',
+  override_preserved: 'override_preserved',
+  failed: 'failed',
+} as const;
+
+export interface MemberLimitPolicyOutcome {
+  workspaceId: string;
+  userId: string;
+  /** @nullable */
+  desiredAmountUsd: number | null;
+  /** @nullable */
+  sourceType: MemberLimitPolicyOutcomeSourceType;
+  /** @nullable */
+  sourceId: string | null;
+  /** @nullable */
+  previousAmountUsd: number | null;
+  state: MemberLimitPolicyOutcomeState;
+  status: MemberLimitPolicyOutcomeStatus;
+  /** @nullable */
+  error: string | null;
+}
+
+export type MemberLimitPolicyMutationResultSourceType = typeof MemberLimitPolicyMutationResultSourceType[keyof typeof MemberLimitPolicyMutationResultSourceType];
+
+
+export const MemberLimitPolicyMutationResultSourceType = {
+  group: 'group',
+  workspace_default: 'workspace_default',
+} as const;
+
+export interface MemberLimitPolicyMutationResult {
+  workspaceId: string;
+  sourceType: MemberLimitPolicyMutationResultSourceType;
+  sourceId: string;
+  /** @nullable */
+  amountUsd: number | null;
+  outcomes: MemberLimitPolicyOutcome[];
+}
+
+export interface GroupMemberLimitPolicy {
+  groupId: string;
+  groupName: string;
+  /** @nullable */
+  amountUsd: number | null;
+  isEnabled: boolean;
+}
+
+export interface MemberLimitOverride {
+  userId: string;
+  /** @nullable */
+  name: string | null;
+  amountUsd: number;
+}
+
+export interface WorkspaceLimitPolicyView {
+  workspaceId: string;
+  workspaceName: string;
+  /** @nullable */
+  defaultAmountUsd: number | null;
+  groups: GroupMemberLimitPolicy[];
+  overrides: MemberLimitOverride[];
+}
+
 export type UsageLimitAuditAction = typeof UsageLimitAuditAction[keyof typeof UsageLimitAuditAction];
 
 
@@ -659,6 +791,14 @@ export interface TeamBudget {
   teamName: string;
   /** @nullable */
   amountUsd: number | null;
+  /** @nullable */
+  monthlyAgentLimitUsd: number | null;
+  cycleAgentSpendUsd: number;
+  /** @nullable */
+  agentRemainingUsd: number | null;
+  /** @nullable */
+  agentPercentUsed: number | null;
+  agentBlocked: boolean;
   /** Visible workspaces containing groups assigned to this team. */
   workspaceIds: string[];
 }
@@ -1043,11 +1183,22 @@ export const AlertEntityType = {
   team: 'team',
 } as const;
 
+export type AlertAlertType = typeof AlertAlertType[keyof typeof AlertAlertType];
+
+
+export const AlertAlertType = {
+  allocation_threshold: 'allocation_threshold',
+  member_limit_reached: 'member_limit_reached',
+} as const;
+
 export interface Alert {
   id: number;
   entityType: AlertEntityType;
   entityId: string;
   entityName: string;
+  alertType: AlertAlertType;
+  /** @minimum 0 */
+  blockedMemberCount: number;
   workspaceIds: string[];
   /** Threshold percent crossed (50, 75, 90, 100) */
   threshold: number;

@@ -1,4 +1,23 @@
 import { Router } from "express";
+import {
+  GetWorkspaceLimitPoliciesResponse,
+  SetGroupMemberLimitPolicyBody,
+  SetGroupMemberLimitPolicyResponse,
+  SetWorkspaceDefaultLimitPolicyBody,
+  SetWorkspaceDefaultLimitPolicyResponse,
+} from "@workspace/api-zod";
+import {
+  groupUserLimitPoliciesTable,
+  memberLimitPolicyAssignmentsTable,
+  workspaceDefaultLimitTargetsTable,
+} from "@workspace/db";
+import {
+  getWorkspaceMemberLimitPolicyViews,
+  markMemberLimitAsHandSet,
+  setGroupMemberLimitPolicy,
+  setWorkspaceDefaultMemberLimitPolicy,
+  type MemberLimitPolicyOutcome,
+} from "../lib/member-limit-policies";
 import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsTable, teamLimitTargetsTable, teamBudgetsTable, adminEmailsTable, alertsTable, appAdminsTable, usersTable, apiProjectMetadataTable, apiProjectMetadataStateTable, usageLimitAuditsTable, ListGroupsResponse, GetSummaryResponse, ListBudgetsResponse, SetGroupBudgetBody, SetGroupBudgetResponse, DeleteGroupBudgetResponse, GetTeamsBudgetsResponse, ListAdminsResponse, AddAdminBody, AddAdminResponse, DeleteAdminResponse, ListWorkspaceAdminsResponse, ListAlertsQueryParams, ListAlertsResponse, RunAlertCheckResponse, SendTestAlertResponse, SendEmailTestExampleBody, SendEmailTestExampleResponse, GetStatusResponse, GetGroupDetailResponse, GetGroupProjectsResponse, GetCanonicalClusterHeadlineResponse, GetTrendsQueryParams, GetTrendsResponse, ListAppAdminsResponse, AddAppAdminBody, AddAppAdminResponse, DeleteAppAdminResponse, ListDirectoryGroupsResponse, GetTeamBudgetHistoryResponse, GetTeamAllocationAuditResponse, UpdateTeamAnnualAllocationParams, UpdateTeamAnnualAllocationBody, UpdateTeamAnnualAllocationResponse, UpdateTeamVisibilityParams, UpdateTeamVisibilityBody, UpdateTeamVisibilityResponse, GetTeamBudgetSyncStatusResponse, RetryTeamBudgetUpstreamSyncResponse, RefreshTeamBudgetsResponse, UpdateTeamBudgetLimitParams, UpdateTeamBudgetLimitBody, UpdateTeamBudgetLimitResponse, ApplyTeamBudgetLimitsBody, ApplyTeamBudgetLimitsResponse, GetTeamBudgetTargetsResponse, AssignTeamBudgetTargetBody, AssignTeamBudgetTargetResponse, UpdateTeamBudgetTargetParams, UpdateTeamBudgetTargetBody, UpdateTeamBudgetTargetResponse, ListVisibleWorkspacesResponse, ListVisibleWorkspaceMembersResponse, SetWorkspaceMemberBudgetBody, SetWorkspaceMemberBudgetResponse, ClearWorkspaceMemberBudgetResponse, BulkSetWorkspaceMemberBudgetsBody, BulkSetWorkspaceMemberBudgetsResponse, ListWorkspaceUsageLimitAuditsResponse, GetUserActivityResponse, GetAccountUsageObservationExportQueryParams, GetAccountUsageObservationExportResponse, GetEmailSettingsResponse, UpdateEmailSettingsBody, UpdateEmailSettingsResponse, isConfigured, getApiHealth, getDirectory, getDirectoryFreshness, getBillingPeriod, getBillingPeriodMetadata, buildCanonicalGroupMergePlan, buildCanonicalEffectiveTeams, type CanonicalAccountDirectory, resolveCanonicalMergedGroupBudget, type EnterpriseGroup, buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, getEmailTestRecipient, resolveAlertRecipients, runCheck, getFiredThresholds, getFiredThresholdsBatch, getLastCheckAt, getCheckerState, requireAuth, requireRole, requireCapability, requireTrueAccountAdmin, requireUserLimitWorkspace, canSeeGroup, isAccountWide, isAdminRole, scopeGroups, type Authorization, scopeFor, getRosterHistory, projectEndOfPeriod, generateTrendBuckets, getEffectiveTeamBudgets, applyTeamBudgetLimits, assignTeamLimitTarget, getFreshEligibleTeamLimitGroup, getTeamLimitTargetConfiguration, getTeamBudgetUpstreamSyncRows, getVisibleEffectiveTeamBudgetMap, queueTeamBudgetUpstreamReconciliation, reconcileTeamBudgetsUpstream, refreshTeamBudgetSnapshot, updateTeamMonthlyLimit, updateTeamAnnualAllocation, updateTeamVisibility, getTeamAllocationAudits, updateTeamLimitTargetOverride, TEAM_BUDGET_REQUIRED_APPROVAL_STATUS, TEAM_BUDGET_SOURCE_TABLE, listReplitMemberBudgets, ReplitBudgetConnectorError, setReplitMemberBudget, resolveUsageWindow, USAGE_DATA_CUTOFF_ISO, type UsageWindowSelection, readUsageSnapshot, type UsageSnapshot, computeDedupedMemberCounts, computeHistoricalSnapshotUsageRollups, computeSnapshotUsageRollup, projectAttributionKey, type SnapshotUsageRollup, BACKGROUND_CYCLE_INTERVAL_MINUTES, runCycle, getNotificationSettings, updateNotificationSettings, visibleGroups, visibleGroupMembers, visibleRosterMembers, buildTeamAlertCanonicalScope, canSeeAlertEntity, targetTeamForGroup, groupTeamKey, buildGroupTeamMap, windowFromQuery, workspaceScope, readProjectMetadata, usageForRequest, usageHealth, dailyUsageRollups, effectiveGroupBudget, mergedGroupMemberIds, canonicalUserAttribution, alertToJson } from "./monitor.shared";
 
 const router = Router();
@@ -54,6 +73,14 @@ router.get(
         return;
       }
       const snapshot = await listReplitMemberBudgets(workspaceId);
+      const policyViews = await getWorkspaceMemberLimitPolicyViews(
+        workspaceId,
+        new Map([...snapshot.budgets].map(([userId, value]) => [
+          userId,
+          value.budgetUsd,
+        ])),
+        dir,
+      );
       const selection = windowFromQuery({ rangeType: "billing" });
       const usage = await readUsageSnapshot({
         window: selection.window,
@@ -83,6 +110,9 @@ router.get(
             : !workspaceUsage.has(member.userId)
               ? 0
               : (workspaceUsage.get(member.userId)?.aiCostUsd ?? null);
+          const policyView = policyViews.get(member.userId);
+          const percentUsed =
+            budgetUsd == null || usageUsd == null ? null : (usageUsd / budgetUsd) * 100;
           return [{
             userId: member.userId,
             username: member.username,
@@ -95,6 +125,12 @@ router.get(
             // Do not clamp: a negative value is meaningful overspend.
             remainingUsd:
               budgetUsd == null || usageUsd == null ? null : budgetUsd - usageUsd,
+            percentUsed,
+            blocked: percentUsed != null && percentUsed >= 100,
+            effectiveBaselineUsd: policyView?.effectiveBaseline?.amountUsd ?? null,
+            baselineSourceType: policyView?.effectiveBaseline?.sourceType ?? null,
+            baselineSourceId: policyView?.effectiveBaseline?.sourceId ?? null,
+            isHandSetOverride: policyView?.isHandSetOverride ?? false,
           }];
         })
         .sort((a, b) =>
@@ -164,7 +200,11 @@ function sendBudgetConnectorError(
   res: Response,
 ): void {
   if (error instanceof ReplitBudgetConnectorError) {
-    res.status(error.kind === "unavailable" ? 503 : 502).json({ error: error.message });
+    const status =
+      error.upstreamStatus === 401 || error.upstreamStatus === 403
+        ? error.upstreamStatus
+        : error.kind === "unavailable" ? 503 : 502;
+    res.status(status).json({ error: error.message });
     return;
   }
   res.status(502).json({
@@ -188,9 +228,12 @@ router.put(
         res.status(404).json({ error: "Workspace member not found" });
         return;
       }
-      const outcomes = await Promise.all(userIds.map(async (userId) => {
+      const outcomes = [];
+      for (const userId of userIds) {
+        let outcome;
         try {
           await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
+          await markMemberLimitAsHandSet(workspaceId, userId);
         } catch (error) {
           await recordUsageLimitAudit(
             req,
@@ -201,7 +244,7 @@ router.put(
             parsed.data.amountUsd,
             "failed",
           );
-          return {
+          outcome = {
             userId,
             success: false,
             budgetUsd: null,
@@ -209,6 +252,8 @@ router.put(
               ? error.message
               : "Replit budgets API request failed",
           };
+          outcomes.push(outcome);
+          continue;
         }
         await recordUsageLimitAudit(
           req,
@@ -219,13 +264,14 @@ router.put(
           parsed.data.amountUsd,
           "success",
         );
-        return {
+        outcome = {
           userId,
           success: true,
           budgetUsd: parsed.data.amountUsd,
           error: null,
         };
-      }));
+        outcomes.push(outcome);
+      }
       if (
         outcomes.every((outcome) => !outcome.success) &&
         outcomes.some((outcome) => /write:budgets|connector/i.test(outcome.error ?? ""))
@@ -262,6 +308,7 @@ router.put(
       }
       try {
         await setReplitMemberBudget(workspaceId, userId, parsed.data.amountUsd);
+        await markMemberLimitAsHandSet(workspaceId, userId);
       } catch (error) {
         await recordUsageLimitAudit(
           req,
@@ -309,6 +356,7 @@ router.delete(
       }
       try {
         await setReplitMemberBudget(workspaceId, userId, null);
+        await markMemberLimitAsHandSet(workspaceId, userId);
       } catch (error) {
         await recordUsageLimitAudit(
           req,
@@ -339,6 +387,141 @@ router.delete(
     } catch (error) {
       req.log.error({ err: error }, "clear usage limit failed");
       res.status(500).json({ error: "Usage limit audit could not be recorded" });
+    }
+  },
+);
+
+function policyOutcomeJson(outcome: MemberLimitPolicyOutcome) {
+  return {
+    workspaceId: outcome.workspaceId,
+    userId: outcome.userId,
+    desiredAmountUsd: outcome.desired?.amountUsd ?? null,
+    sourceType: outcome.desired?.sourceType ?? null,
+    sourceId: outcome.desired?.sourceId ?? null,
+    previousAmountUsd: outcome.previousAmountUsd,
+    state: outcome.state,
+    status: outcome.status,
+    error: outcome.error,
+  };
+}
+
+router.get(
+  "/directory/workspaces/:workspaceId/limit-policies",
+  requireUserLimitWorkspace,
+  async (req, res): Promise<void> => {
+    const workspaceId = String(req.params["workspaceId"]);
+    const dir = await getDirectory();
+    const workspace = dir.workspaces.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: "Workspace not found" });
+      return;
+    }
+    const [groupPolicies, defaults, assignments, snapshot] = await Promise.all([
+      db.select().from(groupUserLimitPoliciesTable)
+        .where(eq(groupUserLimitPoliciesTable.workspaceId, workspaceId)),
+      db.select().from(workspaceDefaultLimitTargetsTable)
+        .where(eq(workspaceDefaultLimitTargetsTable.workspaceId, workspaceId)),
+      db.select().from(memberLimitPolicyAssignmentsTable)
+        .where(eq(memberLimitPolicyAssignmentsTable.workspaceId, workspaceId)),
+      listReplitMemberBudgets(workspaceId),
+    ]);
+    const assignmentByUser = new Map(assignments.map((row) => [row.userId, row]));
+    const overrides = [...snapshot.budgets.values()].flatMap((budget) => {
+      if (
+        budget.budgetUsd == null ||
+        assignmentByUser.get(budget.userId)?.lastAmountUsd === budget.budgetUsd
+      ) return [];
+      const member = dir.members.get(budget.userId);
+      return [{
+        userId: budget.userId,
+        name: member?.name ?? member?.username ?? null,
+        amountUsd: budget.budgetUsd,
+      }];
+    });
+    const policyByGroup = new Map(groupPolicies.map((row) => [row.groupId, row]));
+    res.json(GetWorkspaceLimitPoliciesResponse.parse({
+      workspaceId,
+      workspaceName: workspace.name,
+      defaultAmountUsd:
+        defaults[0]?.isEnabled ? defaults[0].monthlyLimitUsd : null,
+      groups: dir.groups
+        .filter((group) => group.workspaceId === workspaceId)
+        .map((group) => ({
+          groupId: group.id,
+          groupName: group.name,
+          amountUsd: policyByGroup.get(group.id)?.amountUsd ?? null,
+          isEnabled: policyByGroup.get(group.id)?.isEnabled ?? false,
+        })),
+      overrides,
+    }));
+  },
+);
+
+router.put(
+  "/directory/workspaces/:workspaceId/default-limit-policy",
+  requireUserLimitWorkspace,
+  async (req, res): Promise<void> => {
+    const parsed = SetWorkspaceDefaultLimitPolicyBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.message });
+      return;
+    }
+    const workspaceId = String(req.params["workspaceId"]);
+    const dir = await getDirectory();
+    const workspace = dir.workspaces.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: "Workspace not found" });
+      return;
+    }
+    try {
+      const outcomes = await setWorkspaceDefaultMemberLimitPolicy({
+        workspaceId,
+        displayName: workspace.name,
+        amountUsd: parsed.data.amountUsd,
+      });
+      res.json(SetWorkspaceDefaultLimitPolicyResponse.parse({
+        workspaceId,
+        sourceType: "workspace_default",
+        sourceId: workspaceId,
+        amountUsd: parsed.data.amountUsd,
+        outcomes: outcomes.map(policyOutcomeJson),
+      }));
+    } catch (error) {
+      sendBudgetConnectorError(error, res);
+    }
+  },
+);
+
+router.put(
+  "/directory/workspaces/:workspaceId/groups/:groupId/limit-policy",
+  requireUserLimitWorkspace,
+  async (req, res): Promise<void> => {
+    const parsed = SetGroupMemberLimitPolicyBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.message });
+      return;
+    }
+    const workspaceId = String(req.params["workspaceId"]);
+    const groupId = String(req.params["groupId"]);
+    try {
+      const outcomes = await setGroupMemberLimitPolicy({
+        workspaceId,
+        groupId,
+        amountUsd: parsed.data.amountUsd,
+      });
+      res.json(SetGroupMemberLimitPolicyResponse.parse({
+        workspaceId,
+        sourceType: "group",
+        sourceId: groupId,
+        amountUsd: parsed.data.amountUsd,
+        outcomes: outcomes.map(policyOutcomeJson),
+      }));
+    } catch (error) {
+      if (error instanceof Error && error.message === "Group not found in workspace") {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      sendBudgetConnectorError(error, res);
     }
   },
 );

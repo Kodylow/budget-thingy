@@ -1242,8 +1242,7 @@ paths:
       summary: List members and Agent budgets for a visible workspace
       description: >
         Usage is always for the current Replit billing cycle and is independent
-        of the dashboard reporting range. Budget connector failures are returned
-        explicitly and never fall back to the Enterprise API key.
+        of the dashboard reporting range. Budget failures are returned explicitly.
       parameters:
         - $ref: "#/components/parameters/WorkspaceIdPath"
       responses:
@@ -1296,6 +1295,108 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/limit-policies:
+    get:
+      operationId: getWorkspaceLimitPolicies
+      tags: [directory, budgets]
+      summary: Read member-limit policy state for a workspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      responses:
+        "200":
+          description: Workspace default, group baselines, and hand-set overrides
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceLimitPolicyView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/default-limit-policy:
+    put:
+      operationId: setWorkspaceDefaultLimitPolicy
+      tags: [directory, budgets]
+      summary: Set or clear the workspace-default member Agent limit policy
+      description: Applies members serially and reports every verified upstream outcome.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberLimitPolicyInput"
+      responses:
+        "200":
+          description: Policy saved and applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberLimitPolicyMutationResult"
+        "400":
+          description: Invalid policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/groups/{groupId}/limit-policy:
+    put:
+      operationId: setGroupMemberLimitPolicy
+      tags: [directory, budgets]
+      summary: Set or clear a member-group Agent limit baseline
+      description: The lowest applicable baseline wins; hand-set member overrides are preserved.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberLimitPolicyInput"
+      responses:
+        "200":
+          description: Policy saved and applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberLimitPolicyMutationResult"
+        "400":
+          description: Invalid policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /directory/workspaces/{workspaceId}/members/budget:
     put:
       operationId: bulkSetWorkspaceMemberBudgets
@@ -1304,7 +1405,7 @@ paths:
       description: >
         Account-wide operators only. User IDs are deduplicated, every requested
         user must be a current member of the visible workspace, and each
-        non-transactional Replit connector outcome is returned explicitly.
+        non-transactional Replit Budgets API outcome is returned explicitly.
       parameters:
         - $ref: "#/components/parameters/WorkspaceIdPath"
       requestBody:
@@ -1337,7 +1438,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
         "503":
-          description: Replit connector lacks write:budgets or is unavailable
+          description: Replit Budgets API key lacks write:budgets or is unavailable
           content:
             application/json:
               schema:
@@ -1347,7 +1448,7 @@ paths:
       operationId: setWorkspaceMemberBudget
       tags: [directory, budgets]
       summary: Set or replace a member's desired Agent budget
-      description: Account-wide operators only. The Replit connector is the sole credential source.
+      description: Authorized account and workspace administrators use the configured Enterprise budgets key.
       parameters:
         - $ref: "#/components/parameters/WorkspaceIdPath"
         - $ref: "#/components/parameters/UserIdPath"
@@ -1978,7 +2079,7 @@ components:
           type: number
     Group:
       type: object
-      required: [groupId, workspaceId, workspaceName, name, familyKey, familyName, role, isLegacy, teamName, type, spendUsd, paceSpendUsd, projectSpendUsd, rollupSpendUsd, rollupMemberCount, thresholdsFired, history]
+      required: [groupId, workspaceId, workspaceName, name, familyKey, familyName, role, isLegacy, teamName, type, spendUsd, paceSpendUsd, projectSpendUsd, rollupSpendUsd, rollupMemberCount, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentPercentUsed, agentRemainingUsd, agentBlocked, thresholdsFired, history]
       properties:
         groupId:
           type: string
@@ -2045,6 +2146,18 @@ components:
         percentUsed:
           type: ["number", "null"]
           description: spend / budget * 100, null if no budget or spend not loaded
+        monthlyAgentLimitUsd:
+          type: ["number", "null"]
+          description: Current upstream Replit Agent group limit.
+        cycleAgentSpendUsd:
+          type: number
+          description: Agent spend in the current Replit billing cycle.
+        agentPercentUsed:
+          type: ["number", "null"]
+        agentRemainingUsd:
+          type: ["number", "null"]
+        agentBlocked:
+          type: boolean
         thresholdsFired:
           type: array
           description: Thresholds (50, 75, 90, 100) already alerted this billing period
@@ -2495,7 +2608,7 @@ components:
           type: [string, "null"]
     WorkspaceMemberBudget:
       type: object
-      required: [userId, username, name, email, role, isDisabled, budgetUsd, usageUsd, remainingUsd]
+      required: [userId, username, name, email, role, isDisabled, budgetUsd, usageUsd, remainingUsd, percentUsed, blocked, effectiveBaselineUsd, baselineSourceType, baselineSourceId, isHandSetOverride]
       properties:
         userId:
           type: string
@@ -2518,6 +2631,20 @@ components:
         remainingUsd:
           type: [number, "null"]
           description: Budget minus current-cycle Agent usage; may be negative and is null when unset.
+        percentUsed:
+          type: [number, "null"]
+        blocked:
+          type: boolean
+          description: Current-cycle Agent usage is at or above the effective member limit.
+        effectiveBaselineUsd:
+          type: [number, "null"]
+        baselineSourceType:
+          type: [string, "null"]
+          enum: [group, workspace_default, null]
+        baselineSourceId:
+          type: [string, "null"]
+        isHandSetOverride:
+          type: boolean
     WorkspaceMembersResponse:
       type: object
       required: [workspaceId, workspaceName, billingPeriod, connector, members]
@@ -2592,6 +2719,77 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WorkspaceMemberBulkBudgetOutcome"
+    MemberLimitPolicyInput:
+      type: object
+      additionalProperties: false
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: [number, "null"]
+          exclusiveMinimum: 0
+    MemberLimitPolicyOutcome:
+      type: object
+      required: [workspaceId, userId, desiredAmountUsd, sourceType, sourceId, previousAmountUsd, state, status, error]
+      properties:
+        workspaceId: { type: string }
+        userId: { type: string }
+        desiredAmountUsd: { type: [number, "null"] }
+        sourceType:
+          type: [string, "null"]
+          enum: [group, workspace_default, null]
+        sourceId: { type: [string, "null"] }
+        previousAmountUsd: { type: [number, "null"] }
+        state:
+          type: string
+          enum: [no_limit, policy_managed, hand_set_override]
+        status:
+          type: string
+          enum: [applied, cleared, unchanged, no_policy, override_preserved, failed]
+        error: { type: [string, "null"] }
+    MemberLimitPolicyMutationResult:
+      type: object
+      required: [workspaceId, sourceType, sourceId, amountUsd, outcomes]
+      properties:
+        workspaceId: { type: string }
+        sourceType:
+          type: string
+          enum: [group, workspace_default]
+        sourceId: { type: string }
+        amountUsd: { type: [number, "null"] }
+        outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberLimitPolicyOutcome"
+    GroupMemberLimitPolicy:
+      type: object
+      required: [groupId, groupName, amountUsd, isEnabled]
+      properties:
+        groupId: { type: string }
+        groupName: { type: string }
+        amountUsd: { type: [number, "null"] }
+        isEnabled: { type: boolean }
+    MemberLimitOverride:
+      type: object
+      required: [userId, name, amountUsd]
+      properties:
+        userId: { type: string }
+        name: { type: [string, "null"] }
+        amountUsd: { type: number }
+    WorkspaceLimitPolicyView:
+      type: object
+      required: [workspaceId, workspaceName, defaultAmountUsd, groups, overrides]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: string }
+        defaultAmountUsd: { type: [number, "null"] }
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupMemberLimitPolicy"
+        overrides:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberLimitOverride"
     UsageLimitAudit:
       type: object
       required:
@@ -2633,12 +2831,22 @@ components:
           format: date-time
     TeamBudget:
       type: object
-      required: [teamName, amountUsd, workspaceIds]
+      required: [teamName, amountUsd, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentRemainingUsd, agentPercentUsed, agentBlocked, workspaceIds]
       properties:
         teamName:
           type: string
         amountUsd:
           type: ["number", "null"]
+        monthlyAgentLimitUsd:
+          type: ["number", "null"]
+        cycleAgentSpendUsd:
+          type: number
+        agentRemainingUsd:
+          type: ["number", "null"]
+        agentPercentUsed:
+          type: ["number", "null"]
+        agentBlocked:
+          type: boolean
         workspaceIds:
           type: array
           description: Visible workspaces containing groups assigned to this team.
@@ -3116,7 +3324,7 @@ components:
     Alert:
       type: object
       required:
-        [id, entityType, entityId, entityName, workspaceIds, threshold, spendUsd, budgetUsd, recipients, sentAt, status, currentSpendUsd, currentPercentUsed, currentUsageComplete]
+        [id, entityType, entityId, entityName, alertType, blockedMemberCount, workspaceIds, threshold, spendUsd, budgetUsd, recipients, sentAt, status, currentSpendUsd, currentPercentUsed, currentUsageComplete]
       properties:
         id:
           type: integer
@@ -3127,6 +3335,12 @@ components:
           type: string
         entityName:
           type: string
+        alertType:
+          type: string
+          enum: [allocation_threshold, member_limit_reached]
+        blockedMemberCount:
+          type: integer
+          minimum: 0
         workspaceIds:
           type: array
           items:

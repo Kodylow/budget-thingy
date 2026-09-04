@@ -10,6 +10,12 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
     getDirectory(),
     db.select().from(teamLimitTargetsTable),
   ]);
+  const cycleUsage = await usageForRequest(
+    req.authz!,
+    dir,
+    { rangeType: "billing" },
+    true,
+  );
   const scopedGroups = visibleGroups(req.authz!, dir.groups);
   const visibleTeams = new Set(
     scopedGroups
@@ -38,15 +44,39 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
     : budgets.filter((budget) => visibleTeams.has(budget.teamName));
   res.json(
     GetTeamsBudgetsResponse.parse({
-      budgets: visibleBudgets.map((b) => ({
-        teamName: b.teamName,
-        amountUsd: b.effectiveAmountUsd,
-        workspaceIds: [
-          ...(isAccountWide(req.authz)
-            ? allWorkspaceIdsByTeam.get(b.teamName) ?? []
-            : workspaceIdsByTeam.get(b.teamName) ?? []),
-        ].sort(),
-      })),
+      budgets: visibleBudgets.map((b) => {
+        const cycleAgentSpendUsd = scopedGroups
+          .filter((group) =>
+            targetTeamForGroup(group, dir.account, assignments) === b.teamName
+          )
+          .reduce((sum, group) =>
+            sum + [...(cycleUsage.rollup.aiSpendByGroup.get(group.id)?.values() ?? [])]
+              .reduce((subtotal, amount) => subtotal + amount, 0), 0);
+        const monthlyAgentLimitUsd =
+          b.monthlyLimitUsd != null && b.monthlyLimitUsd > 0
+          ? b.monthlyLimitUsd
+          : null;
+        return {
+          teamName: b.teamName,
+          amountUsd: b.effectiveAmountUsd,
+          monthlyAgentLimitUsd,
+          cycleAgentSpendUsd,
+          agentRemainingUsd: monthlyAgentLimitUsd == null
+            ? null
+            : monthlyAgentLimitUsd - cycleAgentSpendUsd,
+          agentPercentUsed: monthlyAgentLimitUsd == null
+            ? null
+            : (cycleAgentSpendUsd / monthlyAgentLimitUsd) * 100,
+          agentBlocked:
+            monthlyAgentLimitUsd != null &&
+            cycleAgentSpendUsd >= monthlyAgentLimitUsd,
+          workspaceIds: [
+            ...(isAccountWide(req.authz)
+              ? allWorkspaceIdsByTeam.get(b.teamName) ?? []
+              : workspaceIdsByTeam.get(b.teamName) ?? []),
+          ].sort(),
+        };
+      }),
     }),
   );
 });

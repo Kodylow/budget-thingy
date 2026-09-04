@@ -19,6 +19,7 @@ import {
   reconcileTeamBudgetsUpstream,
   refreshTeamBudgetSnapshot,
 } from "./team-budgets";
+import { applyAllMemberLimitPolicies } from "./member-limit-policies";
 
 const CUTOFF = "2026-05-20";
 const DAY_MS = 86_400_000;
@@ -85,12 +86,14 @@ export interface BackgroundCycleOperations {
   evaluateThresholds: () => Promise<unknown>;
   refreshTeamLimitDrift: () => Promise<unknown>;
   syncAllocationAdjustments: () => Promise<{ ok: boolean; error: string | null }>;
+  enforceMemberLimitPolicies: () => Promise<unknown>;
 }
 
 const defaultBackgroundCycleOperations: BackgroundCycleOperations = {
   evaluateThresholds: runCheck,
   refreshTeamLimitDrift: reconcileTeamBudgetsUpstream,
   syncAllocationAdjustments: refreshTeamBudgetSnapshot,
+  enforceMemberLimitPolicies: applyAllMemberLimitPolicies,
 };
 
 /**
@@ -119,6 +122,7 @@ export async function runBackgroundCycleOperations(
       throw new Error(result.error ?? "Allocation adjustment synchronization failed");
     }
   });
+  await attempt("member_limit_policy_enforcement", operations.enforceMemberLimitPolicies);
   if (failures.length > 0) {
     throw new AggregateError(failures, "One or more background cycle operations failed");
   }

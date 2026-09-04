@@ -64,6 +64,8 @@ import type {
   ListRecentUsageIngestRunsParams,
   LogoutBrowserSessionParams,
   LogoutSuccess,
+  MemberLimitPolicyInput,
+  MemberLimitPolicyMutationResult,
   MobileTokenExchangeRequest,
   MobileTokenExchangeSuccess,
   OkResponse,
@@ -90,6 +92,7 @@ import type {
   UsageLimitAudit,
   UserActivityResponse,
   VisibleWorkspace,
+  WorkspaceLimitPolicyView,
   WorkspaceMemberBudgetInput,
   WorkspaceMemberBudgetMutation,
   WorkspaceMemberBulkBudgetInput,
@@ -3502,7 +3505,7 @@ export const getListVisibleWorkspaceMembersUrl = (workspaceId: string,) => {
 }
 
 /**
- * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget connector failures are returned explicitly and never fall back to the Enterprise API key.
+ * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget failures are returned explicitly.
  * @summary List members and Agent budgets for a visible workspace
  */
 export const listVisibleWorkspaceMembers = async (workspaceId: string, options?: RequestInit): Promise<WorkspaceMembersResponse> => {
@@ -3649,6 +3652,231 @@ export function useListWorkspaceUsageLimitAudits<TData = Awaited<ReturnType<type
 
 
 
+export const getGetWorkspaceLimitPoliciesUrl = (workspaceId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/limit-policies`
+}
+
+/**
+ * @summary Read member-limit policy state for a workspace
+ */
+export const getWorkspaceLimitPolicies = async (workspaceId: string, options?: RequestInit): Promise<WorkspaceLimitPolicyView> => {
+
+  return customFetch<WorkspaceLimitPolicyView>(getGetWorkspaceLimitPoliciesUrl(workspaceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWorkspaceLimitPoliciesQueryKey = (workspaceId: string,) => {
+    return [
+    `/api/directory/workspaces/${workspaceId}/limit-policies`
+    ] as const;
+    }
+
+
+export const getGetWorkspaceLimitPoliciesQueryOptions = <TData = Awaited<ReturnType<typeof getWorkspaceLimitPolicies>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceLimitPolicies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkspaceLimitPoliciesQueryKey(workspaceId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkspaceLimitPolicies>>> = ({ signal }) => getWorkspaceLimitPolicies(workspaceId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workspaceId !== null && workspaceId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceLimitPolicies>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWorkspaceLimitPoliciesQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkspaceLimitPolicies>>>
+export type GetWorkspaceLimitPoliciesQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Read member-limit policy state for a workspace
+ */
+
+export function useGetWorkspaceLimitPolicies<TData = Awaited<ReturnType<typeof getWorkspaceLimitPolicies>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ workspaceId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceLimitPolicies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWorkspaceLimitPoliciesQueryOptions(workspaceId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSetWorkspaceDefaultLimitPolicyUrl = (workspaceId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/default-limit-policy`
+}
+
+/**
+ * Applies members serially and reports every verified upstream outcome.
+ * @summary Set or clear the workspace-default member Agent limit policy
+ */
+export const setWorkspaceDefaultLimitPolicy = async (workspaceId: string,
+    memberLimitPolicyInput: MemberLimitPolicyInput, options?: RequestInit): Promise<MemberLimitPolicyMutationResult> => {
+
+  return customFetch<MemberLimitPolicyMutationResult>(getSetWorkspaceDefaultLimitPolicyUrl(workspaceId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(memberLimitPolicyInput)
+  }
+);}
+
+
+
+
+
+export const getSetWorkspaceDefaultLimitPolicyMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setWorkspaceDefaultLimitPolicy>>, TError,{workspaceId: string;data: BodyType<MemberLimitPolicyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setWorkspaceDefaultLimitPolicy>>, TError,{workspaceId: string;data: BodyType<MemberLimitPolicyInput>}, TContext> => {
+
+const mutationKey = ['setWorkspaceDefaultLimitPolicy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setWorkspaceDefaultLimitPolicy>>, {workspaceId: string;data: BodyType<MemberLimitPolicyInput>}> = (props) => {
+          const {workspaceId,data} = props ?? {};
+
+          return  setWorkspaceDefaultLimitPolicy(workspaceId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetWorkspaceDefaultLimitPolicyMutationResult = NonNullable<Awaited<ReturnType<typeof setWorkspaceDefaultLimitPolicy>>>
+    export type SetWorkspaceDefaultLimitPolicyMutationBody = BodyType<MemberLimitPolicyInput>
+    export type SetWorkspaceDefaultLimitPolicyMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Set or clear the workspace-default member Agent limit policy
+ */
+export const useSetWorkspaceDefaultLimitPolicy = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setWorkspaceDefaultLimitPolicy>>, TError,{workspaceId: string;data: BodyType<MemberLimitPolicyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setWorkspaceDefaultLimitPolicy>>,
+        TError,
+        {workspaceId: string;data: BodyType<MemberLimitPolicyInput>},
+        TContext
+      > => {
+      return useMutation(getSetWorkspaceDefaultLimitPolicyMutationOptions(options));
+    }
+
+export const getSetGroupMemberLimitPolicyUrl = (workspaceId: string,
+    groupId: string,) => {
+
+
+
+
+  return `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/groups/${encodeURIComponent(String(groupId))}/limit-policy`
+}
+
+/**
+ * The lowest applicable baseline wins; hand-set member overrides are preserved.
+ * @summary Set or clear a member-group Agent limit baseline
+ */
+export const setGroupMemberLimitPolicy = async (workspaceId: string,
+    groupId: string,
+    memberLimitPolicyInput: MemberLimitPolicyInput, options?: RequestInit): Promise<MemberLimitPolicyMutationResult> => {
+
+  return customFetch<MemberLimitPolicyMutationResult>(getSetGroupMemberLimitPolicyUrl(workspaceId,groupId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(memberLimitPolicyInput)
+  }
+);}
+
+
+
+
+
+export const getSetGroupMemberLimitPolicyMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGroupMemberLimitPolicy>>, TError,{workspaceId: string;groupId: string;data: BodyType<MemberLimitPolicyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setGroupMemberLimitPolicy>>, TError,{workspaceId: string;groupId: string;data: BodyType<MemberLimitPolicyInput>}, TContext> => {
+
+const mutationKey = ['setGroupMemberLimitPolicy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setGroupMemberLimitPolicy>>, {workspaceId: string;groupId: string;data: BodyType<MemberLimitPolicyInput>}> = (props) => {
+          const {workspaceId,groupId,data} = props ?? {};
+
+          return  setGroupMemberLimitPolicy(workspaceId,groupId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetGroupMemberLimitPolicyMutationResult = NonNullable<Awaited<ReturnType<typeof setGroupMemberLimitPolicy>>>
+    export type SetGroupMemberLimitPolicyMutationBody = BodyType<MemberLimitPolicyInput>
+    export type SetGroupMemberLimitPolicyMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Set or clear a member-group Agent limit baseline
+ */
+export const useSetGroupMemberLimitPolicy = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGroupMemberLimitPolicy>>, TError,{workspaceId: string;groupId: string;data: BodyType<MemberLimitPolicyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setGroupMemberLimitPolicy>>,
+        TError,
+        {workspaceId: string;groupId: string;data: BodyType<MemberLimitPolicyInput>},
+        TContext
+      > => {
+      return useMutation(getSetGroupMemberLimitPolicyMutationOptions(options));
+    }
+
 export const getBulkSetWorkspaceMemberBudgetsUrl = (workspaceId: string,) => {
 
 
@@ -3658,7 +3886,7 @@ export const getBulkSetWorkspaceMemberBudgetsUrl = (workspaceId: string,) => {
 }
 
 /**
- * Account-wide operators only. User IDs are deduplicated, every requested user must be a current member of the visible workspace, and each non-transactional Replit connector outcome is returned explicitly.
+ * Account-wide operators only. User IDs are deduplicated, every requested user must be a current member of the visible workspace, and each non-transactional Replit Budgets API outcome is returned explicitly.
  * @summary Set one Agent usage limit for multiple workspace members
  */
 export const bulkSetWorkspaceMemberBudgets = async (workspaceId: string,
@@ -3732,7 +3960,7 @@ export const getSetWorkspaceMemberBudgetUrl = (workspaceId: string,
 }
 
 /**
- * Account-wide operators only. The Replit connector is the sole credential source.
+ * Authorized account and workspace administrators use the configured Enterprise budgets key.
  * @summary Set or replace a member's desired Agent budget
  */
 export const setWorkspaceMemberBudget = async (workspaceId: string,

@@ -15,6 +15,8 @@ import {
   useBulkSetWorkspaceMemberBudgets,
   useListWorkspaceUsageLimitAudits,
   getListWorkspaceUsageLimitAuditsQueryKey,
+  useGetWorkspaceLimitPolicies,
+  getGetWorkspaceLimitPoliciesQueryKey,
 } from '@workspace/api-client-react';
 import { useRange } from '@/components/range-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -44,6 +46,9 @@ import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
+import { UsageLimitDialog } from '@/components/usage-limit-dialog';
+import { invalidateBudgetCaches } from '@/components/member-budget-input';
+import { WorkspacePolicyControl } from '@/components/policy-control';
 
 interface MergedMember {
   userId: string;
@@ -86,6 +91,7 @@ export default function ClusterDetail() {
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
   const [bulkLimit, setBulkLimit] = useState('');
   const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
 
   const { rangeType, startDate, endDate } = useRange();
   const clusterKey = groupIds.join(',');
@@ -213,8 +219,9 @@ export default function ClusterDetail() {
   const mergedProjects: ClusterProject[] = clusterProjectsData?.projects ?? [];
   const projectsUnattributedSpend = clusterProjectsData?.unattributedSpendUsd ?? 0;
 
-  const firstGroupData = results.find((r) => r.data)?.data;
-  const workspaceId = firstGroupData?.group.workspaceId;
+  const workspaceIds = useMemo(() => new Set(results.map(r => r.data?.group.workspaceId).filter(Boolean)), [results]);
+  const isSingleWorkspace = workspaceIds.size === 1;
+  const workspaceId = isSingleWorkspace ? [...workspaceIds][0] : undefined;
 
   const workspaceMembersQuery = useListVisibleWorkspaceMembers(workspaceId as string, {
     query: {
@@ -271,11 +278,19 @@ export default function ClusterDetail() {
   const displayedSelectedCount =
     displayedMemberIds.filter((userId) => selectedMemberIds.has(userId)).length;
 
-  const applyBulkLimit = async () => {
+  const workspacePoliciesQuery = useGetWorkspaceLimitPolicies(workspaceId as string, {
+    query: {
+      enabled: Boolean(workspaceId && capabilities.canWriteUserLimitsIn.includes(workspaceId)),
+      queryKey: workspaceId ? getGetWorkspaceLimitPoliciesQueryKey(workspaceId) : ['getWorkspaceLimitPolicies', ''],
+      refetchInterval: DATA_REFRESH_INTERVAL_MS,
+    }
+  });
+
+  const handleBulkApplyClick = () => {
     const amountUsd = Number(bulkLimit);
     if (!workspaceId || !Number.isFinite(amountUsd) || amountUsd <= 0) {
       toast({
-        title: 'Invalid usage limit',
+        title: 'Invalid Agent limit',
         description: 'Enter a positive USD amount.',
         variant: 'destructive',
       });
@@ -283,6 +298,13 @@ export default function ClusterDetail() {
     }
     const userIds = displayedMemberIds.filter((userId) => selectedMemberIds.has(userId));
     if (userIds.length === 0) return;
+    setBulkConfirmOpen(true);
+  };
+
+  const applyBulkLimit = async () => {
+    const amountUsd = Number(bulkLimit);
+    const userIds = displayedMemberIds.filter((userId) => selectedMemberIds.has(userId));
+    if (userIds.length === 0 || !workspaceId) return;
     setBulkApplying(true);
     const outcomes: Array<{ userId: string; success: boolean }> = [];
     for (const batch of chunkMemberIds(userIds)) {
@@ -300,12 +322,7 @@ export default function ClusterDetail() {
     const succeeded = outcomes.length - failed.size;
     setSelectedMemberIds(failed);
     if (succeeded > 0) {
-      await queryClient.invalidateQueries({
-        queryKey: getListVisibleWorkspaceMembersQueryKey(workspaceId),
-      });
-      await queryClient.invalidateQueries({
-        queryKey: getListWorkspaceUsageLimitAuditsQueryKey(workspaceId),
-      });
+      invalidateBudgetCaches(queryClient, workspaceId);
     }
     setBulkApplying(false);
     toast({
@@ -347,7 +364,7 @@ export default function ClusterDetail() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3 flex-wrap">
-             {firstGroupData?.group.familyName ?? clusterName}
+             {results.find(r => r.data)?.data?.group.familyName ?? clusterName}
             <div className="flex gap-1.5">
               {sortedRoleLabels.map((r) => (
                 <span
@@ -360,7 +377,7 @@ export default function ClusterDetail() {
             </div>
           </h1>
           <p className="text-muted-foreground mt-1 text-sm md:text-base">
-            {firstGroupData?.group.workspaceName ? `Workspace: ${firstGroupData.group.workspaceName} • ` : ''}
+            {workspaceId ? `Workspace: ${results.find(r => r.data)?.data?.group.workspaceName} • ` : ''}
             {mergedMembers.length} unique member{mergedMembers.length !== 1 ? 's' : ''}
             {rangeLabel ? ` • ${rangeLabel}` : ''}
           </p>
@@ -437,6 +454,12 @@ export default function ClusterDetail() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {canEditLimits && workspaceId && (
+            <WorkspacePolicyControl
+              workspaceId={workspaceId}
+              currentAmount={workspacePoliciesQuery.data?.defaultAmountUsd ?? null}
+            />
+          )}
           {canEditLimits && (
             <div className="mb-4 flex flex-col gap-2 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center">
               <div className="text-sm font-medium min-w-fit">
@@ -454,10 +477,10 @@ export default function ClusterDetail() {
                 disabled={!canEditLimits || bulkApplying}
               />
               <Button
-                onClick={applyBulkLimit}
+                onClick={handleBulkApplyClick}
                 disabled={!canEditLimits || displayedSelectedCount === 0 || bulkApplying}
               >
-                {bulkApplying ? 'Applying…' : 'Apply usage limit'}
+                {bulkApplying ? 'Applying…' : 'Apply Agent limit'}
               </Button>
               <span className="text-xs text-muted-foreground">
                 {editingDisabledReason ??
@@ -485,8 +508,11 @@ export default function ClusterDetail() {
                   )}
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Member</th>
                   <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Role</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Usage limit</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Spend</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground py-3 px-4">Status</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Agent Limit</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Agent Spend</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Agent Remaining</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground py-3 px-4">Overall Spend</th>
                 </tr>
               </thead>
               <tbody>
@@ -543,6 +569,13 @@ export default function ClusterDetail() {
                               ))}
                         </div>
                       </td>
+                      <td className="py-3 px-4 align-middle">
+                        {wsm?.budgetUsd != null && wsm?.usageUsd != null && wsm.usageUsd >= wsm.budgetUsd ? (
+                          <Badge variant="destructive" className="uppercase text-[10px]" data-testid={`badge-blocked-${member.userId}`}>Blocked</Badge>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">Active</span>
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-right align-middle w-32">
                         {workspaceMembersQuery.isLoading ? (
                           <div className="flex justify-end"><LoadingCell /></div>
@@ -556,6 +589,20 @@ export default function ClusterDetail() {
                           />
                         ) : (
                           <span className="text-muted-foreground text-sm">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right align-middle">
+                        {workspaceMembersQuery.isLoading ? <div className="flex justify-end"><LoadingCell /></div> : (
+                          wsm?.usageUsd != null ? <span className="text-sm font-mono tabular-nums">${wsm.usageUsd.toFixed(2)}</span> : <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right align-middle">
+                        {workspaceMembersQuery.isLoading ? <div className="flex justify-end"><LoadingCell /></div> : (
+                          wsm?.remainingUsd != null ? (
+                            <span className={`text-sm font-mono tabular-nums ${wsm.remainingUsd <= 0 ? 'text-destructive font-bold' : ''}`}>
+                               {wsm.remainingUsd < 0 ? '-' : ''}${Math.abs(wsm.remainingUsd).toFixed(2)}
+                            </span>
+                          ) : <span className="text-sm text-muted-foreground">—</span>
                         )}
                       </td>
                       <td className="py-3 px-4 text-right align-middle">
@@ -580,8 +627,11 @@ export default function ClusterDetail() {
                         </span>
                       </div>
                     </td>
-                    <td className="py-3 px-4" />
-                    <td className="py-3 px-4" />
+                    <td className="py-3 px-4" /> {/* Role */}
+                    <td className="py-3 px-4" /> {/* Status */}
+                    <td className="py-3 px-4" /> {/* Agent Limit */}
+                    <td className="py-3 px-4" /> {/* Agent Spend */}
+                    <td className="py-3 px-4" /> {/* Agent Remaining */}
                     <td className="py-3 px-4 text-right">
                       <span className="text-sm font-mono tabular-nums">
                         ${totalUnattributedSpend.toFixed(2)}
@@ -594,8 +644,11 @@ export default function ClusterDetail() {
                 <tr className="bg-muted/30 font-medium border-t border-border">
                   {canEditLimits && <td className="py-3 pl-4" />}
                   <td className="py-3 px-4 text-sm">Combined Total</td>
-                  <td className="py-3 px-4" />
-                  <td className="py-3 px-4" />
+                  <td className="py-3 px-4" /> {/* Role */}
+                  <td className="py-3 px-4" /> {/* Status */}
+                  <td className="py-3 px-4" /> {/* Agent Limit */}
+                  <td className="py-3 px-4" /> {/* Agent Spend */}
+                  <td className="py-3 px-4" /> {/* Agent Remaining */}
                   <td className="py-3 px-4 text-right">
                     <span className="text-sm font-mono tabular-nums">
                       ${(totalMembersSpend + totalUnattributedSpend).toFixed(2)}
@@ -676,6 +729,20 @@ export default function ClusterDetail() {
           </CardContent>
         </Card>
       )}
+
+      <UsageLimitDialog
+        open={bulkConfirmOpen}
+        onOpenChange={setBulkConfirmOpen}
+        onConfirm={applyBulkLimit}
+        title="Set Bulk Agent Limit"
+        description={
+          <>
+            <p>Setting a limit of <strong>${Number(bulkLimit).toFixed(2)}</strong> for {displayedSelectedCount} member{displayedSelectedCount === 1 ? '' : 's'} will <strong>hard-block their Agent usage</strong> when reached in the current cycle.</p>
+            <p>This action takes effect immediately.</p>
+          </>
+        }
+        confirmText="Set Limits"
+      />
 
       <Card>
         <CardHeader>

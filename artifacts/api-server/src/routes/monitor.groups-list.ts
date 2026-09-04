@@ -8,6 +8,8 @@ router.get("/groups", async (req, res): Promise<void> => {
     const dir = await getDirectory();
     const usage = await usageForRequest(
       req.authz!, dir, req.query as Record<string, unknown>, true);
+    const cycleUsage = await usageForRequest(
+      req.authz!, dir, { rangeType: "billing" }, true);
     const dailyRollups = await dailyUsageRollups(dir, usage);
     const [budgets, assignments, teamSnapshot, teamRows] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -44,6 +46,15 @@ router.get("/groups", async (req, res): Promise<void> => {
       const budget = effectiveGroupBudget(
         resolveCanonicalMergedGroupBudget(group.id, mergePlan, budgetMap)?.amountUsd);
       const hasBudget = budget.amountUsd != null && budget.amountUsd > 0;
+      const monthlyAgentLimitUsd =
+        dir.budgets.groupLimits.get(group.workspaceId)?.get(group.id) ?? null;
+      const cycleAgentSpendUsd = sourceIds.reduce(
+        (sum, id) =>
+          sum + [...(cycleUsage.rollup.aiSpendByGroup.get(id)?.values() ?? [])]
+            .reduce((subtotal, amount) => subtotal + amount, 0),
+        0,
+      );
+      const hasAgentLimit = monthlyAgentLimitUsd != null && monthlyAgentLimitUsd > 0;
       const canonicalGroup = dir.account.roleGroupsById.get(group.id)!;
       return {
         groupId: group.id, workspaceId: group.workspaceId,
@@ -66,6 +77,15 @@ router.get("/groups", async (req, res): Promise<void> => {
         budgetUsd: budget.amountUsd, budgetSource: budget.source,
         remainingUsd: hasBudget ? budget.amountUsd! - spendUsd : null,
         percentUsed: hasBudget ? (spendUsd / budget.amountUsd!) * 100 : null,
+        monthlyAgentLimitUsd,
+        cycleAgentSpendUsd,
+        agentRemainingUsd: hasAgentLimit
+          ? monthlyAgentLimitUsd! - cycleAgentSpendUsd
+          : null,
+        agentPercentUsed: hasAgentLimit
+          ? (cycleAgentSpendUsd / monthlyAgentLimitUsd!) * 100
+          : null,
+        agentBlocked: hasAgentLimit && cycleAgentSpendUsd >= monthlyAgentLimitUsd!,
         thresholdsFired: fired.get(group.id) ?? [],
         history: [...dailyRollups].map(([date, daily]) => ({
           date,
@@ -92,6 +112,8 @@ router.get("/groups", async (req, res): Promise<void> => {
         rawMemberSpendUsd: 0, rawMemberSpendLoaded: false,
         spendUpdatedAt: usage.snapshot.dataAsOf, budgetUsd: null, budgetSource: null,
         remainingUsd: null, percentUsed: null, thresholdsFired: [], history: [],
+        monthlyAgentLimitUsd: null, cycleAgentSpendUsd: 0,
+        agentRemainingUsd: null, agentPercentUsed: null, agentBlocked: false,
         projectedSpendUsd: null,
       });
     }

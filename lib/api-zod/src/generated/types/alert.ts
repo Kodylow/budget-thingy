@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AlertAlertType } from './alertAlertType';
 import type { AlertEntityType } from './alertEntityType';
 
 export interface Alert {
@@ -12,6 +13,9 @@ export interface Alert {
   entityType: AlertEntityType;
   entityId: string;
   entityName: string;
+  alertType: AlertAlertType;
+  /** @minimum 0 */
+  blockedMemberCount: number;
   workspaceIds: string[];
   /** Threshold percent crossed (50, 75, 90, 100) */
   threshold: number;

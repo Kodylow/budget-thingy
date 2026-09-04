@@ -554,6 +554,8 @@ export function alertToJson(
     entityType: a.entityType,
     entityId: a.entityId || a.groupId,
     entityName: a.entityName || a.groupName,
+    alertType: a.alertType,
+    blockedMemberCount: a.blockedMemberCount,
     workspaceIds: a.workspaceIds,
     threshold: a.threshold,
     spendUsd: a.spendUsd,

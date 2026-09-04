@@ -4,6 +4,8 @@ const CONNECTOR = "replit";
 const BUDGETS_API_BASE_URL = "https://api.replit.com";
 const BUDGETS_API_KEY_ENV = "REPLIT_ENTERPRISE_API_KEY_BUDGETS";
 const MAX_PAGES = 200;
+const MAX_REQUEST_ATTEMPTS = 3;
+const MAX_RETRY_DELAY_MS = 60_000;
 
 export type BudgetConnectorStatus = "available" | "unavailable" | "error";
 
@@ -62,9 +64,16 @@ export class ReplitBudgetConnectorError extends Error {
     public readonly kind: Exclude<BudgetConnectorStatus, "available">,
     message: string,
     public readonly upstreamStatus?: number,
+    public readonly requestId?: string,
   ) {
     super(message);
+    this.name = "ReplitBudgetConnectorError";
   }
+}
+
+export interface ReplitBudgetWriteResult {
+  requestId?: string;
+  readbackRequestId?: string;
 }
 
 export interface ReplitBudgetRequest {
@@ -111,7 +120,7 @@ async function connectorCanWrite(): Promise<boolean> {
   // add a second local feature flag that can contradict the key's real grants;
   // the Budgets API remains the source of truth and will reject unauthorized
   // writes with 401/403.
-  if (process.env[BUDGETS_API_KEY_ENV]) return true;
+  if (process.env[BUDGETS_API_KEY_ENV]?.trim()) return true;
   try {
     const connections = await new ReplitConnectors().listConnections({
       // The current connector API rejects the unsupported "integration"
@@ -145,7 +154,7 @@ async function enterpriseBudgetTransport(
   path: string,
   init: ReplitBudgetRequest,
 ): Promise<Response> {
-  const key = process.env[BUDGETS_API_KEY_ENV];
+  const key = process.env[BUDGETS_API_KEY_ENV]?.trim();
   if (!key) {
     throw new Error(`${BUDGETS_API_KEY_ENV} is not configured`);
   }
@@ -159,7 +168,7 @@ async function enterpriseBudgetTransport(
 }
 
 function configuredTransport(): ReplitBudgetTransport {
-  return process.env[BUDGETS_API_KEY_ENV]
+  return process.env[BUDGETS_API_KEY_ENV]?.trim()
     ? enterpriseBudgetTransport
     : connectorTransport;
 }
@@ -172,12 +181,62 @@ function errorKind(message: string): "unavailable" | "error" {
     : "error";
 }
 
-async function request(
+interface ReplitBudgetResponse {
+  body: unknown;
+  requestId?: string;
+}
+
+function upstreamRequestId(response: Response): string | undefined {
+  for (const name of [
+    "x-request-id",
+    "request-id",
+    "replit-request-id",
+    "x-replit-request-id",
+  ]) {
+    const value = response.headers.get(name)?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function retryDelayMs(response: Response): number {
+  const retryAfter = response.headers.get("retry-after")?.trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1_000, MAX_RETRY_DELAY_MS);
+    }
+    const date = Date.parse(retryAfter);
+    if (Number.isFinite(date)) {
+      return Math.min(Math.max(0, date - Date.now()), MAX_RETRY_DELAY_MS);
+    }
+  }
+
+  for (const name of [
+    "x-ratelimit-reset",
+    "ratelimit-reset",
+    "rate-limit-reset",
+  ]) {
+    const raw = response.headers.get(name)?.trim();
+    if (!raw) continue;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) continue;
+    if (value < 1_000_000_000) {
+      return Math.min(value * 1_000, MAX_RETRY_DELAY_MS);
+    }
+    const epochMs = value > 10_000_000_000 ? value : value * 1_000;
+    return Math.min(Math.max(0, epochMs - Date.now()), MAX_RETRY_DELAY_MS);
+  }
+  return 1_000;
+}
+
+async function requestDetailed(
   path: string,
   init: ReplitBudgetRequest,
-): Promise<unknown> {
+  requiredStatus?: number,
+): Promise<ReplitBudgetResponse> {
   let response: Response | undefined;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < MAX_REQUEST_ATTEMPTS; attempt++) {
     try {
       response = await (transportOverride ?? configuredTransport())(path, init);
     } catch (error) {
@@ -185,14 +244,20 @@ async function request(
         error instanceof Error ? error.message : "Replit connector unavailable";
       throw new ReplitBudgetConnectorError(errorKind(message), message);
     }
-    if (response.status !== 409 || attempt === 1) break;
-    const retryAfter = Number(response.headers.get("retry-after") ?? "1");
-    const delaySeconds =
-      Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : 1;
-    await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1_000));
+    if (
+      (response.status !== 409 && response.status !== 429) ||
+      attempt === MAX_REQUEST_ATTEMPTS - 1
+    ) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs(response!)));
   }
   if (!response) throw new Error("Replit budgets API returned no response");
-  if (!response.ok) {
+  const requestId = upstreamRequestId(response);
+  if (
+    !response.ok ||
+    (requiredStatus != null && response.status !== requiredStatus)
+  ) {
     const text = await response.text().catch(() => "");
     let message = text || `${response.status} ${response.statusText}`.trim();
     try {
@@ -212,16 +277,36 @@ async function request(
       /not.?connected|connector.*unavailable/i.test(message)
         ? "unavailable"
         : "error";
+    if (requiredStatus != null && response.ok) {
+      message = `expected HTTP ${requiredStatus}, received HTTP ${response.status}`;
+    }
     throw new ReplitBudgetConnectorError(
       kind,
       response.status === 400
         ? message
         : `Replit budgets API request failed: ${message}`,
       response.status,
+      requestId,
     );
   }
-  if (response.status === 204) return null;
-  return response.json();
+  if (response.status === 204) return { body: null, requestId };
+  try {
+    return { body: await response.json(), requestId };
+  } catch {
+    throw new ReplitBudgetConnectorError(
+      "error",
+      "Replit budgets API returned malformed JSON",
+      response.status,
+      requestId,
+    );
+  }
+}
+
+async function request(
+  path: string,
+  init: ReplitBudgetRequest,
+): Promise<unknown> {
+  return (await requestDetailed(path, init)).body;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -525,7 +610,89 @@ export async function setWorkspaceDefaultUserLimit(
   });
 }
 
-export async function setBudget(budget: ReplitBudgetWrite): Promise<void> {
+export interface ReversibleBudgetCanaryResult {
+  previousAmountUsd: number | null;
+  temporaryAmountUsd: number;
+  restoredAmountUsd: number | null;
+}
+
+export class ReversibleBudgetCanaryError extends Error {
+  constructor(
+    public readonly mutationError: unknown,
+    public readonly restorationError: unknown,
+  ) {
+    super(
+      restorationError
+        ? "Budget canary failed and the prior state could not be verified as restored"
+        : "Budget canary mutation failed after the prior state was restored",
+    );
+    this.name = "ReversibleBudgetCanaryError";
+  }
+}
+
+/**
+ * Exercise the verified write boundary on one member and always restore the
+ * exact prior desired state after the temporary write succeeds.
+ */
+export async function runReversibleMemberBudgetCanary(
+  workspaceId: string,
+  userId: string,
+  temporaryAmountUsd: number,
+): Promise<ReversibleBudgetCanaryResult> {
+  const snapshot = await listReplitMemberBudgets(workspaceId);
+  if (snapshot.status !== "available") {
+    throw new ReplitBudgetConnectorError(
+      snapshot.status,
+      snapshot.error ?? "Unable to read the current member limit",
+    );
+  }
+  const previousAmountUsd = snapshot.budgets.get(userId)?.budgetUsd ?? null;
+  let mutationError: unknown = null;
+  try {
+    await setReplitMemberBudget(workspaceId, userId, temporaryAmountUsd);
+  } catch (error) {
+    mutationError = error;
+  }
+  let restorationError: unknown = null;
+  try {
+    // A POST can reach upstream even when response parsing or readback fails.
+    // Therefore cleanup is unconditional once the mutation call has started.
+    await setReplitMemberBudget(workspaceId, userId, previousAmountUsd);
+  } catch (error) {
+    restorationError = error;
+  }
+  if (mutationError || restorationError) {
+    throw new ReversibleBudgetCanaryError(mutationError, restorationError);
+  }
+  return {
+    previousAmountUsd,
+    temporaryAmountUsd,
+    restoredAmountUsd: previousAmountUsd,
+  };
+}
+
+function assertAlphanumericId(name: string, value: string): void {
+  if (typeof value !== "string" || !/^[A-Za-z0-9]+$/.test(value)) {
+    throw new TypeError(`${name} must be a non-empty alphanumeric string`);
+  }
+}
+
+function validateBudgetWrite(budget: ReplitBudgetWrite): void {
+  if (!isBudgetType(budget.type)) {
+    throw new TypeError("type must be a supported Replit budget type");
+  }
+  assertAlphanumericId("workspaceId", budget.workspaceId);
+  if (budget.type === "workspace_group_limit") {
+    if (typeof budget.groupId !== "string" || budget.groupId.trim().length === 0) {
+      throw new TypeError("groupId must be a non-empty string");
+    }
+  }
+  if (
+    budget.type === "workspace_user_limit" &&
+    !/^[1-9]\d*$/.test(budget.userId)
+  ) {
+    throw new TypeError("userId must be a positive decimal string");
+  }
   if (
     budget.amountUsd !== null &&
     (!Number.isFinite(budget.amountUsd) || budget.amountUsd <= 0)
@@ -534,23 +701,162 @@ export async function setBudget(budget: ReplitBudgetWrite): Promise<void> {
       "amountUsd must be null or a finite number greater than zero",
     );
   }
-  if (!(await connectorCanWrite())) {
-    throw new ReplitBudgetConnectorError(
-      "unavailable",
-      "The approved Replit integration does not grant write:budgets",
-    );
+}
+
+function desiredBudgetBody(budget: ReplitBudgetWrite): Record<string, unknown> {
+  return {
+    type: budget.type,
+    workspaceId: budget.workspaceId,
+    ...(budget.type === "workspace_group_limit"
+      ? { groupId: budget.groupId }
+      : {}),
+    ...(budget.type === "workspace_user_limit"
+      ? { userId: budget.userId }
+      : {}),
+    currency: "USD",
+    period: "billing_cycle",
+    amountUsd: budget.amountUsd,
+  };
+}
+
+function hasTargetIdentity(value: unknown, budget: ReplitBudgetWrite): boolean {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    row.type === budget.type &&
+    row.workspaceId === budget.workspaceId &&
+    (budget.type !== "workspace_group_limit" ||
+      row.groupId === budget.groupId) &&
+    (budget.type !== "workspace_user_limit" || row.userId === budget.userId)
+  );
+}
+
+function matchesDesiredBudget(
+  value: unknown,
+  budget: ReplitBudgetWrite,
+): boolean {
+  if (!hasTargetIdentity(value, budget) || !value || typeof value !== "object") {
+    return false;
   }
-  await request("/v1/budgets", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+  const row = value as Record<string, unknown>;
+  return (
+    row.currency === "USD" &&
+    row.period === "billing_cycle" &&
+    row.amountUsd === budget.amountUsd
+  );
+}
+
+function validationError(
+  message: string,
+  requestId?: string,
+): ReplitBudgetConnectorError {
+  return new ReplitBudgetConnectorError("error", message, 200, requestId);
+}
+
+async function readbackBudget(
+  budget: ReplitBudgetWrite,
+): Promise<string | undefined> {
+  let cursor: string | null = null;
+  let requestId: string | undefined;
+  const matchingRows: unknown[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const query = new URLSearchParams({
       type: budget.type,
       workspaceId: budget.workspaceId,
-      ...("groupId" in budget ? { groupId: budget.groupId } : {}),
-      ...("userId" in budget ? { userId: budget.userId } : {}),
-      currency: "USD",
-      period: "billing_cycle",
-      amountUsd: budget.amountUsd,
-    }),
-  });
+      limit: "100",
+    });
+    if (cursor) query.set("cursor", cursor);
+    const response = await requestDetailed(`/v1/budgets?${query}`, {
+      method: "GET",
+    });
+    requestId = response.requestId ?? requestId;
+    let rows: unknown[];
+    try {
+      rows = pageRows(response.body);
+    } catch (error) {
+      throw validationError(
+        error instanceof Error
+          ? error.message
+          : "Replit budgets API returned an invalid readback page",
+        response.requestId,
+      );
+    }
+    matchingRows.push(
+      ...rows.filter((row) => hasTargetIdentity(row, budget)),
+    );
+    cursor = nextCursor(response.body);
+    if (!cursor) {
+      if (budget.amountUsd === null) {
+        if (matchingRows.length !== 0) {
+          throw validationError(
+            "Replit budgets API readback did not confirm the cleared desired state",
+            requestId,
+          );
+        }
+      } else if (
+        matchingRows.length !== 1 ||
+        !matchesDesiredBudget(matchingRows[0], budget)
+      ) {
+        throw validationError(
+          "Replit budgets API readback did not match the requested desired state",
+          requestId,
+        );
+      }
+      return requestId;
+    }
+  }
+  throw new ReplitBudgetConnectorError(
+    "error",
+    `Replit budgets pagination exceeded ${MAX_PAGES} pages during readback`,
+    undefined,
+    requestId,
+  );
+}
+
+export async function setBudget(
+  budget: ReplitBudgetWrite,
+): Promise<ReplitBudgetWriteResult> {
+  validateBudgetWrite(budget);
+  const hasEnterpriseKey = Boolean(process.env[BUDGETS_API_KEY_ENV]?.trim());
+  if (
+    (transportOverride && !(await connectorCanWrite())) ||
+    (!transportOverride && !hasEnterpriseKey)
+  ) {
+    throw new ReplitBudgetConnectorError(
+      "unavailable",
+      `${BUDGETS_API_KEY_ENV} is not configured for budget writes`,
+    );
+  }
+  const response = await requestDetailed("/v1/budgets", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(desiredBudgetBody(budget)),
+  }, 200);
+
+  if (
+    !response.body ||
+    typeof response.body !== "object" ||
+    !Object.prototype.hasOwnProperty.call(response.body, "data")
+  ) {
+    throw validationError(
+      "Replit budgets API returned an invalid budget update response",
+      response.requestId,
+    );
+  }
+  const data = (response.body as Record<string, unknown>).data;
+  if (
+    (budget.amountUsd === null && data !== null) ||
+    (budget.amountUsd !== null && !matchesDesiredBudget(data, budget))
+  ) {
+    throw validationError(
+      "Replit budgets API response did not match the requested desired state",
+      response.requestId,
+    );
+  }
+
+  const readbackRequestId = await readbackBudget(budget);
+  return {
+    ...(response.requestId ? { requestId: response.requestId } : {}),
+    ...(readbackRequestId ? { readbackRequestId } : {}),
+  };
 }

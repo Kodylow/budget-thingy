@@ -72,6 +72,18 @@ export interface Group {
      * @nullable
      */
   percentUsed?: number | null;
+  /**
+     * Current upstream Replit Agent group limit.
+     * @nullable
+     */
+  monthlyAgentLimitUsd: number | null;
+  /** Agent spend in the current Replit billing cycle. */
+  cycleAgentSpendUsd: number;
+  /** @nullable */
+  agentPercentUsed: number | null;
+  /** @nullable */
+  agentRemainingUsd: number | null;
+  agentBlocked: boolean;
   /** Thresholds (50, 75, 90, 100) already alerted this billing period */
   thresholdsFired: number[];
   /** Daily spend snapshots for the current billing period, oldest first */

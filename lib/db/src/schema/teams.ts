@@ -10,7 +10,9 @@ import {
   unique,
   boolean,
   jsonb,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -68,6 +70,67 @@ export const workspaceDefaultLimitTargetsTable = pgTable(
     monthlyLimitUsd: doublePrecision("monthly_limit_usd").notNull().default(1),
     isEnabled: boolean("is_enabled").notNull().default(true),
   },
+);
+
+/**
+ * Durable per-group baselines for workspace user limits. A null amount is kept
+ * as an explicit disabled/cleared desired state so removing a policy can be
+ * reconciled without losing its identity before affected members are visited.
+ */
+export const groupUserLimitPoliciesTable = pgTable(
+  "group_user_limit_policies",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    groupId: text("group_id").notNull(),
+    amountUsd: doublePrecision("amount_usd"),
+    isEnabled: boolean("is_enabled").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      name: "group_user_limit_policies_pkey",
+      columns: [table.workspaceId, table.groupId],
+    }),
+    check(
+      "group_user_limit_policies_positive_amount",
+      sql`${table.amountUsd} is null or ${table.amountUsd} > 0`,
+    ),
+  ],
+);
+
+/**
+ * The last user limit written by the policy engine. This is deliberately
+ * separate from policy definitions: if the upstream value no longer matches
+ * lastAmountUsd, it is a hand-set override and must not be replaced.
+ */
+export const memberLimitPolicyAssignmentsTable = pgTable(
+  "member_limit_policy_assignments",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    lastAmountUsd: doublePrecision("last_amount_usd").notNull(),
+    sourceType: text("source_type")
+      .$type<"group" | "workspace_default">()
+      .notNull(),
+    sourceId: text("source_id").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      name: "member_limit_policy_assignments_pkey",
+      columns: [table.workspaceId, table.userId],
+    }),
+    check(
+      "member_limit_policy_assignments_positive_amount",
+      sql`${table.lastAmountUsd} > 0`,
+    ),
+  ],
 );
 
 export const teamBudgetsTable = pgTable("team_budgets", {

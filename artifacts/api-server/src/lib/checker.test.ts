@@ -46,6 +46,7 @@ const GROUP: TestGroup = {
 };
 let groups: TestGroup[] = [GROUP];
 let groupMembers = new Map<string, string[]>([[GROUP.id, ["u-1"]]]);
+let userLimits = new Map<string, Map<string, number>>();
 
 vi.mock("./enterprise", async () => {
   const actual = await vi.importActual<typeof import("./enterprise")>("./enterprise");
@@ -82,7 +83,7 @@ vi.mock("./enterprise", async () => {
         }),
         budgets: {
           groupLimits: new Map(),
-          userLimits: new Map(),
+          userLimits,
           workspaceDefaults: new Map(),
         },
       };
@@ -129,17 +130,20 @@ beforeEach(async () => {
       id SERIAL PRIMARY KEY, group_id TEXT NOT NULL, group_name TEXT NOT NULL,
       entity_type TEXT NOT NULL DEFAULT 'group', entity_id TEXT NOT NULL DEFAULT '',
       entity_name TEXT NOT NULL DEFAULT '', workspace_ids TEXT[] NOT NULL DEFAULT '{}',
+      alert_type TEXT NOT NULL DEFAULT 'allocation_threshold',
       threshold INTEGER NOT NULL, spend_usd DOUBLE PRECISION NOT NULL,
-      budget_usd DOUBLE PRECISION NOT NULL, recipients TEXT[] NOT NULL,
+      budget_usd DOUBLE PRECISION NOT NULL,
+      blocked_member_count INTEGER NOT NULL DEFAULT 0, recipients TEXT[] NOT NULL,
       status TEXT NOT NULL, error_message TEXT, data_as_of TIMESTAMPTZ,
       sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE alert_delivery_claims (
       id SERIAL PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
+      alert_type TEXT NOT NULL DEFAULT 'allocation_threshold',
       billing_period TEXT NOT NULL, threshold INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'claimed', claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      UNIQUE(entity_type, entity_id, billing_period, threshold)
+      UNIQUE(entity_type, entity_id, alert_type, billing_period, threshold)
     );
     CREATE TABLE fired_thresholds (
       id SERIAL PRIMARY KEY, group_id TEXT NOT NULL,
@@ -238,6 +242,7 @@ beforeEach(async () => {
   `);
   groups = [GROUP];
   groupMembers = new Map([[GROUP.id, ["u-1"]]]);
+  userLimits = new Map();
   sendEmailMock.mockReset().mockResolvedValue({ ok: true });
   invalidateUsageSnapshotMemo();
 });
@@ -557,5 +562,63 @@ describe("checker Postgres snapshot cutover", () => {
       .toEqual(["group", "team"]);
     expect(await getFiredThresholds(GROUP.id, PERIOD_START, "group")).toEqual([50]);
     expect(await getFiredThresholds("Platform", PERIOD_START, "team")).toEqual([50]);
+  });
+
+  it("sends one independent group alert with the blocked-member count", async () => {
+    groupMembers = new Map([[GROUP.id, ["u-1", "u-2"]]]);
+    userLimits = new Map([["ws-1", new Map([["u-1", 100], ["u-2", 200]])]]);
+    await pglite.exec(`UPDATE group_budgets SET amount_usd = 10000`);
+    await insertCompleteUsage({
+      "ws-1": [
+        { userId: "u-1", spendUsd: 100 },
+        { userId: "u-2", spendUsd: 250 },
+      ],
+    });
+
+    const first = await runCheck();
+    expect(first.alerts).toHaveLength(1);
+    expect(first.alerts[0]).toMatchObject({
+      alertType: "member_limit_reached",
+      blockedMemberCount: 2,
+      spendUsd: 350,
+      budgetUsd: 300,
+    });
+    expect(sendEmailMock.mock.calls[0]?.[1]).toContain("2 members have reached");
+    expect(sendEmailMock.mock.calls[0]?.[2]).toContain(
+      "2 members have reached the Agent usage limit",
+    );
+
+    expect((await runCheck()).alerts).toEqual([]);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes member-limit alerts independently and retries failed delivery", async () => {
+    userLimits = new Map([["ws-1", new Map([["u-1", 100]])]]);
+    await pglite.exec(`UPDATE group_budgets SET amount_usd = 100`);
+    await insertCompleteUsage({
+      "ws-1": [{ userId: "u-1", spendUsd: 120 }],
+    });
+    sendEmailMock
+      .mockResolvedValueOnce({ ok: false, error: "temporary" })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true });
+
+    const first = await runCheck();
+    expect(first.alerts.map((alert) => alert.alertType).sort()).toEqual([
+      "allocation_threshold",
+      "member_limit_reached",
+    ]);
+    expect(first.alerts.find((alert) => alert.alertType === "member_limit_reached"))
+      .toMatchObject({ status: "failed", blockedMemberCount: 1 });
+
+    const retry = await runCheck();
+    expect(retry.alerts).toHaveLength(1);
+    expect(retry.alerts[0]).toMatchObject({
+      alertType: "member_limit_reached",
+      status: "sent",
+      blockedMemberCount: 1,
+    });
+    expect((await runCheck()).alerts).toEqual([]);
+    expect(sendEmailMock).toHaveBeenCalledTimes(3);
   });
 });

@@ -153,6 +153,11 @@ interface TeamSection {
   budgetAllocationMethod: "full" | "proportional" | "equal";
   remainingUsd: number | null;
   percentUsed: number | null;
+  monthlyAgentLimitUsd: number | null;
+  cycleAgentSpendUsd: number;
+  agentRemainingUsd: number | null;
+  agentPercentUsed: number | null;
+  agentBlocked: boolean;
   groups: ReturnType<typeof useListGroups>["data"] extends { groups: infer G }
     ? G
     : never[];
@@ -276,6 +281,12 @@ export default function Dashboard() {
     }
     return m;
   }, [teamBudgetsData]);
+  const teamAgentStateMap = useMemo(
+    () => new Map(
+      (teamBudgetsData?.budgets ?? []).map((team) => [team.teamName, team]),
+    ),
+    [teamBudgetsData],
+  );
   const workspaceTeamSpendMap = useMemo(
     () => indexWorkspaceTeamSpend(groupsData?.workspaceTeamRawSpend ?? []),
     [groupsData?.workspaceTeamRawSpend],
@@ -358,6 +369,7 @@ export default function Dashboard() {
       const hasBudget = budgetUsd !== null && budgetUsd > 0;
       const remainingUsd = hasBudget ? budgetUsd! - spendUsd : null;
       const percentUsed = hasBudget ? (spendUsd / budgetUsd!) * 100 : null;
+      const agentState = teamAgentStateMap.get(teamName);
 
       teamSections.push({
         workspaceId: firstGroup.workspaceId,
@@ -373,6 +385,11 @@ export default function Dashboard() {
         budgetAllocationMethod: budgetAllocation?.method ?? "full",
         remainingUsd,
         percentUsed,
+        monthlyAgentLimitUsd: agentState?.monthlyAgentLimitUsd ?? null,
+        cycleAgentSpendUsd: agentState?.cycleAgentSpendUsd ?? 0,
+        agentRemainingUsd: agentState?.agentRemainingUsd ?? null,
+        agentPercentUsed: agentState?.agentPercentUsed ?? null,
+        agentBlocked: agentState?.agentBlocked ?? false,
         groups: teamGroups as any,
       });
     }
@@ -396,6 +413,15 @@ export default function Dashboard() {
           budgetAllocationMethod: "full",
           remainingUsd: budgetUsd != null && budgetUsd > 0 ? budgetUsd : null,
           percentUsed: budgetUsd != null && budgetUsd > 0 ? 0 : null,
+          monthlyAgentLimitUsd:
+            teamAgentStateMap.get(teamName)?.monthlyAgentLimitUsd ?? null,
+          cycleAgentSpendUsd:
+            teamAgentStateMap.get(teamName)?.cycleAgentSpendUsd ?? 0,
+          agentRemainingUsd:
+            teamAgentStateMap.get(teamName)?.agentRemainingUsd ?? null,
+          agentPercentUsed:
+            teamAgentStateMap.get(teamName)?.agentPercentUsed ?? null,
+          agentBlocked: teamAgentStateMap.get(teamName)?.agentBlocked ?? false,
           groups: [] as any,
         });
       }
@@ -416,6 +442,7 @@ export default function Dashboard() {
   }, [
     groups,
     teamBudgetMap,
+    teamAgentStateMap,
     groupsData,
     usageAvailable,
     isAccountWide,
@@ -598,10 +625,22 @@ export default function Dashboard() {
               <span className="text-sm text-muted-foreground">—</span>
             ) : (
               <>
-                <ThresholdBadge
-                  percentUsed={displayPercentUsed}
-                  thresholdsFired={group.thresholdsFired}
-                />
+                <div className="flex items-center gap-2">
+                  {group.agentBlocked && (
+                    <Badge
+                      variant="destructive"
+                      className="uppercase text-[10px]"
+                      data-testid={`badge-blocked-group-${group.groupId}`}
+                      title={`Agent spend $${group.cycleAgentSpendUsd.toFixed(2)} of ${group.monthlyAgentLimitUsd == null ? "no limit" : `$${group.monthlyAgentLimitUsd.toFixed(2)}`}`}
+                    >
+                      Blocked
+                    </Badge>
+                  )}
+                  <ThresholdBadge
+                    percentUsed={displayPercentUsed}
+                    thresholdsFired={group.thresholdsFired}
+                  />
+                </div>
                 <div className="h-1.5 w-full bg-muted overflow-hidden rounded-full">
                   <div
                     className={`h-full transition-all duration-500 ${displayPercentUsed >= 100 ? "bg-destructive" : "bg-primary"}`}
@@ -802,6 +841,16 @@ export default function Dashboard() {
               <span className="w-4" aria-hidden="true" />
             )}
             <span>{formatTeamName(team.teamName)}</span>
+            {team.agentBlocked && (
+              <Badge
+                variant="destructive"
+                className="uppercase text-[9px] h-4 px-1"
+                data-testid={`badge-blocked-team-${team.teamName}`}
+                title={`Agent spend $${team.cycleAgentSpendUsd.toFixed(2)} of ${team.monthlyAgentLimitUsd == null ? "no limit" : `$${team.monthlyAgentLimitUsd.toFixed(2)}`}`}
+              >
+                Blocked
+              </Badge>
+            )}
             {team.budgetIsShared && (
               <Badge
                 variant="outline"

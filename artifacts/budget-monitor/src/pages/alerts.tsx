@@ -100,7 +100,7 @@ export default function Alerts() {
         <CardHeader className="px-4 py-4 md:px-6 md:py-6">
           <CardTitle>Email Activity</CardTitle>
           <CardDescription>
-            Delivery history for threshold notifications, including recipients and failures.
+            Delivery history for allocated-pool and member-limit notifications, including recipients and failures.
             Test sends reuse the selected alert without changing threshold state.
           </CardDescription>
         </CardHeader>
@@ -138,19 +138,38 @@ export default function Alerts() {
                       <Badge variant="secondary" className="text-[10px] capitalize">
                         {alert.entityType}
                       </Badge>
-                      <Badge
-                        variant={alert.threshold >= 100 ? 'destructive' : 'outline'}
-                        className="font-mono text-xs"
-                        data-testid={`badge-threshold-${alert.id}`}
-                      >
-                        {alert.threshold}% threshold
-                      </Badge>
+                      {alert.alertType === 'member_limit_reached' ? (
+                        <Badge
+                          variant="destructive"
+                          className="text-xs"
+                          data-testid={`badge-limit-reached-${alert.id}`}
+                        >
+                          {alert.blockedMemberCount} {alert.blockedMemberCount === 1 ? 'member' : 'members'} blocked
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant={alert.threshold >= 100 ? 'destructive' : 'outline'}
+                          className="font-mono text-xs"
+                          data-testid={`badge-threshold-${alert.id}`}
+                        >
+                          {alert.threshold}% threshold
+                        </Badge>
+                      )}
                     </div>
                     <div className="text-sm text-muted-foreground space-y-1">
-                      <p data-testid={`text-spend-${alert.id}`}>
-                        Send-time snapshot: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Allocated pool:{' '}
-                        <span className="font-mono">${alert.budgetUsd.toFixed(2)}</span>
-                      </p>
+                      {alert.alertType === 'member_limit_reached' ? (
+                        <p data-testid={`text-spend-${alert.id}`}>
+                          Current-cycle Agent spend for blocked members:{' '}
+                          <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> across{' '}
+                          <span className="font-mono">{alert.blockedMemberCount}</span>{' '}
+                          {alert.blockedMemberCount === 1 ? 'member' : 'members'}
+                        </p>
+                      ) : (
+                        <p data-testid={`text-spend-${alert.id}`}>
+                          Send-time snapshot: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Allocated pool:{' '}
+                          <span className="font-mono">${alert.budgetUsd.toFixed(2)}</span>
+                        </p>
+                      )}
                       <p className="break-words" data-testid={`text-recipients-${alert.id}`}>
                         Recipients: {alert.recipients.join(', ')}
                       </p>
@@ -183,7 +202,7 @@ export default function Alerts() {
               <div>
                 <p className="font-medium">No alerts sent yet</p>
                 <p className="text-sm mt-1">
-                  Alerts will appear here when groups or teams cross allocated pool thresholds
+                  Alerts will appear here when allocated pools cross thresholds or members reach Agent limits
                 </p>
               </div>
             </div>

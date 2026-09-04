@@ -63,8 +63,9 @@ test("post-ingest responsibilities run once in their required order", async () =
       order.push("adjustments");
       return { ok: true, error: null };
     },
+    enforceMemberLimitPolicies: async () => { order.push("member-limits"); },
   });
-  expect(order).toEqual(["thresholds", "drift", "adjustments"]);
+  expect(order).toEqual(["thresholds", "drift", "adjustments", "member-limits"]);
 });
 
 test("post-ingest responsibilities all run before combined failure is reported", async () => {
@@ -79,8 +80,12 @@ test("post-ingest responsibilities all run before combined failure is reported",
       order.push("adjustments");
       return { ok: false, error: "adjustment failure" };
     },
+    enforceMemberLimitPolicies: async () => {
+      order.push("member-limits");
+      throw new Error("member limit failure");
+    },
   })).rejects.toThrow("One or more background cycle operations failed");
-  expect(order).toEqual(["thresholds", "drift", "adjustments"]);
+  expect(order).toEqual(["thresholds", "drift", "adjustments", "member-limits"]);
 });
 
 test("application startup launches only the ingest scheduler", async () => {

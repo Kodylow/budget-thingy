@@ -146,6 +146,84 @@ interface EntitySpec {
   firedThresholds?: readonly number[];
 }
 
+interface GroupLimitReachedSpec {
+  entityId: string;
+  entityName: string;
+  periodStart: string;
+  workspaceIds: string[];
+  workspaceName: string | null;
+  blockedMemberCount: number;
+  blockedSpendUsd: number;
+  blockedBudgetUsd: number;
+  dataAsOf: Date;
+}
+
+const MEMBER_LIMIT_ALERT_TYPE = "member_limit_reached";
+
+function blockedMembersForGroup(
+  dir: CheckerDirectory,
+  usage: CheckerUsage,
+  groupIds: readonly string[],
+): Pick<GroupLimitReachedSpec, "blockedMemberCount" | "blockedSpendUsd" | "blockedBudgetUsd"> {
+  const seen = new Set<string>();
+  let blockedMemberCount = 0;
+  let blockedSpendUsd = 0;
+  let blockedBudgetUsd = 0;
+  for (const groupId of groupIds) {
+    const group = dir.groups.find((candidate) => candidate.id === groupId);
+    if (!group) continue;
+    const limits = dir.budgets.userLimits.get(group.workspaceId);
+    if (!limits) continue;
+    for (const [userId, spendUsd] of usage.rollup.aiSpendByGroup.get(groupId) ?? []) {
+      const identity = `${group.workspaceId}\0${userId}`;
+      const budgetUsd = limits.get(userId);
+      if (seen.has(identity) || budgetUsd == null || spendUsd < budgetUsd) continue;
+      seen.add(identity);
+      blockedMemberCount += 1;
+      blockedSpendUsd += spendUsd;
+      blockedBudgetUsd += budgetUsd;
+    }
+  }
+  return { blockedMemberCount, blockedSpendUsd, blockedBudgetUsd };
+}
+
+function escapeAlertHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]!);
+}
+
+function buildGroupLimitReachedEmail(
+  spec: GroupLimitReachedSpec,
+  billingPeriodLabel: string,
+): { subject: string; html: string } {
+  const countLabel = `${spec.blockedMemberCount} ${
+    spec.blockedMemberCount === 1 ? "member has" : "members have"
+  }`;
+  const workspaceNote = spec.workspaceName
+    ? ` in ${escapeAlertHtml(spec.workspaceName)}`
+    : "";
+  return {
+    subject:
+      `[Replit Budget Alert] ${spec.entityName}: ${spec.blockedMemberCount} ${
+        spec.blockedMemberCount === 1 ? "member has" : "members have"
+      } reached the Agent usage limit (${billingPeriodLabel})`,
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;color:#1a2533">
+        <h1>${escapeAlertHtml(spec.entityName)}</h1>
+        <p><strong>${countLabel} reached the Agent usage limit</strong>${workspaceNote}
+          during ${escapeAlertHtml(billingPeriodLabel)}.</p>
+        <p>These members are currently blocked from additional Agent usage.
+          Review their member budgets in Replit Enterprise.</p>
+        <p style="color:#667584">Data as of ${spec.dataAsOf.toISOString()} UTC</p>
+      </div>`,
+  };
+}
+
 /**
  * Fired thresholds for an entity/period. entityType defaults to "group" so
  * existing group callers (e.g. dashboard routes) keep working unchanged.
@@ -240,6 +318,7 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
   const [insertedClaim] = await db.insert(alertDeliveryClaimsTable).values({
     entityType: spec.entityType,
     entityId: spec.entityId,
+    alertType: "allocation_threshold",
     billingPeriod: spec.periodStart,
     threshold: highest,
     status: "claimed",
@@ -251,6 +330,7 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
       .where(and(
         eq(alertDeliveryClaimsTable.entityType, spec.entityType),
         eq(alertDeliveryClaimsTable.entityId, spec.entityId),
+        eq(alertDeliveryClaimsTable.alertType, "allocation_threshold"),
         eq(alertDeliveryClaimsTable.billingPeriod, spec.periodStart),
         eq(alertDeliveryClaimsTable.threshold, highest),
         eq(alertDeliveryClaimsTable.status, "failed"),
@@ -302,10 +382,12 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
       entityType: spec.entityType,
       entityId: spec.entityId,
       entityName: spec.entityName,
+      alertType: "allocation_threshold",
       workspaceIds: spec.workspaceIds,
       threshold: highest,
       spendUsd: spec.spendUsd,
       budgetUsd: spec.budgetUsd,
+      blockedMemberCount: 0,
       recipients: result.deliveredTo ?? recipients,
       status: result.ok ? "sent" : "failed",
       errorMessage: result.ok ? null : (result.error ?? "unknown error"),
@@ -323,6 +405,78 @@ async function evaluateEntityOnce(spec: EntitySpec): Promise<Alert[]> {
     "Allocated pool alert processed",
   );
   return created;
+}
+
+async function evaluateGroupLimitReachedOnce(
+  spec: GroupLimitReachedSpec,
+): Promise<Alert[]> {
+  if (spec.blockedMemberCount <= 0) return [];
+  if (!(await isAutomatedEmailEnabled())) return [];
+  const recipients = await resolveAlertRecipients(spec.workspaceIds);
+  if (recipients.length === 0 || !(await isEmailConfigured())) return [];
+
+  const [insertedClaim] = await db.insert(alertDeliveryClaimsTable).values({
+    entityType: "group",
+    entityId: spec.entityId,
+    alertType: MEMBER_LIMIT_ALERT_TYPE,
+    billingPeriod: spec.periodStart,
+    threshold: 100,
+    status: "claimed",
+  }).onConflictDoNothing().returning();
+  let claim = insertedClaim;
+  if (!claim) {
+    const [retryClaim] = await db.update(alertDeliveryClaimsTable)
+      .set({ status: "claimed", updatedAt: new Date() })
+      .where(and(
+        eq(alertDeliveryClaimsTable.entityType, "group"),
+        eq(alertDeliveryClaimsTable.entityId, spec.entityId),
+        eq(alertDeliveryClaimsTable.alertType, MEMBER_LIMIT_ALERT_TYPE),
+        eq(alertDeliveryClaimsTable.billingPeriod, spec.periodStart),
+        eq(alertDeliveryClaimsTable.threshold, 100),
+        eq(alertDeliveryClaimsTable.status, "failed"),
+      )).returning();
+    claim = retryClaim;
+  }
+  if (!claim) return [];
+
+  const { label } = getBillingPeriod();
+  const { subject, html } = buildGroupLimitReachedEmail(spec, label);
+  const result = await sendEmail(recipients, subject, html);
+  await db.update(alertDeliveryClaimsTable)
+    .set({ status: result.ok ? "sent" : "failed", updatedAt: new Date() })
+    .where(eq(alertDeliveryClaimsTable.id, claim.id));
+
+  const [alert] = await db.insert(alertsTable).values({
+    groupId: spec.entityId,
+    groupName: spec.entityName,
+    entityType: "group",
+    entityId: spec.entityId,
+    entityName: spec.entityName,
+    alertType: MEMBER_LIMIT_ALERT_TYPE,
+    workspaceIds: spec.workspaceIds,
+    threshold: 100,
+    spendUsd: spec.blockedSpendUsd,
+    budgetUsd: spec.blockedBudgetUsd,
+    blockedMemberCount: spec.blockedMemberCount,
+    recipients: result.deliveredTo ?? recipients,
+    status: result.ok ? "sent" : "failed",
+    errorMessage: result.ok ? null : (result.error ?? "unknown error"),
+    dataAsOf: spec.dataAsOf,
+  }).returning();
+  return alert ? [alert] : [];
+}
+
+function evaluateGroupLimitReached(spec: GroupLimitReachedSpec): Promise<Alert[]> {
+  const key = `limit|group|${spec.entityId}`;
+  const existing = entityEvaluationsInFlight.get(key);
+  if (existing) return existing;
+  const evaluation = evaluateGroupLimitReachedOnce(spec).finally(() => {
+    if (entityEvaluationsInFlight.get(key) === evaluation) {
+      entityEvaluationsInFlight.delete(key);
+    }
+  });
+  entityEvaluationsInFlight.set(key, evaluation);
+  return evaluation;
 }
 
 async function evaluateEntity(spec: EntitySpec): Promise<Alert[]> {
@@ -352,38 +506,50 @@ async function evaluateGroupOnce(
   const primaryId = mergePlan.primaryByGroupId.get(group.id) ?? group.id;
   const primary = dir.groups.find((candidate) => candidate.id === primaryId);
   if (!primary) return [];
-  const budgetRows = await db.select().from(groupBudgetsTable);
-  const budget = resolveCanonicalMergedGroupBudget(
-    primary.id,
-    mergePlan,
-    new Map(budgetRows.map((row) => [row.groupId, row.amountUsd])),
-  );
-  if (!budget || budget.amountUsd <= 0) return [];
-
   const usage = await readCheckerUsage(dir);
   if (!usage) return [];
   const workspaceName = dir.workspaces.get(primary.workspaceId)?.name ?? null;
   const periodStart = getBillingPeriod().start;
   if (!periodStart) return [];
 
-  return evaluateEntity({
+  const mergedIds = mergePlan.mergeMap.get(primary.id) ?? [primary.id];
+  const workspaceIds = [
+    ...new Set(
+      mergedIds
+        .map((id) => dir.groups.find((candidate) => candidate.id === id)?.workspaceId)
+        .filter((id): id is string => !!id),
+    ),
+  ].sort();
+  const blocked = blockedMembersForGroup(dir, usage, mergedIds);
+  const alerts = await evaluateGroupLimitReached({
+    entityId: primary.id,
+    entityName: primary.name,
+    periodStart,
+    workspaceIds,
+    workspaceName,
+    ...blocked,
+    dataAsOf: usage.dataAsOf,
+  });
+  const budgetRows = await db.select().from(groupBudgetsTable);
+  const budget = resolveCanonicalMergedGroupBudget(
+    primary.id,
+    mergePlan,
+    new Map(budgetRows.map((row) => [row.groupId, row.amountUsd])),
+  );
+  if (!budget || budget.amountUsd <= 0) return alerts;
+  alerts.push(...await evaluateEntity({
     entityType: "group",
     entityId: primary.id,
     entityName: primary.name,
-    spendUsd: (mergePlan.mergeMap.get(primary.id) ?? [primary.id])
-      .reduce((sum, id) => sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0),
+    spendUsd: mergedIds.reduce((sum, id) =>
+      sum + (usage.rollup.byGroup.get(id)?.spendUsd ?? 0), 0),
     budgetUsd: budget.amountUsd,
     periodStart,
-    workspaceIds: [
-      ...new Set(
-        (mergePlan.mergeMap.get(primary.id) ?? [primary.id])
-          .map((id) => dir.groups.find((candidate) => candidate.id === id)?.workspaceId)
-          .filter((id): id is string => !!id),
-      ),
-    ].sort(),
+    workspaceIds,
     workspaceName,
     dataAsOf: usage.dataAsOf,
-  });
+  }));
+  return alerts;
 }
 
 export function evaluateGroup(
@@ -603,7 +769,10 @@ async function runCheckInternal(): Promise<CheckResult> {
   ]);
   const budgetByGroupId = new Map(budgets.map((row) => [row.groupId, row.amountUsd]));
   const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
-  const groups = dir.groups.filter(
+  const canonicalGroups = dir.groups.filter(
+    (group) => !mergePlan.hiddenGroupIds.has(group.id),
+  );
+  const groups = canonicalGroups.filter(
     (group) =>
       !mergePlan.hiddenGroupIds.has(group.id) &&
       !!resolveCanonicalMergedGroupBudget(
@@ -630,6 +799,23 @@ async function runCheckInternal(): Promise<CheckResult> {
   }
 
   const alerts: Alert[] = [];
+  for (const group of canonicalGroups) {
+    const mergedIds = mergePlan.mergeMap.get(group.id) ?? [group.id];
+    const workspaceIds = [
+      ...new Set(mergedIds
+        .map((id) => dir.groups.find((candidate) => candidate.id === id)?.workspaceId)
+        .filter((id): id is string => !!id)),
+    ].sort();
+    alerts.push(...(await evaluateGroupLimitReached({
+      entityId: group.id,
+      entityName: group.name,
+      periodStart,
+      workspaceIds,
+      workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
+      ...blockedMembersForGroup(dir, usage, mergedIds),
+      dataAsOf: usage.dataAsOf,
+    })));
+  }
   for (const group of groups) {
     const budget = resolveCanonicalMergedGroupBudget(group.id, mergePlan, budgetByGroupId);
     if (!budget || budget.amountUsd <= 0) continue;
@@ -673,7 +859,15 @@ async function runCheckInternal(): Promise<CheckResult> {
     lastAttemptAt,
     lastSkipReason: null,
   });
-  return { checkedGroups: groups.length, checkedTeams, alerts, evaluatedAt, dataAsOf: usage.dataAsOf, skipped: false, skipReason: null };
+  return {
+    checkedGroups: canonicalGroups.length,
+    checkedTeams,
+    alerts,
+    evaluatedAt,
+    dataAsOf: usage.dataAsOf,
+    skipped: false,
+    skipReason: null,
+  };
 }
 
 let fullCheckInFlight: Promise<CheckResult> | null = null;
