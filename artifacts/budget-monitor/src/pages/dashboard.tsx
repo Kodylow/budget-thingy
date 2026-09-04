@@ -1231,12 +1231,6 @@ export default function Dashboard() {
           >
             {dashboardTitle}
           </h1>
-          <p
-            className="text-muted-foreground mt-1"
-            data-testid="text-billing-period"
-          >
-            {rangePresetLabel}
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <RangeFilter selectedLabel={selectedRangeLabel} />
