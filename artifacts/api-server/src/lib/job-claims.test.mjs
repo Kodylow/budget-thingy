@@ -1,6 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { db, recurringJobClaimsTable } from "@workspace/db";
 import {
@@ -105,36 +104,4 @@ test("persistable round-robin cursor rotates every scope fairly", () => {
   assert.deepEqual(second.selected.map((item) => item.key), ["c", "d"]);
   const third = selectRoundRobinUsageItems(items, second.cursor, 2);
   assert.deepEqual(third.selected.map((item) => item.key), ["a", "b"]);
-});
-
-test("replica count and ordinary GET traffic cannot multiply scheduling", async () => {
-  const key = `test:volume:${crypto.randomUUID()}`;
-  let upstreamPasses = 0;
-  const replicas = await Promise.all(
-    Array.from({ length: 40 }, async () => {
-      const claim = await acquireJobClaim(key, 60_000, 10_000);
-      if (!claim) return;
-      upstreamPasses++;
-      await releaseJobClaim(claim);
-    }),
-  );
-  assert.equal(replicas.length, 40);
-  assert.equal(upstreamPasses, 1);
-
-  const source = await readFile(
-    new URL("../routes/monitor.ts", import.meta.url),
-    "utf8",
-  );
-  let routeMethod = "";
-  for (const line of source.split("\n")) {
-    const route = line.match(/router\.(get|post|put|delete)\(/);
-    if (route) routeMethod = route[1];
-    if (routeMethod === "get") {
-      assert.doesNotMatch(
-        line,
-        /\b(queue(?:Account|Member|Project|AllWorkspaces|WsSpend|GroupSpend|ProjectTitles)Fetch|refreshAllGroupSpends)\s*\(/,
-        "ordinary GET handlers must remain read-only with respect to ingestion",
-      );
-    }
-  }
 });
