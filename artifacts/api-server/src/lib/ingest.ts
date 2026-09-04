@@ -101,8 +101,10 @@ const defaultBackgroundCycleOperations: BackgroundCycleOperations = {
 
 /**
  * Run all post-ingest responsibilities in their authoritative order. Each is
- * attempted even when an earlier operation fails, then the cycle reports all
- * failures together so the scheduler retries on its next pass.
+ * attempted even when an earlier operation fails. Core post-ingest failures
+ * are reported together so the scheduler retries on its next pass. Allocation
+ * synchronization is intentionally non-fatal because it preserves the last
+ * successful snapshot and reports its own source diagnostics.
  */
 export async function runBackgroundCycleOperations(
   operations: BackgroundCycleOperations = defaultBackgroundCycleOperations,
@@ -119,12 +121,24 @@ export async function runBackgroundCycleOperations(
   };
   await attempt("threshold_evaluation", operations.evaluateThresholds);
   await attempt("team_limit_drift_refresh", operations.refreshTeamLimitDrift);
-  await attempt("allocation_adjustment_sync", async () => {
+  try {
     const result = await operations.syncAllocationAdjustments();
     if (!result.ok) {
-      throw new Error(result.error ?? "Allocation adjustment synchronization failed");
+      logger.warn(
+        {
+          operation: "allocation_adjustment_sync",
+          error: result.error ?? "Allocation adjustment synchronization failed",
+        },
+        "Optional background cycle operation unavailable",
+      );
     }
-  });
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    logger.warn(
+      { err: failure, operation: "allocation_adjustment_sync" },
+      "Optional background cycle operation failed",
+    );
+  }
   await attempt("member_limit_policy_enforcement", operations.enforceMemberLimitPolicies);
   if (failures.length > 0) {
     throw new AggregateError(failures, "One or more background cycle operations failed");

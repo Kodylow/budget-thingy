@@ -115,6 +115,20 @@ test("post-ingest responsibilities all run before combined failure is reported",
   expect(order).toEqual(["thresholds", "drift", "adjustments", "member-limits"]);
 });
 
+test("an unavailable allocation source does not fail an otherwise healthy usage cycle", async () => {
+  const order: string[] = [];
+  await expect(runBackgroundCycleOperations({
+    evaluateThresholds: async () => { order.push("thresholds"); },
+    refreshTeamLimitDrift: async () => { order.push("drift"); },
+    syncAllocationAdjustments: async () => {
+      order.push("adjustments");
+      return { ok: false, error: "Airtable source is not configured" };
+    },
+    enforceMemberLimitPolicies: async () => { order.push("member-limits"); },
+  })).resolves.toBeUndefined();
+  expect(order).toEqual(["thresholds", "drift", "adjustments", "member-limits"]);
+});
+
 test("application startup launches only the ingest scheduler", async () => {
   const source = await readFile(new URL("../index.ts", import.meta.url), "utf8");
   const schedulerStarts = source.match(
