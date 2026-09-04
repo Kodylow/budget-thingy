@@ -616,7 +616,7 @@ export default function Dashboard() {
                       variant="destructive"
                       className="uppercase text-[10px]"
                       data-testid={`badge-blocked-group-${group.groupId}`}
-                      title={`Agent spend $${group.cycleAgentSpendUsd.toFixed(2)} of ${group.monthlyAgentLimitUsd == null ? "no limit" : `$${group.monthlyAgentLimitUsd.toFixed(2)}`}`}
+                      title={`Agent spend ${group.cycleAgentSpendUsd == null ? "unavailable" : `$${group.cycleAgentSpendUsd.toFixed(2)}`} of ${group.monthlyAgentLimitUsd == null ? "no limit" : `$${group.monthlyAgentLimitUsd.toFixed(2)}`}`}
                     >
                       Blocked
                     </Badge>

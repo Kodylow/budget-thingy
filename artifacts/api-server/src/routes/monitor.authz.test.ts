@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray, like } from "drizzle-orm";
 import {
   alertsTable,
+  appAdminsTable,
   apiProjectMetadataStateTable,
   db,
   teamBudgetsTable,
@@ -19,7 +20,13 @@ import { invalidateUsageSnapshotMemo } from "../lib/usage-store";
 import { setReplitBudgetTransportForTests } from "../lib/replit-budgets";
 import { setSendEmailOverrideForTests } from "../lib/email";
 import { setAuthorizationResolver } from "../middlewares/requireAuth";
-import type { Authorization, AuthzRole } from "../lib/authz";
+import {
+  BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
+  isPersistedAppAdmin,
+  maybeBootstrapAppAdmin,
+  type Authorization,
+  type AuthzRole,
+} from "../lib/authz";
 import monitorRouter, { canSeeAlertEntity } from "./monitor";
 
 const PREFIX = "rbac217";
@@ -595,6 +602,43 @@ describe("GET /workspace-admins", () => {
     } finally {
       installDefaultDirectory();
     }
+  });
+});
+
+describe("bootstrap account-admin revocation", () => {
+  it("survives deletion and both authentication callback bootstrap attempts", async () => {
+    const userId = "workspace";
+    await db.delete(appAdminsTable).where(eq(appAdminsTable.userId, userId));
+    await db.insert(appAdminsTable).values({
+      userId,
+      email: BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
+      createdBy: null,
+    });
+
+    const response = await request(
+      `/app-admins/${encodeURIComponent(userId)}`,
+      fixtures[0],
+      { method: "DELETE" },
+    );
+    expect(response.status).toBe(200);
+
+    const claims = {
+      sub: userId,
+      email: BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
+      email_verified: true,
+    };
+    await expect(maybeBootstrapAppAdmin(claims)).resolves.toBe(false);
+    await expect(maybeBootstrapAppAdmin(claims)).resolves.toBe(false);
+    expect(await isPersistedAppAdmin(userId)).toBe(false);
+
+    const [row] = await db
+      .select()
+      .from(appAdminsTable)
+      .where(eq(appAdminsTable.userId, userId));
+    expect(row?.revokedAt).toBeInstanceOf(Date);
+    expect(row?.revokedBy).toBe("account");
+
+    await db.delete(appAdminsTable).where(eq(appAdminsTable.userId, userId));
   });
 });
 

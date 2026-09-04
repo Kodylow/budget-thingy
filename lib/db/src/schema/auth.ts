@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, jsonb, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { index, jsonb, pgTable, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 
 // (IMPORTANT) This table is mandatory for Replit Auth, don't drop it.
 export const sessionsTable = pgTable(
@@ -41,14 +41,24 @@ export type User = typeof usersTable.$inferSelect;
  * row is created; `createdBy` records the stable user ID of the account admin
  * who granted access (nullable for system-bootstrapped rows).
  */
-export const appAdminsTable = pgTable('app_admins', {
-  userId: varchar('user_id').primaryKey(),
-  email: varchar('email').notNull(),
-  createdBy: varchar('created_by'),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const appAdminsTable = pgTable(
+  'app_admins',
+  {
+    userId: varchar('user_id').primaryKey(),
+    email: varchar('email').notNull(),
+    createdBy: varchar('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: varchar('revoked_by'),
+  },
+  (table) => [
+    uniqueIndex('app_admins_bootstrap_email_unique')
+      .on(sql`lower(btrim(${table.email}))`)
+      .where(sql`${table.createdBy} is null`),
+  ],
+);
 
 export type AppAdminEntry = typeof appAdminsTable.$inferSelect;
 

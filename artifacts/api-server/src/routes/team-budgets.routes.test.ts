@@ -429,14 +429,20 @@ test("budget audit and sync status reject workspace-scoped users", async () => {
 });
 
 test("sync status identifies the approval-only Finance Approval feed", async () => {
-  const { status, json } = await request("/teams/budgets", "task158-workspace");
+  const { status, json } = await request(
+    "/admin/team-budgets/sync",
+    "task158-account",
+  );
   expect(status).toBe(200);
   expect(json.sourceTable).toBe("Replit Finance Approval");
   expect(json.requiredApprovalStatus).toBe("Approved");
 });
 
 test("history orders months and exposes hidden teams only to true admins", async () => {
-  const { status, json } = await request("/teams/budgets", "task158-workspace");
+  const { status, json } = await request(
+    "/admin/team-budgets/history",
+    "task158-account",
+  );
   expect(status).toBe(200);
   expect(json.teams.find((team) => team.teamName === HIDDEN)).toMatchObject({
     isHidden: true,
@@ -593,7 +599,7 @@ test("complete zero-spend hidden teams stay out of rows without changing account
     request(`/summary?${COMPLETE_RANGE}`, "task158-account"),
   ]);
   expect(groups.status).toBe(200);
-  expect(groups.json.isComplete).toBe(true);
+  expect(groups.json.usageHealth.status).toBe("complete");
   expect(summary.status).toBe(200);
 
   const returnedIds = groups.json.groups.map((group) => group.groupId);
@@ -618,7 +624,7 @@ test("hidden-team zero rows remain visible when the selected range is partial", 
   invalidateUsageSnapshotMemo();
   const groups = await request(`/groups?${PARTIAL_RANGE}`, "task158-account");
   expect(groups.status).toBe(200);
-  expect(groups.json.isComplete).toBe(false);
+  expect(groups.json.usageHealth.status).toBe("partial");
   const hiddenCanonicalRows = groups.json.groups.filter(
     (group) => group.name === HIDDEN_ZERO_NAME,
   );
@@ -673,7 +679,10 @@ test("workspace-qualified team spend keeps the same team separate by workspace",
   });
   try {
     invalidateUsageSnapshotMemo();
-    const response = await request("/groups", "task158-account");
+    const response = await request(
+      `/groups?${COMPLETE_RANGE}`,
+      "task158-account",
+    );
     expect(response.status).toBe(200);
     const firstGroup = response.json.groups.find((group) => group.groupId === GROUP_ID);
     const secondGroup = response.json.groups.find((group) => group.groupId === SECOND_GROUP_ID);
@@ -804,14 +813,6 @@ test("true admins can edit and reset monthly team and target limits", async () =
   let response = await request(path, "task158-account", "PATCH", {
     monthlyLimitUsd: 9,
   });
-
-  const groupIds = response.json.workspaces.flatMap((workspace) =>
-    workspace.teams.flatMap((team) =>
-      team.families.flatMap((family) =>
-        family.groups.map((group) => group.groupId),
-      ),
-    ),
-  );
   expect(response.status).toBe(200);
   expect(response.json).toMatchObject({
     monthlyLimitUsd: 9,
@@ -824,7 +825,6 @@ test("true admins can edit and reset monthly team and target limits", async () =
     monthlyLimitUsd: 10.42,
     monthlyLimitSource: "derived",
   });
-
   const targetPath =
     `/admin/team-budgets/targets/task158-ws/${encodeURIComponent(GROUP_ID)}`;
   response = await request(targetPath, "task158-account", "PATCH", {

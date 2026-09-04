@@ -13,7 +13,8 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       res.status(404).json({ error: "Group not found" });
       return;
     }
-    const usage = await usageForRequest(req.authz!, dir, req.query as Record<string, unknown>);
+    const usage = await usageForRequest(
+      req.authz!, dir, req.query as Record<string, unknown>, true);
     const cycleUsage = await usageForRequest(
       req.authz!, dir, { rangeType: "billing" }, true);
     const dailyRollups = await dailyUsageRollups(dir, usage);
@@ -47,19 +48,21 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     );
     const projectSpendLoaded = projectAttribution.isComplete;
 
-    const attributed: {
-      projectId: string;
-      title: string | null;
-      totalCostUsd: number;
-      aiSpendUsd: number;
-      nonAiSpendUsd: number;
-      creatorId: string | null;
-      creatorName: string | null;
-      creatorIsCurrentMember: boolean;
-      metrics: [];
-      workspaceId: string | null;
-      workspaceName: string | null;
-    }[] = [];
+    const attributed = {
+      spendUsd: sourceIds.reduce(
+        (sum, id) => sum + (canonical.byGroup.get(id)?.spendUsd ?? 0),
+        0,
+      ),
+      byUser: (() => {
+        const result = new Map<string, number>();
+        for (const id of sourceIds) {
+          for (const [userId, spend] of canonical.byGroup.get(id)?.byUser ?? []) {
+            result.set(userId, (result.get(userId) ?? 0) + spend);
+          }
+        }
+        return result;
+      })(),
+    };
 
     const [budgets, groupTeamsRows] = await Promise.all([
       db.select().from(groupBudgetsTable),
@@ -281,7 +284,7 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
     // hasn't loaded yet.
     const projectsSum = projects.reduce((sum, p) => sum + p.totalCostUsd, 0);
     const groupTotal = usage.rollup.byGroup.get(group.id)?.spendUsd ?? 0;
-    let unattributedSpendUsd = 0;
+    const unattributedSpendUsd = Math.max(0, groupTotal - projectsSum);
 
     res.json(
       GetGroupProjectsResponse.parse({
@@ -300,7 +303,10 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
 
 router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => {
   try {
-    const groupIds = rawKey.split(",").map((id) => id.trim()).filter(Boolean);
+    const groupIds = String(req.params["clusterKey"])
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
     if (groupIds.length === 0) {
       res.status(400).json({ error: "No group IDs in cluster key" });
       return;

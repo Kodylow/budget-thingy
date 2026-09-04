@@ -22,6 +22,20 @@
       "when": 1788521806896,
       "tag": "0002_purple_supreme_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788523747849,
+      "tag": "0003_bored_raza",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788524041652,
+      "tag": "0004_closed_maria_hill",
+      "breakpoints": true
     }
   ]
 }

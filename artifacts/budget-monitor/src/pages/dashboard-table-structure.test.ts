@@ -11,8 +11,14 @@ test("dashboard table keeps one hierarchy column followed by six metrics", () =>
     /<table[^>]*data-testid="table-groups"[\s\S]*?<thead>([\s\S]*?)<\/thead>/,
   )?.[1];
 
+  const columnGroup = dashboardSource.match(
+    /<table[^>]*data-testid="table-groups"[\s\S]*?<colgroup>([\s\S]*?)<\/colgroup>/,
+  )?.[1];
+
   expect(tableHeader).toBeDefined();
   expect(tableHeader?.match(/<th\b/g)).toHaveLength(7);
+  expect(columnGroup).toBeDefined();
+  expect(columnGroup?.match(/<col\b/g)).toHaveLength(7);
   expect(tableHeader).toContain("Members");
   expect(tableHeader).toContain("Spend");
   expect(tableHeader).toContain("Budget");

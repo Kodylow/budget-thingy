@@ -1,5 +1,5 @@
 import { appAdminsTable, db, teamLimitTargetsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import {
   getDirectory,
@@ -65,9 +65,56 @@ export async function isPersistedAppAdmin(userId: string): Promise<boolean> {
   const [row] = await db
     .select({ userId: appAdminsTable.userId })
     .from(appAdminsTable)
-    .where(eq(appAdminsTable.userId, userId))
+    .where(and(
+      eq(appAdminsTable.userId, userId),
+      isNull(appAdminsTable.revokedAt),
+    ))
     .limit(1);
   return !!row;
+}
+
+export const BOOTSTRAP_ACCOUNT_ADMIN_EMAIL = "kody.low@repl.it";
+
+async function isPersistedBootstrapAccountAdmin(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({
+      email: appAdminsTable.email,
+      createdBy: appAdminsTable.createdBy,
+      revokedAt: appAdminsTable.revokedAt,
+    })
+    .from(appAdminsTable)
+    .where(eq(appAdminsTable.userId, userId))
+    .limit(1);
+  return row?.createdBy === null &&
+    row.revokedAt === null &&
+    normalizeEmail(row.email) === BOOTSTRAP_ACCOUNT_ADMIN_EMAIL;
+}
+
+export async function revokeAppAdmin(
+  userId: string,
+  revokedBy: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select()
+    .from(appAdminsTable)
+    .where(eq(appAdminsTable.userId, userId))
+    .limit(1);
+  if (!row || row.revokedAt !== null) return false;
+
+  const isBootstrapIdentity =
+    row.createdBy === null &&
+    normalizeEmail(row.email) === BOOTSTRAP_ACCOUNT_ADMIN_EMAIL;
+  if (isBootstrapIdentity) {
+    await db
+      .update(appAdminsTable)
+      .set({ revokedAt: new Date(), revokedBy })
+      .where(eq(appAdminsTable.userId, userId));
+  } else {
+    await db
+      .delete(appAdminsTable)
+      .where(eq(appAdminsTable.userId, userId));
+  }
+  return true;
 }
 
 async function lookupAppAdmin(userId: string): Promise<boolean> {
@@ -171,7 +218,11 @@ async function resolveFromDirectory(
   const userIds = new Set<string>([userId]);
 
   const isAllowlisted = !forceRole && member ? await lookupAppAdmin(userId) : false;
-  const trueAdmin = !forceRole && member?.isAccountAdmin === true;
+  const isBootstrapAccountAdmin = !forceRole && isAllowlisted
+    ? await isPersistedBootstrapAccountAdmin(userId)
+    : false;
+  const trueAdmin = !forceRole &&
+    (member?.isAccountAdmin === true || isBootstrapAccountAdmin);
   const isActiveMember = member
     ? [...member.workspaces.values()].some((membership) => !membership.isDisabled)
     : false;
@@ -353,14 +404,33 @@ export async function maybeBootstrapAppAdmin(claims: {
   email?: unknown;
   email_verified?: unknown;
 }): Promise<boolean> {
-  const configured = process.env.BOOTSTRAP_ADMIN_EMAIL;
-  if (!configured || claims.email_verified !== true) return false;
+  if (claims.email_verified !== true) return false;
   if (typeof claims.email !== "string" || typeof claims.sub !== "string") return false;
-  if (normalizeEmail(claims.email) !== normalizeEmail(configured)) return false;
+  if (normalizeEmail(claims.email) !== BOOTSTRAP_ACCOUNT_ADMIN_EMAIL) return false;
+
+  const bootstrapRows = await db
+    .select({
+      userId: appAdminsTable.userId,
+      email: appAdminsTable.email,
+      createdBy: appAdminsTable.createdBy,
+      revokedAt: appAdminsTable.revokedAt,
+    })
+    .from(appAdminsTable)
+    .where(isNull(appAdminsTable.createdBy));
+  const designatedRows = bootstrapRows.filter(
+    (row) => normalizeEmail(row.email) === BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
+  );
+  if (
+    designatedRows.some((row) => row.userId !== claims.sub) ||
+    designatedRows.some((row) => row.revokedAt !== null)
+  ) {
+    return false;
+  }
+
   await db.insert(appAdminsTable).values({
     userId: claims.sub,
-    email: claims.email,
+    email: BOOTSTRAP_ACCOUNT_ADMIN_EMAIL,
     createdBy: null,
-  }).onConflictDoNothing({ target: appAdminsTable.userId });
-  return true;
+  }).onConflictDoNothing();
+  return isPersistedBootstrapAccountAdmin(claims.sub);
 }

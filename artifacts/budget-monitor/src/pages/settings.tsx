@@ -35,7 +35,6 @@ import {
 } from '@/lib/email-policy';
 import { Switch } from '@/components/ui/switch';
 import { useRange } from '@/components/range-context';
-import { DATA_REFRESH_INTERVAL_MS } from '@/lib/client-performance';
 import {
   Dialog,
   DialogContent,
@@ -77,7 +76,6 @@ export default function Settings() {
     query: {
       enabled: role === 'account',
       queryKey: getGetSummaryQueryKey(summaryParams),
-      refetchInterval: DATA_REFRESH_INTERVAL_MS,
     },
   });
   const {
