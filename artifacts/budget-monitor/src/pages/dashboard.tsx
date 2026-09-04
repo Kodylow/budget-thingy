@@ -162,7 +162,7 @@ export default function Dashboard() {
   const [, setLocation] = useLocation();
   const canWrite = useCanWrite();
   const { auth, isAccountWide, role, user, capabilities } = useAuthContext();
-  const { rangeType, startDate, endDate } = useRange();
+  const { rangeSelection, rangeType, startDate, endDate } = useRange();
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1108,6 +1108,19 @@ export default function Dashboard() {
             ? `${memberName}${memberName.endsWith("s") ? "'" : "'s"} Dashboard`
             : "My Dashboard"
           : "Comcast Account Dashboard";
+  const rangePresetLabel = {
+    "full-term": "Full term",
+    billing: "Billing period",
+    mtd: "Month to date",
+    ytd: "Year to date",
+    custom: "Custom range",
+  }[rangeSelection];
+  const selectedRangeLabel =
+    rangeSelection === "full-term"
+      ? "May 20, 2026–present"
+      : groupsData?.billingPeriodLabel ??
+        summary?.billingPeriodLabel ??
+        rangePresetLabel;
 
   if (role === "member") {
     const cycleUser = memberCycleActivity?.users[0];
@@ -1222,13 +1235,11 @@ export default function Dashboard() {
             className="text-muted-foreground mt-1"
             data-testid="text-billing-period"
           >
-            {groupsData?.billingPeriodLabel ??
-              summary?.billingPeriodLabel ??
-              "Current period"}
+            {rangePresetLabel}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <RangeFilter />
+          <RangeFilter selectedLabel={selectedRangeLabel} />
         </div>
       </div>
       {groupsData?.usageHealth.status === "empty" && (
