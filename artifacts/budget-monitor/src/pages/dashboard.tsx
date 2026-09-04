@@ -1381,31 +1381,6 @@ export default function Dashboard() {
       <Tabs defaultValue="groups" className="space-y-4">
         <TabsContent value="groups">
           <Card>
-            <CardHeader>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <CardTitle>Groups</CardTitle>
-                  <CardDescription>
-                    Monitor spending and set budgets by workspace, team, and
-                    family
-                  </CardDescription>
-                </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={showLegacyGroups}
-                    onChange={(event) =>
-                      setShowLegacyGroups(event.target.checked)
-                    }
-                    data-testid="toggle-dashboard-legacy-groups"
-                  />
-                  Show legacy groups
-                </label>
-              </div>
-              <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
-                Current credit pool expires May 17, 2027.
-              </p>
-            </CardHeader>
             <CardContent>
               <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
                 <table className="w-full" data-testid="table-groups">
