@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "DdesVg7-YIo0nMAXire46"
+uri = "file://.agents/outputs/usage-tie-out-report-2026-09-04.md"
+type = "text"
+title = "Usage Tie-Out Report"
+description = "Read-only development usage reconciliation captured on 2026-09-04 UTC, including the observed HTTP 429 from the single direct Enterprise request."
+logical_id = "79869e6c-9f42-4b1d-8d28-b37ad6d6f70a"
+content_hash = "sha256:65465aa255cb7b7448662b6e6ae1857df51a846cd0831fe12b179a5550a22759"
+size = 16361
+mtime_ms = 1788508814361
+storage_uri = "gcs://replit-rams-assets-comcast-use5/rams/assets/repl:a7ac41b7-3a2d-440f-a090-f5b717499315/79869e6c-9f42-4b1d-8d28-b37ad6d6f70a/b200f9c6-8fbc-47a4-9160-9e09ee1797f7"
+storage_version_token = "1788508843803068"
+content_type = "text/markdown"
