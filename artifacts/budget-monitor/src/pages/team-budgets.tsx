@@ -10,7 +10,7 @@ import {
   useAddTeamMonthlyAllocation,
   type TeamBudgetHistoryTeam,
 } from '@workspace/api-client-react';
-import { AlertTriangle, ExternalLink, Eye, EyeOff, Pencil, Plus, Search, ChevronDown } from 'lucide-react';
+import { AlertTriangle, ExternalLink, Eye, EyeOff, Pencil, Plus, Search, ChevronDown, History, ShieldCheck } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -269,7 +269,7 @@ function EditableOpeningFunding({
       <DialogTrigger asChild>
         <Button
           variant="ghost"
-          className="ml-auto h-8 gap-2 px-2 font-normal tabular-nums"
+          className="ml-auto h-8 gap-2 px-2 font-mono font-normal tabular-nums"
            aria-label={`Edit opening baseline for ${teamName}`}
           data-testid={`button-edit-opening-funding-${teamName}`}
         >
@@ -395,6 +395,7 @@ export default function TeamBudgets() {
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [searchQuery, setSearchQuery] = useState('');
   const [showHidden, setShowHidden] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   const [optimisticVisibility, setOptimisticVisibility] = useState<Record<string, boolean>>({});
 
@@ -471,16 +472,15 @@ export default function TeamBudgets() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-7xl space-y-6 p-4 pb-24 md:p-8" data-testid="page-team-budgets">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">Management</p>
-          <h1 className="text-2xl font-bold tracking-tight md:text-3xl" data-testid="text-team-budgets-title">Budget allocations</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+    <div className="mx-auto w-full min-w-0 max-w-[1280px] space-y-8 px-4 py-6 pb-24 md:px-8 md:py-8" data-testid="page-team-budgets">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl" data-testid="text-team-budgets-title">Budget allocations</h1>
+          <p className="max-w-3xl text-sm text-muted-foreground">
              Manage local planning funding. Undated opening funding, dated monthly additions, and carried-forward additions remain separate from platform limits.
           </p>
         </div>
-        <div className="flex w-full items-center gap-3 sm:w-auto">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           {canEdit && <AddAllocationDialog key={authorizationKey} teams={teams} onSuccess={() => invalidateBudgetCaches(queryClient)} />}
         </div>
       </div>
@@ -492,21 +492,25 @@ export default function TeamBudgets() {
         </div>
       )}
 
-      <div className="border-y bg-card">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between py-4 border-b">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+      <Card className="overflow-hidden rounded-md shadow-none">
+        <CardHeader className="border-b bg-card pb-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="relative block w-full sm:w-64">
+              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Find a team</span>
+              <Search className="absolute left-3 top-[34px] h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search teams..."
                 aria-label="Search teams"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="pl-9 h-9 bg-background"
+                className="h-9 bg-background pl-9"
               />
-            </div>
-            <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
-              <SelectTrigger aria-label="Allocation year" className="w-[120px] h-9 bg-background">
+            </label>
+            <label className="block w-full sm:w-28">
+              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Year</span>
+              <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
+              <SelectTrigger aria-label="Allocation year" className="h-9 bg-background">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -515,13 +519,23 @@ export default function TeamBudgets() {
                 ))}
               </SelectContent>
             </Select>
+            </label>
           </div>
-           {canManageVisibility && <div className="flex items-center gap-2">
-            <Label htmlFor="show-hidden" className="text-sm font-normal text-muted-foreground cursor-pointer">
-              Show hidden teams
-            </Label>
-             <Switch id="show-hidden" checked={showHidden} onCheckedChange={setShowHidden} data-testid="switch-show-hidden-teams" />
-           </div>}
+           {canManageVisibility && (
+             <div className="flex items-center gap-2">
+               <Switch id="show-hidden" checked={showHidden} onCheckedChange={setShowHidden} data-testid="switch-show-hidden-teams" />
+               <Label htmlFor="show-hidden" className="cursor-pointer text-sm font-normal text-muted-foreground">Show hidden teams</Label>
+             </div>
+           )}
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-3">
+            <div className="text-sm">
+              <strong>Funding ledger</strong>
+              <span className="ml-2 text-muted-foreground">Selected year: {selectedYear}</span>
+            </div>
+            <Badge variant="outline" className="font-normal">{filteredRows.length} teams</Badge>
         </div>
 
         {(footerTotals.laterAdditions !== 0 || footerTotals.futureAdditions !== 0) && (
@@ -572,13 +586,14 @@ export default function TeamBudgets() {
         )}
 
         <div className="relative w-full max-w-full overflow-x-auto overscroll-contain" tabIndex={0} aria-label="Budget allocation ledger">
-          <table className="w-full min-w-[720px] border-separate border-spacing-0 text-sm whitespace-nowrap [&_th]:border-b [&_td]:border-b [&_th]:border-border [&_td]:border-border" data-testid="table-team-budget-history">
+          <table className="w-full min-w-[820px] border-separate border-spacing-0 whitespace-nowrap text-sm [&_td]:border-b [&_td]:border-border [&_th]:border-b [&_th]:border-border" data-testid="table-team-budget-history">
             <thead className="sticky top-0 z-30 bg-muted/90 backdrop-blur text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
               <tr>
                  <th className="sticky left-0 top-0 z-40 w-48 min-w-48 bg-muted/95 p-3 text-left font-medium shadow-[inset_-1px_0_0_0_hsl(var(--border))] sm:w-64 sm:min-w-64">Team</th>
                  <th className="p-3 text-right font-medium" title="Opening baseline, carried and undated additions, and January–July additions">Starting allocation</th>
                  <th className="p-3 text-right font-medium" title={`August ${selectedYear} additions`}>August</th>
                  <th className="p-3 text-right font-medium" title={`September ${selectedYear} additions`}>September</th>
+                  <th className="p-3 text-right font-medium" title={`October–December ${selectedYear} additions`}>Later additions</th>
                  <th className="p-3 text-right font-bold" title={`All funding through ${selectedYear}, including disclosed October–December additions`}>
                    Total <span className="block text-xs font-normal">through {selectedYear}</span>
                  </th>
@@ -588,7 +603,7 @@ export default function TeamBudgets() {
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                   <td colSpan={canManageVisibility ? 6 : 5} className="p-12 text-center text-muted-foreground">
+                    <td colSpan={canManageVisibility ? 7 : 6} className="p-12 text-center text-muted-foreground">
                     No teams found.
                   </td>
                 </tr>
@@ -601,7 +616,7 @@ export default function TeamBudgets() {
                         {row.isHidden && <Badge variant="secondary" className="text-[10px] uppercase px-1.5 py-0 h-4">Hidden</Badge>}
                       </div>
                     </th>
-                    <td className="p-3 text-right shadow-[inset_-1px_0_0_0_hsl(var(--border))] tabular-nums">
+                    <td className="p-3 text-right font-mono tabular-nums shadow-[inset_-1px_0_0_0_hsl(var(--border))]">
                        <EditableOpeningFunding
                          key={`${authorizationKey}:${row.team.teamName}`}
                          teamName={row.team.teamName}
@@ -611,9 +626,10 @@ export default function TeamBudgets() {
                          onSuccess={() => invalidateBudgetCaches(queryClient)}
                       />
                     </td>
-                    <td className="p-3 text-right tabular-nums"><CellValue value={row.august} /></td>
-                    <td className="p-3 text-right tabular-nums"><CellValue value={row.september} /></td>
-                     <td className="p-3 text-right font-bold tabular-nums">
+                    <td className="p-3 text-right font-mono tabular-nums"><CellValue value={row.august} /></td>
+                    <td className="p-3 text-right font-mono tabular-nums"><CellValue value={row.september} /></td>
+                    <td className="p-3 text-right font-mono tabular-nums"><CellValue value={row.laterAdditions} /></td>
+                     <td className="p-3 text-right font-mono font-bold tabular-nums">
                       <CellValue value={row.rowTotal} isZeroFaded={false} />
                     </td>
                      {canManageVisibility && (
@@ -624,6 +640,7 @@ export default function TeamBudgets() {
                           className="text-muted-foreground opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
                           onClick={() => handleToggleVisibility(row.team)}
                           title={row.isHidden ? "Show team" : "Hide team"}
+                           aria-label={row.isHidden ? `Show ${row.team.teamName}` : `Hide ${row.team.teamName}`}
                           data-testid={`button-toggle-team-visibility-${row.team.teamName}`}
                         >
                           {row.isHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -648,6 +665,9 @@ export default function TeamBudgets() {
                     <CellValue value={footerTotals.september} isZeroFaded={false} />
                   </td>
                    <td className="p-3 text-right shadow-[inset_0_1px_0_0_hsl(var(--border))] tabular-nums">
+                     <CellValue value={footerTotals.laterAdditions} isZeroFaded={false} />
+                   </td>
+                   <td className="p-3 text-right shadow-[inset_0_1px_0_0_hsl(var(--border))] tabular-nums">
                     <CellValue value={footerTotals.rowTotal} isZeroFaded={false} />
                   </td>
                    {canManageVisibility && <td className="w-[52px] min-w-[52px] p-3 shadow-[inset_0_1px_0_0_hsl(var(--border))]"></td>}
@@ -656,19 +676,20 @@ export default function TeamBudgets() {
             )}
           </table>
         </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      <div className="pt-4">
-        <Collapsible>
+      <div className="border-t pt-2">
+        <Collapsible open={auditOpen} onOpenChange={setAuditOpen}>
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full flex justify-between items-center border-t text-foreground h-12 px-0" data-testid="disclosure-allocation-audit">
-               <span>Allocation sources and audit history</span>
-              <ChevronDown className="h-4 w-4" />
+            <Button variant="ghost" className="h-12 w-full justify-between px-0 text-left" data-testid="disclosure-allocation-audit">
+               <span className="flex items-center gap-2 font-semibold"><History className="h-4 w-4 text-primary" />Allocation sources and audit history</span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${auditOpen ? 'rotate-180' : ''}`} />
             </Button>
           </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-6 pt-6">
-            <Card className="rounded-none border-x-0 border-b-0 shadow-none">
-              <CardHeader className="border-b px-0">
+          <CollapsibleContent className="space-y-6 pt-4">
+            <Card className="rounded-md shadow-none">
+              <CardHeader>
                 <CardTitle className="text-lg">Source issues</CardTitle>
                 <CardDescription>Approved records that were not included in allocation totals.</CardDescription>
               </CardHeader>
@@ -706,8 +727,8 @@ export default function TeamBudgets() {
             </Card>
 
             {canEdit && (
-              <Card className="rounded-none border-x-0 border-b-0 shadow-none">
-                <CardHeader className="border-b px-0">
+              <Card className="rounded-md shadow-none">
+                <CardHeader>
                    <CardTitle className="text-lg">Allocation audit history</CardTitle>
                    <CardDescription>Opening funding and monthly additions are recorded newest first{canManageVisibility ? ', with administrator visibility changes' : ''}.</CardDescription>
                 </CardHeader>
@@ -789,6 +810,10 @@ export default function TeamBudgets() {
             )}
           </CollapsibleContent>
         </Collapsible>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <ShieldCheck className="h-4 w-4 text-primary" />
+        Planning allocations do not change Replit platform limits.
       </div>
     </div>
   );

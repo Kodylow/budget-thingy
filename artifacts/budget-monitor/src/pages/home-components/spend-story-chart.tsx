@@ -1,5 +1,5 @@
 import React from 'react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
 import { formatFinancialAxis, formatFinancialUsd } from '@/lib/financial-format';
 import type { DashboardResponseTrend } from '@workspace/api-client-react';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
@@ -22,13 +22,7 @@ export function SpendStoryChart({ trend }: { trend?: DashboardResponseTrend }) {
   return (
     <div className="h-full w-full min-w-0 relative">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-          <defs>
-            <linearGradient id="actual-spend-grad-home" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#0D62FF" stopOpacity={0.25} />
-              <stop offset="95%" stopColor="#0D62FF" stopOpacity={0} />
-            </linearGradient>
-          </defs>
+        <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
           <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" opacity={0.5} />
           <XAxis
             dataKey="dateLabel"
@@ -64,19 +58,14 @@ export function SpendStoryChart({ trend }: { trend?: DashboardResponseTrend }) {
               return null;
             }}
           />
-          <Area
-            type="monotone"
+          <Bar
             isAnimationActive={false}
             dataKey="val"
-            stroke="#0D62FF"
-            strokeWidth={2}
-            fill="url(#actual-spend-grad-home)"
-            fillOpacity={1}
-            connectNulls={false}
-            dot={chartData.filter(point => point.val != null).length === 1 ? { r: 4, fill: '#0D62FF' } : false}
-            activeDot={{ r: 4, fill: '#0D62FF', stroke: 'var(--background)', strokeWidth: 2 }}
+            fill="#0D62FF"
+            radius={[2, 2, 0, 0]}
+            maxBarSize={48}
           />
-        </AreaChart>
+        </BarChart>
       </ResponsiveContainer>
       {hasIncomplete && (
         <AdminDataQualityNote title="My Spend Story">
@@ -142,7 +131,7 @@ export function MonthMiniBars({ monthly }: { monthly?: any[] }) {
               return null;
             }}
           />
-          <Bar dataKey="val" radius={[2, 2, 0, 0]}>
+          <Bar dataKey="val" radius={[2, 2, 0, 0]} maxBarSize={48}>
             {chartData.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={entry.isCurrent ? '#000A73' : '#0D62FF'} opacity={entry.isCurrent ? 1 : 0.6} />
             ))}

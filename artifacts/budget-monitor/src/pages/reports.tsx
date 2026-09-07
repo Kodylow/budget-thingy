@@ -13,13 +13,15 @@ import {
   type ListSpendPoolsParams,
   type SpendTableRow,
 } from '@workspace/api-client-react';
-import { Activity, AlertCircle, BarChart3, Building2, DollarSign, Search, Users } from 'lucide-react';
+import { AlertCircle, BarChart3, FileText, Search, SlidersHorizontal, Users } from 'lucide-react';
 import { useAuthContext } from '@/components/auth-context';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
+import { MetricCard } from '@/components/journey-primitives';
 import { useRange } from '@/components/range-context';
 import { RangeFilter } from '@/components/range-filter';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -82,29 +84,6 @@ function percent(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? 'Unavailable' : `${value.toFixed(1)}%`;
 }
 
-function Tile({
-  label,
-  value,
-  sub,
-  icon: Icon,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  icon: typeof Users;
-}) {
-  return (
-    <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl p-5">
-      <div className="mb-2 flex items-center gap-2">
-        <Icon className="h-3.5 w-3.5 text-primary" />
-        <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
-      </div>
-      <div className="text-2xl font-mono font-semibold tabular-nums">{value}</div>
-      <div className="mt-1.5 text-xs text-muted-foreground">{sub}</div>
-    </div>
-  );
-}
-
 type MemberSort = 'name' | 'spend' | 'agent' | 'current';
 
 function MembersTable({ report }: { report: ReportingDetail }) {
@@ -149,13 +128,16 @@ function MembersTable({ report }: { report: ReportingDetail }) {
   );
 
   return (
-    <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden">
-      <div className="flex flex-col gap-3 border-b border-border/50 bg-muted/20 p-5 sm:flex-row sm:items-center sm:justify-between">
+    <Card className="overflow-hidden rounded-md shadow-none">
+      <CardHeader className="flex flex-col gap-3 border-b bg-muted/20 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-semibold">Team members ({report.members.length})</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Users className="h-4 w-4 text-primary" />
+            Team members ({report.members.length})
+          </CardTitle>
+          <CardDescription className="mt-1">
             Selected-period spend and current-cycle limits.
-          </p>
+          </CardDescription>
         </div>
         <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -167,7 +149,7 @@ function MembersTable({ report }: { report: ReportingDetail }) {
             aria-label="Search team members"
           />
         </div>
-      </div>
+      </CardHeader>
       <div className="overflow-x-auto [&>div]:overflow-visible" tabIndex={0} aria-label="Budget team members">
         <Table className="min-w-[1120px]">
           <TableHeader>
@@ -221,17 +203,19 @@ function MembersTable({ report }: { report: ReportingDetail }) {
           </TableBody>
         </Table>
       </div>
-    </div>
+    </Card>
   );
 }
 
 function Message({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-card/50 border border-border/50 rounded-xl p-8 text-center">
-      <BarChart3 className="mx-auto mb-3 h-7 w-7 text-muted-foreground" />
-      <h2 className="font-semibold">{title}</h2>
-      <div className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">{children}</div>
-    </div>
+    <Card className="border-dashed rounded-md shadow-none">
+      <CardContent className="px-6 py-12 text-center">
+        <BarChart3 className="mx-auto mb-3 h-7 w-7 text-muted-foreground" />
+        <h2 className="font-semibold">{title}</h2>
+        <div className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">{children}</div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -319,7 +303,7 @@ export default function Reports() {
 
   if (!canAccess) {
     return (
-      <div className="p-4 md:p-8">
+      <div className="mx-auto max-w-[1280px] p-4 md:p-8">
         <Message title="Custom Reports is unavailable">
           You do not have an authorized budget-team view. Reports do not query account or team data without that existing access.
         </Message>
@@ -328,45 +312,76 @@ export default function Reports() {
   }
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-5 p-4 md:p-8" data-testid="page-custom-reports">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Custom Reports</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Budget-team reporting.
-        </p>
+    <div className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8" data-testid="page-custom-reports">
+      <div className="space-y-2">
+        <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Custom Reports</h1>
+        <p className="text-sm text-muted-foreground">Budget-team reporting.</p>
         <AdminDataQualityNote title="Custom Reports data quality">
           <p>Read-only budget-team reporting from authorized Airtable mappings.</p>
         </AdminDataQualityNote>
       </div>
 
-      <div className="space-y-4 bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl p-5">
-        <div className="grid gap-4 md:grid-cols-[minmax(240px,1fr)_auto] md:items-end">
-          <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Budget team
-            </label>
-            <Select value={selectedPool?.id ?? ''} onValueChange={updatePool} disabled={poolLoading || poolLoadError || generationMismatch}>
-              <SelectTrigger aria-label="Budget team" data-testid="select-budget-team">
-                <SelectValue placeholder={poolLoading ? 'Loading budget teams…' : 'Choose a budget team'} />
-              </SelectTrigger>
-              <SelectContent>
-                {pools.map((pool) => (
-                  <SelectItem key={pool.id} value={pool.id}>{pool.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <div className="space-y-5">
+        <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/[0.045] px-4 py-3.5">
+          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <div className="space-y-1 text-sm">
+            <p className="font-semibold">Custom Reports data quality</p>
+            <p className="text-muted-foreground">Read-only budget-team reporting from authorized Airtable mappings.</p>
           </div>
-          <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Timeframe
-            </label>
-            <RangeFilter selectedLabel={report?.period.label} />
-          </div>
+          <Badge variant="outline" className="ml-auto hidden shrink-0 sm:inline-flex">Verified source</Badge>
         </div>
+
+        <Card className="rounded-md shadow-none">
+          <CardHeader className="border-b pb-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <SlidersHorizontal className="h-4 w-4 text-primary" />
+                  Build a custom report
+                </CardTitle>
+                <CardDescription className="mt-1">Choose the authorized scope and accounting window for this view.</CardDescription>
+              </div>
+              <span className="hidden text-xs font-medium text-muted-foreground sm:block">Report controls</span>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-5">
+            <div className="grid gap-4 md:grid-cols-[minmax(240px,1fr)_auto] md:items-end">
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Budget team
+                </label>
+                <Select value={selectedPool?.id ?? ''} onValueChange={updatePool} disabled={poolLoading || poolLoadError || generationMismatch}>
+                  <SelectTrigger aria-label="Budget team" data-testid="select-budget-team">
+                    <SelectValue placeholder={poolLoading ? 'Loading budget teams…' : 'Choose a budget team'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {pools.map((pool) => (
+                      <SelectItem key={pool.id} value={pool.id}>{pool.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Timeframe
+                </label>
+                <RangeFilter selectedLabel={report?.period.label} />
+              </div>
+            </div>
+            {report && (
+              <div className="rounded-md bg-muted/45 px-3 py-2.5 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">Scope resolved</span><br />
+                {report.sourceGroups.length} physical group{report.sourceGroups.length === 1 ? '' : 's'} across {sourceWorkspaces} workspace{sourceWorkspaces === 1 ? '' : 's'}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {report && (
-          <div className="border-t border-border/60 pt-3">
-            <div className="mb-2 text-xs text-muted-foreground">
-              Airtable team mapping · {report.sourceGroups.length} physical group{report.sourceGroups.length === 1 ? '' : 's'} across {sourceWorkspaces} workspace{sourceWorkspaces === 1 ? '' : 's'}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">{selectedPool?.name}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Selected period · {report.period.label}</p>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {report.sourceGroups.map((group) => (
@@ -377,7 +392,6 @@ export default function Reports() {
             </div>
           </div>
         )}
-      </div>
 
       {poolLoadError && (
         <Message title="Budget teams couldn’t be loaded">
@@ -425,8 +439,8 @@ export default function Reports() {
         <Message title="Build a custom report">Choose an authorized budget team and reporting timeframe.</Message>
       )}
       {selectedPool && selectedReport.isLoading && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 9 }, (_, index) => <div key={index} className="h-28 animate-pulse-glow rounded-xl bg-muted" />)}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 8 }, (_, index) => <div key={index} className="h-28 animate-pulse-glow rounded-md bg-muted" />)}
         </div>
       )}
       {selectedPool && selectedReport.isError && !report && (
@@ -462,31 +476,31 @@ export default function Reports() {
               This budget team currently has no mapped workspaces or groups. Its allocation remains visible, while spend and people are empty.
             </div>
           )}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Tile icon={DollarSign} label="Annual allocation" value={formatUsd(budget.allocationUsd)}
-              sub={`Full period · ${fullReport?.period.label ?? 'loading budget period'}`} />
-            <Tile icon={DollarSign} label="Budget-period spend" value={formatUsd(budget.spendUsd)}
-              sub={fullReport
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard label="Annual allocation" value={formatUsd(budget.allocationUsd)}
+              detail={`Full period · ${fullReport?.period.label ?? 'loading budget period'}`} />
+            <MetricCard label="Budget-period spend" value={formatUsd(budget.spendUsd)}
+              detail={fullReport
                 ? `${!fullReport.headline.isComplete && reportUsageObserved(fullReport) ? 'Known subtotal · Partial · ' : ''}${fullReport.period.label}`
                 : 'Loading full-period spend'} />
-            <Tile icon={Activity} label="Budget remaining / used"
+            <MetricCard label="Budget remaining / used"
               value={budget.remainingUsd == null ? 'Unavailable' : formatUsd(budget.remainingUsd)}
-              sub={`${percent(budget.percentUsed)} used · full-period accounting`} />
-            <Tile icon={DollarSign} label="Selected spend"
+              detail={`${percent(budget.percentUsed)} used · full-period accounting`} />
+            <MetricCard label="Selected spend"
               value={formatUsd(selectedObserved ? report.headline.spendUsd : null)}
-              sub={`${!report.headline.isComplete && selectedObserved ? 'Known subtotal · Partial · ' : ''}${report.period.label}`} />
-            <Tile icon={Activity} label="Selected Agent"
+              detail={`${!report.headline.isComplete && selectedObserved ? 'Known subtotal · Partial · ' : ''}${report.period.label}`} />
+            <MetricCard label="Selected Agent"
               value={formatUsd(selectedObserved ? report.headline.agentSpendUsd : null)}
-              sub={`${!report.headline.isComplete && selectedObserved ? 'Known subtotal · Partial · ' : ''}${report.period.label}`} />
-            <Tile icon={Activity} label="Selected other services"
+              detail={`${!report.headline.isComplete && selectedObserved ? 'Known subtotal · Partial · ' : ''}${report.period.label}`} />
+            <MetricCard label="Selected other services"
               value={formatUsd(selectedObserved ? report.headline.otherServicesUsd : null)}
-              sub={`${!report.headline.isComplete && selectedObserved ? 'Known subtotal · Partial · ' : ''}${report.period.label}`} />
-            <Tile icon={Users} label="Unique members" value={String(report.headline.memberCount)}
-              sub="Current visible mapped members" />
-            <Tile icon={Users} label="People with recorded spend" value={String(recordedPeople)}
-              sub="Current mapped members with selected-period spend" />
-            <Tile icon={Building2} label="Mapped groups" value={String(report.sourceGroups.length)}
-              sub={`${sourceWorkspaces} mapped workspace${sourceWorkspaces === 1 ? '' : 's'}`} />
+              detail={`${!report.headline.isComplete && selectedObserved ? 'Known subtotal · Partial · ' : ''}${report.period.label}`} />
+            <MetricCard label="Unique members" value={String(report.headline.memberCount)}
+              detail="Current visible mapped members" />
+            <MetricCard label="People with recorded spend" value={String(recordedPeople)}
+              detail="Current mapped members with selected-period spend" />
+            <MetricCard label="Mapped groups" value={String(report.sourceGroups.length)}
+              detail={`${sourceWorkspaces} mapped workspace${sourceWorkspaces === 1 ? '' : 's'}`} />
           </div>
 
           <AdminDataQualityNote title="Custom Reports qualifications">
@@ -504,9 +518,40 @@ export default function Reports() {
               </div>
             )}
           </AdminDataQualityNote>
-          <MembersTable report={report} />
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+            <MembersTable report={report} />
+            <Card className="h-fit rounded-md shadow-none">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Report qualifications</CardTitle>
+                <CardDescription>How to read this report</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                <div className="border-l-2 border-primary pl-3">
+                  <p className="font-medium">Canonical Agent usage</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Shown for the selected period. Other services includes hosting, storage, and other costs.</p>
+                </div>
+                {!report.headline.isComplete && selectedObserved && (
+                  <div className="border-l-2 border-amber-500 pl-3">
+                    <p className="font-medium">Partial coverage</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Selected-period values are a known subtotal.</p>
+                  </div>
+                )}
+                {report.metadata.qualifications.map((qualification) => (
+                  <div key={`visible:selected:${qualification}`} className="border-l-2 border-border pl-3 text-xs leading-5 text-muted-foreground">
+                    {qualification}
+                  </div>
+                ))}
+                {fullReport !== report && fullReport?.metadata.qualifications.map((qualification) => (
+                  <div key={`visible:budget:${qualification}`} className="border-l-2 border-border pl-3 text-xs leading-5 text-muted-foreground">
+                    <span className="font-medium text-foreground">Full period:</span> {qualification}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
+      </div>
     </div>
   );
 }

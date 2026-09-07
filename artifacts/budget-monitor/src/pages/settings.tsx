@@ -18,7 +18,7 @@ import {
   type EmailTestResult,
   type SystemStatus,
 } from '@workspace/api-client-react';
-import { AlertCircle, CheckCircle, Plus, Send, ShieldAlert, Trash2, XCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle, Info, Plus, Send, ShieldAlert, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 import { useAuthContext } from '@/components/auth-context';
@@ -57,20 +57,44 @@ function SpendAccountingCard({
       typeof dashboard.accounting.internalExcludedUsd === 'number' &&
       typeof dashboard.accounting.eligibleSpendUsd === 'number',
   );
+  const accountingStatus = isPreviousRange
+    ? refreshFailed ? 'Previous' : 'Refreshing'
+    : !dashboard
+      ? 'Loading'
+      : dashboard.metadata.status === 'partial'
+        ? 'Partial'
+        : dashboard.metadata.stale
+          ? 'Stale'
+          : 'Current';
+  const accountingCurrent = accountingStatus === 'Current';
   return (
-    <Card className="rounded-none border-x-0 border-b-0 shadow-none" data-testid="internal-spend-accounting">
-      <CardHeader>
-        <CardTitle>Selected range spend accounting</CardTitle>
-        <CardDescription>{dashboard?.period.label ?? 'Active reporting range'}</CardDescription>
+    <Card className="rounded-md shadow-none" data-testid="internal-spend-accounting">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-base">Selected range spend accounting</CardTitle>
+            <CardDescription>{dashboard?.period.label ?? 'Active reporting range'}</CardDescription>
+          </div>
+          <Badge
+            variant="outline"
+            className={accountingCurrent
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400'
+              : accountingStatus === 'Stale' || accountingStatus === 'Partial'
+              ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-400'
+              : undefined}
+          >
+            {accountingStatus}
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent>
         {available ? (
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono tabular-nums">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-sm tabular-nums">
             <span>${dashboard!.accounting.grossSpendUsd.toFixed(2)} gross</span>
-            <span aria-hidden="true">−</span>
-            <span>${dashboard!.accounting.internalExcludedUsd.toFixed(2)} internal</span>
-            <span aria-hidden="true">=</span>
-            <span className="font-semibold">${dashboard!.accounting.eligibleSpendUsd.toFixed(2)} eligible</span>
+            <span className="text-muted-foreground" aria-hidden="true">−</span>
+            <span className="text-muted-foreground">${dashboard!.accounting.internalExcludedUsd.toFixed(2)} internal</span>
+            <span className="text-muted-foreground" aria-hidden="true">=</span>
+            <span className="font-semibold text-primary">${dashboard!.accounting.eligibleSpendUsd.toFixed(2)} eligible</span>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
@@ -94,9 +118,12 @@ function SpendAccountingCard({
             Usage coverage is partial, so known spend is not presented as complete accounting.
           </p>
         )}
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>
           Internal Replit user usage remains visible in directory context but is excluded from
           eligible spend, budget consumption, and limit policy calculations.
+          </span>
         </p>
       </CardContent>
     </Card>
@@ -422,8 +449,8 @@ function EnterpriseGuidance({ presentation }: { presentation: EnterprisePresenta
   const danger = presentation.state === 'failed' || presentation.state === 'missing';
   return (
     <div className={danger
-      ? 'p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-3'
-      : 'p-4 rounded-lg bg-muted border border-border flex items-start gap-3'}>
+      ? 'mt-4 flex items-start gap-3 rounded-md border border-destructive/20 bg-destructive/10 p-4'
+      : 'mt-4 flex items-start gap-3 rounded-md border border-border bg-muted p-4'}>
       <AlertCircle className={danger ? 'h-5 w-5 text-destructive mt-0.5' : 'h-5 w-5 text-chart-2 mt-0.5'} />
       <div className="flex-1">
         <p className={danger ? 'text-sm font-medium text-destructive' : 'text-sm font-medium'}>{presentation.calloutTitle}</p>
@@ -436,7 +463,7 @@ function EnterpriseGuidance({ presentation }: { presentation: EnterprisePresenta
 function SystemStatusContent({ status, canTest }: { status: SystemStatus; canTest: boolean }) {
   const enterprise = getEnterpriseApiStatusPresentation(status);
   return (
-    <div className="space-y-4">
+    <div>
       <EnterpriseApiRow presentation={enterprise} />
       <EmailConnectorRow status={status} canTest={canTest} />
       <AutomatedEmailRow />
@@ -462,12 +489,12 @@ function SystemStatusCard({ canTest }: { canTest: boolean }) {
     content = <p className="text-muted-foreground text-sm">No system status is available.</p>;
   }
   return (
-    <Card className="rounded-none border-x-0 border-b-0 shadow-none">
-      <CardHeader className="px-0 py-5">
-        <CardTitle>System Status</CardTitle>
+    <Card className="rounded-md shadow-none">
+      <CardHeader className="border-b pb-4">
+        <CardTitle className="text-base">System status</CardTitle>
         <CardDescription>Enterprise API connectivity and background checker state</CardDescription>
       </CardHeader>
-      <CardContent className="px-0 pb-4">{content}</CardContent>
+      <CardContent className="pt-1">{content}</CardContent>
     </Card>
   );
 }
@@ -503,11 +530,11 @@ function AdministratorsCard() {
     list = <p className="text-sm text-muted-foreground">Editor data is unavailable.</p>;
   } else if (query.data?.length) {
     list = (
-      <div className="space-y-2">
+      <div className="divide-y">
         {query.data.map((editor) => (
-          <div key={editor.userId} className="flex items-center justify-between border-b border-border py-3 last:border-b-0">
+          <div key={editor.userId} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
           <div className="min-w-0 pr-2"><p className="break-words text-sm font-medium">{editor.email || editor.userId}</p><p className="break-all text-xs text-muted-foreground font-mono">{editor.userId}</p></div>
-            <Button variant="ghost" size="sm" onClick={() => remove(editor.userId)} disabled={deleteEditor.isPending} data-testid={`button-delete-editor-${editor.userId}`}>
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => remove(editor.userId)} disabled={deleteEditor.isPending} aria-label={`Remove ${editor.email || editor.userId}`} data-testid={`button-delete-editor-${editor.userId}`}>
               <Trash2 className="h-4 w-4 text-destructive" />
             </Button>
           </div>
@@ -518,15 +545,15 @@ function AdministratorsCard() {
     list = <p className="text-sm text-muted-foreground">No application administrators configured.</p>;
   }
   return (
-    <Card className="rounded-none border-x-0 border-b-0 shadow-none">
-      <CardHeader><CardTitle>Application Administrators</CardTitle><CardDescription>Replit users with account-level access to this application.</CardDescription></CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input placeholder="Stable Replit user ID" value={userIdDraft} onChange={(event) => setUserIdDraft(event.target.value)} onKeyDown={(event) => {
+    <Card className="rounded-md shadow-none">
+      <CardHeader className="border-b pb-4"><CardTitle className="text-base">Application administrators</CardTitle><CardDescription>Replit users with account-level access to this application.</CardDescription></CardHeader>
+      <CardContent className="space-y-4 pt-5">
+        <div className="flex gap-2">
+          <Input aria-label="New administrator user ID" placeholder="Stable Replit user ID" value={userIdDraft} onChange={(event) => setUserIdDraft(event.target.value)} onKeyDown={(event) => {
             if (event.key === 'Enter') add();
           }} data-testid="input-new-editor" />
-          <Button className="w-full sm:w-auto" onClick={add} disabled={addEditor.isPending || !userIdDraft.trim()} data-testid="button-add-editor">
-            <Plus className="h-4 w-4 mr-2" />Add
+          <Button onClick={add} disabled={addEditor.isPending || !userIdDraft.trim()} aria-label="Add administrator" data-testid="button-add-editor">
+            <Plus className="h-4 w-4" />
           </Button>
         </div>
         {list}
@@ -552,21 +579,26 @@ export default function Settings() {
   });
   if (!capabilities.canManageAccess) {
     return (
-      <div className="mx-auto max-w-6xl p-4 md:p-8" data-testid="settings-forbidden">
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Settings</h1>
+      <div className="mx-auto max-w-[1280px] space-y-2 px-4 py-6 md:px-8 md:py-8" data-testid="settings-forbidden">
+        <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Settings</h1>
         <p className="text-muted-foreground mt-2">Settings are only available to account administrators.</p>
       </div>
     );
   }
   return (
-    <main className="mx-auto max-w-6xl space-y-8 p-4 md:p-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">Management</p>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight" data-testid="text-settings-title">Settings</h1>
-          <p className="text-muted-foreground mt-1 text-sm md:text-base">Monitor system freshness, email policy, and authorized test facilities</p>
+    <main className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl" data-testid="text-settings-title">Settings</h1>
+          <p className="text-sm text-muted-foreground">Monitor system freshness, email policy, and authorized test facilities</p>
         </div>
         {role === 'account' && <RangeFilter selectedLabel={dashboard.data?.period.label} />}
+      </div>
+      <div className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/[0.04] px-4 py-3 text-sm text-muted-foreground">
+        <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+        <span>Account administrator controls</span>
+        <span className="hidden text-border sm:inline" aria-hidden="true">/</span>
+        <span className="hidden sm:inline">Policy changes apply to all managed workspaces.</span>
       </div>
       {role === 'account' && (
         <SpendAccountingCard
@@ -575,8 +607,10 @@ export default function Settings() {
           refreshFailed={dashboard.isError}
         />
       )}
-      <SystemStatusCard canTest={capabilities.canManageAccess} />
-      <AdministratorsCard />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.85fr)]">
+        <SystemStatusCard canTest={capabilities.canManageAccess} />
+        <AdministratorsCard />
+      </div>
     </main>
   );
 }

@@ -34,4 +34,14 @@ describe('Allocation page safety regressions', () => {
     expect(source).toContain('key={`${authorizationKey}:${row.team.teamName}`}');
     expect(source.match(/<DialogContent className="max-h-\[90dvh\] overflow-y-auto">/g)).toHaveLength(2);
   });
+
+  it('uses the approved allocation ledger hierarchy without replacing live data', () => {
+    expect(source).toContain('max-w-[1280px] space-y-8');
+    expect(source).toContain('<Card className="overflow-hidden rounded-md shadow-none">');
+    expect(source).toContain('<strong>Funding ledger</strong>');
+    expect(source).toContain('Later additions</th>');
+    expect(source).toContain('filteredRows.map(row => (');
+    expect(source).toContain('<History className="h-4 w-4 text-primary" />');
+    expect(source).toContain('Planning allocations do not change Replit platform limits.');
+  });
 });

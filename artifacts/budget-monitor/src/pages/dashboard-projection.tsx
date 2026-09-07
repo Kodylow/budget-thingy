@@ -4,13 +4,12 @@ import {
   DashboardProjectionStatus
 } from '@workspace/api-client-react';
 import {
-  Line,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  Area,
   ComposedChart,
   ReferenceLine
 } from 'recharts';
@@ -246,35 +245,31 @@ export default function DashboardProjectionView({ projection, animateKey }: Dash
                 }}
               />
 
-              <Area
-                type="step"
+              <Bar
                 dataKey={(d) => d.isFuture && d.sevenDayScenarioUsd !== null && d.twentyEightDayScenarioUsd !== null ? [Math.min(d.sevenDayScenarioUsd, d.twentyEightDayScenarioUsd), Math.max(d.sevenDayScenarioUsd, d.twentyEightDayScenarioUsd)] : null}
-                stroke="none"
                 fill="var(--color-muted)"
                 fillOpacity={0.6}
+                radius={[2, 2, 0, 0]}
+                maxBarSize={48}
                 isAnimationActive={false}
               />
 
-              <Area
-                type="monotone"
+              <Bar
                 dataKey="actualFillUsd"
-                stroke="#0D62FF"
-                strokeWidth={2}
                 fill="#0D62FF"
-                fillOpacity={0.15}
+                fillOpacity={0.85}
+                radius={[2, 2, 0, 0]}
+                maxBarSize={48}
                 isAnimationActive={false}
-                connectNulls={false}
                />
 
-              <Line
-                type="monotone"
+              <Bar
                 dataKey="projectedCumulativeUsd"
-                 stroke="var(--color-foreground)"
-                strokeWidth={2}
-                strokeDasharray="4 4"
-                dot={false}
+                fill="var(--color-foreground)"
+                fillOpacity={0.45}
+                radius={[2, 2, 0, 0]}
+                maxBarSize={48}
                 isAnimationActive={false}
-                connectNulls={false}
                />
 
                {latestActualDate && (

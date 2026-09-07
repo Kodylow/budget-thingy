@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useListSpendPeople, getListSpendPeopleQueryKey } from "@workspace/api-client-react";
 import { useRange } from "@/components/range-context";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -9,6 +8,7 @@ import { Search, ChevronLeft, ChevronRight, AlertTriangle, RefreshCw } from "luc
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatObservedCurrency, isUnknownSpendTotal } from "@/lib/spend-presentation";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
+import { DataTable } from "@/components/journey-primitives";
 
 export function OrgInsightsPeopleTable() {
   const { rangeType, startDate, endDate } = useRange();
@@ -38,9 +38,9 @@ export function OrgInsightsPeopleTable() {
   const knownTotal = data ? !isUnknownSpendTotal(data.metadata) : false;
   
   return (
-    <div className="flex flex-col h-full bg-card border border-border shadow-sm rounded-xl overflow-hidden">
-      <div className="p-4 border-b border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Users by Period Spend</h2>
+    <div className="flex h-full flex-col overflow-hidden rounded-md border bg-card">
+      <div className="flex flex-col justify-between gap-4 border-b p-4 sm:flex-row sm:items-center">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Users by period spend</h3>
         <div className="flex flex-col sm:flex-row gap-2">
           {workspaces.length > 0 && (
              <Select value={workspaceId || "all"} onValueChange={v => { setWorkspaceId(v === "all" ? null : v); setPage(1); }}>
@@ -66,7 +66,7 @@ export function OrgInsightsPeopleTable() {
         </div>
       </div>
       
-      <div className="flex-1 overflow-auto min-h-[300px] relative">
+      <div className="relative min-h-[300px] flex-1 overflow-auto">
         {!data ? (
            query.isError ? (
              <div className="flex flex-col items-center justify-center h-full p-8 text-center text-muted-foreground">
@@ -84,48 +84,31 @@ export function OrgInsightsPeopleTable() {
              No matching users found.
            </div>
         ) : (
-          <Table>
-            <TableHeader className="bg-muted/50 sticky top-0 z-10 shadow-sm">
-              <TableRow>
-                <TableHead className="w-16 text-xs text-muted-foreground uppercase tracking-wider font-semibold">Rank</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">User</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Workspace</TableHead>
-                <TableHead className="text-right text-xs text-muted-foreground uppercase tracking-wider font-semibold">Period Total</TableHead>
-                <TableHead className="text-right text-xs text-muted-foreground uppercase tracking-wider font-semibold">Current Cycle Agent</TableHead>
-                <TableHead className="text-right text-xs text-muted-foreground uppercase tracking-wider font-semibold">Agent Limit</TableHead>
-                <TableHead className="text-right text-xs text-muted-foreground uppercase tracking-wider font-semibold">Cycle Remaining</TableHead>
-                <TableHead className="text-right text-xs text-muted-foreground uppercase tracking-wider font-semibold">Cycle % Used</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.rows.map((row, idx) => (
-                <TableRow key={row.id} className="hover:bg-muted/30">
-                  <TableCell className="font-mono text-xs text-muted-foreground">#{(page - 1) * pageSize + idx + 1}</TableCell>
-                  <TableCell className="font-medium text-sm text-foreground">{row.name || "Unknown User"}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{row.workspaceName || row.workspaceId}</TableCell>
-                  <TableCell className="text-right font-mono text-sm text-foreground">
-                    {formatObservedCurrency(row.spendUsd, knownTotal && row.usageObserved !== false)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                    {row.currentCycleAgentSpendUsd != null ? formatObservedCurrency(row.currentCycleAgentSpendUsd, true) : "Unavailable"}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                    {row.limitState === "no_limit" ? "No limit" : row.allocationUsd != null ? formatObservedCurrency(row.allocationUsd, true) : "Unavailable"}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-sm">
-                    {row.currentCycleRemainingUsd != null ? formatObservedCurrency(row.currentCycleRemainingUsd, true) : "Unavailable"}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-sm">
-                    {row.currentCyclePercentUsed != null ? (
-                      <span className={row.currentCyclePercentUsed > 100 ? "text-[var(--budget-over)]" : row.currentCyclePercentUsed >= 90 ? "text-[var(--budget-near)]" : "text-[var(--budget-within)]"}>
-                        {row.currentCyclePercentUsed.toFixed(1)}%
-                      </span>
-                    ) : "Unavailable"}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+           <DataTable
+             caption="Organization users and spend"
+             columns={[
+               { label: "Rank" },
+               { label: "Person" },
+               { label: "Workspace" },
+               { label: "Period total", className: "text-right" },
+               { label: "Current cycle agent", className: "text-right" },
+               { label: "Agent limit", className: "text-right" },
+               { label: "Cycle remaining", className: "text-right" },
+               { label: "Cycle % used", className: "text-right" },
+             ]}
+             rows={data.rows.map((row, idx) => [
+               <span className="font-mono text-xs text-muted-foreground">#{(page - 1) * pageSize + idx + 1}</span>,
+               <span className="font-medium">{row.name || "Unknown User"}</span>,
+               <span className="text-muted-foreground">{row.workspaceName || row.workspaceId}</span>,
+               <span className="font-mono">{formatObservedCurrency(row.spendUsd, knownTotal && row.usageObserved !== false)}</span>,
+               <span className="font-mono text-muted-foreground">{row.currentCycleAgentSpendUsd != null ? formatObservedCurrency(row.currentCycleAgentSpendUsd, true) : "Unavailable"}</span>,
+               <span className="font-mono text-muted-foreground">{row.limitState === "no_limit" ? "No limit" : row.allocationUsd != null ? formatObservedCurrency(row.allocationUsd, true) : "Unavailable"}</span>,
+               <span className="font-mono">{row.currentCycleRemainingUsd != null ? formatObservedCurrency(row.currentCycleRemainingUsd, true) : "Unavailable"}</span>,
+               <span className={`font-mono ${row.currentCyclePercentUsed != null ? row.currentCyclePercentUsed > 100 ? "text-[var(--budget-over)]" : row.currentCyclePercentUsed >= 90 ? "text-[var(--budget-near)]" : "text-[var(--budget-within)]" : ""}`}>
+                 {row.currentCyclePercentUsed != null ? `${row.currentCyclePercentUsed.toFixed(1)}%` : "Unavailable"}
+               </span>,
+             ])}
+           />
         )}
       </div>
 

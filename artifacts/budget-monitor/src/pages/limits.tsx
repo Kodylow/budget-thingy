@@ -42,7 +42,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Search, ShieldAlert, AlertTriangle, CheckCircle2, ChevronRight,
@@ -52,7 +52,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { invalidateBudgetCaches } from '@/lib/budget-cache';
 import { GroupPolicyControl, WorkspacePolicyControl } from '@/components/policy-control';
-import { BudgetMeter } from '@/components/budget-meter';
+import { BudgetMeter, DataTable, EmptyState, StatusBadge } from '@/components/journey-primitives';
 
 export default function LimitsPage() {
   const searchParams = useSearch();
@@ -83,29 +83,28 @@ export default function LimitsPage() {
 
   if (availableWorkspaces.length === 0) {
     return (
-      <div className="p-8 text-center text-muted-foreground max-w-md mx-auto">
-        <ShieldAlert className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
-        <h2 className="text-lg font-semibold text-foreground mb-2">No Authorized Workspaces</h2>
-        <p>You do not have permission to set user limits in any workspaces.</p>
+      <div className="mx-auto max-w-[1280px] px-4 py-6 md:px-8 md:py-8">
+        <EmptyState
+          title="No authorized workspaces"
+          description="You do not have permission to set user limits in any workspaces."
+        />
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-8 space-y-6 max-w-[100vw] flex flex-col h-auto min-h-[100dvh] sm:h-[calc(100dvh-3.5rem)] lg:h-[100dvh]">
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 shrink-0">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Limits</h1>
-          <p className="text-muted-foreground mt-1 text-sm md:text-base">Individual monthly Agent limits · reset each billing cycle · hard-block Agent usage when reached.</p>
+    <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col space-y-8 px-4 py-6 md:px-8 md:py-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Limits</h1>
+          <p className="text-sm text-muted-foreground">Individual monthly Agent limits · reset each billing cycle · hard-block Agent usage when reached.</p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {isReadOnly && (
-            <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30">
-              Preview (Read-only)
-            </Badge>
-          )}
-        </div>
+        {isReadOnly && (
+          <Badge variant="outline" className="h-8 w-fit border-amber-200 bg-amber-50 px-3 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+            Preview · Read-only
+          </Badge>
+        )}
       </div>
 
       {!workspaceId ? (
@@ -248,7 +247,7 @@ function WorkspaceLimitsView({
   }
 
   return (
-    <div className="sm:flex-1 flex flex-col gap-6 sm:min-h-0 relative">
+    <div className="flex flex-col gap-5">
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 shrink-0">
         <label htmlFor="limits-workspace" className="text-sm font-semibold text-foreground">Workspace</label>
         <Select value={workspaceId} onValueChange={setWorkspaceId}>
@@ -265,22 +264,23 @@ function WorkspaceLimitsView({
         </Select>
       </div>
 
-      {(!ws.canWrite || ws.unavailableReason) && (
-        <div className="shrink-0 flex items-start gap-3 bg-muted/30 border rounded-xl p-5 text-muted-foreground">
-          <ShieldAlert className="h-6 w-6 shrink-0 mt-0.5 text-muted-foreground/70" />
+      {(isReadOnly || !ws.canWrite || ws.unavailableReason) && (
+        <div className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50/60 p-4 text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
           <div>
-            <h3 className="font-semibold text-base mb-1 text-foreground">Workspace edits disabled</h3>
-            <p className="text-sm">{ws.unavailableReason || 'You do not have write access to this workspace.'}</p>
+            <h3 className="text-sm font-semibold">Workspace edits disabled</h3>
+            <p className="mt-0.5 text-xs opacity-75">{ws.unavailableReason || (isReadOnly ? 'You can review limit coverage. Changes require write access outside preview mode.' : 'You do not have write access to this workspace.')}</p>
           </div>
         </div>
       )}
 
       <div className="shrink-0 border-y py-3 flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-6 text-sm">
-        <p className="font-medium" data-testid="text-limit-cycle">
+          <p className="font-semibold" data-testid="text-limit-cycle">
           Current billing cycle: {new Date(ws.billingPeriod.start).toLocaleDateString(undefined, { month: 'short', day: 'numeric'})} &ndash; {new Date(ws.billingPeriod.end).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric'})}
         </p>
         {ws.limitObservation.status === 'available' ? (
-          <p className="text-muted-foreground" data-testid="status-limit-observation">
+          <p className="flex items-center gap-1.5 text-muted-foreground" data-testid="status-limit-observation">
+            <CheckCircle2 className="h-4 w-4 text-emerald-700" />
             Usage observed {ws.limitObservation.observedAt ? new Date(ws.limitObservation.observedAt).toLocaleString() : 'during the current cycle'}.
           </p>
         ) : (
@@ -520,16 +520,65 @@ function WorkspaceLimitsManager({
   const selectedVisibleCount = [...selectedUserIds].filter(id => visibleSelectableIds.has(id)).length;
   const selectedOutsideCount = selectedUserIds.size - selectedVisibleCount;
   const observationAvailable = ws.limitObservation.status === 'available';
+  const groupRows = filteredGroups.map((group: SetLimitsGroup) => {
+    const groupMembers = ws.members.filter((member: SetLimitsMember) => member.groupIds.includes(group.groupId));
+    const selectableIds = getSelectableGroupUserIds(group, ws.members);
+    const selectedCount = selectableIds.filter(id => selectedUserIds.has(id)).length;
+    const allSelected = selectableIds.length > 0 && selectedCount === selectableIds.length;
+    const stateCounts = groupMembers.reduce((counts: Record<string, number>, member: SetLimitsMember) => {
+      counts[member.limitState] = (counts[member.limitState] || 0) + 1;
+      return counts;
+    }, {});
+
+    return [
+      <Checkbox
+        checked={allSelected ? true : selectedCount > 0 ? 'indeterminate' : false}
+        onCheckedChange={() => handleGroupToggle(group)}
+        disabled={selectableIds.length === 0 || isReadOnly}
+        aria-label={`Select eligible members in ${group.name}`}
+        data-testid={`checkbox-group-${group.groupId}`}
+      />,
+      <span className="font-medium" title={group.name}>{group.name}</span>,
+      <span className="font-mono">{groupMembers.length}</span>,
+      <span className="font-mono">{selectableIds.length}</span>,
+      <span className="text-xs text-muted-foreground" data-testid={`text-group-states-${group.groupId}`}>
+        {stateCounts.explicit || 0} explicit · {stateCounts.inherited || 0} inherited · {stateCounts.no_limit || 0} none · {stateCounts.unavailable || 0} unknown
+      </span>,
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 px-2 text-xs text-primary"
+          onClick={() => handleGroupToggle(group)}
+          disabled={selectableIds.length === 0 || isReadOnly}
+          data-testid={`button-select-group-${group.groupId}`}
+        >
+          {allSelected ? 'Remove eligible' : 'Select eligible'}
+        </Button>
+        {canManagePolicies && (
+          <Link
+            href={`/limits?workspaceId=${encodeURIComponent(ws.workspaceId)}&groupId=${encodeURIComponent(group.groupId)}`}
+            className="text-xs font-medium text-primary hover:underline"
+            data-testid={`link-manage-baseline-${group.groupId}`}
+          >
+            Baseline policy
+          </Link>
+        )}
+      </div>,
+    ];
+  });
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 relative">
+    <div className="space-y-5">
       {canManagePolicies && (
         <details
           key={contextGroupIds.join(',')}
           open={contextGroupIds.length > 0 ? true : undefined}
-          className="mb-3 border-y border-border px-1 py-2"
+          className="group rounded-md border bg-card px-4 py-3"
         >
-          <summary className="cursor-pointer text-sm font-semibold">Advanced defaults and baseline policies</summary>
+          <summary className="cursor-pointer list-none text-sm font-semibold">
+            Advanced defaults and baseline policies
+          </summary>
           <p className="mt-2 text-xs text-muted-foreground">
             Defaults and policies provide ongoing limits while preserving hand-set overrides. They are separate from the selected one-time limits below.
           </p>
@@ -542,7 +591,7 @@ function WorkspaceLimitsManager({
             </p>
           )}
           {policiesQuery.isSuccess && policiesQuery.data && (
-          <div className="mt-4">
+          <div className="mt-4 border-t pt-4">
             <WorkspacePolicyControl
               workspaceId={ws.workspaceId}
               currentAmount={policiesQuery.data?.defaultAmountUsd ?? null}
@@ -566,15 +615,24 @@ function WorkspaceLimitsManager({
           )}
         </details>
       )}
-      <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'groups' | 'members')} className="sm:flex-1 flex flex-col sm:min-h-0">
-        <div className="flex flex-col gap-2 mb-3 shrink-0">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted-foreground">
-            <span><strong className="text-foreground tabular-nums">{selectableCount}</strong> eligible</span>
-            <span><strong className="text-foreground tabular-nums">{explicitCount}</strong> explicit</span>
-            <span><strong className="text-foreground tabular-nums">{inheritedCount}</strong> inherited</span>
+      <Card className="overflow-hidden rounded-md shadow-none">
+      <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'groups' | 'members')}>
+        <CardHeader className="gap-4 border-b pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-lg">Review limits</CardTitle>
+              <CardDescription className="mt-1">Select members or groups to prepare a one-time monthly limit update.</CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-mono font-semibold text-foreground">{selectableCount}</span> eligible
+              <span>·</span>
+              <span className="font-mono font-semibold text-foreground">{explicitCount}</span> explicit
+              <span>·</span>
+              <span className="font-mono font-semibold text-foreground">{inheritedCount}</span> inherited
+            </div>
           </div>
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-            <TabsList className="h-10 self-start">
+            <TabsList className="self-start">
               <TabsTrigger value="members" className="gap-2 px-5" data-testid="tab-limits-members"><User className="h-4 w-4"/> Members</TabsTrigger>
               <TabsTrigger value="groups" className="gap-2 px-5" data-testid="tab-limits-groups"><Users className="h-4 w-4"/> Groups</TabsTrigger>
             </TabsList>
@@ -632,10 +690,11 @@ function WorkspaceLimitsManager({
               </Popover>
             </div>
           </div>
-        </div>
+        </CardHeader>
+        <CardContent className="p-0">
 
         {!isReadOnly && selectedUserIds.size > 0 && (
-          <div className="mb-5">
+          <div className="border-b bg-primary/5">
             <SelectionActionBar
               selectedCount={selectedUserIds.size}
               selectedOutsideCount={selectedOutsideCount}
@@ -649,11 +708,45 @@ function WorkspaceLimitsManager({
           </div>
         )}
 
-        <TabsContent value="groups" className="m-0 sm:flex-1 overflow-auto sm:min-h-0">
+        <TabsContent value="groups" className="m-0">
           {filteredGroups.length === 0 ? (
-            <div className="py-16 text-center text-muted-foreground">No groups match your search and filters.</div>
+            <div className="py-14 text-center text-sm text-muted-foreground">No groups match your search and filters.</div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-6">
+            <>
+            <DataTable
+              caption="Group monthly Agent limit policies"
+              columns={[
+                { label: 'Select', className: 'w-10' },
+                { label: 'Group' },
+                { label: 'Members' },
+                { label: 'Eligible' },
+                { label: 'Limit states' },
+                { label: 'Policy' },
+              ]}
+              rows={groupRows}
+              rowProps={(_row, index) => {
+                const selectableIds = getSelectableGroupUserIds(filteredGroups[index], ws.members);
+                return {
+                  className: selectableIds.length > 0 && selectableIds.every(id => selectedUserIds.has(id)) ? 'bg-primary/5' : '',
+                  'data-testid': `card-limit-group-${filteredGroups[index].groupId}`,
+                } as React.HTMLAttributes<HTMLTableRowElement>;
+              }}
+            />
+            {false && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-sm">
+                <caption className="sr-only">Group monthly Agent limit policies</caption>
+                <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="w-10 px-4 py-3 font-medium">Select</th>
+                    <th className="px-4 py-3 font-medium">Group</th>
+                    <th className="px-4 py-3 font-medium">Members</th>
+                    <th className="px-4 py-3 font-medium">Eligible</th>
+                    <th className="px-4 py-3 font-medium">Limit states</th>
+                    <th className="px-4 py-3 font-medium">Policy</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
               {filteredGroups.map((group: SetLimitsGroup) => {
                 const groupMembers = ws.members.filter((member: SetLimitsMember) => member.groupIds.includes(group.groupId));
                 const selectableIds = getSelectableGroupUserIds(group, ws.members);
@@ -664,15 +757,8 @@ function WorkspaceLimitsManager({
                   return counts;
                 }, {});
                 return (
-                  <Card key={group.groupId} className={`flex flex-col shadow-none ${allSelected ? 'border-primary bg-primary/5' : 'border-border'}`} data-testid={`card-limit-group-${group.groupId}`}>
-                    <CardHeader className="p-4 pb-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <CardTitle className="text-base break-words" title={group.name}>{group.name}</CardTitle>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {groupMembers.length} members · {selectableIds.length} eligible
-                          </p>
-                        </div>
+                  <tr key={group.groupId} className={allSelected ? 'bg-primary/5' : 'bg-card'} data-testid={`card-limit-group-${group.groupId}`}>
+                    <td className="px-4 py-3">
                         <Checkbox
                           checked={allSelected ? true : selectedCount > 0 ? 'indeterminate' : false}
                           onCheckedChange={() => handleGroupToggle(group)}
@@ -680,18 +766,19 @@ function WorkspaceLimitsManager({
                           aria-label={`Select eligible members in ${group.name}`}
                           data-testid={`checkbox-group-${group.groupId}`}
                         />
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-4 pt-1 flex-1 flex flex-col gap-3">
-                      <div className="text-xs text-muted-foreground leading-relaxed" data-testid={`text-group-states-${group.groupId}`}>
-                        {stateCounts.explicit || 0} explicit · {stateCounts.inherited || 0} inherited<br/>
-                        {stateCounts.no_limit || 0} none · {stateCounts.unavailable || 0} unknown
-                      </div>
-                      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t pt-2">
+                    </td>
+                    <td className="px-4 py-3 font-medium" title={group.name}>{group.name}</td>
+                    <td className="px-4 py-3 font-mono">{groupMembers.length}</td>
+                    <td className="px-4 py-3 font-mono">{selectableIds.length}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground" data-testid={`text-group-states-${group.groupId}`}>
+                      {stateCounts.explicit || 0} explicit · {stateCounts.inherited || 0} inherited · {stateCounts.no_limit || 0} none · {stateCounts.unavailable || 0} unknown
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 px-2 text-xs -ml-2 text-primary"
+                          className="h-8 px-2 text-xs text-primary"
                           onClick={() => handleGroupToggle(group)}
                           disabled={selectableIds.length === 0 || isReadOnly}
                           data-testid={`button-select-group-${group.groupId}`}
@@ -708,100 +795,102 @@ function WorkspaceLimitsManager({
                           </Link>
                         )}
                       </div>
-                    </CardContent>
-                  </Card>
+                    </td>
+                  </tr>
                 );
               })}
+                </tbody>
+              </table>
             </div>
+            )}
+            </>
           )}
         </TabsContent>
 
-        <TabsContent value="members" className="h-[60dvh] sm:h-auto sm:flex-1 overflow-hidden sm:min-h-0 flex flex-col m-0 relative">
-          <div className="flex-1 overflow-auto">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-6">
-                <div className="col-span-full flex flex-wrap items-center justify-between gap-2 border-y py-3">
-                  <div className="flex items-center gap-3">
+        <TabsContent value="members" className="m-0">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] text-sm">
+              <caption className="sr-only">Member monthly Agent limits</caption>
+              <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="w-10 px-4 py-3 font-medium">
                     <Checkbox
                       checked={isPageAllSelected ? true : isPageSomeSelected ? 'indeterminate' : false}
                       onCheckedChange={handlePageToggle}
                       disabled={isReadOnly || pageSelectable.length === 0}
                       id="select-page-cards"
-                     data-testid="checkbox-select-page"
+                      aria-label="Select eligible members on this page"
+                      data-testid="checkbox-select-page"
                     />
-                    <label htmlFor="select-page-cards" className="text-sm font-medium cursor-pointer">Select page</label>
-                  </div>
-                  <span className="text-xs text-muted-foreground">Current billing cycle · {ws.workspaceName}</span>
-                </div>
+                  </th>
+                  <th className="px-4 py-3 font-medium">Member</th>
+                  <th className="px-4 py-3 font-medium">Role / group</th>
+                  <th className="px-4 py-3 font-medium">Monthly limit</th>
+                  <th className="min-w-[230px] px-4 py-3 font-medium">Cycle usage</th>
+                  <th className="px-4 py-3 font-medium">State</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
                 {pagedMembers.length === 0 ? (
-                  <div className="col-span-full h-32 flex items-center justify-center text-muted-foreground">
-                    No members match your filters.
-                  </div>
+                  <tr><td colSpan={7} className="h-32 text-center text-muted-foreground">No members match your filters.</td></tr>
                 ) : (
                   pagedMembers.map(m => {
                     const isSelected = selectedUserIds.has(m.userId);
                     const selectable = isMemberSelectable(m);
+                    const status = m.effectiveLimitUsd != null && m.usageUsd != null
+                      ? m.usageUsd > m.effectiveLimitUsd
+                        ? 'Over budget'
+                        : m.usageUsd >= m.effectiveLimitUsd * 0.8
+                          ? 'Near limit'
+                          : 'Within budget'
+                      : null;
 
                     return (
-                      <Card
+                      <tr
                         key={m.userId}
                         data-testid={`card-limit-member-${m.userId}`}
-                        className={`transition-colors flex flex-col shadow-none ${!selectable ? 'bg-muted/20' : 'hover:border-primary/50 cursor-pointer'} ${isSelected ? 'bg-primary/5 border-primary' : ''}`}
+                        className={`transition-colors ${!selectable ? 'bg-muted/20' : 'cursor-pointer bg-card hover:bg-muted/20'} ${isSelected ? 'bg-primary/5' : ''}`}
                         onClick={(e) => {
                           if (!selectable || isReadOnly) return;
                           if (e.target instanceof Element && e.target.closest('button, input, a, [role="checkbox"]')) return;
                           toggleMember(m);
                         }}
                       >
-                        <CardHeader className="p-4 pb-2 flex flex-row items-start gap-3 space-y-0 shrink-0">
+                        <td className="px-4 py-3">
                           <Checkbox
                             checked={isSelected}
                             disabled={!selectable || isReadOnly}
                             onCheckedChange={() => toggleMember(m)}
-                            className="mt-1"
                             aria-label={`Select ${m.name || m.username}`}
                             data-testid={`checkbox-member-${m.userId}`}
                           />
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-foreground text-sm truncate" title={m.name || m.username}>{m.name || m.username}</div>
-                            <div className="text-xs text-muted-foreground mt-0.5 truncate" title={`@${m.username}`}>
-                              @{m.username}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1 truncate">{ws.workspaceName} · {m.role}</div>
-                            {!selectable && !m.isInternal && (
-                              <div className="text-[10px] font-semibold text-destructive/80 mt-1.5 flex items-center gap-1">
-                                <UserX className="h-3 w-3" />
-                                {m.isDisabled ? 'Disabled' : 'Ineligible'}
-                              </div>
-                            )}
-                          </div>
-                        </CardHeader>
-                        <CardContent className="p-4 pt-1 flex-1 flex flex-col gap-3">
-                          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-t border-border/50 pt-3 text-sm">
-                            <div>
-                              <div className="text-xs text-muted-foreground mb-1">Monthly Agent limit</div>
-                              <div className="tabular-nums" data-testid={`text-effective-limit-${m.userId}`}>
-                                {m.limitState === 'no_limit' ? <span className="text-muted-foreground">No limit</span> :
-                                 m.limitState === 'unavailable' || m.effectiveLimitUsd == null ? <span className="text-muted-foreground">Unknown</span> :
-                                 <span className="font-semibold text-foreground">${m.effectiveLimitUsd.toFixed(2)}</span>}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="mb-1 text-xs text-muted-foreground">Limit state</div>
-                              <LimitStateBadge state={m.limitState} />
-                            </div>
-                          </div>
-                          {m.groupIds.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5">
-                              {m.groupIds.slice(0, 3).map(id => {
-                                const g = ws.groups.find((g: SetLimitsGroup) => g.groupId === id);
-                                return g ? <Badge key={id} variant="secondary" className="block h-5 max-w-[120px] truncate bg-muted/60 py-0 text-xs font-medium text-foreground" title={g.name}>{g.name}</Badge> : null;
-                              })}
-                              {m.groupIds.length > 3 && (
-                                <Badge variant="outline" className="h-5 border-dashed py-0 text-xs">+{m.groupIds.length - 3}</Badge>
-                              )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium" title={m.name || m.username}>{m.name || m.username}</div>
+                          <div className="mt-0.5 text-xs text-muted-foreground" title={`@${m.username}`}>@{m.username}</div>
+                          {!selectable && !m.isInternal && (
+                            <div className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-destructive/80">
+                              <UserX className="h-3 w-3" />{m.isDisabled ? 'Disabled' : 'Ineligible'}
                             </div>
                           )}
-                          <div className="text-sm">
+                        </td>
+                        <td className="px-4 py-3">
+                          <div>{m.role}</div>
+                          <div className="mt-1 flex max-w-[220px] flex-wrap gap-1">
+                            {m.groupIds.slice(0, 2).map(id => {
+                              const group = ws.groups.find((item: SetLimitsGroup) => item.groupId === id);
+                              return group ? <span key={id} className="text-xs text-muted-foreground">{group.name}</span> : null;
+                            })}
+                            {m.groupIds.length > 2 && <span className="text-xs text-muted-foreground">+{m.groupIds.length - 2}</span>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-mono" data-testid={`text-effective-limit-${m.userId}`}>
+                                {m.limitState === 'no_limit' ? <span className="text-muted-foreground">No limit</span> :
+                                 m.limitState === 'unavailable' || m.effectiveLimitUsd == null ? <span className="text-muted-foreground">Unknown</span> :
+                                  `$${m.effectiveLimitUsd.toFixed(2)}`}
+                        </td>
+                        <td className="px-4 py-3">
                             <BudgetMeter
                               actualUsd={m.usageUsd}
                               budgetUsd={m.limitState === 'unavailable' ? null : m.effectiveLimitUsd}
@@ -812,21 +901,22 @@ function WorkspaceLimitsManager({
                               incomplete={ws.limitObservation.status === 'unavailable' || m.limitState === 'unavailable'}
                               label="Current-cycle Agent usage"
                             />
-                            <div className="mt-1 tabular-nums text-xs text-muted-foreground" data-testid={`text-cycle-usage-${m.userId}`}>
+                            <div className="mt-1 font-mono text-xs text-muted-foreground" data-testid={`text-cycle-usage-${m.userId}`}>
                               {m.usageUsd != null ? (
                                 <span>${m.usageUsd.toFixed(2)} used · {m.effectiveLimitUsd != null ? `$${(m.effectiveLimitUsd - m.usageUsd).toFixed(2)} remaining` : 'Remaining unknown'}</span>
                               ) : <span>Usage unknown</span>}
                             </div>
-                          </div>
-                          {!observationAvailable && (
-                            <p className="text-xs text-amber-700 dark:text-amber-400">Current-cycle usage is unavailable.</p>
-                          )}
-                        </CardContent>
-                      </Card>
+                        </td>
+                        <td className="px-4 py-3"><LimitStateBadge state={m.limitState} /></td>
+                        <td className="px-4 py-3">
+                          {status ? <StatusBadge status={status} /> : <span className="text-xs text-muted-foreground">{observationAvailable ? 'Unknown' : 'Usage unavailable'}</span>}
+                        </td>
+                      </tr>
                     );
                   })
                 )}
-            </div>
+              </tbody>
+            </table>
           </div>
 
           {/* Banner if all on page selected but not all matching */}
@@ -850,8 +940,9 @@ function WorkspaceLimitsManager({
             </div>
           </div>
         </TabsContent>
+        </CardContent>
       </Tabs>
-
+      </Card>
     </div>
   );
 }

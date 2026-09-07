@@ -1,14 +1,14 @@
-import React, { useId } from "react";
+import React from "react";
 import { DashboardResponse } from "@workspace/api-client-react";
 import { formatFinancialUsd, formatFinancialAxis } from "@/lib/financial-format";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { ChartTooltip } from "@/components/financial-chart";
+import { MetricCard } from "@/components/journey-primitives";
 
 export function InsightCard({
   title,
   value,
   subtitle,
-  icon: Icon,
   testId,
   highlightText
 }: {
@@ -21,32 +21,20 @@ export function InsightCard({
 }) {
   return (
     <div
-      className="bg-card border border-border shadow-sm rounded-xl p-5 min-w-0 text-left flex flex-col justify-between h-full"
+      className="min-w-0 h-full"
       data-testid={testId}
     >
-      <div className="flex items-center gap-2 mb-2">
-        {Icon && <Icon className="w-4 h-4 text-primary opacity-80" />}
-        <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-widest">
-          {title}
-        </div>
-      </div>
-      <div>
-        <div className="text-2xl font-mono font-semibold tracking-tight break-words text-foreground">
-          {value}
-        </div>
-        {(highlightText || subtitle) && (
-          <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-1 items-center leading-tight">
-            {highlightText && <span className="text-emerald-600 dark:text-emerald-500 font-medium">{highlightText}</span>}
-            {subtitle && <span>{subtitle}</span>}
-          </div>
-        )}
-      </div>
+      <MetricCard
+        label={title}
+        value={typeof value === "string" || typeof value === "number" ? String(value) : "Unavailable"}
+        detail={[highlightText, subtitle].filter(Boolean).join(" ")}
+        tone={highlightText === "Up" ? "warning" : "default"}
+      />
     </div>
   );
 }
 
 export function MonthlySpendChart({ monthly }: { monthly: NonNullable<DashboardResponse["insights"]>["monthly"] }) {
-  const chartId = useId();
   if (!monthly || monthly.length === 0) {
     return <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">No monthly spend data</div>;
   }
@@ -65,20 +53,7 @@ export function MonthlySpendChart({ monthly }: { monthly: NonNullable<DashboardR
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-        <defs>
-          <linearGradient id={`colorAgent-${chartId}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-          </linearGradient>
-          <linearGradient id={`colorOther-${chartId}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="hsl(var(--muted-foreground))" stopOpacity={0.22} />
-            <stop offset="95%" stopColor="hsl(var(--muted-foreground))" stopOpacity={0} />
-          </linearGradient>
-          <pattern id={`stripe-${chartId}`} patternUnits="userSpaceOnUse" width="4" height="4">
-            <path d="M-1,1 l2,-2 M0,4 l4,-4 M3,5 l2,-2" stroke="hsl(var(--primary))" strokeWidth="1" strokeOpacity={0.2} />
-          </pattern>
-        </defs>
+      <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
         <XAxis
           dataKey="name"
@@ -123,28 +98,25 @@ export function MonthlySpendChart({ monthly }: { monthly: NonNullable<DashboardR
             );
           }}
         />
-        <Area
-          type="monotone"
+        <Bar
           dataKey="agent"
           isAnimationActive={false}
           name="Agent"
-          stroke="hsl(var(--primary))"
-          strokeWidth={2}
-          fill={`url(#colorAgent-${chartId})`}
-          activeDot={{ r: 4, fill: "hsl(var(--primary))" }}
-          connectNulls={false}
+          fill="hsl(var(--primary))"
+          stackId="spend"
+          radius={[2, 2, 0, 0]}
+          maxBarSize={48}
         />
-        <Area
-          type="monotone"
+        <Bar
           dataKey="other"
           isAnimationActive={false}
           name="Other"
-          stroke="hsl(var(--muted-foreground))"
-          strokeWidth={2}
-          fill={`url(#colorOther-${chartId})`}
-          connectNulls={false}
+          fill="hsl(var(--muted-foreground))"
+          stackId="spend"
+          radius={[2, 2, 0, 0]}
+          maxBarSize={48}
         />
-      </AreaChart>
+      </BarChart>
     </ResponsiveContainer>
   );
 }
@@ -154,29 +126,21 @@ export function TopSpendersList({ spenders }: { spenders: NonNullable<DashboardR
     return <div className="text-sm text-muted-foreground p-4 text-center">No spenders found.</div>;
   }
 
-  const knownSpend = spenders.flatMap((spender) => spender.spendUsd == null ? [] : [spender.spendUsd]);
-  const maxSpend = knownSpend.length > 0 ? Math.max(...knownSpend) : null;
-  
   return (
-    <div className="flex flex-col gap-2.5 h-full overflow-y-auto pr-2">
+    <div className="space-y-1">
       {spenders.map((spender, idx) => {
         const spend = spender.spendUsd;
-        const width = spend != null && maxSpend != null && maxSpend > 0 ? (spend / maxSpend) * 100 : 0;
         return (
-          <div key={spender.id} className="flex items-center gap-3 text-xs">
-            <div className="w-5 text-[10px] text-muted-foreground font-mono text-right shrink-0">#{idx + 1}</div>
-            <div className="flex-1 min-w-0">
-              <div className="flex justify-between items-baseline mb-1 gap-2">
-                <div className="truncate font-medium text-foreground">{spender.name || "Unknown"}</div>
-                <div className="font-mono text-muted-foreground shrink-0">{spend != null ? formatFinancialUsd(spend) : "Unavailable"}</div>
-              </div>
-              <div className="h-1.5 w-full bg-muted/30 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-primary rounded-full transition-all duration-500" 
-                  style={{ width: `${width}%` }}
-                />
-              </div>
+          <div key={spender.id} className="flex items-center gap-3 border-b py-3 last:border-0">
+            <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">
+              {String(idx + 1).padStart(2, "0")}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">{spender.name || "Unknown"}</p>
             </div>
+            <span className="shrink-0 font-mono text-sm font-semibold">
+              {spend != null ? formatFinancialUsd(spend) : "Unavailable"}
+            </span>
           </div>
         );
       })}
@@ -187,23 +151,19 @@ export function TopSpendersList({ spenders }: { spenders: NonNullable<DashboardR
 export function CategoryCards({ categories }: { categories: NonNullable<DashboardResponse["insights"]>["categories"] }) {
   if (!categories || categories.length === 0) return null;
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <section aria-label="Spend categories" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       {categories.map((cat, idx) => (
-        <div key={cat.key} className="bg-card border border-border shadow-sm rounded-xl p-5 min-w-0">
-          <div className="flex items-center gap-2 mb-3">
-             <div className={`w-2.5 h-2.5 rounded-full ${idx === 0 ? 'bg-primary' : 'bg-muted-foreground'}`} />
-             <div className="text-sm font-medium">{cat.label}</div>
-          </div>
-          <div className="text-xl font-mono font-semibold text-foreground">
+        <div key={cat.key} className="flex min-w-0 items-center gap-2 rounded-md border bg-card px-3 py-2 text-xs">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${idx === 0 ? 'bg-primary' : idx === 1 ? 'bg-[#5277b8]' : 'bg-[#8aa4ca]'}`} />
+          <div className="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground">{cat.label}</div>
+          <span className="shrink-0 font-mono font-semibold text-foreground">
             {cat.spendUsd != null ? formatFinancialUsd(cat.spendUsd) : "Unavailable"}
-          </div>
+          </span>
           {cat.activeUsers != null && (
-            <div className="text-xs text-muted-foreground mt-2">
-              {cat.activeUsers} active users
-            </div>
+            <span className="sr-only">{cat.activeUsers} active users</span>
           )}
         </div>
       ))}
-    </div>
+    </section>
   );
 }

@@ -1292,7 +1292,7 @@ test('forecast history keeps canonical horizons, inclusive dates, and reporting 
   await expect(page.getByText(/chart options/i)).toHaveCount(0);
   const chart = page.getByTestId('container-dashboard-projection');
   await expect(chart).toBeVisible();
-  await expect(chart.locator('.recharts-area-curve').first()).toBeVisible();
+  await expect(chart.locator('.recharts-bar-rectangle').first()).toBeAttached();
   await page.getByTestId('select-projection-horizon').click();
   const canonicalOptions = page.getByRole('option');
   await expect(canonicalOptions).toHaveCount(3);
@@ -1318,12 +1318,12 @@ test('forecast history keeps canonical horizons, inclusive dates, and reporting 
   await assertReportingContext();
   await expect(page.getByTestId('projection-method').getByText('Forecast Through', { exact: true }).locator('..')).toContainText('May 20, 2027');
   await assertInclusiveChartValue('May 20, 2027');
-  await expect(chart.locator('.recharts-area-curve').first()).toBeVisible();
+  await expect(chart.locator('.recharts-bar-rectangle').first()).toBeAttached();
   await page.screenshot({ path: 'e2e/evidence/forecast/desktop.png', fullPage: true });
 
   await page.setViewportSize({ width: 390, height: 1000 });
   await expect(chart).toBeVisible();
-  await expect(chart.locator('.recharts-area-curve').first()).toBeVisible();
+  await expect(chart.locator('.recharts-bar-rectangle').first()).toBeAttached();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   await page.getByTestId('select-projection-horizon').click();
   await expect(page.getByRole('option')).toHaveCount(3);
@@ -1993,7 +1993,7 @@ test.describe('reference-home-org focused mocked pass', () => {
     expect(observedRequests.filter((request) => request.includes('/api/dashboard?')).every((request) => /viewScope=(all_authorized|managed|my)/.test(request))).toBeTruthy();
     const peopleRequests = observedRequests.filter((request) => request.includes('/api/spend/people?'));
     expect(peopleRequests.some((request) => request.includes('viewScope=all_authorized'))).toBeTruthy();
-    await expect(page.locator('.recharts-area-curve').first()).toBeVisible();
+    await expect(page.locator('.recharts-bar-rectangle').first()).toBeAttached();
     await expect(page.getByText('Invalid Date', { exact: true })).toHaveCount(0);
     await page.screenshot({ path: 'e2e/evidence/reference-exact/OrgInsights-desktop.png' });
   });

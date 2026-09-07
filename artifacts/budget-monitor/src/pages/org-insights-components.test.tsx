@@ -6,8 +6,8 @@ import { MonthlySpendChart, InsightCard } from './org-insights-components';
 // Mock Recharts and generic DOM so renderToStaticMarkup doesn't crash
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: any) => children,
-  AreaChart: ({ children }: any) => <div data-testid="area-chart">{children}</div>,
-  Area: ({ connectNulls }: any) => <div data-testid={`area-connectNulls-${connectNulls}`} />,
+  BarChart: ({ children }: any) => <div data-testid="bar-chart">{children}</div>,
+  Bar: ({ stackId }: any) => <div data-testid={`bar-stack-${stackId}`} />,
   XAxis: () => null,
   YAxis: () => null,
   Tooltip: () => null,
@@ -16,13 +16,13 @@ vi.mock('recharts', () => ({
 }));
 
 describe('MonthlySpendChart', () => {
-  it('passes connectNulls={false} to Area chart', () => {
+  it('stacks monthly spend bars', () => {
     const monthly = [
       { start: '2026-06-01', endExclusive: '2026-07-01', spendUsd: 100, agentSpendUsd: 50, otherSpendUsd: 50, activeUsers: 1, isPartial: false, isMissing: false },
       { start: '2026-07-01', endExclusive: '2026-08-01', spendUsd: null, agentSpendUsd: null, otherSpendUsd: null, activeUsers: null, isPartial: false, isMissing: true },
     ];
     const html = renderToStaticMarkup(<MonthlySpendChart monthly={monthly} />);
-    expect(html).toContain('data-testid="area-connectNulls-false"');
+    expect(html.match(/data-testid="bar-stack-spend"/g)).toHaveLength(2);
   });
 });
 

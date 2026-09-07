@@ -15,6 +15,14 @@ import {
   personalLimitBudgetRows,
 } from './home-components/budget-logic';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  BudgetMeter,
+  DataTable,
+  EmptyState,
+  MetricCard,
+  type JourneyTableColumn,
+} from '@/components/journey-primitives';
 import { Link, useSearch } from 'wouter';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
 import { dashboardAllocatedBudget, dashboardTotalSpend } from '@/lib/spend-presentation';
@@ -39,10 +47,8 @@ import {
 // Presentation ported from usage-dashboard home.tsx; API data is adapted only at this page boundary.
 function HeroTile({
   label,
-  icon: Icon,
   children,
   sub,
-  delay = 0,
 }: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -51,19 +57,7 @@ function HeroTile({
   delay?: number;
 }) {
   return (
-    <div
-      className="bg-card border border-border shadow-sm rounded-xl p-5 relative overflow-hidden transition-colors hover:border-primary/30"
-      style={{ animationDelay: `${delay}ms` }}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className="w-3.5 h-3.5 text-primary" />
-        <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{label}</div>
-      </div>
-      <div className="text-3xl font-mono font-semibold text-foreground tracking-tight">{children}</div>
-      <div className="flex items-end justify-between gap-2 mt-1.5 min-h-[28px]">
-        <div className="text-xs text-muted-foreground">{sub}</div>
-      </div>
-    </div>
+    <MetricCard label={label} value={children} detail={sub} />
   );
 }
 
@@ -195,6 +189,10 @@ export default function Home() {
     : new Date().getHours() < 18
       ? 'Good afternoon'
       : 'Good evening';
+  const projectColumns: JourneyTableColumn[] = [
+    { label: 'Project', className: 'min-w-[220px]' },
+    { label: 'Spend', className: 'text-right' },
+  ];
 
   if (myLoading) {
     return (
@@ -224,16 +222,21 @@ export default function Home() {
   }
 
   return (
-    <div className="mx-auto max-w-[1280px] min-w-0 space-y-8 px-4 py-6">
-      <section className="space-y-5">
-        <div>
-          <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
-            {greeting}{user?.firstName ? <>, <span className="text-primary">{user.firstName}</span></> : ''}
-          </h1>
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground mt-1.5">
-              Your Replit world for {myDashboard?.period?.label || 'this period'} — your apps, your spend, your story.
-            </p>
+    <div className="mx-auto max-w-[1280px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8">
+      <section className="space-y-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <h1
+              className="text-3xl font-semibold tracking-tight md:text-4xl"
+              data-testid="text-dashboard-scope"
+            >
+              Overview
+            </h1>
+            <h2 className="text-sm font-normal text-muted-foreground">
+              {greeting}{user?.firstName ? `, ${user.firstName}` : ''}. Your spend, budgets, and Replit activity in one place.
+            </h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
             {myDashboard?.metadata?.dataAsOf && (
               <p className="text-xs text-muted-foreground whitespace-nowrap">
                 Updated {new Date(myDashboard.metadata.dataAsOf).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
@@ -245,7 +248,19 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="rounded-md border bg-card p-4 shadow-none">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-primary">Personal spend</p>
+              <p className="mt-1 text-sm text-muted-foreground">Values reflect posted usage visible to you.</p>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Reporting period <span className="ml-1 font-medium text-foreground">{myDashboard.period.label}</span>
+            </div>
+          </div>
+        </div>
+
+        <div aria-label="Spend summary" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <HeroTile
             label={`My Spend (${rangeType === 'mtd' ? 'MTD' : 'Period'})`}
             icon={DollarSign}
@@ -414,35 +429,64 @@ export default function Home() {
         </AdminDataQualityNote>
       )}
 
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="bg-card border border-border shadow-sm rounded-2xl p-5 lg:col-span-2 space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold flex items-center gap-2">
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]">
+        <Card className="rounded-md shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
               <TrendingUp className="w-4 h-4 text-primary" /> My Spend Story · {myDashboard?.period?.label || 'This period'}
-            </h2>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Cumulative spend, day by day</p>
-          </div>
-          <div className="h-56">
-            <SpendStoryChart trend={myDashboard?.trend} />
-          </div>
-        </div>
+            </CardTitle>
+            <CardDescription>Cumulative posted spend, day by day</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-56 rounded-sm border bg-muted/25 p-2">
+              <SpendStoryChart trend={myDashboard?.trend} />
+            </div>
+          </CardContent>
+        </Card>
         <div className="space-y-4">
-          <div className="bg-card border border-border shadow-sm rounded-2xl p-5 space-y-3">
-            <div>
-              <h2 className="text-sm font-semibold flex items-center gap-2">
+          <Card className="rounded-md shadow-none">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Target className="h-4 w-4 text-primary" /> Budget health
+              </CardTitle>
+              <CardDescription>Current-cycle workspace limit consumption</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {budgetRows.length > 0 ? budgetRows.slice(0, 4).map((row) => (
+                <BudgetMeter
+                  key={row.id}
+                  label={row.workspaceName || row.workspaceId}
+                  actualUsd={row.currentCycleAgentSpendUsd}
+                  budgetUsd={row.allocationUsd}
+                  incomplete={row.limitState === 'unavailable' || row.allocationUsd == null}
+                  compact
+                />
+              )) : (
+                <p className="text-sm text-muted-foreground">Current-cycle limits unavailable.</p>
+              )}
+            </CardContent>
+          </Card>
+          <Card className="rounded-md shadow-none">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
                 <BarChart3 className="w-4 h-4 text-primary" /> My Last 6 Months
-              </h2>
-              <p className="text-[11px] text-muted-foreground mt-0.5">My total spend per month</p>
-            </div>
-            <div className="h-32">
+              </CardTitle>
+              <CardDescription>My total spend per month</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-32">
               <MonthMiniBars monthly={myDashboard?.insights?.monthly} />
-            </div>
-          </div>
-          <div className="bg-card border border-border shadow-sm rounded-2xl p-5">
-            <div className="flex items-center gap-2 mb-2">
-              <Flame className="w-3.5 h-3.5 text-primary" />
-              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Activity</div>
-            </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="rounded-md shadow-none">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Flame className="h-4 w-4 text-primary" /> Activity
+              </CardTitle>
+              <CardDescription>Operational context for this period</CardDescription>
+            </CardHeader>
+            <CardContent>
             {activity != null ? (
               <>
                 <div className="text-2xl font-mono font-semibold">
@@ -457,34 +501,46 @@ export default function Home() {
             ) : (
               <div className="text-sm text-muted-foreground">Activity unavailable for this period.</div>
             )}
-          </div>
+            </CardContent>
+          </Card>
         </div>
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-card border border-border shadow-sm rounded-2xl p-5 space-y-3">
-          <h2 className="text-sm font-semibold flex items-center gap-2">
-            <Box className="w-4 h-4 text-primary" /> My Replit World
-          </h2>
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Card className="rounded-md shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Box className="w-4 h-4 text-primary" /> My Replit World
+            </CardTitle>
+            <CardDescription>Highest-spend projects in the selected period</CardDescription>
+          </CardHeader>
+          <CardContent>
           {myProjects?.rows?.length ? (
-            <div className="space-y-2">
-              {myProjects.rows.slice(0, 4).map((project) => (
-                <div key={project.id} className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
-                  <span className="text-sm font-medium truncate">{project.name || 'Untitled project'}</span>
-                  <span className="text-xs font-mono shrink-0">{formatUsd(project.spendUsd)}</span>
-                </div>
-              ))}
-            </div>
+            <DataTable
+              columns={projectColumns}
+              caption="Highest-spend projects"
+              rows={myProjects.rows.slice(0, 4).map((project) => [
+                <span className="block truncate font-medium">{project.name || 'Untitled project'}</span>,
+                <span className="block whitespace-nowrap text-right font-mono">{formatUsd(project.spendUsd)}</span>,
+              ])}
+            />
           ) : (
-            <p className="text-sm text-muted-foreground">No projects with spend in this period.</p>
+            <EmptyState
+              title="No project spend"
+              description="No projects with spend were found in this period."
+            />
           )}
-        </div>
+          </CardContent>
+        </Card>
 
-        <div className="bg-card border border-border shadow-sm rounded-2xl p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold flex items-center gap-2">
+        <Card className="rounded-md shadow-none">
+          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pb-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
               <Users className="w-4 h-4 text-primary" /> {isOrganization ? 'Me vs My Organization' : 'Me vs My Team'}
-            </h2>
+              </CardTitle>
+              <CardDescription className="mt-1">Spend context for the selected period</CardDescription>
+            </div>
             {isManager && capabilities?.canViewAccountUsage === true && (
               <Link
                 href={reportingNavigationHref('/org-insights?viewScope=all_authorized', searchString)}
@@ -493,15 +549,16 @@ export default function Home() {
                 Org Insights <ArrowRight className="w-3 h-3" />
               </Link>
             )}
-          </div>
+          </CardHeader>
+          <CardContent>
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg bg-muted/40 p-3 min-w-0">
+            <div className="min-w-0 rounded-md bg-muted/45 p-3">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Me</div>
               <div className="text-lg font-mono font-semibold">{formatUsd(mySpendUsd)}</div>
               <div className="text-[10px] text-muted-foreground">period spend</div>
               <div className="mt-1"><DeltaBadge pct={changePct} /></div>
             </div>
-            <div className="rounded-lg bg-muted/40 p-3 min-w-0">
+            <div className="min-w-0 rounded-md bg-muted/45 p-3">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{isOrganization ? 'My Organization' : 'My Team'}</div>
               <div className="text-lg font-mono font-semibold">
                 {isManager
@@ -514,8 +571,14 @@ export default function Home() {
               {isManager && <div className="mt-1"><DeltaBadge pct={managedDashboard?.insights?.changePercent} /></div>}
             </div>
           </div>
-        </div>
+          </CardContent>
+        </Card>
       </section>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-2"><RefreshCw className="h-3.5 w-3.5" />Values reflect the latest posted usage.</span>
+        <span>Pending usage and refunds may not be reflected.</span>
+      </div>
     </div>
   );
 }

@@ -187,6 +187,8 @@ describe('Spend Behaviors', () => {
     expect(html).toContain('aria-label="Search members"');
     expect(html).toContain('Filters');
     expect(html).toContain('aria-label="Table options"');
+    expect(html).toContain('aria-label="Spend summary"');
+    expect(html).toContain('Export CSV');
     expect(html).toContain('Total spend');
     expect(html).toContain('>Agent<');
     expect(html).not.toContain('Current-cycle Agent usage');

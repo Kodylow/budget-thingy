@@ -1,9 +1,9 @@
 import React, { useId, useState } from 'react';
 import type { DashboardResponseTrend } from "@workspace/api-client-react";
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
 } from 'recharts';
-import { List, LineChart as LineChartIcon } from 'lucide-react';
+import { BarChart3, List } from 'lucide-react';
 import { ChartKey, ChartTooltip } from '@/components/financial-chart';
 import { formatFinancialAxis, formatFinancialUsd } from '@/lib/financial-format';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
@@ -41,7 +41,7 @@ export default function TrendChart({ trend, onClick }: { trend: DashboardRespons
           <button type="button" aria-controls={valuesId} aria-pressed={showValues}
             className="inline-flex items-center gap-1.5 h-7 px-2.5 text-xs font-medium bg-muted hover:bg-muted/80 text-foreground rounded-md transition-colors"
             onClick={() => setShowValues(!showValues)}>
-            {showValues ? <><LineChartIcon className="w-3.5 h-3.5" /> Chart</> : <><List className="w-3.5 h-3.5" /> Values</>}
+            {showValues ? <><BarChart3 className="w-3.5 h-3.5" /> Chart</> : <><List className="w-3.5 h-3.5" /> Values</>}
           </button>
           <button type="button" onClick={onClick}
             className="inline-flex items-center gap-1.5 h-7 px-2.5 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 rounded-md transition-colors">
@@ -82,14 +82,8 @@ export default function TrendChart({ trend, onClick }: { trend: DashboardRespons
           </div>
         ) : (
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} accessibilityLayer aria-label={`${seriesLabel} in USD. Use left and right arrow keys for values.`}
+          <BarChart data={chartData} accessibilityLayer aria-label={`${seriesLabel} in USD. Use left and right arrow keys for values.`}
             onClick={onClick} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} style={{ cursor: 'pointer' }}>
-            <defs>
-              <linearGradient id="actual-spend-grad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#0D62FF" stopOpacity={0.25} />
-                <stop offset="95%" stopColor="#0D62FF" stopOpacity={0} />
-              </linearGradient>
-            </defs>
             <CartesianGrid vertical={false} stroke="var(--color-border)" strokeDasharray="3 3" opacity={0.5} />
             <XAxis
               dataKey="dateLabel"
@@ -127,19 +121,14 @@ export default function TrendChart({ trend, onClick }: { trend: DashboardRespons
                 return null;
               }}
             />
-            <Area
-              type="monotone"
+            <Bar
               isAnimationActive={false}
               dataKey="val"
-              stroke="#0D62FF"
-              strokeWidth={2}
-              fill="url(#actual-spend-grad)"
-              fillOpacity={1}
-              connectNulls={false}
-              dot={chartData.filter(point => point.val !== null).length === 1 ? { r: 3, fill: '#0D62FF' } : false}
-              activeDot={{ r: 4, fill: '#0D62FF', stroke: 'var(--color-background)', strokeWidth: 2 }}
+              fill="#0D62FF"
+              radius={[2, 2, 0, 0]}
+              maxBarSize={48}
             />
-          </AreaChart>
+          </BarChart>
         </ResponsiveContainer>
         )}
       </div>

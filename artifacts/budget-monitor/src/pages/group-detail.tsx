@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertCircle, ChevronLeft, RefreshCw } from 'lucide-react';
+import { AlertCircle, ChevronLeft, Info, RefreshCw, ShieldCheck } from 'lucide-react';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -20,7 +20,7 @@ import { GroupUserExport } from '@/components/group-user-export';
 import { useAuthContext } from '@/components/auth-context';
 import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 import { InternalSpendExplanation, InternalUserBadge } from '@/components/internal-user-badge';
-import { BudgetMeter } from '@/components/budget-meter';
+import { BudgetMeter, StatusBadge, type JourneyStatus } from '@/components/journey-primitives';
 import { isUnknownSpendTotal } from '@/lib/spend-presentation';
 
 function errorStatus(error: unknown) {
@@ -47,46 +47,46 @@ function BackLink() {
 
 function DetailUnavailable() {
   return (
-    <div className="p-4 md:p-6 lg:p-8 space-y-5 max-w-[1400px] mx-auto" data-testid="group-detail-unavailable">
+    <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8" data-testid="group-detail-unavailable">
       <BackLink />
-      <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
+      <Card className="rounded-md border-dashed shadow-none">
+        <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
           <AlertCircle className="h-8 w-8 text-muted-foreground" />
           <h1 className="text-xl font-semibold">Group unavailable</h1>
           <p className="max-w-lg text-sm text-muted-foreground">
             This group does not exist or is outside your authorized account scope.
           </p>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
 function DetailLoading() {
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+    <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">
       <BackLink />
       <div className="h-10 w-64 animate-pulse-glow rounded bg-muted" />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        {[1, 2, 3, 4].map((i) => <div key={i} className="h-28 animate-pulse-glow rounded bg-muted" />)}
+      <div className="grid gap-4 lg:grid-cols-[1.12fr_.88fr]">
+        {[1, 2].map((i) => <div key={i} className="h-48 animate-pulse-glow rounded-md border bg-muted/50" />)}
       </div>
-      <div className="mt-8 h-64 animate-pulse-glow rounded bg-muted" />
+      <div className="h-64 animate-pulse-glow rounded-md border bg-muted/50" />
     </div>
   );
 }
 
 function LoadError({ retry }: { retry: () => void }) {
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+    <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">
       <BackLink />
-      <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
+      <Card className="rounded-md border-dashed shadow-none">
+        <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
           <AlertCircle className="h-8 w-8 text-destructive" />
           <h1 className="text-xl font-semibold">Couldn&apos;t load group details</h1>
           <p className="text-sm text-muted-foreground">The reporting service is temporarily unavailable.</p>
           <Button variant="outline" onClick={retry} data-testid="button-retry-group-detail">Retry</Button>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -140,40 +140,13 @@ export default function GroupDetail() {
   const detailFailed = detailQuery.isError;
   const hasSelectedObservations = data.metadata.status !== 'empty' && !isUnknownSpendTotal(data.metadata);
   const projectsDenied = projectsQuery.isError && [403, 404].includes(errorStatus(projectsQuery.error) ?? 0);
-  const spendSummary = [
-    {
-      title: 'Selected total',
-      value: hasSelectedObservations ? `$${data.headline.spendUsd.toFixed(2)}` : '—',
-      description: 'Authoritative group total',
-    },
-    {
-      title: 'Agent',
-      value: hasSelectedObservations ? `$${data.headline.agentSpendUsd.toFixed(2)}` : '—',
-      description: 'Selected-period Agent usage',
-    },
-    {
-      title: 'Other services',
-      value: hasSelectedObservations ? `$${data.headline.otherServicesUsd.toFixed(2)}` : '—',
-      description: 'Hosting, storage, and other costs',
-    },
-  ];
-  const budgetSummary = [
-    {
-      title: group.sharedPool ? 'Shared allocation' : 'Allocation',
-      value: data.headline.allocationUsd == null ? '—' : `$${data.headline.allocationUsd.toFixed(2)}`,
-      description: group.sharedPool ? 'Shared across role groups' : 'Canonical allocation',
-    },
-    {
-      title: 'Remaining',
-      value: data.headline.remainingUsd == null ? '—' : `$${data.headline.remainingUsd.toFixed(2)}`,
-      valueClassName: data.headline.remainingUsd != null && data.headline.remainingUsd < 0 ? 'text-destructive' : '',
-    },
-    {
-      title: 'Usage',
-      value: data.headline.percentUsed == null ? '—' : `${data.headline.percentUsed.toFixed(1)}%`,
-      valueClassName: data.headline.percentUsed != null && data.headline.percentUsed >= 100 ? 'text-destructive' : '',
-    },
-  ];
+  const budgetStatus: JourneyStatus | null = data.headline.percentUsed == null
+    ? null
+    : data.headline.percentUsed >= 100
+      ? 'Over budget'
+      : data.headline.percentUsed >= 90
+        ? 'Near limit'
+        : 'Within budget';
   const setActiveTab = (value: string) => {
     const nextTab = value === 'projects' ? 'projects' : 'members';
     const nextSearch = new URLSearchParams(search);
@@ -184,20 +157,18 @@ export default function GroupDetail() {
   };
 
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="page-group-detail">
-      <BackLink />
+    <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8" data-testid="page-group-detail">
       {detailFailed && (
-        <div className="flex items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 text-sm" data-testid="status-group-detail-stale-error">
+        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm" data-testid="status-group-detail-stale-error">
           <span>Showing the last available values. Refresh failed.</span>
           <Button variant="outline" size="sm" onClick={() => void detailQuery.refetch()} data-testid="button-retry-group-detail-refresh">Retry</Button>
         </div>
       )}
 
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <h1 className="flex items-center gap-3 text-2xl font-bold tracking-tight md:text-3xl">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-2">
+          <h1 className="flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight md:text-4xl">
             {group.name}
-            <Badge variant="secondary" className="uppercase text-[10px]">{group.role}</Badge>
             {detailQuery.isFetching && !detailFailed && (
               <Badge variant="outline" className="text-muted-foreground" data-testid="status-group-detail-updating">
                 <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
@@ -213,7 +184,7 @@ export default function GroupDetail() {
               </Badge>
             )}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground md:text-base">
+          <p className="text-sm text-muted-foreground">
             {sourceWorkspaceIds.length === 1
               ? `Workspace: ${sourceWorkspaceNameById.get(sourceWorkspaceIds[0]) || sourceWorkspaceIds[0]}`
               : `${sourceWorkspaceIds.length} workspaces`}
@@ -225,66 +196,127 @@ export default function GroupDetail() {
             </p></AdminDataQualityNote>
           )}
         </div>
-        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
-          {manageContexts.map((context) => (
-            <Link
-              key={context.workspaceId}
-              href={`/limits?workspaceId=${encodeURIComponent(context.workspaceId)}&groupIds=${encodeURIComponent(context.groupIds.join(','))}`}
-              className="inline-flex h-10 sm:h-9 w-full sm:w-auto items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90"
-              data-testid={`link-manage-people-budgets-${context.workspaceId}`}
-            >
-              Manage limits{manageContexts.length > 1 ? ` (${sourceWorkspaceNameById.get(context.workspaceId) || context.workspaceId})` : ''}
-            </Link>
-          ))}
-          <div className="w-full sm:w-auto flex justify-start">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className="flex justify-start">
             <GroupUserExport groupIds={[groupId]} />
           </div>
-          <div className="w-full sm:w-auto">
+          <div>
             <RangeFilter />
           </div>
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {spendSummary.map((stat) => (
-            <div key={stat.title} className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl p-5 animate-count-up">
-              <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-2">{stat.title}</dt>
-              <dd className="text-2xl font-mono font-semibold tabular-nums">{stat.value}</dd>
-              <p className="mt-1 text-xs text-muted-foreground">{stat.description}</p>
-            </div>
-          ))}
-        </dl>
-        <dl className="grid grid-cols-3 border-t border-border lg:border-t-0">
-          {budgetSummary.map((stat) => (
-            <div key={stat.title} className="min-w-0 border-r border-border px-2 py-5 last:border-r-0 md:px-5 lg:last:pr-0">
-              <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{stat.title}</dt>
-              <dd className={`mt-2 text-xl font-semibold tabular-nums md:text-2xl ${stat.valueClassName ?? ''}`}>{stat.value}</dd>
-              {stat.description && <p className="mt-1 text-xs text-muted-foreground">{stat.description}</p>}
-            </div>
-          ))}
-        </dl>
+      <div className="flex items-center justify-between gap-3">
+        <BackLink />
+        <span className="text-xs text-muted-foreground">Authorized group detail</span>
       </div>
 
+      <section className="grid gap-4 lg:grid-cols-[1.12fr_.88fr]" aria-label="Group headline">
+        <Card className="rounded-md shadow-none">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle className="text-xl">{group.name}</CardTitle>
+                  <Badge variant="secondary" className="text-[10px] uppercase">{group.role}</Badge>
+                  {budgetStatus && <StatusBadge status={budgetStatus} />}
+                </div>
+                <CardDescription className="mt-1.5">
+                  {group.sharedPool ? `Shared allocation across the ${group.name} role group` : `Allocation for the ${group.name} role group`}
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {manageContexts.map((context) => (
+                  <Link
+                    key={context.workspaceId}
+                    href={`/limits?workspaceId=${encodeURIComponent(context.workspaceId)}&groupIds=${encodeURIComponent(context.groupIds.join(','))}`}
+                    className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90"
+                    data-testid={`link-manage-people-budgets-${context.workspaceId}`}
+                  >
+                    <ShieldCheck className="mr-2 h-4 w-4" />
+                    Manage limits{manageContexts.length > 1 ? ` (${sourceWorkspaceNameById.get(context.workspaceId) || context.workspaceId})` : ''}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-5 p-5 sm:grid-cols-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Selected total</p>
+              <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">{hasSelectedObservations ? `$${data.headline.spendUsd.toFixed(2)}` : '—'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Authoritative group total</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Agent</p>
+              <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">{hasSelectedObservations ? `$${data.headline.agentSpendUsd.toFixed(2)}` : '—'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Selected-period Agent usage</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Other services</p>
+              <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">{hasSelectedObservations ? `$${data.headline.otherServicesUsd.toFixed(2)}` : '—'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Hosting, storage, and other costs</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="rounded-md shadow-none">
+          <CardHeader className="pb-3">
+            <CardDescription>{group.sharedPool ? 'Shared allocation' : 'Allocation'}</CardDescription>
+            <CardTitle className="font-mono text-2xl tabular-nums">
+              {data.headline.allocationUsd == null ? '—' : `$${data.headline.allocationUsd.toFixed(2)}`}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <BudgetMeter
+              actualUsd={hasSelectedObservations ? data.headline.spendUsd : null}
+              budgetUsd={data.headline.allocationUsd}
+              stale={data.metadata.stale}
+              incomplete={data.metadata.status !== 'complete'}
+              label="Group usage"
+            />
+            <div className="grid grid-cols-2 gap-4 border-t pt-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Remaining</p>
+                <p className={`mt-1 font-mono text-lg font-semibold tabular-nums ${data.headline.remainingUsd != null && data.headline.remainingUsd < 0 ? 'text-destructive' : ''}`}>
+                  {data.headline.remainingUsd == null ? '—' : `$${data.headline.remainingUsd.toFixed(2)}`}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Usage</p>
+                <p className={`mt-1 font-mono text-lg font-semibold tabular-nums ${data.headline.percentUsed != null && data.headline.percentUsed >= 100 ? 'text-destructive' : ''}`}>
+                  {data.headline.percentUsed == null ? '—' : `${data.headline.percentUsed.toFixed(1)}%`}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
-          <div className="p-5 border-b border-border/50 bg-muted/20 flex-row items-center justify-between gap-4">
+        <Card className="overflow-hidden rounded-md shadow-none">
+          <CardHeader className="gap-4 border-b bg-muted/20 pb-0 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <CardTitle className="text-lg">Spending breakdown</CardTitle>
+              <CardDescription className="mt-1 pb-4">Full authorized group view; filters from results remain preserved.</CardDescription>
+            </div>
             <TabsList aria-label="Group spending breakdown">
               <TabsTrigger value="members" data-testid="tab-group-members">Members</TabsTrigger>
               <TabsTrigger value="projects" data-testid="tab-group-projects">Projects</TabsTrigger>
             </TabsList>
-          </div>
+          </CardHeader>
           <TabsContent value="members" className="mt-0">
-            <div className="p-5 border-b border-border/50 bg-muted/20">
-              <p className="text-sm text-muted-foreground mt-1.5">
-                Deduplicated member spending plus any unattributed residual reconciles to
-                the authoritative group total above. This detail shows the full authorized group;
-                ledger scope, workspace, search, and status filters are preserved in Back to results,
-                not applied here.
-                Limit, Agent spend, and remaining columns use the current billing cycle;
-                total spend columns use the selected period.
-              </p>
-              <InternalSpendExplanation />
+            <div className="flex items-start gap-2 border-b bg-muted/10 px-5 py-4 text-xs text-muted-foreground">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p>
+                  Deduplicated member spending plus any unattributed residual reconciles to
+                  the authoritative group total above. This detail shows the full authorized group;
+                  ledger scope, workspace, search, and status filters are preserved in Back to results,
+                  not applied here.
+                  Limit, Agent spend, and remaining columns use the current billing cycle;
+                  total spend columns use the selected period.
+                </p>
+                <InternalSpendExplanation />
+              </div>
             </div>
             <div className="p-0">
               <div className="max-h-[70vh] overflow-auto" data-virtual-scroll>
@@ -415,7 +447,7 @@ export default function GroupDetail() {
             </div>
           </TabsContent>
           <TabsContent value="projects" className="mt-0">
-            <div className="p-5 border-b border-border/50 bg-muted/20">
+            <div className="border-b bg-muted/10 p-5">
               <h3 className="font-semibold tracking-tight text-lg">Projects</h3>
               <AdminDataQualityNote title="Group project attribution"><p>
                 Explanatory project attribution for the selected period, not the authoritative
@@ -445,7 +477,7 @@ export default function GroupDetail() {
               )}
             </div>
           </TabsContent>
-        </div>
+        </Card>
       </Tabs>
     </div>
   );

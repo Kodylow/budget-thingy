@@ -125,68 +125,69 @@ function SignedOutShell({
   const embedded = isEmbeddedPreview();
   const returnTo = `${window.location.pathname}${window.location.search}`;
   return (
-    <div className="signed-out-shell min-h-[100dvh] bg-background text-foreground" data-testid="auth-signed-out">
-        <header className="signed-out-shell__header">
-          <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="28" height="28" className="h-7 w-7 shrink-0" />
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
-            <span className="font-display font-semibold tracking-tight text-foreground">Replit Budget Monitor</span>
-          </div>
-        </header>
-
-        <main className="signed-out-shell__main">
-          <div className="min-w-0">
-            <h1 className="signed-out-shell__headline font-display font-bold tracking-tight text-foreground">
-              Your Replit spend.<br />{' '}In clear view.
-            </h1>
-            <p className="mt-6 max-w-md text-base leading-relaxed text-muted-foreground sm:text-lg">
-              Review workspace spending, track team allocations, and manage authorized monthly Agent limits.
-            </p>
-            <div className="mt-10 flex">
-              <Button className="signed-out-shell__login min-h-12 h-auto px-8 py-3 text-base font-medium transition-colors hover:bg-[hsl(219_100%_46%)] active:bg-[hsl(219_100%_40%)]" asChild>
-                <a
-                  href={getLoginUrl(returnTo)}
-                  target={embedded ? '_top' : '_self'}
-                  rel="noopener noreferrer"
-                  data-testid="button-login"
-                  onClick={() => {
-                    logAuthDebug('login.click', { target: embedded ? '_top' : '_self' });
-                    beginExplicitSignIn();
-                  }}
-                >
-                  <LogIn className="mr-2.5 h-5 w-5" />
-                  Log in
-                </a>
-              </Button>
-            </div>
-            {isUnavailable && (
-             <div className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-               <span>Having trouble checking access.</span>
-               <Button
-                 type="button"
-                 variant="link"
-                 size="sm"
-                 className="min-h-11 h-auto px-1 font-medium text-primary hover:no-underline"
-                 onClick={onReconnect}
-                 data-testid="button-reconnect"
-               >
-                 Reconnect
-               </Button>
-             </div>
-           )}
-          </div>
-      <div className="signed-out-shell__art bg-background">
+    <div className="signed-out-shell text-foreground" data-testid="auth-signed-out">
+      <div className="signed-out-shell__image" aria-label="Comcast Technology Center">
         <img
-          src={`${import.meta.env.BASE_URL}comcast-logo.png`}
-          alt="Comcast"
-          width="1024"
-          height="576"
-          className="h-full w-full object-contain object-center"
-          onError={(e) => {
-            e.currentTarget.style.display = 'none';
+          src={`${import.meta.env.BASE_URL}comcast-technology-center.png`}
+          alt="Comcast Technology Center lobby in Philadelphia"
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
           }}
         />
+        <div className="signed-out-shell__image-caption">Philadelphia · Enterprise technology</div>
       </div>
-        </main>
+
+      <section className="signed-out-shell__panel" aria-labelledby="signed-out-title">
+        <header className="signed-out-shell__brand">
+          <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="32" height="32" />
+          <h2>Replit Budget Monitor</h2>
+        </header>
+
+        <div className="signed-out-shell__content">
+          <p className="signed-out-shell__eyebrow">Comcast Enterprise · Finance operations</p>
+          <h1 id="signed-out-title" className="signed-out-shell__headline font-display font-bold">
+            Your Replit spend. In clear view.
+          </h1>
+          <p className="signed-out-shell__copy">
+            Review workspace spending, track team allocations, and manage authorized monthly Agent limits.
+          </p>
+          <Button className="signed-out-shell__login min-h-12 h-auto px-7 py-3 text-base font-bold transition-colors hover:bg-[hsl(219_100%_46%)] active:bg-[hsl(219_100%_40%)]" asChild>
+            <a
+              href={getLoginUrl(returnTo)}
+              target={embedded ? '_top' : '_self'}
+              rel="noopener noreferrer"
+              data-testid="button-login"
+              onClick={() => {
+                logAuthDebug('login.click', { target: embedded ? '_top' : '_self' });
+                beginExplicitSignIn();
+              }}
+            >
+              <LogIn className="mr-2.5 h-5 w-5" aria-hidden="true" />
+              Log in
+            </a>
+          </Button>
+          {isUnavailable && (
+            <div className="signed-out-shell__reconnect" data-testid="auth-unavailable" role="status">
+              <span>Having trouble checking access.</span>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="min-h-11 h-auto px-1 font-medium text-primary hover:no-underline"
+                onClick={onReconnect}
+                data-testid="button-reconnect"
+              >
+                Reconnect
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <footer className="signed-out-shell__footer">
+          <span>Internal use · Authorized Comcast employees</span>
+          <span className="signed-out-shell__comcast">Comcast Enterprise</span>
+        </footer>
+      </section>
     </div>
   );
 }

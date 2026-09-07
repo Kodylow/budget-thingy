@@ -38,11 +38,20 @@ for (const viewport of [
     await expect(headline).toHaveText('Your Replit spend. In clear view.');
     if (viewport.width >= 1024) {
       const lines = await headline.evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight));
-      expect(lines).toBeLessThanOrEqual(2.1);
+      // The approved desktop panel intentionally uses a narrower editorial
+      // measure than the old split layout, so the large headline may use
+      // three lines while remaining fully visible.
+      expect(lines).toBeLessThanOrEqual(3.1);
     } else {
-      const art = page.locator('img[src$="comcast-logo.png"]');
-      expect((await art.boundingBox())!.y).toBeGreaterThan(loginBox.y + loginBox.height);
+      const panel = page.locator('.signed-out-shell__panel');
+      await expect(panel).toBeVisible();
+      expect((await panel.boundingBox())!.width).toBeLessThanOrEqual(viewport.width);
     }
+    const art = page.locator('img[src$="comcast-technology-center.png"]');
+    await expect(art).toBeVisible();
+    const artBox = (await art.boundingBox())!;
+    expect(artBox.width).toBeGreaterThanOrEqual(viewport.width);
+    expect(artBox.height).toBeGreaterThanOrEqual(viewport.height);
     await expect(page.getByTestId('button-reconnect')).toHaveCount(0);
     expect(requests.every(path => path === '/api/auth/user')).toBe(true);
   });
@@ -103,7 +112,7 @@ test('unavailable access offers a working reconnect without protected requests',
 
 test('image failure, enlarged text, short viewport and reduced motion stay usable', async ({ page }) => {
   await signedOut(page);
-  await page.route('**/comcast-logo.png', route => route.abort());
+  await page.route('**/comcast-technology-center.png', route => route.abort());
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 320, height: 400 });
   await page.goto('/');
@@ -113,7 +122,7 @@ test('image failure, enlarged text, short viewport and reduced motion stay usabl
   await noHorizontalOverflow(page);
   await login.scrollIntoViewIfNeeded();
   await expect(login).toBeInViewport();
-  const image = page.locator('img[src$="comcast-logo.png"]');
+  const image = page.locator('img[src$="comcast-technology-center.png"]');
   await expect(image).toBeHidden();
   const duration = await login.evaluate(el => parseFloat(getComputedStyle(el).transitionDuration));
   expect(duration).toBeLessThanOrEqual(0.001);

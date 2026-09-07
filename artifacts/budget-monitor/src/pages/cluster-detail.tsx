@@ -24,6 +24,7 @@ import { roleBadgeClass, roleLabel } from '@/lib/hierarchy-presentation';
 import { GroupUserExport } from '@/components/group-user-export';
 import { useAuthContext } from '@/components/auth-context';
 import { InternalUserBadge } from '@/components/internal-user-badge';
+import { MetricCard } from '@/components/journey-primitives';
 
 function errorStatus(error: unknown) {
   return typeof error === 'object' && error !== null && 'status' in error
@@ -53,9 +54,9 @@ function BackLink() {
 
 function DetailUnavailable() {
   return (
-    <div className="p-4 md:p-6 lg:p-8 space-y-5 max-w-[1400px] mx-auto" data-testid="cluster-detail-unavailable">
+    <div className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8" data-testid="cluster-detail-unavailable">
       <BackLink />
-      <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
+      <Card className="border-dashed shadow-none">
         <div className="flex flex-col items-center gap-3 py-16 text-center">
           <AlertCircle className="h-8 w-8 text-muted-foreground" />
           <h1 className="text-xl font-semibold">Cluster unavailable</h1>
@@ -63,36 +64,36 @@ function DetailUnavailable() {
             Choose a visible group cluster from the dashboard or check that the requested groups are in your scope.
           </p>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
 
 function DetailLoading() {
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+    <div className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8">
       <BackLink />
       <div className="h-10 w-64 animate-pulse-glow rounded bg-muted" />
-      <div className="grid grid-cols-2 gap-3 md:gap-4">
-        {[1, 2].map((i) => <div key={i} className="h-28 animate-pulse-glow rounded bg-muted" />)}
+      <div className="grid gap-4 md:grid-cols-2">
+        {[1, 2].map((i) => <div key={i} className="h-32 animate-pulse-glow rounded-md border bg-card" />)}
       </div>
-      <div className="mt-8 h-64 animate-pulse-glow rounded bg-muted" />
+      <div className="h-64 animate-pulse-glow rounded-md border bg-card" />
     </div>
   );
 }
 
 function LoadError({ retry }: { retry: () => void }) {
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
+    <div className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8">
       <BackLink />
-      <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
+      <Card className="border-dashed shadow-none">
         <div className="flex flex-col items-center gap-3 py-16 text-center">
           <AlertCircle className="h-8 w-8 text-destructive" />
           <h1 className="text-xl font-semibold">Couldn&apos;t load cluster details</h1>
           <p className="text-sm text-muted-foreground">The reporting service is temporarily unavailable.</p>
           <Button variant="outline" onClick={retry} data-testid="button-retry-cluster-detail">Retry</Button>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -164,18 +165,18 @@ export default function ClusterDetail() {
   });
 
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]" data-testid="page-cluster-detail">
+    <div className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8" data-testid="page-cluster-detail">
       <BackLink />
       {detailQuery.isError && (
-        <div className="flex items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 text-sm" data-testid="status-cluster-detail-stale-error">
+        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm" data-testid="status-cluster-detail-stale-error">
           <span>Showing the last available values. Refresh failed.</span>
           <Button variant="outline" size="sm" onClick={() => void detailQuery.refetch()} data-testid="button-retry-cluster-detail-refresh">Retry</Button>
         </div>
       )}
 
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <h1 className="flex flex-wrap items-center gap-3 text-2xl font-bold tracking-tight md:text-3xl">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-2">
+          <h1 className="flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight md:text-4xl">
             {data.headline.familyName}
             {detailQuery.isFetching && !detailQuery.isError && (
               <Badge variant="outline" className="text-muted-foreground" data-testid="status-cluster-detail-updating">
@@ -199,7 +200,7 @@ export default function ClusterDetail() {
               ))}
             </span>
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground md:text-base">
+          <p className="text-sm text-muted-foreground">
             {workspaceIds.length === 1 ? `Workspace: ${workspaceNameById.get(workspaceIds[0]) || '—'} • ` : `${workspaceIds.length} workspaces • `}
             {members.length} member{members.length !== 1 ? 's' : ''} • {data.period.label}
           </p>
@@ -211,7 +212,7 @@ export default function ClusterDetail() {
             </AdminDataQualityNote>
           )}
         </div>
-        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
+        <div className="flex shrink-0 flex-col flex-wrap items-stretch gap-2 sm:flex-row sm:items-center">
           {manageContexts.map((context) => (
             <Link
               key={context.workspaceId}
@@ -231,32 +232,32 @@ export default function ClusterDetail() {
         </div>
       </div>
 
-      <dl className="grid gap-4 lg:grid-cols-2">
-        <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl p-5 animate-count-up">
-          <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-2">Group spend</dt>
-          <dd className="text-2xl font-mono font-semibold tabular-nums">{hasSelectedObservations ? `$${data.headline.spendUsd.toFixed(2)}` : '—'}</dd>
-          <p className="mt-1 text-xs text-muted-foreground">Canonical spend used for allocations and alerts</p>
-        </div>
-        <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl p-5 animate-count-up delay-75">
-          <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-2">Members</dt>
-          <dd className="text-2xl font-mono font-semibold tabular-nums">{members.length}</dd>
-          <p className="mt-1 text-xs text-muted-foreground">Workspace-qualified across all roles</p>
-        </div>
-      </dl>
+      <div className="grid gap-4 md:grid-cols-2">
+        <MetricCard
+          label="Group spend"
+          value={hasSelectedObservations ? `$${data.headline.spendUsd.toFixed(2)}` : '—'}
+          detail="Canonical spend used for allocations and alerts"
+        />
+        <MetricCard
+          label="Members"
+          value={members.length.toString()}
+          detail="Workspace-qualified across all roles"
+        />
+      </div>
 
-      <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
-        <div className="p-5 border-b border-border/50 bg-muted/20">
-          <h3 className="font-semibold tracking-tight text-lg">Members</h3>
-          <p className="text-sm text-muted-foreground mt-1.5">
+      <Card className="overflow-hidden rounded-md shadow-none">
+        <CardHeader className="gap-1 border-b pb-4">
+          <CardTitle className="text-lg">Members</CardTitle>
+          <CardDescription>
             Each workspace member appears once. Role badges show membership across {roles.map(roleLabel).join(' / ')} sub-groups.
             Spend combines member AI with creator-attributed hosting and other non-AI costs.
             Limit, Agent spend, and remaining columns use the current billing cycle; total spend uses the selected period.
-          </p>
-        </div>
-        <div className="p-0">
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
+            <Table className="min-w-[980px] [&_td]:px-4 [&_td]:py-3 [&_th]:px-4 [&_th]:py-3">
+              <TableHeader className="bg-muted/50 text-xs">
                 <TableRow className="border-b border-border">
                   <TableHead>Member</TableHead>
                   <TableHead>Role</TableHead>
@@ -362,24 +363,24 @@ export default function ClusterDetail() {
             </Table>
             {members.length === 0 && <div className="py-12 text-center text-muted-foreground">No members found.</div>}
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {canReviewHistory && (
-        <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
-          <div className="p-5 border-b border-border/50 bg-muted/20 flex flex-row items-center justify-between gap-4">
+        <Card className="overflow-hidden rounded-md shadow-none">
+          <CardHeader className="flex-row items-center justify-between gap-4 border-b pb-4">
             <div>
-              <h3 className="font-semibold tracking-tight text-lg">Limit change history</h3>
-              <p className="text-sm text-muted-foreground mt-1.5">Account administrator audit trail for changes in this workspace.</p>
+              <CardTitle className="text-lg">Limit change history</CardTitle>
+              <CardDescription className="mt-1">Account administrator audit trail for changes in this workspace.</CardDescription>
             </div>
             {!showHistory && (
               <Button variant="outline" onClick={() => setHistoryClusterKey(clusterKey)} data-testid="button-load-limit-history">
                 Load history
               </Button>
             )}
-          </div>
+          </CardHeader>
           {showHistory && (
-            <div className="p-0">
+            <CardContent className="p-4">
               {auditsDenied ? (
                 <p className="text-sm text-muted-foreground" data-testid="status-limit-history-unavailable">Limit history is no longer available.</p>
               ) : auditsQuery.isError && !auditsQuery.data ? (
@@ -401,8 +402,8 @@ export default function ClusterDetail() {
                     </div>
                   )}
                   <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
+                   <Table className="min-w-[720px] [&_td]:px-4 [&_td]:py-3 [&_th]:px-4 [&_th]:py-3">
+                     <TableHeader className="bg-muted/50">
                       <TableRow className="border-b border-border">
                         {['When', 'Operator', 'Member', 'Change', 'Outcome'].map((heading) => <th key={heading} className="text-left text-xs font-medium text-muted-foreground">{heading}</th>)}
                       </TableRow>
@@ -460,19 +461,19 @@ export default function ClusterDetail() {
                   )}
                 </div>
               )}
-            </div>
+            </CardContent>
           )}
-        </div>
+        </Card>
       )}
 
-      <div className="bg-card/50 backdrop-blur-sm border border-border/50 shadow-sm rounded-xl overflow-hidden animate-count-up">
-        <div className="p-5 border-b border-border/50 bg-muted/20">
-          <h3 className="font-semibold tracking-tight text-lg">Project-Attributed Spend</h3>
+      <Card className="overflow-hidden rounded-md shadow-none">
+        <CardHeader className="gap-1 border-b pb-4">
+          <CardTitle className="text-lg">Project-Attributed Spend</CardTitle>
           <AdminDataQualityNote title="Team project attribution"><p>
             Project attribution by creator. These rows explain project ownership and are not expected to reconcile to the canonical rollup total.
           </p></AdminDataQualityNote>
-        </div>
-        <div className="p-0">
+        </CardHeader>
+        <CardContent className="p-0">
           {projectsDenied ? (
             <p className="text-sm text-muted-foreground" data-testid="status-cluster-projects-unavailable">Projects are unavailable for this cluster.</p>
           ) : projectsQuery.isError && !projectsQuery.data ? (
@@ -491,8 +492,8 @@ export default function ClusterDetail() {
               <ProjectsTable data={projectsQuery.data} />
             </>
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -507,8 +508,8 @@ function ProjectsTable({ data }: { data: GroupProjectsResponse | undefined }) {
           Project details are partial{!data.titlesComplete ? '; some titles are unavailable' : ''}.
         </p></AdminDataQualityNote>
       )}
-      <Table>
-        <TableHeader>
+      <Table className="[&_td]:px-4 [&_td]:py-3 [&_th]:px-4 [&_th]:py-3">
+        <TableHeader className="bg-muted/50 text-xs">
           <TableRow className="border-b border-border">
             <TableHead>Project</TableHead>
             <TableHead className="text-right">Total</TableHead>

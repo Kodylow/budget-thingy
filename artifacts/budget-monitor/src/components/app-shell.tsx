@@ -254,7 +254,7 @@ function getSelectedPreviewLabel(
 function MobileTopBar({ isOpen, open }: Pick<MobileNavigation, 'isOpen' | 'open'>) {
   const search = useSearch();
   return (
-    <div className="lg:hidden flex-none h-14 border-b border-border bg-background flex items-center justify-between px-4 sticky top-0 z-30">
+    <div className="xl:hidden flex-none h-14 border-b border-border bg-background flex items-center justify-between px-4 sticky top-0 z-30">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <Button
           variant="ghost"
@@ -271,8 +271,9 @@ function MobileTopBar({ isOpen, open }: Pick<MobileNavigation, 'isOpen' | 'open'
         <Link
           href={reportingNavigationHref('/', search)}
           data-testid="link-overview-brand-mobile"
-          className="flex min-h-11 min-w-0 items-center rounded-sm font-display font-bold leading-tight tracking-tight text-[#161616] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-white"
+          className="flex min-h-11 min-w-0 items-center gap-2 rounded-sm font-display text-sm font-bold leading-tight tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
+          <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="18" height="18" className="h-[18px] w-[18px] shrink-0" />
           Replit Budget Monitor
         </Link>
       </div>
@@ -652,13 +653,14 @@ function DesktopTopBar({ location }: { location: string }) {
   const supportSection = sections.find(s => s.label === 'Support');
 
   return (
-    <header className="hidden lg:flex items-center h-16 border-b border-border bg-card px-5 shrink-0 z-30">
-      <div className="flex items-center mr-5 shrink-0">
+    <header className="hidden xl:flex items-center h-16 border-b border-border bg-card px-5 shrink-0 z-30">
+      <div className="mr-5 flex shrink-0 items-center">
         <Link
           href={reportingNavigationHref('/', search)}
           data-testid="link-overview-brand"
-          className="rounded-sm font-display font-semibold tracking-tight text-foreground text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex items-center gap-2 rounded-sm font-display text-base font-semibold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
+          <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="20" height="20" className="h-5 w-5 shrink-0" />
           Replit Budget Monitor
         </Link>
       </div>
@@ -683,31 +685,22 @@ function DesktopTopBar({ location }: { location: string }) {
       </nav>
 
       <div className="flex items-center gap-1">
-        {supportSection && supportSection.items.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground font-medium px-3">
-                Support
-                <ChevronsUpDown className="ml-1.5 h-3.5 w-3.5 opacity-50" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48 z-50">
-              <DropdownMenuLabel className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Support</DropdownMenuLabel>
-              {supportSection.items.map(item => {
-                const Icon = item.icon;
-                const isActive = location === item.path;
-                return (
-                  <DropdownMenuItem asChild key={item.path}>
-                    <Link href={item.path} className="flex items-center w-full cursor-pointer" data-testid={item.testId} aria-current={isActive ? 'page' : undefined}>
-                      <Icon className="mr-2 h-4 w-4 text-muted-foreground" />
-                      {item.label}
-                    </Link>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+        {supportSection?.items.map(item => {
+          const isActive = reportingNavigationKey(location, search) === item.path;
+          return (
+            <Link
+              key={item.path}
+              href={reportingNavigationHref(item.path, search)}
+              className={`rounded-md px-3 py-2 text-sm font-medium ${
+                isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
+              data-testid={item.testId}
+              aria-current={isActive ? 'page' : undefined}
+            >
+              {item.label}
+            </Link>
+          );
+        })}
 
         {managementSection && managementSection.items.length > 0 && (
           <DropdownMenu>
@@ -784,12 +777,13 @@ function MobileSidebar({ location, isOpen, close }: SidebarProps) {
       >
         <div className="flex shrink-0 items-center justify-between border-b border-sidebar-border p-4 md:p-6">
           <div className="min-w-0 pr-10">
-            <SheetTitle className="font-display text-lg font-bold text-[#161616] dark:text-white tracking-tight">
+            <SheetTitle className="font-display text-lg font-bold text-foreground tracking-tight">
               <Link
                 href={reportingNavigationHref('/', search)}
                 onClick={close}
-                className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
+                <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="20" height="20" className="h-5 w-5 shrink-0" />
                 Replit Budget Monitor
               </Link>
             </SheetTitle>
@@ -811,7 +805,7 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <AdminDataQualityProvider>
-      <div className="app-shell flex h-[100dvh] bg-background flex-col overflow-hidden relative">
+      <div className="app-shell flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground relative">
       <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:px-4 focus:py-2 focus:bg-background focus:border focus:z-50 focus:rounded-md focus:shadow-md">
         Skip to content
       </a>

@@ -1,7 +1,14 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { RefreshCw, CheckCircle, XCircle, Send } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  RefreshCw,
+  Send,
+  ShieldCheck,
+} from 'lucide-react';
 import {
   useListAlerts,
   useRunAlertCheck,
@@ -9,10 +16,33 @@ import {
   getListAlertsQueryKey,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { DataTable, EmptyState, StatusBadge } from '@/components/journey-primitives';
+import { useToast } from '@/hooks/use-toast';
 import { useAuthContext } from '@/components/auth-context';
 import { NotificationRecipients } from '@/components/notification-recipients';
+import { cn } from '@/lib/utils';
+
+interface LastCheck {
+  checkedGroups: number;
+  alertsSent: number;
+  completedAt: Date;
+}
+
+const formatMoney = (value: number) =>
+  `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const formatDate = (value: string) =>
+  new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
 
 export default function Alerts() {
   const queryClient = useQueryClient();
@@ -20,6 +50,7 @@ export default function Alerts() {
   const { canTestEmail, capabilities } = useAuthContext();
   const [runningCheck, setRunningCheck] = useState(false);
   const [testingAlertId, setTestingAlertId] = useState<number | null>(null);
+  const [lastCheck, setLastCheck] = useState<LastCheck | null>(null);
   const [cursors, setCursors] = useState<Array<number | undefined>>([undefined]);
   const beforeId = cursors[cursors.length - 1];
 
@@ -34,6 +65,11 @@ export default function Alerts() {
     runCheck.mutate(undefined, {
       onSuccess: (result) => {
         queryClient.invalidateQueries({ queryKey: getListAlertsQueryKey() });
+        setLastCheck({
+          checkedGroups: result.checkedGroups,
+          alertsSent: result.alertsSent,
+          completedAt: new Date(),
+        });
         toast({
           title: 'Alert check completed',
           description: `Checked ${result.checkedGroups} groups, sent ${result.alertsSent} alerts`,
@@ -75,14 +111,54 @@ export default function Alerts() {
     );
   };
 
+  const history = alerts ?? [];
+
+  const activityCell = (
+    alert: (typeof history)[number],
+    includeTestIds = false,
+    includeRowTestId = includeTestIds,
+  ) => (
+    <div className="min-w-[210px]" {...(includeRowTestId ? { 'data-testid': `alert-${alert.id}` } : {})}>
+      <div className="flex items-center gap-2 font-medium">
+        <span className={cn('h-2 w-2 rounded-full', alert.status === 'sent' ? 'bg-emerald-600' : 'bg-red-600')} />
+        <span
+          className="break-words"
+          {...(includeTestIds ? { 'data-testid': `text-entity-name-${alert.id}` } : {})}
+        >
+          {alert.entityName}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="capitalize">{alert.entityType}</span>
+        {alert.alertType === 'member_limit_reached' ? (
+          <Badge
+            variant="destructive"
+            className="text-[10px]"
+            {...(includeTestIds ? { 'data-testid': `badge-limit-reached-${alert.id}` } : {})}
+          >
+            {alert.blockedMemberCount} {alert.blockedMemberCount === 1 ? 'member' : 'members'} blocked
+          </Badge>
+        ) : (
+          <Badge
+            variant={alert.threshold >= 100 ? 'destructive' : 'outline'}
+            className="font-mono text-[10px]"
+            {...(includeTestIds ? { 'data-testid': `badge-threshold-${alert.id}` } : {})}
+          >
+            {alert.threshold}% threshold
+          </Badge>
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-[100vw]">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight" data-testid="text-alerts-title">
+    <div className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl" data-testid="text-alerts-title">
             Email activity
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm md:text-base">
+          <p className="text-sm text-muted-foreground">
             Review recipients, delivery history, and authorized operational checks
           </p>
         </div>
@@ -91,136 +167,243 @@ export default function Alerts() {
             onClick={handleRunCheck}
             disabled={runningCheck || runCheck.isPending}
             data-testid="button-run-check"
-            className="w-full sm:w-auto"
+            className="w-full min-w-[142px] sm:w-auto"
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${runningCheck || runCheck.isPending ? 'animate-spin' : ''}`} />
-            Run Check Now
+            <RefreshCw className={cn('mr-2 h-4 w-4', (runningCheck || runCheck.isPending) && 'animate-spin')} />
+            {runningCheck || runCheck.isPending ? 'Checking…' : 'Run Check Now'}
           </Button>
         )}
       </div>
 
-      <NotificationRecipients />
+      <section aria-label="Notification recipients and operational status" className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <NotificationRecipients />
+        <Card className="rounded-md border-primary/20 bg-primary/[0.03] shadow-none">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-3">
+              <CardDescription>Operational check</CardDescription>
+              {capabilities.canRunChecks && (
+                <Badge variant="outline" className="gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Authorized
+                </Badge>
+              )}
+            </div>
+            <CardTitle className="text-base">Budget alerts monitored</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 text-sm text-emerald-700">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              {lastCheck
+                ? `Last check ${formatDistanceToNow(lastCheck.completedAt, { addSuffix: true })}`
+                : 'Ready for the next authorized check'}
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t pt-3 text-xs text-muted-foreground">
+              {lastCheck ? (
+                <>
+                  <span>{lastCheck.checkedGroups} groups checked</span>
+                  <span>{lastCheck.alertsSent} alerts sent</span>
+                </>
+              ) : (
+                <span>Results from a manual check will appear here</span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
 
-      <section className="border-t border-border pt-6">
-        <div className="mb-4 max-w-3xl">
-          <h2 className="text-lg font-semibold">Delivery history</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+      <section aria-labelledby="history-heading" className="border-t pt-7">
+        <div className="mb-5 max-w-3xl">
+          <div className="flex items-center gap-2">
+            <h2 id="history-heading" className="text-xl font-semibold">Delivery history</h2>
+            {!isLoading && (
+              <Badge variant="secondary" className="font-mono text-[11px]">
+                {history.length} {history.length === 1 ? 'record' : 'records'}
+              </Badge>
+            )}
+          </div>
+          <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
             Delivery history for allocated-pool and member-limit notifications, including recipients and failures.
             Test sends reuse the selected alert without changing threshold state.
           </p>
         </div>
-          {isLoading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-16 bg-muted animate-pulse-glow rounded" />
-              ))}
-            </div>
-          ) : isError && !alerts ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              Email activity is unavailable.
-              <Button variant="outline" className="ml-3" onClick={() => refetch()}>Retry</Button>
-            </div>
-          ) : (alerts ?? []).length > 0 ? (
-            <div className="border-y border-border">
-              {(alerts ?? []).map((alert) => (
-                <div
-                  key={alert.id}
-                  className="flex flex-wrap items-start gap-3 border-b border-border px-1 py-4 last:border-b-0 sm:flex-nowrap md:gap-4"
-                  data-testid={`alert-${alert.id}`}
-                >
-                  <div className="flex-shrink-0 mt-1">
+
+        {isLoading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map((item) => (
+              <div key={item} className="h-16 animate-pulse-glow rounded-md bg-muted" />
+            ))}
+          </div>
+        ) : isError && !alerts ? (
+          <EmptyState
+            title="Email activity is unavailable"
+            description="The delivery history could not be loaded. Retry to request it again."
+            action={<Button variant="outline" onClick={() => refetch()}>Retry</Button>}
+          />
+        ) : history.length > 0 ? (
+          <>
+            <div className="hidden md:block">
+              <DataTable
+                caption="Alert delivery history"
+                columns={[
+                  { label: 'Activity' },
+                  { label: 'Send-time snapshot', className: 'w-[220px]' },
+                  { label: 'Recipients', className: 'w-[270px]' },
+                  { label: 'Status', className: 'w-[150px]' },
+                  { label: '', className: 'w-[118px]' },
+                ]}
+                rows={history.map((alert) => [
+                  activityCell(alert, true),
+                  <div
+                    className="space-y-1 text-xs"
+                    data-testid={`text-spend-${alert.id}`}
+                  >
+                    <div className="font-mono text-sm">
+                      {formatMoney(alert.spendUsd)}
+                      {alert.alertType !== 'member_limit_reached' ? ` / ${formatMoney(alert.budgetUsd)}` : ''}
+                    </div>
+                    <div className="text-muted-foreground" data-testid={`text-time-${alert.id}`}>
+                      {formatDate(alert.sentAt)}
+                    </div>
+                  </div>,
+                  <div
+                    className="max-w-[255px] truncate text-xs text-muted-foreground"
+                    title={alert.recipients.join(', ')}
+                    data-testid={`text-recipients-${alert.id}`}
+                  >
+                    {alert.recipients.join(', ')}
+                  </div>,
+                  <div className="flex items-center gap-2">
                     {alert.status === 'sent' ? (
-                      <CheckCircle className="h-5 w-5 text-chart-1" data-testid={`icon-success-${alert.id}`} />
+                      <CheckCircle2 className="h-4 w-4 text-emerald-700" data-testid={`icon-success-${alert.id}`} />
                     ) : (
-                      <XCircle className="h-5 w-5 text-destructive" data-testid={`icon-error-${alert.id}`} />
+                      <CircleAlert className="h-4 w-4 text-red-700" data-testid={`icon-error-${alert.id}`} />
                     )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <span className="break-words font-medium text-sm" data-testid={`text-entity-name-${alert.id}`}>
-                        {alert.entityName}
-                      </span>
-                      <span className="text-xs capitalize text-muted-foreground">
-                        {alert.entityType}
-                      </span>
-                      {alert.alertType === 'member_limit_reached' ? (
-                        <Badge
-                          variant="destructive"
-                          className="text-xs"
-                          data-testid={`badge-limit-reached-${alert.id}`}
-                        >
-                          {alert.blockedMemberCount} {alert.blockedMemberCount === 1 ? 'member' : 'members'} blocked
-                        </Badge>
+                    <StatusBadge status={alert.status === 'sent' ? 'Sent' : 'Failed'} />
+                  </div>,
+                  canTestEmail ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSendTest(alert.id, alert.entityName)}
+                      disabled={sendTest.isPending}
+                      aria-label={`Send test email for ${alert.entityName}`}
+                      data-testid={`button-send-test-${alert.id}`}
+                    >
+                      {testingAlertId === alert.id ? (
+                        <><Clock3 className="mr-1.5 h-3.5 w-3.5 animate-pulse" />Sending…</>
                       ) : (
-                        <Badge
-                          variant={alert.threshold >= 100 ? 'destructive' : 'outline'}
-                          className="font-mono text-xs"
-                          data-testid={`badge-threshold-${alert.id}`}
-                        >
-                          {alert.threshold}% threshold
-                        </Badge>
+                        <><Send className="mr-1.5 h-3.5 w-3.5" />Send test</>
+                      )}
+                    </Button>
+                  ) : null,
+                ])}
+              />
+            </div>
+
+            <div className="space-y-3 md:hidden">
+              {history.map((alert) => (
+                <Card
+                  key={alert.id}
+                  className="rounded-md shadow-none"
+                  data-testid={`alert-${alert.id}-mobile`}
+                >
+                  <CardContent className="space-y-3 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      {activityCell(alert, true, false)}
+                      {alert.status === 'sent' ? (
+                        <CheckCircle2
+                          className="h-4 w-4 shrink-0 text-emerald-700"
+                          data-testid={`icon-success-${alert.id}`}
+                        />
+                      ) : (
+                        <CircleAlert
+                          className="h-4 w-4 shrink-0 text-red-700"
+                          data-testid={`icon-error-${alert.id}`}
+                        />
                       )}
                     </div>
-                    <div className="text-sm text-muted-foreground space-y-1">
-                      {alert.alertType === 'member_limit_reached' ? (
-                        <p data-testid={`text-spend-${alert.id}`}>
-                          Current-cycle Agent spend for blocked members:{' '}
-                          <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> across{' '}
-                          <span className="font-mono">{alert.blockedMemberCount}</span>{' '}
-                          {alert.blockedMemberCount === 1 ? 'member' : 'members'}
+                    <div className="grid grid-cols-2 gap-3 border-y py-3 text-xs">
+                      <div data-testid={`text-spend-${alert.id}`}>
+                        <span className="text-muted-foreground">Snapshot</span>
+                        <p className="mt-1 font-mono">
+                          {formatMoney(alert.spendUsd)}
+                          {alert.alertType !== 'member_limit_reached' ? ` / ${formatMoney(alert.budgetUsd)}` : ''}
                         </p>
-                      ) : (
-                        <p data-testid={`text-spend-${alert.id}`}>
-                          Send-time snapshot: <span className="font-mono">${alert.spendUsd.toFixed(2)}</span> / Allocated pool:{' '}
-                          <span className="font-mono">${alert.budgetUsd.toFixed(2)}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Sent</span>
+                        <p className="mt-1" data-testid={`text-time-${alert.id}`}>
+                          {formatDate(alert.sentAt)}
                         </p>
-                      )}
-                      <p className="break-words" data-testid={`text-recipients-${alert.id}`}>
-                        Recipients: {alert.recipients.join(', ')}
-                      </p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex w-full flex-shrink-0 flex-wrap items-center justify-between gap-2 pl-8 sm:w-auto sm:flex-col sm:items-end sm:pl-0">
-                    <span className="text-xs text-muted-foreground" data-testid={`text-time-${alert.id}`}>
-                      {formatDistanceToNow(new Date(alert.sentAt), { addSuffix: true })}
-                    </span>
+                    <p
+                      className="truncate text-xs text-muted-foreground"
+                      title={alert.recipients.join(', ')}
+                      data-testid={`text-recipients-${alert.id}`}
+                    >
+                      {alert.recipients.join(', ')}
+                    </p>
                     {canTestEmail && (
                       <Button
                         variant="outline"
                         size="sm"
+                        className="w-full"
                         onClick={() => handleSendTest(alert.id, alert.entityName)}
                         disabled={sendTest.isPending}
                         aria-label={`Send test email for ${alert.entityName}`}
                         data-testid={`button-send-test-${alert.id}`}
                       >
-                        <Send className={`h-3.5 w-3.5 mr-1.5 ${testingAlertId === alert.id ? 'animate-pulse' : ''}`} />
-                        {testingAlertId === alert.id ? 'Sending…' : 'Send test'}
+                        {testingAlertId === alert.id ? 'Sending…' : 'Send test email'}
                       </Button>
                     )}
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
               ))}
             </div>
-          ) : (
-            <div className="border-y border-border py-10 text-muted-foreground" data-testid="text-no-alerts">
-              <div className="max-w-lg">
-                <p className="font-medium">{beforeId ? 'No older alerts' : 'No alerts sent yet'}</p>
-                <p className="text-sm mt-1">
-                  Alerts will appear here when allocated pools cross thresholds or members reach Agent limits
-                </p>
-              </div>
-            </div>
-          )}
-          {isError && alerts && (
-            <p className="text-sm text-muted-foreground">Refresh failed. Showing the last successful history page. <button className="underline" onClick={() => refetch()}>Retry</button></p>
-          )}
-          <div className="flex flex-col items-stretch justify-between gap-3 pt-4 min-[390px]:flex-row min-[390px]:items-center">
-            <span className="text-xs text-muted-foreground">Page {cursors.length} · up to 100 records per page</span>
-            <div className="flex gap-2">
-              <Button className="flex-1" variant="outline" disabled={cursors.length === 1 || isLoading} onClick={() => setCursors((current) => current.slice(0, -1))}>Previous</Button>
-              <Button className="flex-1" variant="outline" disabled={isLoading || !alerts || alerts.length < 100} onClick={() => setCursors((current) => [...current, alerts?.at(-1)?.id])}>Next</Button>
-            </div>
+          </>
+        ) : (
+          <div data-testid="text-no-alerts">
+            <EmptyState
+              title={beforeId ? 'No older alerts' : 'No alerts sent yet'}
+              description="Alerts will appear here when allocated pools cross thresholds or members reach Agent limits."
+            />
           </div>
+        )}
+
+        {isError && alerts && (
+          <p className="mt-4 text-sm text-muted-foreground">
+            Refresh failed. Showing the last successful history page.{' '}
+            <button className="underline" onClick={() => refetch()}>Retry</button>
+          </p>
+        )}
+        <div className="flex flex-col items-stretch justify-between gap-3 pt-4 min-[390px]:flex-row min-[390px]:items-center">
+          <span className="text-xs text-muted-foreground">
+            Page {cursors.length} · up to 100 records per page
+          </span>
+          <div className="flex gap-2">
+            <Button
+              className="flex-1"
+              variant="outline"
+              size="sm"
+              disabled={cursors.length === 1 || isLoading}
+              onClick={() => setCursors((current) => current.slice(0, -1))}
+            >
+              <ChevronLeft className="mr-1 h-4 w-4" />
+              Previous
+            </Button>
+            <Button
+              className="flex-1"
+              variant="outline"
+              size="sm"
+              disabled={isLoading || !alerts || alerts.length < 100}
+              onClick={() => setCursors((current) => [...current, alerts?.at(-1)?.id])}
+            >
+              Next
+              <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       </section>
     </div>
   );

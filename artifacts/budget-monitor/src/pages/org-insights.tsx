@@ -7,12 +7,13 @@ import { dashboardRequestParams } from "@/lib/dashboard-request";
 import { RangeFilter } from "@/components/range-filter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, RefreshCw, Users, Target, Activity, TrendingUp, DollarSign } from "lucide-react";
+import { AlertTriangle, RefreshCw, Users, Target, Activity, TrendingUp, DollarSign, Download } from "lucide-react";
 import { formatFinancialUsd } from "@/lib/financial-format";
 import { dashboardTotalSpend } from "@/lib/spend-presentation";
 import { InsightCard, MonthlySpendChart, TopSpendersList, CategoryCards } from "./org-insights-components";
 import { OrgInsightsPeopleTable } from "./org-insights-table";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function OrgInsights() {
   const { capabilities } = useAuthContext();
@@ -81,26 +82,26 @@ function OrgInsightsView() {
   const totalSpend = dashboardTotalSpend(displayData);
 
   return (
-    // Presentation ported from usage-dashboard dashboard.tsx; existing authorized dashboard/table reads are unchanged.
-    <div className="mx-auto max-w-[1400px] min-w-0 space-y-6 px-4 py-6 md:px-8 md:py-8">
+    <div className="mx-auto max-w-[1280px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8">
       {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-2 min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl md:text-[28px] font-semibold tracking-tight">Org Insights</h1>
-            <div className="flex items-center gap-1.5 mt-1 ml-2">
+          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Org Insights</h1>
+          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <span>Organization-wide Replit adoption and spend for {period.label}</span>
+            <div className="flex items-center gap-1.5">
               {isFetching && (
-                <Badge variant="secondary" className="border-border/50 text-muted-foreground font-normal text-xs">
+                <Badge variant="secondary" className="border-border/50 text-[11px] font-normal text-muted-foreground">
                   <RefreshCw className="h-3 w-3 mr-1.5 animate-spin opacity-70" /> Updating
                 </Badge>
               )}
               {isPartial && (
-                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700 font-medium text-xs">
+                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[11px] font-medium text-amber-700">
                   Partial data
                 </Badge>
               )}
               {metadata.stale && !isError && (
-                <Badge variant="secondary" className="border-border/50 text-muted-foreground font-normal text-xs">
+                <Badge variant="secondary" className="border-border/50 text-[11px] font-normal text-muted-foreground">
                   Cached
                 </Badge>
               )}
@@ -111,16 +112,15 @@ function OrgInsightsView() {
               )}
             </div>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Organization-wide Replit adoption and spend for {period.label}
-          </p>
         </div>
-        
-        <div className="flex w-full min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-end lg:w-auto">
-          <div className="w-full sm:w-auto min-w-0">
-             <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Reporting period</p>
-             <RangeFilter selectedLabel={period.label} />
-          </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2">
+            <Download className="h-4 w-4" /> Export view
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching} className="gap-2">
+            <RefreshCw className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            {isFetching ? "Updating" : "Refresh data"}
+          </Button>
         </div>
       </div>
 
@@ -139,6 +139,24 @@ function OrgInsightsView() {
           {metadata.qualifications.map((qualification) => <p key={qualification}>{qualification}</p>)}
         </AdminDataQualityNote>
       )}
+
+      <div className="flex flex-col gap-3 rounded-md border bg-card p-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex items-start gap-2 text-xs text-muted-foreground">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+          <p>
+            <strong className="font-semibold text-foreground">Organization insights data quality.</strong>{" "}
+            {isPartial
+              ? "Coverage is partial; values shown are the last available UTC totals."
+              : metadata.stale
+                ? "Values shown are the last available cached UTC totals."
+                : "Values reflect the latest available UTC totals."}
+          </p>
+        </div>
+        <div className="w-full shrink-0 sm:w-auto">
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Reporting period</p>
+          <RangeFilter selectedLabel={period.label} />
+        </div>
+      </div>
 
       {/* Top Cards */}
       <section className="grid min-w-0 gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
@@ -189,21 +207,29 @@ function OrgInsightsView() {
       </section>
 
       {/* Middle section */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-         <div className="bg-card border border-border shadow-sm rounded-2xl p-6 lg:col-span-2">
-               <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground flex items-center gap-2 mb-4">
+       <div className="grid min-w-0 gap-4 lg:grid-cols-5">
+          <Card className="shadow-none lg:col-span-2">
+             <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                  <Users className="w-3.5 h-3.5 text-primary" /> Top Spenders
-               </h2>
+                </CardTitle>
+             </CardHeader>
+             <CardContent className="space-y-1">
                <TopSpendersList spenders={insights?.topSpenders ?? []} />
-         </div>
-         <div className="bg-card border border-border shadow-sm rounded-2xl p-6 lg:col-span-3">
-               <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground flex items-center gap-2 mb-4">
+             </CardContent>
+          </Card>
+          <Card className="shadow-none lg:col-span-3">
+             <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                  <Activity className="w-3.5 h-3.5 text-primary" /> Monthly Spend by Category
-               </h2>
-            <div className="h-72">
+                </CardTitle>
+             </CardHeader>
+             <CardContent>
+             <div className="h-56">
                <MonthlySpendChart monthly={insights?.monthly ?? []} />
             </div>
-         </div>
+             </CardContent>
+          </Card>
       </div>
       
       {/* Category Cards */}
@@ -211,8 +237,12 @@ function OrgInsightsView() {
          <CategoryCards categories={insights.categories} />
       )}
 
-      {/* People Table */}
-      <section className="min-w-0">
+       {/* People Table */}
+       <section className="min-w-0 space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">People using Replit</h2>
+            <p className="text-sm text-muted-foreground">Account-wide users with activity in the selected period.</p>
+          </div>
          <OrgInsightsPeopleTable />
       </section>
     </div>

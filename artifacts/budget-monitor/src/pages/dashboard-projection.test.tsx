@@ -25,8 +25,7 @@ vi.mock('recharts', () => ({
   XAxis: (props: any) => { rendering.xAxis = props; return null; },
   CartesianGrid: () => null,
   Tooltip: () => null,
-  Area: () => null,
-  Line: () => null,
+  Bar: () => null,
 }));
 beforeEach(() => {
   rendering.references = [];

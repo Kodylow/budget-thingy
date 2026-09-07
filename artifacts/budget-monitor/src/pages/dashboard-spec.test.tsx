@@ -74,8 +74,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(source).toContain("Known cumulative spend · partial coverage");
     expect(source).toContain('AdminDataQualityNote');
     expect(source).toContain("coverageLabel(b)");
-    expect(source).toContain('stroke="#0D62FF"');
-    expect(source).toContain('connectNulls={false}');
+    expect(source).toContain('fill="#0D62FF"');
   });
 
   it('uses one spend headline and quiet facts without a chart options menu', () => {

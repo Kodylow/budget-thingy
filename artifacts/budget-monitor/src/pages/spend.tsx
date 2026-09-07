@@ -48,7 +48,7 @@ import {
   type SpendViewScope,
 } from '@/lib/spend-scope';
 import { downloadAuthenticatedBlob } from '@/lib/download';
-import { BudgetMeter } from '@/components/budget-meter';
+import { BudgetMeter, MetricCard } from '@/components/journey-primitives';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
 import { spendColumns, spendDetailHref, updateSpendParams } from '@/lib/spend-exploration';
 import {
@@ -189,28 +189,27 @@ export default function Spend() {
   };
 
   return (
-    <div className="absolute inset-0 flex flex-col bg-background overflow-hidden">
-      <header className="flex-none border-b border-border bg-background px-4 py-4 md:px-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">{pageTitle}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+    <div className="mx-auto max-w-[1280px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">{pageTitle}</h1>
+            <p className="text-sm text-muted-foreground">
               {activeTab === 'projects'
                 ? `${scopeOptions.find((option) => option.value === viewScope)?.label || 'Current scope'} · Current projects · selected-period spend`
                 : `${scopeOptions.find((option) => option.value === viewScope)?.label || 'Current scope'} · reporting-period ledger`}
             </p>
           </div>
-          <RangeFilter />
-        </div>
+          <div className="w-full shrink-0 sm:w-auto">
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Reporting period</p>
+            <RangeFilter />
+          </div>
       </header>
 
-      <section aria-label="Spend ledger" className="flex-1 min-h-0 overflow-auto lg:overflow-hidden p-4 md:px-6 md:pb-6">
-        <div className="flex min-h-full lg:h-full lg:min-h-0 w-full flex-col overflow-hidden border-y border-border bg-background">
+      <section aria-label="Spend ledger">
           {activeTab === 'pools' && <SpendTable type="pools" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
           {activeTab === 'groups' && <SpendTable type="groups" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
           {activeTab === 'people' && <SpendTable type="people" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
           {activeTab === 'projects' && <SpendTable type="projects" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
-        </div>
       </section>
     </div>
   );
@@ -378,9 +377,31 @@ function SpendTable({
   };
   const exportDisabled = isExporting || searchValue !== search || !data || query.isFetching || query.isError;
 
+  const totalsObserved = Boolean(data && !isUnknownSpendTotal(data.metadata));
+
   return (
-    <div className="flex flex-col min-h-full lg:h-full lg:min-h-0 bg-background relative z-10">
-      <div className="flex-none border-b border-border py-3">
+    <div className="space-y-3">
+      {data && (
+        <section aria-label="Spend summary" className="grid gap-3 sm:grid-cols-3">
+          <MetricCard
+            label="Total spend"
+            value={formatObservedCurrency(data.totals.spendUsd, totalsObserved)}
+            detail={`${data.filteredRows} ${viewLabels[type].toLowerCase()} in view`}
+          />
+          <MetricCard
+            label="Agent"
+            value={formatObservedCurrency(data.totals.agentSpendUsd, totalsObserved)}
+            detail="Selected reporting period"
+          />
+          <MetricCard
+            label="Other services"
+            value={formatObservedCurrency(data.totals.otherServicesUsd, totalsObserved)}
+            detail="Hosting, storage, and other costs"
+          />
+        </section>
+      )}
+      <section aria-label={`${viewLabels[type]} spend ledger`} className="overflow-hidden rounded-md border bg-card">
+      <div className="flex-none border-b border-border px-4 py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
           <div className="flex w-full gap-2 sm:w-auto">
             <Select value={type} onValueChange={(value) => updateUrlParams({ tab: value })}>
@@ -482,7 +503,7 @@ function SpendTable({
               </PopoverContent>
             </Popover>
             <Select value={sort} onValueChange={(value) => updateUrlParams({ sort: value })}>
-              <SelectTrigger className="h-10 flex-1 sm:h-9 sm:flex-none sm:w-[180px]" aria-label="Sort spend"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-10 flex-1 sm:h-9 sm:flex-none sm:w-[180px]" aria-label="Sort spend"><ArrowUpDown className="mr-2 h-3.5 w-3.5 text-muted-foreground" /><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="spend_desc">Spend: high to low</SelectItem>
                 <SelectItem value="spend_asc">Spend: low to high</SelectItem>
@@ -491,6 +512,16 @@ function SpendTable({
                 <SelectItem value="status">Status priority</SelectItem>
               </SelectContent>
             </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-10 gap-2 sm:h-9"
+              disabled={exportDisabled}
+              onClick={onExport}
+            >
+              {isExporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {isExporting ? 'Exporting…' : 'Export CSV'}
+            </Button>
           </div>
           {query.isFetching && <span className="ml-auto inline-flex items-center text-xs text-muted-foreground" data-testid="status-spend-updating"><RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />Updating</span>}
         </div>
@@ -545,7 +576,7 @@ function SpendTable({
         {type === 'people' && <p className="mt-1">Total, Agent, and other services use the selected reporting period. Optional limit and current-cycle columns refer to monthly Agent enforcement, not this reporting range.</p>}
         {type === 'pools' && <p className="mt-1">Allocations are planning baselines. Utilization applies to the full term, not a monthly Agent limit.</p>}
       </AdminDataQualityNote>}
-      <div className="flex-none lg:flex-1 overflow-auto min-h-[240px] max-h-[60vh] lg:min-h-0 lg:max-h-none relative bg-background" data-virtual-scroll tabIndex={0} aria-label="Spend results">
+      <div className="relative min-h-[240px] max-h-[60vh] overflow-auto bg-background" data-virtual-scroll tabIndex={0} aria-label="Spend results">
         {!data ? query.isError ? <div className="p-8 text-center space-y-3" role="status">
           <p>{type === 'projects'
             ? 'Projects unavailable. Your filters and selected spend period are preserved.'
@@ -655,6 +686,7 @@ function SpendTable({
       <p className="sr-only">
         Generated from {data.period.label}, generation {data.metadata.generationId}.
       </p></>}
+      </section>
     </div>
   );
 }
@@ -713,7 +745,7 @@ function GenericSpendTable({
   };
 
   return (
-    <div className="min-w-max bg-card border border-border rounded-xl overflow-hidden">
+    <div className="min-w-max bg-card">
       <table className={`w-full min-w-max text-left text-sm border-collapse [&_td]:px-3 [&_th]:px-3 ${density === 'compact' ? '[&_td]:py-2' : '[&_td]:py-3'}`} aria-rowcount={logicalRowCount + 1}>
         <TableHeader className="sticky top-0 bg-background/95 backdrop-blur z-10">
           <TableRow>

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import { Link } from 'wouter';
 import { useSearch } from 'wouter/use-browser-location';
 import {
@@ -10,15 +10,22 @@ import {
   useListSpendProjects,
   type SpendTableRow,
 } from '@workspace/api-client-react';
-import { Activity, DollarSign, RefreshCw, Users } from 'lucide-react';
+import { Activity, ArrowUpRight, DollarSign, RefreshCw, Users } from 'lucide-react';
 import { useAuthContext } from '@/components/auth-context';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
 import { TrendAreaChart } from '@/components/Charts';
+import {
+  DataTable,
+  EmptyState,
+  MetricCard,
+  StatusBadge,
+  type JourneyStatus,
+} from '@/components/journey-primitives';
 import { RangeFilter } from '@/components/range-filter';
 import { useRange } from '@/components/range-context';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
 import { dashboardTotalSpend } from '@/lib/spend-presentation';
 import { formatUsd } from '@/pages/home-components/format';
@@ -37,87 +44,108 @@ export function resolveMyTeamScope(
   return { authorized: false, viewScope: 'managed' as const };
 }
 
-function SummaryCard({ icon: Icon, label, value, detail }: {
-  icon: typeof Users;
-  label: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
-      <div className="mb-2 flex items-center gap-2">
-        <Icon className="h-4 w-4 text-primary" />
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
-      </div>
-      <div className="font-mono text-2xl font-semibold">{value}</div>
-      <p className="mt-1.5 text-xs text-muted-foreground">{detail}</p>
-    </div>
-  );
-}
-
 function TablePanel({ title, caption, viewAllHref, children }: {
   title: string;
   caption: string;
   viewAllHref: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 rounded-lg border border-border bg-card shadow-sm">
-      <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-        <div>
-          <h2 className="font-semibold">{title}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{caption}</p>
+    <Card className="min-w-0 rounded-md shadow-none">
+      <CardHeader className="border-b pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">{title}</CardTitle>
+            <CardDescription>{caption}</CardDescription>
+          </div>
+          <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs text-primary" asChild>
+            <Link href={viewAllHref}>View all <ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Link>
+          </Button>
         </div>
-        <Link href={viewAllHref} className="shrink-0 text-xs font-medium text-primary hover:underline">View all</Link>
-      </div>
-      <div aria-label={`${title} table`} className="max-w-full overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:overflow-visible" tabIndex={0}>
-        {children}
-      </div>
-    </section>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div aria-label={`${title} table`} className="max-w-full overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:overflow-visible" tabIndex={0}>
+          {children}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+}
+
+export function resolveLimitStatus(row: SpendTableRow): JourneyStatus | null {
+  if (
+    row.limitState === 'no_limit'
+    || row.limitState === 'unavailable'
+    || row.allocationUsd == null
+    || row.currentCycleAgentSpendUsd == null
+  ) return null;
+  if (row.allocationUsd === 0) {
+    return row.currentCycleAgentSpendUsd > 0 ? 'Over budget' : 'Within budget';
+  }
+  if (row.currentCycleAgentSpendUsd > row.allocationUsd) return 'Over budget';
+  if (row.currentCycleAgentSpendUsd >= row.allocationUsd * 0.9) return 'Near limit';
+  return 'Within budget';
+}
+
 function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
-  if (rows.length === 0) return <p className="p-6 text-sm text-muted-foreground">No people with recorded spend were found in this scope and period.</p>;
+  if (rows.length === 0) {
+    return <EmptyState title="No recorded people spend" description="No people with recorded spend were found in this scope and period." />;
+  }
   return (
-    <Table className="min-w-[480px]">
-      <TableHeader><TableRow>
-        <TableHead>Member</TableHead>
-        <TableHead className="text-right">Selected spend</TableHead>
-        <TableHead className="text-right">Billing-cycle Agent</TableHead>
-        <TableHead className="text-right">Billing-cycle limit</TableHead>
-      </TableRow></TableHeader>
-      <TableBody>{rows.map((row) => <TableRow key={row.id}>
-        <TableCell><span className="font-medium">{row.name}</span><span className="block text-xs text-muted-foreground">{row.workspaceName || 'Workspace unavailable'}</span></TableCell>
-        <TableCell className="text-right font-mono">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</TableCell>
-        <TableCell className="text-right font-mono">{formatUsd(row.currentCycleAgentSpendUsd)}</TableCell>
-        <TableCell className="text-right font-mono">
-          {row.limitState === 'no_limit' ? 'No limit' : formatUsd(row.allocationUsd)}
-          {row.limitObservationStatus === 'refreshing' && <span className="block font-sans text-[10px] text-muted-foreground">Refreshing</span>}
-          {row.limitObservationStatus === 'failed' && <span className="block font-sans text-[10px] text-muted-foreground">{row.allocationUsd != null ? 'Last known · refresh failed' : 'Observation failed'}</span>}
-          {row.limitObservationStatus === 'unavailable' && <span className="block font-sans text-[10px] text-muted-foreground">Observation unavailable</span>}
-        </TableCell>
-      </TableRow>)}</TableBody>
-    </Table>
+    <DataTable
+      caption="Top people by selected-period spend"
+      columns={[
+        { label: 'Member' },
+        { label: 'Selected spend', className: 'text-right' },
+        { label: 'Billing-cycle Agent', className: 'text-right' },
+        { label: 'Billing-cycle limit', className: 'text-right' },
+      ]}
+      rows={rows.map((row) => {
+        const status = resolveLimitStatus(row);
+        return [
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{initials(row.name)}</span>
+            <span><span className="block whitespace-nowrap font-medium">{row.name}</span><span className="block whitespace-nowrap text-xs text-muted-foreground">{row.workspaceName || 'Workspace unavailable'}</span></span>
+          </div>,
+          <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
+          <span className="whitespace-nowrap font-mono text-xs">{formatUsd(row.currentCycleAgentSpendUsd)}</span>,
+          <span className="flex flex-col items-end gap-1">
+            <span className="whitespace-nowrap font-mono text-xs">{row.limitState === 'no_limit' ? 'No limit' : formatUsd(row.allocationUsd)}</span>
+            {status && <StatusBadge status={status} />}
+            {row.limitObservationStatus === 'refreshing' && <span className="text-[10px] text-muted-foreground">Refreshing</span>}
+            {row.limitObservationStatus === 'failed' && <span className="text-[10px] text-muted-foreground">{row.allocationUsd != null ? 'Last known · refresh failed' : 'Observation failed'}</span>}
+            {row.limitObservationStatus === 'unavailable' && <span className="text-[10px] text-muted-foreground">Observation unavailable</span>}
+          </span>,
+        ];
+      })}
+    />
   );
 }
 
 function ProjectsTable({ rows }: { rows: SpendTableRow[] }) {
-  if (rows.length === 0) return <p className="p-6 text-sm text-muted-foreground">No projects with recorded spend were found in this scope and period.</p>;
+  if (rows.length === 0) {
+    return <EmptyState title="No recorded project spend" description="No projects with recorded spend were found in this scope and period." />;
+  }
   return (
-    <Table className="min-w-[480px]">
-      <TableHeader><TableRow>
-        <TableHead>App / project</TableHead>
-        <TableHead className="text-right">Selected spend</TableHead>
-        <TableHead className="text-right">Agent</TableHead><TableHead className="text-right">Other services</TableHead>
-      </TableRow></TableHeader>
-      <TableBody>{rows.map((row) => <TableRow key={row.id}>
-        <TableCell><span className="font-medium">{row.name}</span><span className="block text-xs text-muted-foreground">{row.ownerName || 'Owner unavailable'} · {row.workspaceName || 'Workspace unavailable'}</span></TableCell>
-        <TableCell className="text-right font-mono">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</TableCell>
-        <TableCell className="text-right font-mono">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.agentSpendUsd)}</TableCell>
-        <TableCell className="text-right font-mono">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.otherServicesUsd)}</TableCell>
-      </TableRow>)}</TableBody>
-    </Table>
+    <DataTable
+      caption="Top apps by selected-period spend"
+      columns={[
+        { label: 'App / project' },
+        { label: 'Selected spend', className: 'text-right' },
+        { label: 'Agent', className: 'text-right' },
+        { label: 'Other services', className: 'text-right' },
+      ]}
+      rows={rows.map((row) => [
+        <div><span className="block whitespace-nowrap font-medium">{row.name}</span><span className="block whitespace-nowrap text-xs text-muted-foreground">{row.ownerName || 'Owner unavailable'} · {row.workspaceName || 'Workspace unavailable'}</span></div>,
+        <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
+        <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.agentSpendUsd)}</span>,
+        <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.otherServicesUsd)}</span>,
+      ])}
+    />
   );
 }
 
@@ -145,21 +173,48 @@ export default function MyTeam() {
     : isOrganization
       ? 'Organization activity.'
       : 'Activity across your teams and workspaces.';
+  const refreshAll = () => void Promise.all([dashboard.refetch(), people.refetch(), projects.refetch()]);
   const pageHeader = (
-    <header className="flex flex-wrap items-start justify-between gap-4">
-      <div><h1 className="text-2xl font-semibold tracking-tight">{isOrganization ? 'My Organization' : 'My Team'}</h1><p className="mt-1 text-sm text-muted-foreground">{scopeCopy}{dashboard.data?.period?.label ? ` Selected period: ${dashboard.data.period.label}` : ''}</p></div>
-      <RangeFilter />
+    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="min-w-0 space-y-2">
+        <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{isOrganization ? 'My Organization' : 'My Team'}</h1>
+        <p className="text-sm text-muted-foreground">
+          {scopeCopy} Review member spending, current-cycle limits, and activity across your available scope.
+        </p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={refreshAll}>
+          <RefreshCw className="mr-2 h-4 w-4" />Refresh data
+        </Button>
+        <Button size="sm" asChild>
+          <Link href={reportingNavigationHref(`/spend?viewScope=${viewScope}`, search)}>
+            <ArrowUpRight className="mr-2 h-4 w-4" />View spend details
+          </Link>
+        </Button>
+      </div>
     </header>
+  );
+  const rangePanel = (
+    <div className="flex flex-col gap-4 rounded-md border bg-card p-4 shadow-none lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <p className="mb-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Team view</p>
+        <p className="text-sm text-foreground">Scope and reporting period apply to every value below.</p>
+      </div>
+      <div className="w-full lg:w-auto">
+        <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Reporting period</span>
+        <RangeFilter selectedLabel={dashboard.data?.period?.label} />
+      </div>
+    </div>
   );
 
   if (!authorized) {
     return <div className="p-8" data-testid="my-team-forbidden"><h1 className="text-2xl font-semibold">403 · Access denied</h1><p className="mt-2 text-sm text-muted-foreground">Your role does not include personal or managed usage access.</p></div>;
   }
   if (dashboard.isLoading || people.isLoading || projects.isLoading) {
-    return <div className="mx-auto max-w-[1280px] space-y-5 p-4 md:p-8">{pageHeader}<div className="grid gap-4 sm:grid-cols-3">{[1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-lg" />)}</div><Skeleton className="h-72 rounded-lg" /></div>;
+    return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<div className="grid gap-4 sm:grid-cols-3">{[1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-md" />)}</div><Skeleton className="h-72 rounded-md" /></div>;
   }
   if (!dashboard.data || !people.data || !projects.data) {
-    return <div className="mx-auto max-w-[1280px] space-y-5 p-4 md:p-8">{pageHeader}<div className="flex min-h-[35vh] flex-col items-center justify-center text-center"><p className="font-medium">Unable to load activity.</p><p className="mt-1 text-sm text-muted-foreground">No values are shown because one or more scoped requests failed.</p><Button variant="outline" className="mt-4" onClick={() => void Promise.all([dashboard.refetch(), people.refetch(), projects.refetch()])}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button></div></div>;
+    return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<EmptyState title="Unable to load activity" description="No values are shown because one or more scoped requests failed." action={<Button variant="outline" onClick={refreshAll}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>} /></div>;
   }
 
   const insights = dashboard.data.insights;
@@ -179,14 +234,15 @@ export default function MyTeam() {
     .some(metadata => metadata.status !== 'complete' || metadata.stale);
 
   return (
-    <div className="mx-auto max-w-[1280px] min-w-0 space-y-6 px-4 py-6 md:px-8">
+    <div className="mx-auto max-w-[1280px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8">
       {pageHeader}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <SummaryCard icon={Users} label="People with recorded spend" value={recordedPeople == null ? 'Unavailable' : recordedPeople.toLocaleString()} detail={`People with positive recorded spend in ${dashboard.data.period.label}`} />
-        <SummaryCard icon={DollarSign} label={role === 'member' ? 'My spend' : isOrganization ? 'Organization spend' : 'Team spend'} value={formatUsd(totalSpend)} detail={dashboard.data.period.label} />
-        <SummaryCard icon={Activity} label="Average per active user" value={totalSpend == null ? 'Unavailable' : formatUsd(insights?.avgSpendPerActiveUserUsd)} detail="Average among people with positive recorded spend in the selected period" />
+      {rangePanel}
+      <div className="grid gap-4 md:grid-cols-3">
+        <MetricCard label="People with recorded spend" value={recordedPeople == null ? 'Unavailable' : recordedPeople.toLocaleString()} detail={`Positive recorded spend in ${dashboard.data.period.label}`} />
+        <MetricCard label={role === 'member' ? 'My spend' : isOrganization ? 'Organization spend' : 'Team spend'} value={formatUsd(totalSpend)} detail={dashboard.data.period.label} />
+        <MetricCard label="Average per active user" value={totalSpend == null ? 'Unavailable' : formatUsd(insights?.avgSpendPerActiveUserUsd)} detail="Among people with positive recorded spend" />
       </div>
-      {requestFailed && <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground"><span>Refresh failed; last available values are shown.</span><button type="button" className="font-medium text-primary hover:underline" onClick={() => void Promise.all([dashboard.refetch(), people.refetch(), projects.refetch()])}>Retry</button></div>}
+      {requestFailed && <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"><span>Refresh failed; last available values are shown.</span><button type="button" className="font-semibold underline underline-offset-2" onClick={refreshAll}>Retry</button></div>}
       <AdminDataQualityNote title={isOrganization ? 'Organization activity' : 'Team activity'}>
         {incomplete && <p>{dashboard.data.metadata.status === 'partial' ? 'Partial coverage.' : 'Data may be stale or incomplete.'}</p>}
         {qualifications.map(qualification => <p key={qualification}>{qualification}</p>)}
@@ -198,10 +254,23 @@ export default function MyTeam() {
         <TablePanel title="Top People" caption="Selected-period spend and current-cycle limits." viewAllHref={peopleHref}><PeopleTable rows={people.data.rows} /></TablePanel>
         <TablePanel title="Top Apps" caption="Projects ranked by selected-period scoped spend." viewAllHref={projectsHref}><ProjectsTable rows={projects.data.rows} /></TablePanel>
       </div>
-      <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-        <section className="rounded-lg border border-border bg-card p-5 shadow-sm"><h2 className="text-sm font-semibold uppercase tracking-wider">Latest 6 months · Spend</h2><div className="mt-3 h-64"><TrendAreaChart data={monthly} dataKey="spendUsd" valueLabel="Scoped spend" /></div></section>
-        <section className="rounded-lg border border-border bg-card p-5 shadow-sm"><h2 className="text-sm font-semibold uppercase tracking-wider">Latest 6 months · Active users</h2><div className="mt-3 h-64"><TrendAreaChart data={monthly} dataKey="activeUsers" valueKind="count" valueLabel="Active users" /></div></section>
-      </div>
+      <Card className="rounded-md shadow-none">
+        <CardHeader>
+          <CardTitle className="text-base">Six-month activity</CardTitle>
+          <CardDescription>Scoped spend and active users, independent of the selected period.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid min-w-0 gap-6 xl:grid-cols-2">
+          <section className="min-w-0">
+            <h2 className="flex items-center gap-2 text-xs font-medium"><DollarSign className="h-4 w-4 text-primary" />Spend</h2>
+            <div className="mt-3 h-64"><TrendAreaChart data={monthly} dataKey="spendUsd" valueLabel="Scoped spend" /></div>
+          </section>
+          <section className="min-w-0">
+            <h2 className="flex items-center gap-2 text-xs font-medium"><Users className="h-4 w-4 text-primary" />Active users</h2>
+            <div className="mt-3 h-64"><TrendAreaChart data={monthly} dataKey="activeUsers" valueKind="count" valueLabel="Active users" /></div>
+          </section>
+          {hasPartialMonth && <p className="flex items-center gap-2 border-t pt-4 text-xs text-muted-foreground xl:col-span-2"><Activity className="h-3.5 w-3.5" />The latest month is partial; known spend and users are shown.</p>}
+        </CardContent>
+      </Card>
     </div>
   );
 }
