@@ -34,24 +34,14 @@ for (const viewport of [
     const loginBox = (await login.boundingBox())!;
     expect(loginBox.y + loginBox.height).toBeLessThanOrEqual(viewport.height);
     expect(loginBox.height).toBeGreaterThanOrEqual(44);
-    const headline = page.getByRole('heading', { level: 1 });
-    await expect(headline).toHaveText('Your Replit spend. In clear view.');
-    if (viewport.width >= 1024) {
-      const lines = await headline.evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight));
-      // The approved desktop panel intentionally uses a narrower editorial
-      // measure than the old split layout, so the large headline may use
-      // three lines while remaining fully visible.
-      expect(lines).toBeLessThanOrEqual(3.1);
-    } else {
-      const panel = page.locator('.signed-out-shell__panel');
-      await expect(panel).toBeVisible();
-      expect((await panel.boundingBox())!.width).toBeLessThanOrEqual(viewport.width);
-    }
-    const art = page.locator('img[src$="comcast-technology-center.png"]');
-    await expect(art).toBeVisible();
-    const artBox = (await art.boundingBox())!;
-    expect(artBox.width).toBeGreaterThanOrEqual(viewport.width);
-    expect(artBox.height).toBeGreaterThanOrEqual(viewport.height);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Replit Budget Monitor');
+    const content = page.getByTestId('auth-signed-out').locator(':scope > div');
+    expect((await content.boundingBox())!.width).toBeLessThanOrEqual(320);
+    const symbol = page.locator('img[src$="replit-logo.svg"]');
+    await expect(symbol).toBeVisible();
+    expect((await symbol.boundingBox())!.width).toBe(32);
+    await expect(page.getByText('Your Replit spend. In clear view.')).toHaveCount(0);
+    await expect(page.locator('img[src$="comcast-technology-center.png"]')).toHaveCount(0);
     await expect(page.getByTestId('button-reconnect')).toHaveCount(0);
     expect(requests.every(path => path === '/api/auth/user')).toBe(true);
   });
@@ -110,9 +100,8 @@ test('unavailable access offers a working reconnect without protected requests',
   expect(requests.every(path => path === '/api/auth/user')).toBe(true);
 });
 
-test('image failure, enlarged text, short viewport and reduced motion stay usable', async ({ page }) => {
+test('enlarged text, short viewport and reduced motion stay usable', async ({ page }) => {
   await signedOut(page);
-  await page.route('**/comcast-technology-center.png', route => route.abort());
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 320, height: 400 });
   await page.goto('/');
@@ -122,8 +111,6 @@ test('image failure, enlarged text, short viewport and reduced motion stay usabl
   await noHorizontalOverflow(page);
   await login.scrollIntoViewIfNeeded();
   await expect(login).toBeInViewport();
-  const image = page.locator('img[src$="comcast-technology-center.png"]');
-  await expect(image).toBeHidden();
   const duration = await login.evaluate(el => parseFloat(getComputedStyle(el).transitionDuration));
   expect(duration).toBeLessThanOrEqual(0.001);
 });

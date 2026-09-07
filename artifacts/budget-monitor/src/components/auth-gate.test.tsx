@@ -126,6 +126,17 @@ describe('AuthGate sign-in shell', () => {
     expect(container.querySelector('[data-testid="button-reconnect"]')).toBeNull();
   });
 
+  it('renders the intentional minimal signed-out layout', async () => {
+    await act(async () => root.render(createElement(AuthGate, null, 'protected')));
+    const shell = container.querySelector('[data-testid="auth-signed-out"]');
+    expect(shell?.querySelectorAll('h1')).toHaveLength(1);
+    expect(shell?.querySelector('h1')?.textContent).toBe('Replit Budget Monitor');
+    expect(shell?.querySelector('img')?.getAttribute('src')).toContain('replit-logo.svg');
+    expect(shell?.querySelector('[data-testid="button-login"]')?.className).toContain('w-full');
+    expect(shell?.textContent).not.toContain('Comcast');
+    expect(shell?.textContent).not.toContain('Your Replit spend');
+  });
+
   it('keeps normal login and offers optional development preview when enabled', async () => {
     developmentEnabled = true;
     await act(async () => root.render(
@@ -133,7 +144,7 @@ describe('AuthGate sign-in shell', () => {
     ));
     expect(container.querySelector('[data-testid="button-login"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="dev-view-chip"]')?.textContent)
-      .toContain('Preview as a person');
+      .toContain('Preview as someone');
     expect(selectDevelopmentUser).not.toHaveBeenCalled();
   });
 

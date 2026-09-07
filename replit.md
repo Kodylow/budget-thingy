@@ -79,7 +79,8 @@ Monitors spending by group and team across the Comcast Replit Enterprise account
 
 ## Development identity viewing
 
-- Normal API development startup uses `NODE_ENV=development` and offers an optional **Preview as a person** picker beside normal login. A fresh tab never chooses an identity automatically: search the configured Enterprise directory or click Random. Explicit choices persist in that tab across refreshes. Once inside, the View-As chip switches people or exits preview.
+- Keep the logged-out screen minimal: logo, app name, Log in, and the optional preview picker. This is an internal tool entry point, not a marketing page; do not reintroduce hero copy, photos, or explanatory paragraphs.
+- Normal API development startup uses `NODE_ENV=development` and offers an optional **Preview as someone** picker beside normal login. A fresh tab never chooses an identity automatically: search the configured Enterprise directory or click Random. Explicit choices persist in that tab across refreshes. Once inside, the View-As chip switches people or exits preview.
 - Real Replit login remains available without disabling development preview. Only explicitly selected preview requests use the development identity; exiting clears preview headers and protected caches and returns to normal authentication. This separation prevents silently mistaking another person's view for the signed-in user's account.
 - This mode is strictly read-only: the server rejects mutations even when viewing an administrator or when requests are forged. The directory-derived identity determines actual visible scopes; the chip does not grant builder-preview or account-wide authority.
 - **Keep the development preview private. Anyone who can reach it can read data available through its directory picker, without logging in.** This is not a way to share a public demo.

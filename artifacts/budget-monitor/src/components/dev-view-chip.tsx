@@ -25,7 +25,7 @@ function displayName(user: {
   return user.name || user.username || user.email || user.userId;
 }
 
-function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
+function DevelopmentViewControl({ signedOut = false }: { signedOut?: boolean }) {
   const { developmentView, isAuthenticated } = useAuthContext();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -40,7 +40,7 @@ function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
 
   if (
     !developmentView.enabled ||
-    (!inline && !isAuthenticated && !developmentView.selectedId)
+    (!signedOut && !isAuthenticated && !developmentView.selectedId)
   ) {
     return null;
   }
@@ -67,7 +67,7 @@ function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
   };
 
   return (
-    <div className={inline
+    <div className={signedOut
       ? 'w-full'
       : 'fixed bottom-4 right-4 z-40 max-w-[calc(100vw-2rem)] sm:bottom-6 sm:right-6'}>
       <Popover open={open} onOpenChange={setPopoverOpen}>
@@ -75,17 +75,19 @@ function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
           <Button
             type="button"
             variant="outline"
-            className={inline
-              ? 'h-11 w-full justify-between rounded-lg border-white/40 bg-white/10 px-3 text-white hover:border-white/60 hover:bg-white/15 hover:text-white'
+            className={signedOut
+              ? 'h-10 w-full justify-between border-transparent bg-transparent px-3 text-muted-foreground shadow-none hover:bg-muted hover:text-foreground'
               : 'h-10 max-w-full rounded-full border-primary/25 bg-background px-3 text-primary shadow-sm hover:bg-primary/5'}
-            aria-label={`Development view as ${selectedUser ? displayName(selectedUser) : 'a user'}`}
+            aria-label={`Development view as ${selectedUser
+              ? displayName(selectedUser)
+              : signedOut ? 'someone' : 'a user'}`}
             data-testid="dev-view-chip"
           >
             <Eye aria-hidden="true" />
             <span className="truncate">
-              {selectedUser ? `Viewing as ${displayName(selectedUser)}` : 'Preview as a person'}
+              {selectedUser ? `Viewing as ${displayName(selectedUser)}` : 'Preview as someone'}
             </span>
-            {inline ? <ChevronsUpDown className="size-4 opacity-60" aria-hidden="true" /> : (
+            {signedOut ? <ChevronsUpDown className="size-4 opacity-60" aria-hidden="true" /> : (
               <span className="border-l border-border pl-2 text-[10px] text-muted-foreground">Read-only</span>
             )}
           </Button>
@@ -97,14 +99,7 @@ function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
           sideOffset={8}
           className="max-h-[var(--radix-popover-content-available-height)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto p-0"
         >
-          <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold">View as user</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Preview the app with another identity.
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
+          <div className="flex items-center justify-end gap-1 border-b px-2 py-2">
               <Button
                 type="button"
                 variant="ghost"
@@ -128,7 +123,6 @@ function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
               >
                 <X aria-hidden="true" />
               </Button>
-            </div>
           </div>
 
           {developmentView.error ? (
@@ -159,9 +153,9 @@ function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
                 <CommandInput
                   value={search}
                   onValueChange={setSearch}
-                  placeholder="Search name, username, or email"
-                  aria-label="Search users"
-                    data-testid="input-dev-view-search"
+                  placeholder="Search people"
+                  aria-label="Search people"
+                  data-testid="input-dev-view-search"
                   className="pr-9"
                 />
                 {search ? (
@@ -235,7 +229,7 @@ function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
           <div className="flex items-center justify-between gap-3 border-t bg-muted/40 px-4 py-2.5">
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Eye className="size-3.5" aria-hidden="true" />
-              Read-only preview
+              Read-only
             </p>
             {developmentView.selectedId ? (
               <Button
@@ -264,5 +258,5 @@ export function DevViewChip() {
 }
 
 export function DevViewSignedOutPicker() {
-  return <DevelopmentViewControl inline />;
+  return <DevelopmentViewControl signedOut />;
 }
