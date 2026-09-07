@@ -125,43 +125,44 @@ function SignedOutShell({
   const embedded = isEmbeddedPreview();
   const returnTo = `${window.location.pathname}${window.location.search}`;
   return (
-    <div className="flex min-h-[100dvh] flex-col bg-background md:flex-row" data-testid="auth-signed-out">
-      <div className="relative h-44 w-full shrink-0 overflow-hidden bg-[#000A73] md:h-auto md:min-h-[100dvh] md:w-[62%]">
-        <img
-          src={`${import.meta.env.BASE_URL}comcast-technology-center.png`}
-          alt="Comcast Technology Center entrance and illuminated sign"
-          width="554"
-          height="554"
-          className="absolute inset-0 h-full w-full object-cover object-[center_60%] md:object-center"
-        />
-      </div>
+    <div className="signed-out-shell min-h-[100dvh] bg-background text-foreground" data-testid="auth-signed-out">
+        <header className="signed-out-shell__header">
+          <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="28" height="28" className="h-7 w-7 shrink-0" />
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
+            <span className="font-display font-semibold tracking-tight text-foreground">Replit Budget Monitor</span>
+          </div>
+        </header>
 
-      <div className="z-20 flex flex-1 flex-col justify-start bg-background px-6 py-12 md:w-[38%] md:justify-center md:px-12 lg:px-16">
-        <div className="w-full max-w-sm mx-auto">
-          <h1 className="mb-4 flex items-start gap-3 font-display text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
-            <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="36" height="36" className="mt-1 h-9 w-9 shrink-0" />
-            <span>Replit Budget Monitor</span>
-          </h1>
-           <Button className="h-11 w-full text-base" asChild>
-            <a
-              href={getLoginUrl(returnTo)}
-              target={embedded ? '_top' : '_self'}
-              rel="noopener noreferrer"
-              data-testid="button-login"
-              onClick={beginExplicitSignIn}
-            >
-              <LogIn className="mr-2 h-4 w-4" />
-              Log in
-            </a>
-          </Button>
-           {isUnavailable && (
-             <div className="mt-3 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+        <main className="signed-out-shell__main">
+          <div className="min-w-0">
+            <h1 className="signed-out-shell__headline font-display font-bold tracking-tight text-foreground">
+              Your Replit spend.<br />{' '}In clear view.
+            </h1>
+            <p className="mt-6 max-w-md text-base leading-relaxed text-muted-foreground sm:text-lg">
+              Review workspace spending, track team allocations, and manage authorized monthly Agent limits.
+            </p>
+            <div className="mt-10 flex">
+              <Button className="signed-out-shell__login min-h-12 h-auto px-8 py-3 text-base font-medium transition-colors hover:bg-[hsl(219_100%_46%)] active:bg-[hsl(219_100%_40%)]" asChild>
+                <a
+                  href={getLoginUrl(returnTo)}
+                  target={embedded ? '_top' : '_self'}
+                  rel="noopener noreferrer"
+                  data-testid="button-login"
+                  onClick={beginExplicitSignIn}
+                >
+                  <LogIn className="mr-2.5 h-5 w-5" />
+                  Log in
+                </a>
+              </Button>
+            </div>
+            {isUnavailable && (
+             <div className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                <span>Having trouble checking access.</span>
                <Button
                  type="button"
-                 variant="ghost"
+                 variant="link"
                  size="sm"
-                 className="h-7 px-2"
+                 className="min-h-11 h-auto px-1 font-medium text-primary hover:no-underline"
                  onClick={onReconnect}
                  data-testid="button-reconnect"
                >
@@ -169,8 +170,20 @@ function SignedOutShell({
                </Button>
              </div>
            )}
-        </div>
+          </div>
+      <div className="signed-out-shell__art bg-background">
+        <img
+          src={`${import.meta.env.BASE_URL}comcast-logo.png`}
+          alt="Comcast"
+          width="1024"
+          height="576"
+          className="h-full w-full object-contain object-center"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
+        />
       </div>
+        </main>
     </div>
   );
 }
