@@ -5,6 +5,7 @@ import {
   getBudgetDisplayInfo,
   personalProjectCatalogMetrics,
   personalLimitBudgetRows,
+  personalLimitSummaryRows,
 } from './budget-logic';
 
 describe('Budget Logic', () => {
@@ -29,6 +30,21 @@ describe('Budget Logic', () => {
       allocationUsd: 500,
       currentCycleAgentSpendUsd: 0,
     });
+  });
+
+  it('defaults the Agent spend details to used or finite-limit workspaces', () => {
+    const limits = [
+      { workspaceId: 'used', amount: null, state: 'no_limit', currentCycleAgentSpendUsd: 4 },
+      { workspaceId: 'finite', amount: 100, state: 'explicit', currentCycleAgentSpendUsd: 0 },
+      { workspaceId: 'unused-unlimited', amount: null, state: 'no_limit', currentCycleAgentSpendUsd: 0 },
+      { workspaceId: 'unknown-unlimited', amount: null, state: 'no_limit', currentCycleAgentSpendUsd: null },
+    ];
+
+    expect(personalLimitSummaryRows(limits).map((row) => row.id)).toEqual([
+      'used',
+      'finite',
+    ]);
+    expect(personalLimitBudgetRows(limits)).toHaveLength(4);
   });
 
   it('null cycle cannot show 0 spent', () => {

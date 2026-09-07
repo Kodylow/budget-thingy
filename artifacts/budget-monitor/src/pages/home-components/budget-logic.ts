@@ -35,6 +35,17 @@ export function personalLimitBudgetRows(limits: PersonalLimitSummary[]) {
   }));
 }
 
+export function personalLimitSummaryRows(limits: PersonalLimitSummary[]) {
+  return personalLimitBudgetRows(limits).filter((row) => {
+    const hasFiniteLimit =
+      (row.limitState === 'explicit' || row.limitState === 'inherited') &&
+      row.allocationUsd != null;
+    const hasSpend = row.currentCycleAgentSpendUsd != null &&
+      row.currentCycleAgentSpendUsd !== 0;
+    return hasFiniteLimit || hasSpend;
+  });
+}
+
 export function aggregatePersonalLimits(limits: PersonalLimitSummary[]) {
   const finite = limits.filter((limit) =>
     (limit.state === 'explicit' || limit.state === 'inherited') && limit.amount != null);

@@ -106,7 +106,7 @@ function usePreviewOptions(canPreviewRbac: boolean, isPreviewing: boolean, isOpe
   const membersQuery = useListDirectoryMembers({}, {
     query: { enabled: canPreviewRbac && !isPreviewing && isOpen, queryKey: getListDirectoryMembersQueryKey({}) },
   });
-  const teamsQuery = useGetTeamsBudgets({
+  const teamsQuery = useGetTeamsBudgets(undefined, {
     query: { enabled: canPreviewRbac && !isPreviewing && isOpen, queryKey: getGetTeamsBudgetsQueryKey() },
   });
   const workspacesData = workspacesQuery.data;
@@ -163,7 +163,7 @@ function getNavSections(
       label: 'Management',
       id: 'management-admin',
       items: [
-        { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canEditAllocations, testId: 'nav-allocations' },
+        { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canViewAccountUsage, testId: 'nav-allocations' },
         { path: '/limits', label: 'Limits', icon: ShieldCheck, show: capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
         { path: '/alerts', label: 'Email activity', icon: Bell, show: role !== 'member' && role !== 'denied' && role !== null, testId: 'nav-alerts' },
         { path: '/access', label: 'Access', icon: Users, show: capabilities.canManageAccess, testId: 'nav-access' },

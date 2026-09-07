@@ -477,7 +477,7 @@ export default function TeamBudgets() {
         <div className="min-w-0 space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl" data-testid="text-team-budgets-title">Budget allocations</h1>
           <p className="max-w-3xl text-sm text-muted-foreground">
-             Manage local planning funding. Undated opening funding, dated monthly additions, and carried-forward additions remain separate from platform limits.
+             {canEdit ? 'Manage' : 'View'} local planning funding. Undated opening funding, dated monthly additions, and carried-forward additions remain separate from platform limits.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">

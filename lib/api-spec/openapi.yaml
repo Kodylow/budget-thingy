@@ -1065,6 +1065,21 @@ paths:
       operationId: getTeamsBudgets
       tags: [teams]
       summary: List all team budgets
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [authorized, own]
+            default: authorized
+          description: "own restricts results to funding teams containing the caller."
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [billing, full-term]
+            default: billing
+          description: Reporting period for all-service team spend. Allocation remains annual.
       responses:
         "200":
           description: Team budget list
@@ -4792,12 +4807,20 @@ components:
           format: date-time
     TeamBudget:
       type: object
-      required: [teamName, amountUsd, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentRemainingUsd, agentPercentUsed, agentBlocked, workspaceIds]
+      required: [teamName, amountUsd, spendUsd, spendPeriodLabel, spendScope, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentRemainingUsd, agentPercentUsed, agentBlocked, workspaceIds]
       properties:
         teamName:
           type: string
         amountUsd:
           type: ["number", "null"]
+        spendUsd:
+          type: ["number", "null"]
+          description: All-service spend in spendPeriodLabel over only the caller-authorized portion of this funding team.
+        spendPeriodLabel:
+          type: string
+        spendScope:
+          type: string
+          enum: [complete, partial]
         monthlyAgentLimitUsd:
           type: ["number", "null"]
         cycleAgentSpendUsd:

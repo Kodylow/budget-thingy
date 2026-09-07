@@ -5,11 +5,19 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { TeamBudgetSpendScope } from './teamBudgetSpendScope';
 
 export interface TeamBudget {
   teamName: string;
   /** @nullable */
   amountUsd: number | null;
+  /**
+     * All-service spend in spendPeriodLabel over only the caller-authorized portion of this funding team.
+     * @nullable
+     */
+  spendUsd: number | null;
+  spendPeriodLabel: string;
+  spendScope: TeamBudgetSpendScope;
   /** @nullable */
   monthlyAgentLimitUsd: number | null;
   /**

@@ -2269,10 +2269,25 @@ export interface UsageLimitAudit {
   createdAt: string;
 }
 
+export type TeamBudgetSpendScope = typeof TeamBudgetSpendScope[keyof typeof TeamBudgetSpendScope];
+
+
+export const TeamBudgetSpendScope = {
+  complete: 'complete',
+  partial: 'partial',
+} as const;
+
 export interface TeamBudget {
   teamName: string;
   /** @nullable */
   amountUsd: number | null;
+  /**
+     * All-service spend in spendPeriodLabel over only the caller-authorized portion of this funding team.
+     * @nullable
+     */
+  spendUsd: number | null;
+  spendPeriodLabel: string;
+  spendScope: TeamBudgetSpendScope;
   /** @nullable */
   monthlyAgentLimitUsd: number | null;
   /**
@@ -3833,6 +3848,33 @@ status?: SpendStatusParameter;
 workspaceId?: SpendWorkspaceParameter;
 sort?: SpendSortParameter;
 };
+
+export type GetTeamsBudgetsParams = {
+/**
+ * own restricts results to funding teams containing the caller.
+ */
+scope?: GetTeamsBudgetsScope;
+/**
+ * Reporting period for all-service team spend. Allocation remains annual.
+ */
+period?: GetTeamsBudgetsPeriod;
+};
+
+export type GetTeamsBudgetsScope = typeof GetTeamsBudgetsScope[keyof typeof GetTeamsBudgetsScope];
+
+
+export const GetTeamsBudgetsScope = {
+  authorized: 'authorized',
+  own: 'own',
+} as const;
+
+export type GetTeamsBudgetsPeriod = typeof GetTeamsBudgetsPeriod[keyof typeof GetTeamsBudgetsPeriod];
+
+
+export const GetTeamsBudgetsPeriod = {
+  billing: 'billing',
+  'full-term': 'full-term',
+} as const;
 
 export type GetTeamAllocationAuditParams = {
 /**

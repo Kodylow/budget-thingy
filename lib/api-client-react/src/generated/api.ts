@@ -57,6 +57,7 @@ import type {
   GetGroupProjectsParams,
   GetReportingDetailParams,
   GetTeamAllocationAuditParams,
+  GetTeamsBudgetsParams,
   GetUserActivityParams,
   GetWorkspaceProjectParams,
   GroupAdminsItem,
@@ -2907,20 +2908,27 @@ export const useDeleteGroupBudget = <TError = ErrorType<UnauthorizedResponse | F
       return useMutation(getDeleteGroupBudgetMutationOptions(options));
     }
 
-export const getGetTeamsBudgetsUrl = () => {
+export const getGetTeamsBudgetsUrl = (params?: GetTeamsBudgetsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/teams/budgets`
+  return stringifiedParams.length > 0 ? `/api/teams/budgets?${stringifiedParams}` : `/api/teams/budgets`
 }
 
 /**
  * @summary List all team budgets
  */
-export const getTeamsBudgets = async ( options?: RequestInit): Promise<TeamBudgetsResponse> => {
+export const getTeamsBudgets = async (params?: GetTeamsBudgetsParams, options?: RequestInit): Promise<TeamBudgetsResponse> => {
 
-  return customFetch<TeamBudgetsResponse>(getGetTeamsBudgetsUrl(),
+  return customFetch<TeamBudgetsResponse>(getGetTeamsBudgetsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -2933,23 +2941,23 @@ export const getTeamsBudgets = async ( options?: RequestInit): Promise<TeamBudge
 
 
 
-export const getGetTeamsBudgetsQueryKey = () => {
+export const getGetTeamsBudgetsQueryKey = (params?: GetTeamsBudgetsParams,) => {
     return [
-    `/api/teams/budgets`
+    `/api/teams/budgets`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetTeamsBudgetsQueryOptions = <TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTeamsBudgetsQueryOptions = <TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(params?: GetTeamsBudgetsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetTeamsBudgetsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamsBudgetsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamsBudgets>>> = ({ signal }) => getTeamsBudgets({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamsBudgets>>> = ({ signal }) => getTeamsBudgets(params, { signal, ...requestOptions });
 
 
 
@@ -2967,11 +2975,11 @@ export type GetTeamsBudgetsQueryError = ErrorType<UnauthorizedResponse | Forbidd
  */
 
 export function useGetTeamsBudgets<TData = Awaited<ReturnType<typeof getTeamsBudgets>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetTeamsBudgetsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeamsBudgets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetTeamsBudgetsQueryOptions(options)
+  const queryOptions = getGetTeamsBudgetsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

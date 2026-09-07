@@ -141,6 +141,22 @@ beforeAll(async () => {
         },
       });
     }
+    if (userId === "task158-readonly-account") {
+      return Promise.resolve({
+        role: "account", roles: ["account"], userId, workspaceIds: [],
+        teamNames: [], groupIds: [], userIds: [userId], isTrueAccountAdmin: true,
+        capabilities: {
+          canViewAccountUsage: true,
+          canManageAccess: false, canEditAllocations: false,
+          canManageNotifications: false, canManageSystem: false,
+          canPreviewRoles: false,
+          canWriteGroupLimits: false, canWriteUserLimitsIn: [],
+          canRunChecks: false, canSendTestEmail: false,
+        },
+        isPreview: true,
+        previewReadOnly: true,
+      });
+    }
     if (userId === "task158-editor") {
       return Promise.resolve({
         role: "account", roles: ["account"], userId, workspaceIds: [],
@@ -493,6 +509,28 @@ test("history orders months and exposes hidden teams only to true admins", async
   expect(budgetOnly.effectiveAmountUsd).toBe(60);
 });
 
+test("read-only account preview can read allocations but cannot mutate them", async () => {
+  const history = await request(
+    "/admin/team-budgets/history",
+    "task158-readonly-account",
+  );
+  expect(history.status).toBe(200);
+  expect(history.json.teams.some((team) => team.teamName === ASSIGNED)).toBe(true);
+
+  const allocationPath =
+    `/admin/team-budgets/${encodeURIComponent(ASSIGNED)}/allocation`;
+  expect((await request(
+    allocationPath,
+    "task158-readonly-account",
+    "PATCH",
+    { annualAllocationUsd: 999 },
+  )).status).toBe(403);
+  expect((await request(
+    "/admin/team-budgets/audit",
+    "task158-readonly-account",
+  )).status).toBe(403);
+});
+
 test("manual monthly allocations are validated, idempotent, audited, and rolled up", async () => {
   const key = "00000000-0000-4000-8000-000000000001";
   const path = `/admin/team-budgets/${encodeURIComponent(BUDGET_ONLY)}/allocations`;
@@ -778,13 +816,17 @@ test("editors edit planning while true admins edit visibility with newest-first 
 });
 
 test("effective totals agree across configured pools, groups, and Spend", async () => {
-  const [pools, groups, spend, dashboard] = await Promise.all([
+  const [pools, ownAccountPools, ownWorkspacePools, groups, spend, dashboard] = await Promise.all([
     request("/teams/budgets", "task158-account"),
+    request("/teams/budgets?scope=own&period=full-term", "task158-account"),
+    request("/teams/budgets?scope=own&period=full-term", "task158-workspace"),
     request("/groups", "task158-account"),
     request("/spend/pools?rangeType=full-term&viewScope=all_authorized&pageSize=100", "task158-account"),
     request("/dashboard?rangeType=full-term&viewScope=all_authorized", "task158-account"),
   ]);
   expect(pools.status).toBe(200);
+  expect(ownAccountPools.status).toBe(200);
+  expect(ownWorkspacePools.status).toBe(200);
   expect(groups.status).toBe(200);
   expect(spend.status).toBe(200);
   expect(dashboard.status).toBe(200);
@@ -798,6 +840,14 @@ test("effective totals agree across configured pools, groups, and Spend", async 
   expect(budgetOnlyPool.workspaceIds).toEqual([]);
   expect(originalOnlyPool.workspaceIds).toEqual([]);
   expect(!pools.json.budgets.some((budget) => budget.teamName === HIDDEN)).toBeTruthy();
+  expect(ownAccountPools.json.budgets).toEqual([]);
+  expect(ownWorkspacePools.json.budgets.map((budget) => budget.teamName)).toEqual([ASSIGNED]);
+  expect(ownWorkspacePools.json.budgets[0]).toMatchObject({
+    amountUsd: 125,
+    spendScope: "partial",
+  });
+  expect(ownWorkspacePools.json.budgets[0].spendPeriodLabel).toBeTruthy();
+  expect(ownWorkspacePools.json.budgets[0].spendUsd).toBeNull();
 
   const assignedGroup = groups.json.groups.find((group) => group.groupId === GROUP_ID);
   expect(assignedGroup.teamName).toBe(ASSIGNED);
@@ -855,6 +905,13 @@ test("effective totals agree across configured pools, groups, and Spend", async 
     .toBeCloseTo(positiveVisiblePoolTotal, 8);
   expect(dashboard.json.cards.find((card) => card.key === "allocation_remaining")?.value)
     .toBeCloseTo(positiveVisiblePoolTotal - 20, 8);
+});
+
+test("team budget query rejects unsupported scope and period values", async () => {
+  expect((await request("/teams/budgets?scope=organization", "task158-account")).status)
+    .toBe(400);
+  expect((await request("/teams/budgets?period=annual", "task158-account")).status)
+    .toBe(400);
 });
 
 test("complete zero-spend hidden teams stay out of rows without changing accounting", async () => {

@@ -2465,6 +2465,14 @@ export const DeleteGroupBudgetResponse = zod.object({
 /**
  * @summary List all team budgets
  */
+export const getTeamsBudgetsQueryScopeDefault = `authorized`;
+export const getTeamsBudgetsQueryPeriodDefault = `billing`;
+
+export const GetTeamsBudgetsQueryParams = zod.object({
+  "scope": zod.enum(['authorized', 'own']).default(getTeamsBudgetsQueryScopeDefault).describe('own restricts results to funding teams containing the caller.'),
+  "period": zod.enum(['billing', 'full-term']).default(getTeamsBudgetsQueryPeriodDefault).describe('Reporting period for all-service team spend. Allocation remains annual.')
+})
+
 export const getTeamsBudgetsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
 
 
@@ -2476,6 +2484,9 @@ export const GetTeamsBudgetsResponse = zod.object({
   "budgets": zod.array(zod.object({
   "teamName": zod.string(),
   "amountUsd": zod.number().nullable(),
+  "spendUsd": zod.number().nullable().describe('All-service spend in spendPeriodLabel over only the caller-authorized portion of this funding team.'),
+  "spendPeriodLabel": zod.string(),
+  "spendScope": zod.enum(['complete', 'partial']),
   "monthlyAgentLimitUsd": zod.number().nullable(),
   "cycleAgentSpendUsd": zod.number().nullable().describe('Current-cycle Agent usage; null without complete contributing workspace metrics and verified billing context.'),
   "agentRemainingUsd": zod.number().nullable(),

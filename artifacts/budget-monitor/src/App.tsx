@@ -197,11 +197,11 @@ function AlertsRoute() {
 
 function AllocationsRoute() {
   const { capabilities } = useAuthContext();
-  if (capabilities.canEditAllocations) return <Allocations />;
+  if (capabilities.canViewAccountUsage) return <Allocations />;
   return (
     <ForbiddenRoute
       testId="allocations-forbidden"
-      message="Allocations are only available to budget editors."
+      message="Budget allocations are only available to account viewers."
     />
   );
 }

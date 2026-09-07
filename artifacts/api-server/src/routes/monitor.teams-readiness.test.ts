@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { UsageCoverage } from "../lib/usage-store";
 import {
   isTeamCycleAgentUsageComplete,
+  isTeamSpendComplete,
   qualifyTeamAgentMetrics,
 } from "./monitor.teams";
 
@@ -74,5 +75,64 @@ describe("team Agent metric readiness", () => {
       agentPercentUsed: 25,
       agentBlocked: false,
     });
+  });
+});
+
+describe("team all-service spend readiness", () => {
+  const completeUsage = {
+    coverage: completeCoverage,
+    window: {
+      start: "2026-09-05T00:00:00.000Z",
+      end: "2026-09-06T00:00:00.000Z",
+    },
+    dailyWorkspaces: new Map([
+      ["2026-09-05", new Map([["w1", {
+        totalCostUsd: 0,
+        memberAttributableUsd: 0,
+        memberUnattributableUsd: 0,
+      }]])],
+    ]),
+  };
+
+  test("keeps a completely observed zero", () => {
+    expect(isTeamSpendComplete(
+      completeUsage,
+      new Set(["w1"]),
+      ["g1"],
+      new Map([["g1", []]]),
+    )).toBe(true);
+  });
+
+  test("rejects missing, failed, and unattributable contributing coverage", () => {
+    expect(isTeamSpendComplete(
+      {
+        ...completeUsage,
+        coverage: {
+          ...completeCoverage,
+          missingWorkspaceDays: [{ workspaceId: "w1", usageDate: "2026-09-05" }],
+        },
+      },
+      new Set(["w1"]),
+      ["g1"],
+      new Map([["g1", []]]),
+    )).toBe(false);
+    expect(isTeamSpendComplete(
+      {
+        ...completeUsage,
+        coverage: {
+          ...completeCoverage,
+          failedWorkspaceDays: [{ workspaceId: "w1", usageDate: "2026-09-05" }],
+        },
+      },
+      new Set(["w1"]),
+      ["g1"],
+      new Map([["g1", []]]),
+    )).toBe(false);
+    expect(isTeamSpendComplete(
+      completeUsage,
+      new Set(["w1"]),
+      ["g1"],
+      new Map(),
+    )).toBe(false);
   });
 });

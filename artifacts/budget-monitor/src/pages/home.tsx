@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useAuthContext } from '@/components/auth-context';
 import { useRange } from '@/components/range-context';
 import {
-  getGetDashboardQueryKey,
   useGetDashboard,
+  useGetTeamsBudgets,
   useListSpendProjects,
+  type TeamBudget,
 } from '@workspace/api-client-react';
 import { formatUsd, formatInt } from './home-components/format';
 import { SpendStoryChart, MonthMiniBars } from './home-components/spend-story-chart';
@@ -14,6 +15,7 @@ import {
   personalProjectCatalogMetrics,
   personalLimitBudgetRows,
 } from './home-components/budget-logic';
+import { MyBudgetSummary } from './home-components/my-budget-summary';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -25,7 +27,7 @@ import {
 } from '@/components/journey-primitives';
 import { Link, useSearch } from 'wouter';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
-import { dashboardAllocatedBudget, dashboardTotalSpend } from '@/lib/spend-presentation';
+import { dashboardTotalSpend } from '@/lib/spend-presentation';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
@@ -81,44 +83,56 @@ function BreakdownPopover({
   children: React.ReactNode;
   content: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
           aria-label={label}
           className="rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
-          onClick={(event) => {
-            event.preventDefault();
-            setOpen(true);
-          }}
         >
           {children}
         </button>
       </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-[min(92vw,26rem)] p-0"
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-      >
+      <PopoverContent align="start" className="w-[min(92vw,26rem)] p-0">
         {content}
       </PopoverContent>
     </Popover>
   );
 }
 
+function TeamBudgetDetails({ teams }: { teams: TeamBudget[] }) {
+  return (
+    <>
+      <div className="border-b border-border p-4">
+        <p className="font-semibold">Funding teams</p>
+        <p className="mt-1 text-xs text-muted-foreground">{teams[0]?.spendPeriodLabel ?? 'Full term'} · Annual allocation</p>
+      </div>
+      <div className="max-h-72 overflow-y-auto p-2">
+        {teams.map((team) => (
+          <div key={team.teamName} className="border-t border-border px-2 py-3 first:border-t-0">
+            <p className="truncate text-xs font-medium">{team.teamName}</p>
+            <dl className="mt-2 grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <dt className="text-muted-foreground">Spend</dt>
+                <dd className="mt-0.5 font-mono">{formatUsd(team.spendUsd)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Annual budget</dt>
+                <dd className="mt-0.5 font-mono">{formatUsd(team.amountUsd)}</dd>
+              </div>
+            </dl>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export default function Home() {
   const searchString = useSearch();
-  const { user, role, capabilities } = useAuthContext();
+  const { user } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
-  const isManager = role === 'team_admin' || role === 'workspace_admin' || role === 'account';
-  const isOrganization = role === 'account' && capabilities.canViewAccountUsage;
 
   const myDashboardQuery = useGetDashboard({
     viewScope: 'my',
@@ -136,36 +150,18 @@ export default function Home() {
     sort: 'spend_desc',
   });
 
-  const managedDashboardParams = {
-    viewScope: isOrganization ? 'all_authorized' as const : 'managed' as const,
-    rangeType,
-    startDate,
-    endDate,
-  };
-  const managedDashboardQuery = useGetDashboard(managedDashboardParams, {
-    query: {
-      enabled: isManager,
-      queryKey: getGetDashboardQueryKey(managedDashboardParams),
-    },
-  });
-  const managedDashboard = managedDashboardQuery.data;
-  const managedFullTermParams = {
-    viewScope: managedDashboardParams.viewScope,
-    rangeType: 'full-term' as const,
-  };
-  const managedFullTermQuery = useGetDashboard(managedFullTermParams, {
-    query: {
-      enabled: isManager && rangeType !== 'full-term',
-      queryKey: getGetDashboardQueryKey(managedFullTermParams),
-    },
-  });
-  const managedBudgetDashboard = rangeType === 'full-term'
-    ? managedDashboard
-    : managedFullTermQuery.data;
-  const managedAllocationUsd = dashboardAllocatedBudget(managedBudgetDashboard);
+  const teamBudgetsQuery = useGetTeamsBudgets({ scope: 'own', period: 'full-term' });
+  const teamBudgets = teamBudgetsQuery.data?.budgets ?? [];
+  const knownTeamSpend = teamBudgets.filter((team) => team.spendUsd != null);
+  const knownTeamBudgets = teamBudgets.filter((team) => team.amountUsd != null);
+  const teamSpendUsd = knownTeamSpend.length
+    ? knownTeamSpend.reduce((sum, team) => sum + team.spendUsd!, 0)
+    : null;
+  const teamBudgetUsd = knownTeamBudgets.length
+    ? knownTeamBudgets.reduce((sum, team) => sum + team.amountUsd!, 0)
+    : null;
 
   const mySpendUsd = dashboardTotalSpend(myDashboard);
-  const managedSpendUsd = dashboardTotalSpend(managedDashboard);
   const changePct = myDashboard?.insights?.changePercent;
   const activeDays = myDashboard?.insights?.activeDays;
   const activity = activeDays != null ? activeDays : null;
@@ -173,17 +169,9 @@ export default function Home() {
   const personalSpendAggregate = aggregatePersonalWorkspaceSpend(personalSpendRows, mySpendUsd);
   const personalProjectCatalog = personalProjectCatalogMetrics(myDashboard?.personalProjectCatalog);
   const projectCount = personalProjectCatalog.projectCount;
-  const personalSpendHeadline = mySpendUsd ??
-    (personalSpendAggregate.workspaceCount > personalSpendAggregate.unknownCount
-      ? personalSpendAggregate.knownSubtotalUsd
-      : null);
   const personalLimits = myDashboard?.personalLimits ?? [];
+  const personalLimitAggregate = aggregatePersonalLimits(personalLimits);
   const budgetRows = personalLimitBudgetRows(personalLimits);
-  const budgetAggregate = aggregatePersonalLimits(personalLimits);
-  const budgetIsFiniteOnly = budgetAggregate.finiteCount > 0 &&
-    budgetAggregate.unlimitedCount === 0 &&
-    budgetAggregate.unknownLimitCount === 0;
-  const budgetConsumptionPrefix = budgetAggregate.consumptionComplete ? '' : 'Known ';
   const greeting = new Date().getHours() < 12
     ? 'Good morning'
     : new Date().getHours() < 18
@@ -251,8 +239,7 @@ export default function Home() {
         <div className="rounded-md border bg-card p-4 shadow-none">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-primary">Personal spend</p>
-              <p className="mt-1 text-sm text-muted-foreground">Values reflect posted usage visible to you.</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-primary">Personal and team</p>
             </div>
             <div className="text-xs text-muted-foreground">
               Reporting period <span className="ml-1 font-medium text-foreground">{myDashboard.period.label}</span>
@@ -260,165 +247,61 @@ export default function Home() {
           </div>
         </div>
 
-        <div aria-label="Spend summary" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div aria-label="Primary spend and budget metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <HeroTile
-            label={`My Spend (${rangeType === 'mtd' ? 'MTD' : 'Period'})`}
+            label="My Spend"
             icon={DollarSign}
-            sub={<span className="flex flex-wrap items-center gap-2">
-              <span>{myDashboard.period.label}</span>
-              {personalSpendAggregate.unknownCount > 0 && <span>Known subtotal · {personalSpendAggregate.unknownCount} workspace{personalSpendAggregate.unknownCount === 1 ? '' : 's'} unknown</span>}
-              <DeltaBadge pct={changePct} />
-            </span>}
+            sub={`Agent · This billing cycle${personalLimitAggregate.consumptionComplete ? '' : ' · Known subtotal'}`}
           >
-            {personalSpendRows.length > 0
-              ? <BreakdownPopover
-                  label="Show selected-period spend by workspace"
-                  content={<div>
-                    <div className="border-b border-border p-4">
-                      <p className="font-semibold">Selected-period spend by workspace</p>
-                       <p className="mt-1 text-xs text-muted-foreground">{myDashboard.period.label}</p>
-                    </div>
-                    <div className="max-h-72 overflow-y-auto p-2">
-                      {personalSpendRows.map((row) => (
-                        <div key={row.workspaceId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md px-2 py-2 text-xs">
-                          <span className="truncate font-medium">{row.workspaceName || row.workspaceId}</span>
-                          <span className="font-mono">
-                            {row.usageObserved && row.spendUsd != null ? formatUsd(row.spendUsd) : 'Unavailable'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>}
-                >
-                  <span>{mySpendUsd == null && personalSpendHeadline != null && 'Known '}{formatUsd(personalSpendHeadline)}</span>
-                </BreakdownPopover>
-              : formatUsd(mySpendUsd)}
+            {personalLimitAggregate.observedConsumptionCount
+              ? formatUsd(personalLimitAggregate.knownConsumptionUsd)
+              : 'Unavailable'}
           </HeroTile>
-          <AdminDataQualityNote title="My Spend">
-            Gross personal spend across all services.
-            {personalSpendAggregate.complete && !personalSpendAggregate.reconcilesToCanonical && (
-              <> Workspace values do not reconcile to the dashboard total.</>
-            )}
-          </AdminDataQualityNote>
+          <MyBudgetSummary limits={personalLimits} />
 
           <HeroTile
-            label="My Replit Budget"
+            label="My Team Spend"
+            icon={Users}
+            sub={`${teamBudgets[0]?.spendPeriodLabel ?? 'Full term'}${teamBudgets.some((team) => team.spendScope === 'partial') ? ' · Partial authorized scope' : ''}${knownTeamSpend.length < teamBudgets.length ? ' · Known subtotal' : ''}`}
+          >
+            {teamBudgets.length > 0
+              ? <BreakdownPopover label="Show funding team spend" content={<TeamBudgetDetails teams={teamBudgets} />}>
+                  {formatUsd(teamSpendUsd)}
+                </BreakdownPopover>
+              : formatUsd(teamSpendUsd)}
+          </HeroTile>
+
+          <HeroTile
+            label="Team Budget"
             icon={Target}
-            delay={30}
-            sub={budgetRows.length > 0
-              ? <span>
-                  Current billing cycle · {budgetAggregate.workspaceCount} workspace{budgetAggregate.workspaceCount === 1 ? '' : 's'}
-                  {budgetAggregate.unknownConsumptionCount > 0 && ` · ${budgetAggregate.unknownConsumptionCount} usage unknown`}
-                  {budgetAggregate.unlimitedCount > 0 && ` · ${budgetAggregate.unlimitedCount} no-limit`}
-                  {budgetAggregate.unknownLimitCount > 0 && ` · ${budgetAggregate.unknownLimitCount} limit unknown`}
-                </span>
-              : 'Current-cycle limits unavailable'}
+            sub={<Link href={reportingNavigationHref('/my-team?viewScope=managed', searchString)} className="inline-flex items-center gap-1 text-primary hover:underline">
+              {knownTeamBudgets.length < teamBudgets.length && 'Known subtotal · '}
+              Annual allocation · My Team <ArrowRight className="h-3 w-3" />
+            </Link>}
           >
-            {budgetRows.length > 0
-              ? <BreakdownPopover
-                  label="Show current-cycle budget by workspace"
-                  content={<div>
-                    <div className="border-b border-border p-4">
-                      <p className="font-semibold">Current-cycle Agent usage by workspace</p>
-                    </div>
-                    <div className="max-h-72 overflow-y-auto p-2">
-                      {budgetRows.map((row) => (
-                        <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 rounded-md px-2 py-2 text-xs">
-                          <span className="truncate font-medium">{row.workspaceName || row.workspaceId}</span>
-                          <span className="font-mono">{formatUsd(row.currentCycleAgentSpendUsd)} used</span>
-                          <span className="font-mono text-muted-foreground">
-                            {row.limitState === 'no_limit' ? 'No limit' : row.allocationUsd == null ? 'Limit unknown' : `${formatUsd(row.allocationUsd)} limit`}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>}
-                >
-                  <span>
-                    {budgetAggregate.observedConsumptionCount > 0
-                      ? <>{budgetConsumptionPrefix}{formatUsd(budgetAggregate.knownConsumptionUsd)}</>
-                      : 'Unavailable'}
-                    {budgetAggregate.observedConsumptionCount > 0 && budgetIsFiniteOnly && <span className="ml-1 text-xs font-sans font-normal text-muted-foreground">of {formatUsd(budgetAggregate.finiteBudgetUsd)}</span>}
-                    {budgetAggregate.observedConsumptionCount > 0 && !budgetIsFiniteOnly && <span className="ml-1 text-xs font-sans font-normal text-muted-foreground">current-cycle Agent</span>}
-                  </span>
+            {teamBudgets.length > 0
+              ? <BreakdownPopover label="Show funding team budgets" content={<TeamBudgetDetails teams={teamBudgets} />}>
+                  {formatUsd(teamBudgetUsd)}
                 </BreakdownPopover>
-              : 'Unavailable'}
+              : formatUsd(teamBudgetUsd)}
           </HeroTile>
-          <AdminDataQualityNote title="My Replit Budget">
-            Workspace limits are separate and are not a transferable pooled budget.
-          </AdminDataQualityNote>
-
-          <HeroTile
-            label="My Projects"
-            icon={Box}
-            delay={120}
-            sub={<span>
-              {personalProjectCatalog.publishedProjectCount == null
-                ? 'Published unavailable'
-                : `${personalProjectCatalog.publishedCountQualified ? 'Known ' : ''}${formatInt(personalProjectCatalog.publishedProjectCount)} published`}
-              {myDashboard.personalProjectCatalog?.publicationUnknownProjectCount
-                ? ` · ${formatInt(myDashboard.personalProjectCatalog.publicationUnknownProjectCount)} publication states unknown`
-                : ''}
-                {myDashboard.personalProjectCatalog?.coverage !== 'complete' && (
-                  <AdminDataQualityNote title="My Projects">
-                    The current project catalog is {myDashboard.personalProjectCatalog?.coverage ?? 'unavailable'}.
-                    {myDashboard.personalProjectCatalog?.publicationUnknownProjectCount
-                      ? ` Publication state is unknown for ${formatInt(myDashboard.personalProjectCatalog.publicationUnknownProjectCount)} projects.`
-                      : ''}
-                 </AdminDataQualityNote>
-               )}
-            </span>}
-          >
-            {projectCount != null
-              ? <>{personalProjectCatalog.projectCountQualified && 'Known '}{formatInt(projectCount)}</>
-              : 'Unavailable'}
-          </HeroTile>
-
-          {isManager ? (
-            <Link href={reportingNavigationHref(`/my-team?viewScope=${isOrganization ? 'all_authorized' : 'managed'}`, searchString)} className="contents">
-              <HeroTile
-                label={isOrganization ? 'My Organization Spend' : "My Team's Spend"}
-                icon={Users}
-                delay={180}
-                sub={<span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-primary">
-                  <span>{managedDashboard?.insights?.activeUsers != null
-                      ? `${managedDashboard.insights.activeUsers} active users`
-                      : isOrganization ? 'Organization scope' : 'Managed scope'}</span>
-                  {rangeType !== 'full-term' && managedAllocationUsd != null && (
-                    <span className="text-muted-foreground">Budget is full-term</span>
-                  )}
-                  <ArrowRight className="w-3 h-3" />
-                </span>}
-              >
-                {managedDashboardQuery.isLoading || (rangeType !== 'full-term' && managedFullTermQuery.isLoading)
-                  ? <Skeleton className="inline-block h-8 w-24" />
-                  : <>{formatUsd(managedSpendUsd)}
-                      {managedAllocationUsd != null && (
-                        <span className="ml-1 text-xs font-sans font-normal text-muted-foreground">
-                          of {formatUsd(managedAllocationUsd)} {rangeType === 'full-term' ? 'allocated' : 'full-term allocated'}
-                        </span>
-                      )}
-                    </>}
-              </HeroTile>
-            </Link>
-          ) : (
-            <HeroTile label="Active Days" icon={Activity} delay={180} sub="days with usage in this period">
-              {activity != null ? formatInt(activity) : '—'}
-            </HeroTile>
-          )}
         </div>
+        {personalSpendAggregate.complete && !personalSpendAggregate.reconcilesToCanonical && (
+          <AdminDataQualityNote title="My Spend">
+            Workspace values do not reconcile to the personal dashboard total.
+          </AdminDataQualityNote>
+        )}
       </section>
 
-      {(myDashboardQuery.isError || managedDashboardQuery.isError || managedFullTermQuery.isError) && (
+      {(myDashboardQuery.isError || teamBudgetsQuery.isError) && (
         <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
           <div className="flex-1">
             <strong className="text-foreground">Refresh failed; last available values are shown.</strong>
           </div>
-          {(myDashboardQuery.isError || managedDashboardQuery.isError || managedFullTermQuery.isError) && (
+          {(myDashboardQuery.isError || teamBudgetsQuery.isError) && (
             <button type="button" className="font-medium text-primary hover:underline" onClick={() => {
               void myDashboardQuery.refetch();
-              if (isManager) void managedDashboardQuery.refetch();
-               if (isManager && rangeType !== 'full-term') void managedFullTermQuery.refetch();
+              void teamBudgetsQuery.refetch();
             }}>Retry</button>
           )}
         </div>
@@ -506,7 +389,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <section>
         <Card className="rounded-md shadow-none">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -533,46 +416,6 @@ export default function Home() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pb-3">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-              <Users className="w-4 h-4 text-primary" /> {isOrganization ? 'Me vs My Organization' : 'Me vs My Team'}
-              </CardTitle>
-              <CardDescription className="mt-1">Spend context for the selected period</CardDescription>
-            </div>
-            {isManager && capabilities?.canViewAccountUsage === true && (
-              <Link
-                href={reportingNavigationHref('/org-insights?viewScope=all_authorized', searchString)}
-                className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-              >
-                Org Insights <ArrowRight className="w-3 h-3" />
-              </Link>
-            )}
-          </CardHeader>
-          <CardContent>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="min-w-0 rounded-md bg-muted/45 p-3">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Me</div>
-              <div className="text-lg font-mono font-semibold">{formatUsd(mySpendUsd)}</div>
-              <div className="text-[10px] text-muted-foreground">period spend</div>
-              <div className="mt-1"><DeltaBadge pct={changePct} /></div>
-            </div>
-            <div className="min-w-0 rounded-md bg-muted/45 p-3">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{isOrganization ? 'My Organization' : 'My Team'}</div>
-              <div className="text-lg font-mono font-semibold">
-                {isManager
-                  ? formatUsd(managedDashboard?.insights?.avgSpendPerActiveUserUsd ?? null)
-                  : '—'}
-              </div>
-              <div className="text-[10px] text-muted-foreground">
-                {isManager ? 'avg / active user' : 'manager access required'}
-              </div>
-              {isManager && <div className="mt-1"><DeltaBadge pct={managedDashboard?.insights?.changePercent} /></div>}
-            </div>
-          </div>
-          </CardContent>
-        </Card>
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-1 text-xs text-muted-foreground">

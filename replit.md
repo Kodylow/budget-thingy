@@ -63,7 +63,7 @@ Monitors spending by group and team across the Comcast Replit Enterprise account
 
 ## Product
 
-- Primary destinations are Overview (attention), Spend (the analytical ledger), and Limits (current-cycle member Agent limits). Support and Management are secondary menus; preserve existing route and query contracts.
+- Home centers My Spend, My Budget, My Team Spend, and Team Budget for every role, including account admins. Organization-wide reporting belongs in Org Insights, not Home. Team cards use the caller's actual funding-team memberships, not every team they administer or can access. Spend remains the analytical ledger and Limits manages current-cycle member Agent limits; preserve existing route and query contracts.
 - Keep spend drill-downs read-only for people limits and link to the workspace-qualified Limits editor. Use its existing review/commit/retry flow rather than introducing parallel inline or bulk write paths. Preserve ongoing baseline policies as distinct from one-time edits.
 - Prefer deleting unreachable or duplicate UI over adding abstraction or automation. Preserve compatibility redirects, accounting qualifications, and authorization boundaries; simpler presentation must not turn unavailable data into zero or “not set.”
 - Dashboard: canonical workspace → team → family → role-group spend for a selectable range (billing period / MTD / YTD / custom dates), allocations, remaining budget, % used, account-wide summary stats, and a `Data as of` usage timestamp.

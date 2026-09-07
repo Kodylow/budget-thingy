@@ -144,6 +144,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
 
   it('keeps spend monitoring primary and planning administration secondary', () => {
     const sections = getNavSections(mockCapabilities({
+      canViewAccountUsage: true,
       canEditAllocations: true,
       canWriteUserLimitsIn: ['workspace-1'],
     }), 'account');
@@ -151,6 +152,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
       ['/', 'Home'],
       ['/my-team', 'My Team'],
       ['/spend?tab=projects&viewScope=my', 'My Projects'],
+      ['/org-insights', 'Org Insights'],
       ['/spend', 'Spend'],
       ['/reports', 'Custom Reports'],
     ]);
@@ -162,6 +164,22 @@ describe('Dashboard and Spend Spec Behaviors', () => {
       ]));
   });
 
+  it('shows Budget allocations to read-only account viewers without exposing it to members', () => {
+    const readOnlyAccount = getNavSections(
+      mockCapabilities({ canViewAccountUsage: true }),
+      'account',
+    );
+    expect(readOnlyAccount.find(s => s.label === 'Management')?.items)
+      .toContainEqual(expect.objectContaining({
+        path: '/allocations',
+        label: 'Budget allocations',
+      }));
+
+    const member = getNavSections(mockCapabilities(), 'member');
+    expect(member.flatMap(section => section.items).some(item => item.path === '/allocations'))
+      .toBe(false);
+  });
+
   it('shows My Team to members without widening their role from finance capabilities', () => {
     const sections = getNavSections(mockCapabilities({
       canViewAccountUsage: true,
@@ -170,6 +188,21 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(sections[0].items).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: '/my-team', label: 'My Team' }),
     ]));
+  });
+
+  it('keeps Home personal and team scoped, including for account admins', () => {
+    const source = readFileSync(new URL('./home.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('label="My Spend"');
+    expect(source).toContain('label="My Team Spend"');
+    expect(source).toContain('label="Team Budget"');
+    expect(source).toContain('<MyBudgetSummary limits={personalLimits} />');
+    expect(source).toContain("useGetTeamsBudgets({ scope: 'own', period: 'full-term' })");
+    expect(source).toContain('useGetTeamsBudgets');
+    expect(source).toContain('team.spendUsd');
+    expect(source).not.toContain('team.cycleAgentSpendUsd');
+    expect(source).not.toContain('auth?.teamNames');
+    expect(source).not.toContain('My Organization');
+    expect(source).not.toContain('all_authorized');
   });
 
   it('consumes validated same-origin returnTo from URL search for back links', () => {

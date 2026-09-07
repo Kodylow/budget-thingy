@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest';
 const source = readFileSync(new URL('./team-budgets.tsx', import.meta.url), 'utf8');
 
 describe('Allocation page safety regressions', () => {
+  it('separates the account-readable route from allocation editing', () => {
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    const shellSource = readFileSync(new URL('../components/app-shell.tsx', import.meta.url), 'utf8');
+    expect(appSource).toContain('if (capabilities.canViewAccountUsage) return <Allocations />;');
+    expect(shellSource).toContain("show: capabilities.canViewAccountUsage, testId: 'nav-allocations'");
+    expect(source).toContain('enabled: canViewAudit');
+  });
+
   it('keeps allocation edits capability-based but visibility true-admin-only', () => {
     expect(source).toContain('getAllocationPermissions(capabilities, isPreviewing || auth?.previewReadOnly === true)');
     expect(source).toContain('canEdit={canEdit}');
