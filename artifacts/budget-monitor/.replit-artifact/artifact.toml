@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Group Budget Monitor"
+version = "1.0.0"
+id = "artifacts/budget-monitor"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18708
+
+[services.development]
+run = "pnpm --filter @workspace/budget-monitor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/budget-monitor", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/budget-monitor/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18708"
+BASE_PATH = "/"

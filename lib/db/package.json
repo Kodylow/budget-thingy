@@ -1,0 +1,31 @@
+{
+  "name": "@workspace/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts",
+    "./seed-teams": "./src/seed-teams.ts",
+    "./bootstrap": "./src/bootstrap.ts"
+  },
+  "scripts": {
+    "setup": "tsx src/bootstrap-cli.ts setup",
+    "migrate": "tsx src/bootstrap-cli.ts migrate",
+    "generate": "drizzle-kit generate --config ./drizzle.config.ts",
+    "seed": "tsx src/bootstrap-cli.ts seed",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "catalog:",
+    "drizzle-zod": "^0.8.3",
+    "pg": "^8.22.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "catalog:"
+  }
+}

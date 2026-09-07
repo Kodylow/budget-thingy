@@ -1,0 +1,32 @@
+import { Router, type IRouter } from "express";
+import { requireAuth } from "../middlewares/requireAuth";
+import groupsListRouter from "./monitor.groups-list";
+import groupsDetailRouter from "./monitor.groups-detail";
+import teamsRouter from "./monitor.teams";
+import limitsRouter from "./monitor.limits";
+import alertsRouter, { canSeeAlertEntity } from "./monitor.alerts";
+import adminRouter from "./monitor.admin";
+import directoryRouter from "./monitor.directory";
+import projectExportsRouter from "./monitor.exports-projects";
+import userExportsRouter from "./monitor.exports-users";
+import dashboardRouter from "./monitor.dashboard";
+import spendTablesRouter from "./monitor.spend-tables";
+import setLimitsRouter from "./set-limits";
+
+const router: IRouter = Router();
+router.use(requireAuth);
+router.use(groupsListRouter);
+router.use(groupsDetailRouter);
+router.use(teamsRouter);
+router.use(limitsRouter);
+router.use(alertsRouter);
+router.use(adminRouter);
+router.use(directoryRouter);
+router.use(projectExportsRouter);
+router.use(userExportsRouter);
+router.use(dashboardRouter);
+router.use(spendTablesRouter);
+router.use(setLimitsRouter);
+
+export { canSeeAlertEntity };
+export default router;

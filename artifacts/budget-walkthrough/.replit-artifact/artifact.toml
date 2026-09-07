@@ -1,0 +1,28 @@
+kind = "slides"
+previewPath = "/budget-walkthrough/"
+title = "Budget Monitor Walkthrough"
+description = "A 12-slide guide for Comcast members and team administrators covering spend, projects, permissions, planning funding, and monthly Agent limits."
+version = "1.0.0"
+id = "artifacts/budget-walkthrough"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/budget-walkthrough/" ]
+localPort = 23894
+
+[services.development]
+run = "pnpm --filter @workspace/budget-walkthrough run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/budget-walkthrough", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/budget-walkthrough/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23894"
+BASE_PATH = "/budget-walkthrough/"

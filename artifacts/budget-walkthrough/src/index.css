@@ -1,0 +1,165 @@
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Montserrat:wght@500;700;800&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-primary: var(--slide-primary);
+  --color-navy: var(--slide-navy);
+  --color-bg: var(--slide-bg);
+  --font-display: var(--font-display-family);
+  --font-body: var(--font-body-family);
+}
+
+:root {
+  --slide-primary: #1463FF;
+  --slide-navy: #000A73;
+  --slide-bg: #FAFBFF;
+  --font-display-family: 'Montserrat', system-ui, sans-serif;
+  --font-body-family: 'Lato', system-ui, sans-serif;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--slide-bg);
+  color: var(--slide-navy);
+}
+
+.slide {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.slide-viewer {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.walkthrough-slide {
+  background:
+    linear-gradient(135deg, rgba(20, 99, 255, 0.045), transparent 38%),
+    var(--slide-bg);
+  color: var(--slide-navy);
+}
+
+.walkthrough-header {
+  position: absolute;
+  top: 4.8vh;
+  left: 5vw;
+  right: 4vw;
+}
+
+.walkthrough-title {
+  max-width: 91vw;
+  margin: 0;
+  font-family: var(--font-display-family);
+  font-size: 3.1vw;
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.walkthrough-rule {
+  width: 5.5vw;
+  height: 0.55vh;
+  margin-top: 1.8vh;
+  background: var(--slide-primary);
+}
+
+.walkthrough-content {
+  position: absolute;
+  top: 19vh;
+  right: 4vw;
+  bottom: 6vh;
+  left: 5vw;
+  display: grid;
+  grid-template-columns: 39vw 52vw;
+  gap: 0;
+  align-items: center;
+}
+
+.walkthrough-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2vh;
+  margin: 0;
+  padding: 0 2.5vw 0 0;
+  list-style: none;
+}
+
+.walkthrough-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9vw;
+}
+
+.walkthrough-list li::before {
+  width: 0.72vw;
+  height: 0.72vw;
+  margin-top: 0.68vh;
+  flex: 0 0 auto;
+  border-radius: 0.16vw;
+  background: var(--slide-primary);
+  content: "";
+}
+
+.walkthrough-list p {
+  margin: 0;
+  font-family: var(--font-body-family);
+  font-size: 2vw;
+  line-height: 1.2;
+  text-wrap: pretty;
+}
+
+.walkthrough-figure {
+  display: flex;
+  width: 52vw;
+  height: 73vh;
+  margin: 0;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.walkthrough-image-frame {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 0.12vw solid rgba(20, 99, 255, 0.32);
+  border-radius: 1.2vw;
+  background: #ffffff;
+  box-shadow: 0 2.2vh 5vh rgba(0, 10, 115, 0.13);
+}
+
+.walkthrough-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.walkthrough-caption {
+  margin-top: 1.1vh;
+  font-family: var(--font-body-family);
+  font-size: 1.5vw;
+  line-height: 1.1;
+  color: rgba(0, 10, 115, 0.68);
+}
+
+.walkthrough-callouts {
+  display: block;
+  margin-bottom: 0.5vh;
+  color: var(--slide-navy);
+  line-height: 1.25;
+}

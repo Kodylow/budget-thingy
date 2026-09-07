@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "app_admins_bootstrap_email_unique" ON "app_admins" USING btree (lower(btrim("email"))) WHERE "app_admins"."created_by" is null;

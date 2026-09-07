@@ -1,0 +1,99 @@
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# compiled output
+dist
+tmp
+out-tsc
+*.tsbuildinfo
+.expo
+.expo-shared
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+**/playwright-report/
+**/test-results/
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# System Files
+.DS_Store
+Thumbs.db
+
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
+
+# Replit
+.cache/
+.local/
+.agents/
+attached_assets/
+screenshots/
+.config/
+.tsbuildinfo
+*.xlsx
+db.sql
+
+# Local authentication configuration; never include credentials in a handoff.
+.env
+.env.*
+*.env
+!.env.example
+
+# Private exports, local databases, and credential files are not source code.
+*.csv
+*.tsv
+*.parquet
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+credentials.json
+service-account*.json
+gitleaks*.json
+
+# Development evidence and unrelated reference projects.
+/e2e/
+**/e2e/evidence/
+**/evidence/
+/artifacts/mockup-sandbox/
+*.bundle
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# One-off editing scripts, not application tooling.
+/fix-*.js
+/rewrite-spend.js
+/update-spend.js
+/disable-test.js
+/remove-padding.js

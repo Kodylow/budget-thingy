@@ -1,0 +1,5161 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: groups
+    description: Enterprise groups and usage
+  - name: budgets
+    description: Per-group budgets
+  - name: teams
+    description: Team budgets
+  - name: admins
+    description: Admin notification emails
+  - name: alerts
+    description: Alert history and checks
+  - name: status
+    description: App/system status
+  - name: directory
+    description: Workspace directory
+  - name: limits
+    description: Durable workspace member-limit operations
+  - name: Auth
+    description: Browser and mobile authentication endpoints.
+paths:
+  /auth/user:
+    get:
+      tags: [Auth]
+      operationId: getCurrentAuthUser
+      summary: Get the currently authenticated user
+      description: >
+        Returns the signed-in identity together with the resolved Enterprise
+        authorization (role and workspace scope). `auth` is null when the request
+        is unauthenticated.
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+        - $ref: '#/components/parameters/SessionCookie'
+        - $ref: '#/components/parameters/PreviewAsHeader'
+      responses:
+        '200':
+          description: Auth status resolved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUserEnvelope'
+  /login:
+    get:
+      tags: [Auth]
+      operationId: beginBrowserLogin
+      summary: Start the browser OIDC login flow
+      parameters:
+        - name: returnTo
+          in: query
+          required: false
+          description: Relative path to redirect to after login (must start with `/`). Defaults to `/`.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to the OIDC authorization endpoint.
+  /callback:
+    get:
+      tags: [Auth]
+      operationId: handleBrowserLoginCallback
+      summary: Complete the browser OIDC login flow
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: iss
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to the `returnTo` path on success (defaults to `/`) or `/api/login` on failure.
+  /logout:
+    post:
+      tags: [Auth]
+      operationId: logoutBrowserSession
+      summary: Clear the session and begin OIDC logout
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+        - $ref: '#/components/parameters/SessionCookie'
+        - name: returnTo
+          in: query
+          required: false
+          schema:
+            type: string
+            default: /
+      responses:
+        '302':
+          description: Redirect to the OIDC provider logout URL with a post-logout redirect back to the validated `returnTo` path.
+  /mobile-auth/token-exchange:
+    post:
+      tags: [Auth]
+      operationId: exchangeMobileAuthorizationCode
+      summary: Exchange a mobile OIDC code for a session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MobileTokenExchangeRequest'
+      responses:
+        '200':
+          description: Session created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileTokenExchangeSuccess'
+        '400':
+          description: Missing or invalid required fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Token did not contain usable claims.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Token exchange failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /mobile-auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logoutMobileSession
+      summary: Delete a mobile session token
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+      responses:
+        '200':
+          description: Logout processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutSuccess'
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /groups:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: listGroups
+      tags: [groups]
+      summary: List all groups with usage and budget state
+      description: >
+        Returns custom/SCIM groups across all workspaces of the Enterprise account,
+        excluding built-in admin/member/guest role groups,
+        joined with stored spend for the selected date range, the configured
+        budget, and threshold state.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Group list with usage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /reporting/details/{groupIds}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getReportingDetail
+      tags: [groups]
+      summary: Compact group or family reporting detail
+      description: >
+        Returns the selected-range headline, role-group metadata, and only the
+        requested groups' visible members. Current-cycle Agent limit metrics are
+        workspace/user scoped and independent of the selected reporting range.
+        Projects, history, audits, and the full workspace directory are excluded.
+      parameters:
+        - name: groupIds
+          in: path
+          required: true
+          description: Comma-separated group IDs. IDs are trimmed, deduplicated, and limited to 32.
+          schema:
+            type: string
+            minLength: 1
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Compact authorized reporting detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingDetail"
+        "400":
+          description: Invalid group IDs or reporting range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: A requested group is missing or outside the current scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Stored accounting unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /reporting/teams/{poolId}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getBudgetTeamReport
+      tags: [groups]
+      summary: Compact read-only budget team report
+      description: >
+        Returns the canonical authorized team-pool headline and its visible
+        mapped physical groups and members. The annual allocation is the
+        current effective team budget and is not prorated to the selected
+        reporting range.
+      parameters:
+        - name: poolId
+          in: path
+          required: true
+          description: Canonical qualified pool ID from the authorized pools table (pool:team:...).
+          schema:
+            type: string
+            minLength: 1
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Compact authorized budget team report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingDetail"
+        "400":
+          description: Invalid reporting range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The ID is not an authorized canonical team pool
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Stored accounting unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /groups/{groupId}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getGroupDetail
+      tags: [groups]
+      summary: Group drill-down with per-user usage
+      description: >
+        Returns one group with its spend for the selected range plus every member
+        of the group: allocated budget (platform user limit or workspace default),
+        actual usage, remaining budget, percent consumed, and workspace role.
+        Usage health describes freshness and coverage of the stored facts.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ScopeGroupIds"
+      responses:
+        "200":
+          description: Group detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /groups/{groupId}/projects:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getGroupProjects
+      tags: [groups]
+      summary: Group project spend drill-down
+      description: >
+        Returns project-level spend breakdown for a group in the selected date range.
+        Usage health describes freshness and coverage of the stored facts.
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Project spend breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupProjectsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /clusters/{clusterKey}/projects:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getClusterProjects
+      tags: [groups]
+      summary: Cluster project spend drill-down
+      description: >
+        Returns creator-attributed project spend for the requested group cluster.
+        Every group in the cluster must be visible to the current user.
+      parameters:
+        - $ref: "#/components/parameters/ClusterKeyPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Cluster project spend breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupProjectsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Cluster not found or outside the current workspace scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Enterprise API not configured or unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /clusters/{clusterKey}/headline:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getCanonicalClusterHeadline
+      tags: [groups]
+      summary: Canonical cluster spend headline
+      description: Returns member-deduped canonical spend across the requested visible groups.
+      parameters:
+        - $ref: "#/components/parameters/ClusterKeyPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Canonical cluster headline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterHeadline"
+        "400":
+          description: Invalid cluster key or range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Cluster not found or outside the current workspace scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /dashboard:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getDashboard
+      tags: [groups]
+      summary: Compact scoped dashboard cards and charts
+      description: >
+        Returns one committed, stored-data dashboard generation. Period boundaries
+        and trend buckets are UTC and end-exclusive. This endpoint never refreshes
+        upstream limits and does not include people, project, or hierarchy tables.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/TrendGranularity"
+        - $ref: "#/components/parameters/TrendMode"
+        - $ref: "#/components/parameters/ProjectionHorizon"
+        - $ref: "#/components/parameters/PlanningEndDate"
+      responses:
+        "200":
+          description: Compact coherent dashboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardResponse"
+        "400":
+          description: Invalid scope or period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Stored accounting data unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /spend/pools:
+    get:
+      operationId: listSpendPools
+      tags: [groups]
+      summary: List authorized canonical budget pools
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Canonical pool page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/groups:
+    get:
+      operationId: listSpendGroups
+      tags: [groups]
+      summary: List authorized workspace-qualified groups
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Group page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/people:
+    get:
+      operationId: listSpendPeople
+      tags: [groups]
+      summary: List authorized workspace-qualified people usage
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: People page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/projects:
+    get:
+      operationId: listSpendProjects
+      tags: [groups]
+      summary: List authorized workspace-qualified project usage
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Project page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendTableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/pools.csv:
+    get:
+      operationId: exportSpendPoolsCsv
+      tags: [groups]
+      summary: Export the authorized filtered canonical pool rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/groups.csv:
+    get:
+      operationId: exportSpendGroupsCsv
+      tags: [groups]
+      summary: Export the authorized filtered group rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/people.csv:
+    get:
+      operationId: exportSpendPeopleCsv
+      tags: [groups]
+      summary: Export the authorized filtered people rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /spend/projects.csv:
+    get:
+      operationId: exportSpendProjectsTableCsv
+      tags: [groups]
+      summary: Export the authorized filtered project rows
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /users/activity:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getUserActivity
+      tags: [groups]
+      summary: List canonical per-user activity
+      description: >
+        Returns one row per visible member using the same canonical split shown
+        in group and cluster member tables: deduplicated member-grouped AI plus
+        non-AI project cost attributed to each current creator.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Progressive canonical user activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserActivityResponse"
+        "400":
+          description: Invalid date range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Enterprise API unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /export/users.csv:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: exportUsersCsv
+      tags: [groups]
+      summary: Export canonical per-user activity as CSV
+      description: >
+        Exports the unique members of the explicitly requested visible groups,
+        with an internal-user marker and separate eligible AI,
+        hosting/non-AI, and total spend columns. Eligible spend excludes
+        internal Replit users.
+      parameters:
+        - name: groupIds
+          in: query
+          required: true
+          description: Comma-separated group IDs from a group or cluster detail page
+          schema:
+            type: string
+            minLength: 1
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: User activity CSV
+          headers:
+            X-Export-Complete:
+              description: Whether all authoritative workspace usage was loaded
+              schema:
+                type: boolean
+            X-Usage-Range:
+              description: Resolved range cache key used for the export
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        "400":
+          description: Missing group scope or invalid date range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /usage/account-observation/export:
+    get:
+      operationId: getAccountUsageObservationExport
+      tags: [status]
+      summary: Export the latest scheduler-owned account usage observation
+      description: >
+        Account-admin-only. Reads the latest durable ungrouped Enterprise usage
+        observation for the requested billing period. This endpoint never
+        triggers ingestion, retry, reconciliation, refresh, or an Enterprise API
+        request.
+      parameters:
+        - name: billingPeriodStart
+          in: query
+          required: true
+          description: Billing-period start date used by scheduled reconciliation
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+      responses:
+        "200":
+          description: Downloadable scheduler-owned account usage observation
+          headers:
+            Content-Disposition:
+              description: JSON attachment filename
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountUsageObservationExport"
+        "400":
+          description: Invalid billing-period start date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No scheduler-owned observation exists for the billing period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /projects/export:
+    get:
+      operationId: exportProjectsCsv
+      tags: [groups]
+      summary: Export scoped project activity as CSV
+      description: Compatibility alias of Spend projects CSV, with the same full filtered rows, authorization, and per-row observation qualifications.
+      parameters:
+        - $ref: '#/components/parameters/PreviewAsHeader'
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendStatus"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/SpendSort"
+      responses:
+        "200":
+          $ref: "#/components/responses/SpendCsv"
+        "400":
+          description: Invalid export query or date range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /budgets:
+    get:
+      operationId: listBudgets
+      tags: [budgets]
+      summary: List all configured group budgets
+      responses:
+        "200":
+          description: Budget list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupBudget"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /groups/{groupId}/budget:
+    put:
+      operationId: setGroupBudget
+      tags: [budgets]
+      summary: Set or update the budget for a group
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupBudgetInput"
+      responses:
+        "200":
+          description: Budget saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupBudget"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      operationId: deleteGroupBudget
+      tags: [budgets]
+      summary: Remove the budget for a group
+      parameters:
+        - $ref: "#/components/parameters/GroupIdPath"
+      responses:
+        "200":
+          description: Budget removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No budget configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /teams/budgets:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getTeamsBudgets
+      tags: [teams]
+      summary: List all team budgets
+      responses:
+        "200":
+          description: Team budget list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/history:
+    get:
+      operationId: getTeamBudgetHistory
+      tags: [teams]
+      summary: Get the auditable annual team budget history
+      description: Account-admin-only. Returns original allocations, accepted credit requests (including preserved legacy imports), effective totals, and matching issues.
+      responses:
+        "200":
+          description: Team budget history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/audit:
+    get:
+      operationId: getTeamAllocationAudit
+      tags: [teams]
+      summary: List annual allocation and visibility changes
+      description: Returns authorized allocation administration changes newest first, at most 200 per page. Continue with beforeId set to the final returned ID; a short page ends traversal.
+      parameters:
+        - name: beforeId
+          in: query
+          required: false
+          description: Return records older than this exclusive audit ID.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+      responses:
+        "200":
+          description: Allocation audit history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamAllocationAuditResponse"
+        "400":
+          description: Invalid exclusive audit cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/{teamName}/allocation:
+    patch:
+      operationId: updateTeamAnnualAllocation
+      tags: [teams]
+      summary: Update a team's annual baseline allocation
+      description: True-account-admin-only. Updates the durable baseline without writing any upstream limit.
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamAnnualAllocationUpdate"
+      responses:
+        "200":
+          description: Annual allocation updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        "400":
+          description: Invalid annual allocation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/team-budgets/{teamName}/allocations:
+    post:
+      operationId: addTeamMonthlyAllocation
+      tags: [teams]
+      summary: Add a manual monthly allocation
+      description: Account-allocation-admin-only. Adds a local ledger entry without writing to any upstream source.
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamMonthlyAllocationAddition"
+      responses:
+        "201":
+          description: Monthly allocation added, or the identical idempotent request replayed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        "400":
+          description: Invalid monthly allocation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Idempotency key was already used with a different payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/team-budgets/{teamName}/visibility:
+    patch:
+      operationId: updateTeamVisibility
+      tags: [teams]
+      summary: Hide or show a team
+      description: True-account-admin-only. Hidden teams remain visible to true admins for management.
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamVisibilityUpdate"
+      responses:
+        "200":
+          description: Team visibility updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        "400":
+          description: Invalid visibility value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/team-budgets/sync:
+    get:
+      operationId: getTeamBudgetSyncStatus
+      tags: [teams]
+      summary: Get Finance Approval budget synchronization status
+      description: Account-admin-only. Reports the read-only Replit Finance Approval import, which consumes only records whose Approval Status is Approved. Connector details and source status are not exposed to scoped viewers.
+      responses:
+        "200":
+          description: Synchronization status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetSyncStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/reconcile:
+    post:
+      operationId: retryTeamBudgetUpstreamSync
+      tags: [teams]
+      summary: Retry upstream Replit group budget synchronization
+      description: Available only to true Enterprise account administrators. Queues a read-only refresh of upstream values; this endpoint never writes budgets.
+      responses:
+        "200":
+          description: Reconciliation queued; latest stored synchronization status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetSyncStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/{teamName}/limit:
+    patch:
+      operationId: updateTeamBudgetLimit
+      tags: [teams]
+      summary: Set or reset a team's monthly upstream limit
+      description: True-account-admin-only. A number sets a persistent manual limit; null resets the limit to the derived annual allocation divided by twelve.
+      parameters:
+        - $ref: "#/components/parameters/TeamNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetLimitUpdate"
+      responses:
+        "200":
+          description: Monthly limit updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        "400":
+          description: Invalid monthly limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/team-budgets/targets:
+    get:
+      operationId: getTeamBudgetTargets
+      tags: [teams]
+      summary: List explicit targets, allocations, and unassigned member groups
+      responses:
+        "200":
+          description: Target configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetTargetConfiguration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: assignTeamBudgetTarget
+      tags: [teams]
+      summary: Assign an unassigned member group to a team
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetTargetAssignment"
+      responses:
+        "200":
+          description: Assigned target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetTarget"
+        "400":
+          description: Invalid target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/targets/{workspaceId}/{groupId}:
+    patch:
+      operationId: updateTeamBudgetTarget
+      tags: [teams]
+      summary: Set or reset a target-specific monthly override
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - { name: groupId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetLimitUpdate"
+      responses:
+        "200":
+          description: Updated target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetTarget"
+        "400":
+          description: Invalid override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Target not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/legacy-limit:
+    patch:
+      operationId: updateLegacyWorkspaceLimit
+      tags: [teams]
+      summary: Set or reset the legacy workspace per-user cap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetLimitUpdate"
+      responses:
+        "200":
+          description: Legacy cap updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegacyWorkspaceLimitTarget"
+        "400":
+          description: Invalid limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/apply:
+    post:
+      operationId: applyTeamBudgetLimits
+      tags: [teams]
+      summary: Apply selected drifted monthly limits upstream
+      description: True-account-admin-only. This is the only team-budget operation that writes upstream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamBudgetApplySelection"
+      responses:
+        "200":
+          description: Per-team and per-target apply outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetApplyResponse"
+        "400":
+          description: Invalid apply selection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/team-budgets/refresh:
+    post:
+      operationId: refreshTeamBudgets
+      tags: [teams]
+      summary: Refresh approved Finance Approval team budgets
+      description: Account-admin-only. Reads only records from Replit Finance Approval whose Approval Status is Approved. Never writes to Airtable; failures preserve the last successful snapshot and legacy imports.
+      responses:
+        "200":
+          description: Snapshot refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetRefreshResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: Airtable refresh failed; the last good snapshot remains active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamBudgetRefreshResult"
+  /admins:
+    get:
+      operationId: listAdmins
+      tags: [admins]
+      summary: List admin notification emails
+      responses:
+        "200":
+          description: Admin email list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminEmail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: addAdmin
+      tags: [admins]
+      summary: Add an admin notification email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminEmailInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminEmail"
+        "400":
+          description: Invalid or duplicate email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admins/{adminId}:
+    delete:
+      operationId: deleteAdmin
+      tags: [admins]
+      summary: Remove an admin notification email
+      parameters:
+        - name: adminId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /app-admins:
+    get:
+      operationId: listAppAdmins
+      tags: [admins]
+      summary: List account-wide app admins
+      description: Available only to Enterprise account administrators and the designated account delegate.
+      responses:
+        "200":
+          description: App admin allowlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AppAdmin"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: addAppAdmin
+      tags: [admins]
+      summary: Add an account-wide app admin
+      description: Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppAdminInput"
+      responses:
+        "201":
+          description: App admin added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppAdmin"
+        "400":
+          description: Invalid or duplicate app admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Replit user has not signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /app-admins/{userId}:
+    delete:
+      operationId: deleteAppAdmin
+      tags: [admins]
+      summary: Remove an account-wide app admin
+      description: Available only to Enterprise account administrators and the designated account delegate.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: App admin removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/members:
+    get:
+      operationId: listDirectoryMembers
+      tags: [directory]
+      summary: List all enterprise workspace members
+      description: >
+        Returns every enterprise member from the directory cache — not just those with
+        recorded spend. Available only to account administrators. Includes per-workspace
+        spend for the selected date range when usage data is available.
+      parameters:
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Directory member list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DirectoryMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces:
+    get:
+      operationId: listVisibleWorkspaces
+      tags: [directory]
+      summary: List workspaces visible to the current operator
+      description: Account-wide operators see every workspace; workspace administrators see only workspaces they administer.
+      responses:
+        "200":
+          description: Visible workspace list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VisibleWorkspace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/members:
+    get:
+      operationId: listVisibleWorkspaceMembers
+      tags: [directory, budgets]
+      summary: List members and Agent budgets for a visible workspace
+      description: >
+        Usage is always for the current Replit billing cycle and is independent
+        of the dashboard reporting range. Budget failures are returned explicitly.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      responses:
+        "200":
+          description: Workspace member budget view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMembersResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found or not visible
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/usage-limit-audits:
+    get:
+      operationId: listWorkspaceUsageLimitAudits
+      tags: [directory, budgets]
+      summary: Review member usage-limit changes for a workspace
+      description: Available only to authorized limit-history reviewers. Returns at most 200 records newest first. Continue with beforeId set to the final returned ID; a short page ends traversal.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - name: beforeId
+          in: query
+          required: false
+          description: Return records older than this exclusive audit ID.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+      responses:
+        "200":
+          description: Newest-first usage-limit audit history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UsageLimitAudit"
+        "400":
+          description: Invalid exclusive audit cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/limit-policies:
+    get:
+      operationId: getWorkspaceLimitPolicies
+      tags: [directory, budgets]
+      summary: Read member-limit policy state for a workspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      responses:
+        "200":
+          description: Workspace default, group baselines, and hand-set overrides
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceLimitPolicyView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/default-limit-policy:
+    put:
+      operationId: setWorkspaceDefaultLimitPolicy
+      tags: [directory, budgets]
+      summary: Set or clear the workspace-default member Agent limit policy
+      description: Applies members serially and reports every verified upstream outcome.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberLimitPolicyInput"
+      responses:
+        "200":
+          description: Policy saved and applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberLimitPolicyMutationResult"
+        "400":
+          description: Invalid policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/groups/{groupId}/limit-policy:
+    put:
+      operationId: setGroupMemberLimitPolicy
+      tags: [directory, budgets]
+      summary: Set or clear a member-group Agent limit baseline
+      description: The lowest applicable baseline wins; hand-set member overrides are preserved.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberLimitPolicyInput"
+      responses:
+        "200":
+          description: Policy saved and applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberLimitPolicyMutationResult"
+        "400":
+          description: Invalid policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/members/budget:
+    put:
+      operationId: bulkSetWorkspaceMemberBudgets
+      tags: [directory, budgets]
+      summary: Set one Agent usage limit for multiple workspace members
+      description: >
+        Account-wide operators only. User IDs are deduplicated, every requested
+        user must be a current member of the visible workspace, and each
+        non-transactional Replit Budgets API outcome is returned explicitly.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceMemberBulkBudgetInput"
+      responses:
+        "200":
+          description: Per-member desired-limit outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMemberBulkBudgetResult"
+        "400":
+          description: Invalid limit or member list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or any requested member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Replit Budgets API key lacks write:budgets or is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/members/{userId}/budget:
+    put:
+      operationId: setWorkspaceMemberBudget
+      tags: [directory, budgets]
+      summary: Set or replace a member's desired Agent budget
+      description: Authorized account and workspace administrators use the configured Enterprise budgets key.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - $ref: "#/components/parameters/UserIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceMemberBudgetInput"
+      responses:
+        "200":
+          description: Desired budget applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMemberBudgetMutation"
+        "400":
+          description: Invalid desired budget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "502":
+          description: Replit budget connector request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Replit budget connector is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: clearWorkspaceMemberBudget
+      tags: [directory, budgets]
+      summary: Clear a member's desired Agent budget
+      description: Account-wide operators only. Clearing an already-unset budget is idempotent.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - $ref: "#/components/parameters/UserIdPath"
+      responses:
+        "200":
+          description: Desired budget cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMemberBudgetMutation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "502":
+          description: Replit budget connector request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Replit budget connector is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/groups:
+    get:
+      operationId: listDirectoryGroups
+      tags: [directory]
+      summary: List enterprise groups with their owning workspaces
+      description: >
+        Returns every custom/SCIM group from the directory cache together with its
+        owning workspace. Available only to account administrators and independent
+        of usage loading or the selected reporting range.
+      responses:
+        "200":
+          description: Directory group list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryGroupsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /workspace-admins:
+    get:
+      operationId: listWorkspaceAdmins
+      tags: [admins]
+      summary: List Team admins per family
+      description: Returns every canonical family with its Team admins from the directory. Available only to account administrators.
+      responses:
+        "200":
+          description: Group admin list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupAdminsItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /alerts:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: listAlerts
+      tags: [alerts]
+      summary: Alert history
+      description: Sent threshold alerts, newest recorded first. Stored spend is the send-time snapshot; current fields use the latest canonical rollup. Continue with beforeId set to the final returned ID; a short page ends traversal. Scope-read failures return 503, never an empty history.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: beforeId
+          in: query
+          required: false
+          description: Return records older than this exclusive alert ID.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Alert scope or history is temporarily unavailable; retry without changing scope.
+  /alerts/check:
+    post:
+      operationId: runAlertCheck
+      tags: [alerts]
+      summary: Run the budget threshold check now
+      description: Evaluates stored daily usage facts and sends any due alert emails immediately without refreshing Enterprise usage.
+      responses:
+        "200":
+          description: Check completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Enterprise API not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /alerts/{alertId}/test:
+    post:
+      operationId: sendTestAlert
+      tags: [alerts]
+      summary: Send the configured operator a test copy of an email activity entry
+      description: >
+        Sends a fixed-recipient test copy without changing alert activity,
+        fired thresholds, or delivery claims.
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Test delivery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailTestResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Source activity not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /alerts/test-email:
+    post:
+      operationId: sendEmailTestExample
+      tags: [alerts]
+      summary: Send the configured operator a predefined threshold-alert example
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailTestSelection"
+      responses:
+        "200":
+          description: Test delivery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailTestResult"
+        "400":
+          description: Unsupported example selection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /settings/email:
+    get:
+      operationId: getEmailSettings
+      tags: [status]
+      summary: Get automated email delivery policy
+      description: Returns the persisted global policy for automated budget-alert delivery.
+      responses:
+        "200":
+          description: Email settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateEmailSettings
+      tags: [status]
+      summary: Update automated email delivery policy
+      description: Enables or disables automated budget-alert delivery without affecting fixed-recipient test sends.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailSettingsUpdate"
+      responses:
+        "200":
+          description: Updated email settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "400":
+          description: Invalid email settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /status:
+    get:
+      operationId: getStatus
+      tags: [status]
+      summary: System status
+      description: Enterprise API connectivity, email configuration, and background checker state.
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/usage/ingest/cycle:
+    post:
+      operationId: runUsageIngestCycle
+      tags: [status]
+      summary: Run one usage ingest cycle
+      description: >
+        Available only to true Enterprise account administrators. Runs one
+        lock-protected live/backfill/reconciliation cycle and returns its result.
+      responses:
+        "200":
+          description: Ingest cycle completed, or another replica held the ingest lock
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageIngestCycleResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Usage ingestion is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/usage/ingest/runs/recent:
+    get:
+      operationId: listRecentUsageIngestRuns
+      tags: [status]
+      summary: List recent usage ingest runs
+      description: Available only to true Enterprise account administrators.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Most recent ingest runs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UsageIngestRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /limits/workspaces/{workspaceId}:
+    get:
+      operationId: getSetLimitsWorkspace
+      tags: [limits]
+      summary: Get the composed Set Limits read model
+      description: Reads persisted directory, billing-cycle usage, and limit observations without refreshing upstream data.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+      responses:
+        "200":
+          description: Set Limits workspace model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetLimitsWorkspace"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/prepare:
+    post:
+      operationId: prepareLimitOperation
+      tags: [limits]
+      summary: Freeze and review workspace member-limit targets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LimitOperationPrepareInput" }
+      responses:
+        "200":
+          description: Frozen operation review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "400":
+          description: Invalid amount or target selection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Idempotency key was reused for a different request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/{operationId}/commit:
+    post:
+      operationId: commitLimitOperation
+      tags: [limits]
+      summary: Commit an exactly reviewed limit operation
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LimitOperationCommitInput" }
+      responses:
+        "202":
+          description: Durable operation accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "400":
+          description: Commit does not match the frozen review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Operation not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "409":
+          description: A selected member already has an active operation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/{operationId}:
+    get:
+      operationId: getLimitOperation
+      tags: [limits]
+      summary: Get and resume a durable limit operation
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      responses:
+        "200":
+          description: Current operation and per-target status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Operation not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/operations/{operationId}/retry:
+    post:
+      operationId: retryLimitOperationTargets
+      tags: [limits]
+      summary: Retry selected failed or verification-pending targets
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LimitOperationRetryInput" }
+      responses:
+        "202":
+          description: Eligible targets queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitOperation" }
+        "400":
+          description: No eligible targets selected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Operation not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+components:
+  responses:
+    SpendCsv:
+      description: CSV containing exactly the authorized filtered rows in server sort order.
+      headers:
+        X-Filtered-Rows:
+          schema: { type: integer, minimum: 0 }
+        X-Total-Spend-Usd:
+          schema: { type: number }
+        X-Generation-Id:
+          schema: { type: string }
+        X-Usage-Range:
+          description: UTC end-exclusive committed reporting interval.
+          schema: { type: string }
+      content:
+        text/csv:
+          schema: { type: string }
+    Unauthorized:
+      description: Authentication required — no valid session.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Forbidden:
+      description: >
+        Authenticated but not authorized (neither account admin nor an enabled
+        workspace admin, or attempting an account-admin-only action).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+  parameters:
+    LimitOperationIdPath:
+      name: operationId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F-]{36}$'
+    WorkspaceIdPath:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    GroupIdPath:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+    ClusterKeyPath:
+      name: clusterKey
+      in: path
+      required: true
+      schema:
+        type: string
+    TeamNamePath:
+      name: teamName
+      in: path
+      required: true
+      description: URL-encoded team name (spaces as %20)
+      schema:
+        type: string
+    RangeType:
+      name: rangeType
+      in: query
+      required: false
+      description: Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+      schema:
+        type: string
+        enum: [billing, full-term, mtd, ytd, custom]
+    ViewScope:
+      name: viewScope
+      in: query
+      required: false
+      description: Server-resolved presentation scope; managed excludes unrelated self-only grants.
+      schema:
+        type: string
+        enum: [managed, my, all_authorized]
+    TrendGranularity:
+      name: granularity
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [day, week, month]
+    TrendMode:
+      name: trendMode
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [period, cumulative]
+    ProjectionHorizon:
+      name: projectionHorizon
+      in: query
+      required: false
+      description: Future boundary for the deterministic projection. year_end ends at January 1 of the next calendar year; term_end is the fixed confirmed contract through May 20, 2027 (exclusive end May 21). cycle_end remains available only when verified billing-cycle metadata exists; planning_end requires planningEndDate.
+      schema:
+        type: string
+        enum: [month_end, year_end, term_end, cycle_end, planning_end]
+        default: month_end
+    PlanningEndDate:
+      name: planningEndDate
+      in: query
+      required: false
+      description: Inclusive user-selected UTC projection end (YYYY-MM-DD), required with projectionHorizon=planning_end; must be today or within the next five years.
+      schema:
+        type: string
+    SpendSearch:
+      name: search
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 200
+    SpendStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [all, over, attention, budgeted, unbudgeted, no_allocation, shared, explicit, inherited, no_limit, unavailable]
+    SpendWorkspace:
+      name: workspaceId
+      in: query
+      required: false
+      description: Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+      schema:
+        type: string
+        maxLength: 200
+    SpendSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [status, spend_desc, spend_asc, name_asc, name_desc]
+    SpendPage:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    SpendPageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    StartDate:
+      name: startDate
+      in: query
+      required: false
+      description: Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+      schema:
+        type: string
+    EndDate:
+      name: endDate
+      in: query
+      required: false
+      description: Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+      schema:
+        type: string
+    ScopeGroupIds:
+      name: scopeGroupIds
+      in: query
+      required: false
+      description: Optional comma-separated group IDs that define a team-cluster deduplication scope.
+      schema:
+        type: string
+    AuthorizationSessionHeader:
+      name: Authorization
+      in: header
+      required: false
+      description: Opaque session token — `Bearer <sid>`.
+      schema:
+        type: string
+    SessionCookie:
+      name: sid
+      in: cookie
+      required: false
+      description: Browser session cookie.
+      schema:
+        type: string
+    PreviewAsHeader:
+      name: X-Preview-As
+      in: header
+      required: false
+      description: Designated-operator-only synthetic authorization view.
+      schema:
+        type: string
+        pattern: '^(workspace_admin|team_admin|member):.+$'
+  schemas:
+    SetLimitsGroup:
+      type: object
+      required: [groupId, name, familyName, role, eligibleUserIds]
+      properties:
+        groupId: { type: string }
+        name: { type: string }
+        familyName: { type: ["string", "null"] }
+        role: { type: ["string", "null"] }
+        eligibleUserIds:
+          type: array
+          items: { type: string, pattern: '^[1-9]\d*$' }
+    SetLimitsMember:
+      type: object
+      required: [userId, username, name, email, role, groupIds, isInternal, isDisabled, eligible, usageUsd, explicitLimitUsd, effectiveLimitUsd, limitState]
+      properties:
+        userId: { type: string, pattern: '^[1-9]\d*$' }
+        username: { type: string }
+        name: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        role: { type: string }
+        groupIds:
+          type: array
+          items: { type: string }
+        isInternal: { type: boolean }
+        isDisabled: { type: boolean }
+        eligible: { type: boolean }
+        usageUsd: { type: ["number", "null"] }
+        explicitLimitUsd: { type: ["number", "null"] }
+        effectiveLimitUsd: { type: ["number", "null"] }
+        limitState:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
+    SetLimitsWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, canWrite, unavailableReason, billingPeriod, limitObservation, groups, members]
+      properties:
+        workspaceId: { type: string, pattern: '^[A-Za-z0-9]+$' }
+        workspaceName: { type: string }
+        canWrite: { type: boolean }
+        unavailableReason: { type: ["string", "null"] }
+        billingPeriod:
+          type: object
+          required: [start, end]
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+        limitObservation:
+          type: object
+          required: [status, observedAt, error]
+          properties:
+            status: { type: string, enum: [available, unavailable, failed] }
+            observedAt: { type: ["string", "null"], format: date-time }
+            error: { type: ["string", "null"] }
+        groups:
+          type: array
+          items: { $ref: "#/components/schemas/SetLimitsGroup" }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/SetLimitsMember" }
+    LimitOperationPrepareInput:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, amountUsd, userIds, groupIds, idempotencyKey]
+      properties:
+        workspaceId: { type: string, pattern: '^[A-Za-z0-9]+$' }
+        amountUsd: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        userIds:
+          type: array
+          maxItems: 1000
+          items: { type: string, pattern: '^[1-9]\d*$' }
+        groupIds:
+          type: array
+          maxItems: 1000
+          items: { type: string, minLength: 1 }
+        idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+    LimitOperationCommitInput:
+      type: object
+      additionalProperties: false
+      required: [reviewFingerprint, amountUsd, userIds]
+      properties:
+        reviewFingerprint: { type: string, minLength: 64, maxLength: 64 }
+        amountUsd: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        userIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { type: string, pattern: '^[1-9]\d*$' }
+    LimitOperationRetryInput:
+      type: object
+      additionalProperties: false
+      required: [userIds, idempotencyKey]
+      properties:
+        userIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { type: string, pattern: '^[1-9]\d*$' }
+        idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+    LimitTargetAttempt:
+      type: object
+      required: [at, stage, outcome]
+      properties:
+        at: { type: string, format: date-time }
+        stage: { type: string, enum: [authorization, membership, reconcile, write, verification, audit] }
+        outcome: { type: string }
+        requestId: { type: ["string", "null"] }
+        retryAfterMs: { type: ["integer", "null"] }
+        message: { type: ["string", "null"] }
+    LimitOperationTarget:
+      type: object
+      required: [workspaceId, userId, memberName, memberEmail, oldAmountUsd, newAmountUsd, state, attempts, history, errorStage, errorCode, errorMessage, upstreamRequestId, queuedAt, applyingAt, verifiedAt, failedAt]
+      properties:
+        workspaceId: { type: string }
+        userId: { type: string }
+        memberName: { type: ["string", "null"] }
+        memberEmail: { type: ["string", "null"] }
+        oldAmountUsd: { type: ["number", "null"] }
+        newAmountUsd: { type: number }
+        state: { type: string, enum: [queued, applying, verified, failed, verification_pending] }
+        attempts: { type: integer }
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/LimitTargetAttempt" }
+        errorStage: { type: ["string", "null"] }
+        errorCode: { type: ["string", "null"] }
+        errorMessage: { type: ["string", "null"] }
+        upstreamRequestId: { type: ["string", "null"] }
+        queuedAt: { type: ["string", "null"], format: date-time }
+        applyingAt: { type: ["string", "null"], format: date-time }
+        verifiedAt: { type: ["string", "null"], format: date-time }
+        failedAt: { type: ["string", "null"], format: date-time }
+    LimitOperation:
+      type: object
+      required: [id, workspaceId, state, amountUsd, reviewFingerprint, actorUserId, preparedAt, committedAt, completedAt, counts, targets]
+      properties:
+        id: { type: string, pattern: '^[0-9a-fA-F-]{36}$' }
+        workspaceId: { type: string }
+        state: { type: string, enum: [prepared, queued, running, completed] }
+        amountUsd: { type: number }
+        reviewFingerprint: { type: string }
+        actorUserId: { type: string }
+        preparedAt: { type: string, format: date-time }
+        committedAt: { type: ["string", "null"], format: date-time }
+        completedAt: { type: ["string", "null"], format: date-time }
+        counts:
+          type: object
+          required: [total, queued, applying, verified, failed, verificationPending]
+          properties:
+            total: { type: integer }
+            queued: { type: integer }
+            applying: { type: integer }
+            verified: { type: integer }
+            failed: { type: integer }
+            verificationPending: { type: integer }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/LimitOperationTarget" }
+    ReportingPeriod:
+      type: object
+      required: [start, endExclusive, timezone, label]
+      properties:
+        start: { type: string, format: date-time }
+        endExclusive: { type: string, format: date-time }
+        timezone: { type: string, const: UTC }
+        label: { type: string }
+    AccountingMetadata:
+      type: object
+      required: [generationId, costBasis, status, dataAsOf, directoryDataAsOf, stale, coverage, qualifications, limitObservation]
+      properties:
+        generationId: { type: string }
+        costBasis:
+          type: string
+          enum: [allocation_eligible_committed]
+        status:
+          type: string
+          enum: [complete, stale, partial, empty]
+        dataAsOf: { type: [string, "null"], format: date-time }
+        directoryDataAsOf: { type: [string, "null"], format: date-time }
+        stale: { type: boolean }
+        coverage:
+          type: object
+          required: [ratio, requestedDays, missingDays, failedWorkspaceDays]
+          properties:
+            ratio: { type: number, minimum: 0, maximum: 1 }
+            requestedDays: { type: integer, minimum: 0 }
+            missingDays:
+              type: array
+              items: { type: string }
+            failedWorkspaceDays:
+              type: array
+              items: { type: string }
+        qualifications:
+          type: array
+          items: { type: string }
+        limitObservation:
+          type: object
+          required: [status, observedAt, lastSuccessfulAt, lastAttemptAt, refreshStartedAt, generation, error]
+          properties:
+            status:
+              type: string
+              enum: [complete, failed, unavailable, refreshing]
+            observedAt: { type: [integer, "null"] }
+            lastSuccessfulAt:
+              type: [integer, "null"]
+              description: Time of the last authoritative complete observation, retained through later failures.
+            lastAttemptAt: { type: [integer, "null"] }
+            refreshStartedAt: { type: [integer, "null"] }
+            generation:
+              type: [string, "null"]
+              description: Durable identity of the last successful set of limit values.
+            error: { type: [string, "null"] }
+    ReportingDetailHeadline:
+      type: object
+      required: [familyKey, familyName, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, memberCount, membersSpendUsd, unattributedSpendUsd, isComplete]
+      properties:
+        familyKey: { type: ["string", "null"] }
+        familyName: { type: string }
+        usageObserved:
+          type: boolean
+          description: >
+            For team reports, false when no mapped workspace has valid usage
+            facts in the selected range. Numeric zeroes are then unknown
+            accumulators rather than confirmed zero spend.
+        spendUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        allocationUsd:
+          type: [number, "null"]
+          description: Canonical allocation for a single group; null when a family has no single confidentially-safe denominator.
+        remainingUsd:
+          type: [number, "null"]
+          description: Null when selected-range accounting is incomplete or no safe allocation is available.
+        percentUsed: { type: [number, "null"] }
+        memberCount: { type: integer, minimum: 0 }
+        membersSpendUsd: { type: number }
+        unattributedSpendUsd:
+          type: number
+          description: Authorized group spend not represented by the current visible member rows.
+        isComplete: { type: boolean }
+    ReportingDetailGroup:
+      type: object
+      required: [groupId, workspaceId, workspaceName, name, familyKey, familyName, role, isLegacy, memberCount, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, sharedPool]
+      properties:
+        groupId: { type: string }
+        workspaceId: { type: string }
+        workspaceName: { type: ["string", "null"] }
+        name: { type: string }
+        familyKey: { type: string }
+        familyName: { type: string }
+        role:
+          $ref: "#/components/schemas/DirectoryRole"
+        isLegacy: { type: boolean }
+        memberCount: { type: integer, minimum: 0 }
+        spendUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        allocationUsd: { type: [number, "null"] }
+        remainingUsd: { type: [number, "null"] }
+        percentUsed: { type: [number, "null"] }
+        sharedPool: { type: boolean }
+    ReportingDetailMember:
+      type: object
+      required: [workspaceId, userId, username, email, name, role, isDisabled, isInternal, groupIds, spendUsd, agentSpendUsd, otherServicesUsd, currentCycleAgentSpendUsd, limitUsd, remainingUsd, percentUsed, limitState, limitObservationStatus]
+      properties:
+        workspaceId: { type: string }
+        userId: { type: string }
+        username: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        name: { type: ["string", "null"] }
+        role: { type: ["string", "null"] }
+        isDisabled: { type: ["boolean", "null"] }
+        isInternal: { type: boolean }
+        groupIds:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+        spendUsd:
+          type: number
+          description: Selected-range spend attributed to the requested groups.
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        currentCycleAgentSpendUsd:
+          type: [number, "null"]
+          description: Complete current-cycle workspace/user Agent usage; null for incomplete coverage or unknown metric classification.
+        limitUsd:
+          type: [number, "null"]
+          description: Effective persisted workspace/user Agent limit.
+        remainingUsd:
+          type: [number, "null"]
+          description: Workspace/user limit minus current-cycle Agent usage; never selected-range or group-attributed spend.
+        percentUsed: { type: [number, "null"] }
+        limitState:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
+        limitObservationStatus:
+          type: string
+          enum: [complete, failed, unavailable, refreshing]
+    ReportingDetail:
+      type: object
+      required: [kind, headline, groups, sourceGroups, members, period, metadata]
+      properties:
+        kind:
+          type: string
+          enum: [group, family, team]
+        id:
+          type: string
+          description: Canonical qualified pool ID; present when kind is team.
+        name:
+          type: string
+          description: Canonical pool name; present when kind is team.
+        headline:
+          $ref: "#/components/schemas/ReportingDetailHeadline"
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDetailGroup"
+        sourceGroups:
+          type: array
+          description: Deduplicated authorized physical role groups represented by the canonical group rows; contains no financial fields.
+          items:
+            type: object
+            required: [groupId, workspaceId, workspaceName, role]
+            properties:
+              groupId: { type: string }
+              workspaceId: { type: string }
+              workspaceName: { type: ["string", "null"] }
+              role:
+                $ref: "#/components/schemas/DirectoryRole"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDetailMember"
+        period:
+          $ref: "#/components/schemas/ReportingPeriod"
+        metadata:
+          $ref: "#/components/schemas/AccountingMetadata"
+    DashboardScope:
+      type: object
+      required: [viewScope, label, workspaceIds, groupIds, isPersonal]
+      properties:
+        viewScope:
+          type: string
+          enum: [managed, my, all_authorized]
+        label: { type: string }
+        workspaceIds:
+          type: array
+          items: { type: string }
+        groupIds:
+          type: array
+          items: { type: string }
+        isPersonal: { type: boolean }
+    DashboardCard:
+      type: object
+      required: [key, label, value, unit, qualification]
+      properties:
+        key:
+          type: string
+          enum: [eligible_spend, allocated_budget, allocation_remaining, pools_attention, spend, agent_spend, other_services, members_with_spend, your_agent_spend, monthly_agent_limit, agent_limit_remaining]
+        label: { type: string }
+        value: { type: [number, "null"] }
+        unit:
+          type: string
+          enum: [usd, count]
+        qualification: { type: [string, "null"] }
+    DashboardTrendBucket:
+      type: object
+      required: [start, endExclusive, spendUsd, valueUsd, isPartial, isMissing]
+      properties:
+        start: { type: string, format: date-time }
+        endExclusive: { type: string, format: date-time }
+        spendUsd: { type: [number, "null"] }
+        valueUsd: { type: [number, "null"] }
+        isPartial: { type: boolean }
+        isMissing: { type: boolean }
+    DashboardBreakdownItem:
+      type: object
+      required: [id, label, spendUsd, kind, drillThrough]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        spendUsd: { type: number }
+        kind:
+          type: string
+          enum: [workspace, group, other, unattributed, reconciliation]
+        drillThrough: { type: [string, "null"] }
+    DashboardAccounting:
+      type: object
+      required: [eligibleSpendUsd, grossSpendUsd, internalExcludedUsd, unbudgetedUsd, unattributedUsd, reconciliationUsd, agentSpendUsd, otherServicesUsd]
+      properties:
+        eligibleSpendUsd: { type: number }
+        grossSpendUsd: { type: number }
+        internalExcludedUsd: { type: number }
+        unbudgetedUsd: { type: number }
+        unattributedUsd: { type: number }
+        reconciliationUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+    DashboardPersonalLimit:
+      type: object
+      required: [workspaceId, workspaceName, amount, state, currentCycleAgentSpendUsd, currentCycleRemainingUsd, currentCyclePercentUsed]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: ["string", "null"] }
+        amount: { type: ["number", "null"] }
+        state:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
+        currentCycleAgentSpendUsd: { type: ["number", "null"] }
+        currentCycleRemainingUsd: { type: ["number", "null"] }
+        currentCyclePercentUsed: { type: ["number", "null"] }
+    DashboardPersonalWorkspaceSpend:
+      type: object
+      required: [workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, usageObserved, coverage, observedDays, requestedDays, activeProjectCount, publishedProjectCount, projectCountCoverage]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: ["string", "null"] }
+        spendUsd: { type: ["number", "null"] }
+        agentSpendUsd: { type: ["number", "null"] }
+        otherServicesUsd: { type: ["number", "null"] }
+        usageObserved: { type: boolean }
+        coverage:
+          type: string
+          enum: [complete, partial, missing]
+        observedDays: { type: integer, minimum: 0 }
+        requestedDays: { type: integer, minimum: 0 }
+        activeProjectCount:
+          type: [integer, "null"]
+          minimum: 0
+          description: Distinct projects with selected-period spend authoritatively attributed to the signed-in creator. Null only when usage or creator metadata is incomplete; deployment metadata does not gate this count.
+        publishedProjectCount:
+          type: [integer, "null"]
+          minimum: 0
+          description: Active projects in activeProjectCount that currently have a deployment according to the Enterprise projects hasDeployment filter. This is current state, not historical state for the selected period.
+        projectCountCoverage:
+          type: string
+          enum: [complete, partial, missing]
+          description: Qualification for the added current-published count. Active-project count may remain known while this is partial because deployment metadata is still refreshing.
+    PersonalProjectCatalog:
+      type: object
+      required: [projectCount, publishedProjectCount, publicationKnownProjectCount, publicationUnknownProjectCount, coverage, dataAsOf]
+      properties:
+        projectCount:
+          type: integer
+          minimum: 0
+          description: Current cached catalog projects owned by the signed-in user in their active authorized workspaces, deduplicated by project ID.
+        publishedProjectCount:
+          type: integer
+          minimum: 0
+          description: Catalog projects currently known to have a deployment. Consult coverage and publicationUnknownProjectCount before treating this as a complete total.
+        publicationKnownProjectCount: { type: integer, minimum: 0 }
+        publicationUnknownProjectCount: { type: integer, minimum: 0 }
+        coverage:
+          type: string
+          enum: [complete, partial, missing]
+        dataAsOf:
+          type: [string, "null"]
+          format: date-time
+    DashboardProjectionPoint:
+      type: object
+      required: [date, actualCumulativeUsd, projectedCumulativeUsd, sevenDayScenarioUsd, twentyEightDayScenarioUsd]
+      properties:
+        date: { type: string, format: date }
+        actualCumulativeUsd: { type: [number, "null"] }
+        projectedCumulativeUsd: { type: [number, "null"] }
+        sevenDayScenarioUsd: { type: [number, "null"] }
+        twentyEightDayScenarioUsd: { type: [number, "null"] }
+    DashboardProjection:
+      type: object
+      required: [actualPeriod, target, dataThrough, rate, baseline, budget, projectedTotalUsd, projectedRemainingUsd, projectedOverageUsd, projectedUsePercent, status, stale, reasons, methodology, trajectory]
+      properties:
+        actualPeriod:
+          type: object
+          required: [start, endExclusive]
+          properties:
+            start: { type: string, format: date-time }
+            endExclusive: { type: string, format: date-time }
+        target:
+          type: object
+          required: [kind, start, endExclusive, verified]
+          properties:
+            kind:
+              type: string
+              enum: [month_end, year_end, term_end, cycle_end, planning_end]
+            start: { type: string, format: date-time }
+            endExclusive: { type: [string, "null"], format: date-time }
+            verified: { type: boolean }
+        dataThrough:
+          type: [string, "null"]
+          format: date
+          description: Last UTC day with a known selected-period fact, including a partial fact or a recorded current day. The rate independently excludes today.
+        rate:
+          type: object
+          required: [dailySpendUsd, windowStart, windowEndExclusive, completeDays, sevenDayDailySpendUsd, twentyEightDayDailySpendUsd]
+          properties:
+            dailySpendUsd: { type: [number, "null"] }
+            windowStart: { type: [string, "null"], format: date-time }
+            windowEndExclusive: { type: [string, "null"], format: date-time }
+            completeDays: { type: integer, minimum: 0, maximum: 28 }
+            sevenDayDailySpendUsd: { type: [number, "null"] }
+            twentyEightDayDailySpendUsd: { type: [number, "null"] }
+        baseline:
+          type: object
+          required: [spendUsd, complete]
+          properties:
+            spendUsd: { type: [number, "null"] }
+            complete: { type: boolean }
+        budget:
+          type: [object, "null"]
+          required: [amountUsd, kind, label]
+          properties:
+            amountUsd: { type: number }
+            kind:
+              type: string
+              enum: [canonical_allocation, personal_agent_limit]
+            label: { type: string }
+        projectedTotalUsd:
+          type: [number, "null"]
+          description: Selected-period known cumulative spend plus future pace, available only when the entire past baseline is complete.
+        projectedKnownTotalUsd:
+          type: [number, "null"]
+          description: Known selected-period spend plus future pace when incomplete baseline coverage is the only blocker. Missing past days are not estimated; budget comparisons remain unavailable.
+        projectedRemainingUsd: { type: [number, "null"] }
+        projectedOverageUsd: { type: [number, "null"] }
+        projectedUsePercent: { type: [number, "null"] }
+        status:
+          type: string
+          enum: [within, near, over, unavailable]
+        stale: { type: boolean }
+        reasons:
+          type: array
+          items:
+            type: string
+            enum: [historical_reporting_period, invalid_planning_end, unverified_cycle_end, insufficient_rate_history, incomplete_baseline]
+        methodology: { type: string }
+        trajectory:
+          type: array
+          maxItems: 400
+          items:
+            $ref: "#/components/schemas/DashboardProjectionPoint"
+    DashboardResponse:
+      type: object
+      required: [scope, period, cardVariant, cards, trend, breakdown, accounting, metadata, projection]
+      properties:
+        scope:
+          $ref: "#/components/schemas/DashboardScope"
+        period:
+          $ref: "#/components/schemas/ReportingPeriod"
+        cardVariant:
+          type: string
+          enum: [budget_health, usage_analysis, personal_limit, personal_usage]
+        cards:
+          type: array
+          minItems: 3
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/DashboardCard"
+        trend:
+          type: object
+          required: [granularity, mode, buckets]
+          properties:
+            granularity:
+              type: string
+              enum: [day, week, month]
+            mode:
+              type: string
+              enum: [period, cumulative]
+            buckets:
+              type: array
+              maxItems: 62
+              items:
+                $ref: "#/components/schemas/DashboardTrendBucket"
+        breakdown:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/DashboardBreakdownItem"
+        accounting:
+          $ref: "#/components/schemas/DashboardAccounting"
+        personalLimits:
+          type: array
+          description: Self-only active-workspace Agent limits and current-cycle usage. Present only when scope.isPersonal is true.
+          items:
+            $ref: "#/components/schemas/DashboardPersonalLimit"
+        personalSpendByWorkspace:
+          type: array
+          description: Selected-range self-only actual usage by active workspace. Unknown workspaces use null spend rather than a synthetic zero. Present only when scope.isPersonal is true.
+          items:
+            $ref: "#/components/schemas/DashboardPersonalWorkspaceSpend"
+        personalProjectCatalog:
+          description: Current self-owned project catalog summary. Present only for personal scope; independent of selected-period active-project analytics.
+          $ref: "#/components/schemas/PersonalProjectCatalog"
+        metadata:
+          $ref: "#/components/schemas/AccountingMetadata"
+        projection:
+          $ref: "#/components/schemas/DashboardProjection"
+        insights:
+          $ref: "#/components/schemas/DashboardInsights"
+    DashboardInsightCategory:
+      type: object
+      required: [key, label, spendUsd, activeUsers]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        spendUsd: { type: [number, "null"] }
+        activeUsers: { type: [number, "null"] }
+    DashboardInsightMonth:
+      type: object
+      required: [start, endExclusive, spendUsd, agentSpendUsd, otherSpendUsd, activeUsers, isPartial, isMissing]
+      properties:
+        start: { type: string, format: date-time }
+        endExclusive: { type: string, format: date-time }
+        spendUsd: { type: [number, "null"] }
+        agentSpendUsd: { type: [number, "null"] }
+        otherSpendUsd: { type: [number, "null"] }
+        activeUsers: { type: [number, "null"] }
+        isPartial: { type: boolean }
+        isMissing: { type: boolean }
+    DashboardInsightSpender:
+      type: object
+      required: [id, name, spendUsd]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        spendUsd: { type: [number, "null"] }
+    DashboardInsights:
+      type: object
+      required: [activeUsers, avgSpendPerActiveUserUsd, activeDays, busiestDay, previousPeriodSpendUsd, changePercent, categories, monthly, topSpenders, projectCount]
+      properties:
+        activeUsers: { type: [number, "null"] }
+        avgSpendPerActiveUserUsd: { type: [number, "null"] }
+        activeDays: { type: [number, "null"] }
+        busiestDay:
+          type: [object, "null"]
+          required: [date, spendUsd]
+          properties:
+            date: { type: string, format: date }
+            spendUsd: { type: number }
+        previousPeriodSpendUsd: { type: [number, "null"] }
+        changePercent: { type: [number, "null"] }
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardInsightCategory"
+        monthly:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/DashboardInsightMonth"
+        topSpenders:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/DashboardInsightSpender"
+        projectCount: { type: [number, "null"] }
+    SpendTableRow:
+      type: object
+      required: [id, kind, name, workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, status, memberCount, ownerName, limitState, limitObservationStatus, sharedPool]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [pool, group, person, project, unattributed, reconciliation]
+        name: { type: string }
+        workspaceId: { type: [string, "null"] }
+        workspaceName: { type: [string, "null"] }
+        usageObserved:
+          type: boolean
+          description: False when this row has no valid workspace usage observation in the selected range. Numeric usage accumulators then represent no known facts, not confirmed zero; display them as unknown.
+        isPublished:
+          type: [boolean, "null"]
+          description: Current cached deployment state for personal catalog project rows. Null means publication state has not been observed.
+        spendUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        allocationUsd: { type: [number, "null"] }
+        remainingUsd: { type: [number, "null"] }
+        percentUsed: { type: [number, "null"] }
+        currentCycleAgentSpendUsd:
+          type: [number, "null"]
+          description: Agent spend in the current billing cycle; populated for People independently of the selected reporting range.
+        currentCycleRemainingUsd:
+          type: [number, "null"]
+          description: Current monthly limit minus current-cycle Agent spend; never selected-range spend.
+        currentCyclePercentUsed:
+          type: [number, "null"]
+          description: Current-cycle Agent spend as a percentage of the current monthly limit.
+        status: { type: string }
+        memberCount: { type: [integer, "null"] }
+        ownerName: { type: [string, "null"] }
+        limitState:
+          type: string
+          enum: [not_applicable, explicit, inherited, no_limit, unavailable]
+        limitObservationStatus:
+          type: string
+          enum: [not_applicable, complete, failed, unavailable, refreshing]
+          description: Current durable observation state; last successful values may remain visible during refresh or after failure.
+        sharedPool: { type: boolean }
+        sourceGroupIds:
+          type: array
+          uniqueItems: true
+          description: >
+            Complete scope-filtered physical group IDs contributing to a
+            canonical team pool. Present only for team-pool rows.
+          items: { type: string }
+    SpendTableResponse:
+      type: object
+      required: [view, scope, period, rows, page, pageSize, totalRows, filteredRows, totals, facets, metadata]
+      properties:
+        view:
+          type: string
+          enum: [pools, groups, people, projects]
+        scope:
+          $ref: "#/components/schemas/DashboardScope"
+        period:
+          $ref: "#/components/schemas/ReportingPeriod"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpendTableRow"
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        totalRows: { type: integer, minimum: 0 }
+        filteredRows: { type: integer, minimum: 0 }
+        totals:
+          type: object
+          required: [spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, internalExcludedUsd, unbudgetedUsd, unattributedUsd, reconciliationUsd]
+          properties:
+            spendUsd: { type: number }
+            agentSpendUsd: { type: number }
+            otherServicesUsd: { type: number }
+            allocationUsd: { type: number }
+            internalExcludedUsd: { type: number }
+            unbudgetedUsd: { type: number }
+            unattributedUsd: { type: number }
+            reconciliationUsd: { type: number }
+        facets:
+          type: object
+          required: [statuses, workspaces]
+          properties:
+            statuses:
+              type: object
+              additionalProperties: { type: integer, minimum: 0 }
+            workspaces:
+              type: array
+              items:
+                type: object
+                required: [id, name, count]
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  count: { type: integer, minimum: 0 }
+        metadata:
+          $ref: "#/components/schemas/AccountingMetadata"
+        personalProjectCatalog:
+          description: Current self-owned catalog summary. Present only for the personal Projects view.
+          $ref: "#/components/schemas/PersonalProjectCatalog"
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    AccountUsageObservationExport:
+      type: object
+      required:
+        - billingPeriodStart
+        - totalCostUsd
+        - upstreamInterval
+        - fetchedAt
+        - sourceStatus
+      properties:
+        billingPeriodStart:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        totalCostUsd:
+          type: [number, 'null']
+        upstreamInterval:
+          type: object
+          required: [startTime, endTime]
+          properties:
+            startTime:
+              type: string
+            endTime:
+              type: string
+        fetchedAt:
+          type: string
+        sourceStatus:
+          type: string
+          enum: [complete, failed]
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    AuthUser:
+      type: object
+      required: [id, email, firstName, lastName, profileImageUrl]
+      properties:
+        id:
+          type: string
+        email:
+          type: [string, 'null']
+        firstName:
+          type: [string, 'null']
+        lastName:
+          type: [string, 'null']
+        profileImageUrl:
+          type: [string, 'null']
+    AuthAuthorization:
+      type: object
+      description: >
+        Resolved roles and the union of their server-derived scopes.
+      required: [role, roles, workspaceIds, teamNames, groupIds, userIds, isPreview, authorizationRevision]
+      properties:
+        role:
+          type: string
+          enum: [account, workspace_admin, team_admin, member]
+          description: Highest role held by the effective identity.
+        roles:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [account, workspace_admin, team_admin, member]
+        workspaceIds:
+          type: array
+          items:
+            type: string
+        teamNames:
+          type: array
+          items:
+            type: string
+        groupIds:
+          type: array
+          items:
+            type: string
+        userIds:
+          type: array
+          items:
+            type: string
+        isPreview:
+          type: boolean
+        authorizationRevision:
+          type: string
+          description: >
+            Opaque deterministic revision of the complete effective
+            server-derived authorization. Clients may compare it for equality
+            but must not interpret its contents.
+        viewScope:
+          type: string
+          enum: [managed, my, all_authorized]
+          description: Server-selected default presentation scope.
+        previewReadOnly:
+          type: boolean
+          description: True when mutations must be rejected for the effective preview.
+    AuthUserEnvelope:
+      type: object
+      required: [user, auth, capabilities]
+      properties:
+        user:
+          oneOf:
+            - $ref: '#/components/schemas/AuthUser'
+            - type: 'null'
+        auth:
+          description: >
+            Resolved authorization, or null when the user is unauthenticated or
+            is not an active Enterprise directory member (access denied).
+          oneOf:
+            - $ref: '#/components/schemas/AuthAuthorization'
+            - type: 'null'
+        capabilities:
+          $ref: '#/components/schemas/AuthCapabilities'
+    AuthCapabilities:
+      type: object
+      required: [canManageAccess, canEditAllocations, canPreviewRoles, canWriteGroupLimits, canWriteUserLimitsIn]
+      properties:
+        canManageAccess:
+          type: boolean
+        canViewAccountUsage:
+          type: boolean
+        canEditAllocations:
+          type: boolean
+        canManageNotifications:
+          type: boolean
+        canManageSystem:
+          type: boolean
+        canPreviewRoles:
+          type: boolean
+          description: Server-derived designated-operator capability for entering role-scoped previews.
+        canWriteGroupLimits:
+          type: boolean
+        canWriteUserLimitsIn:
+          type: array
+          description: Workspace IDs in which the caller may write a user limit.
+          items:
+            type: string
+        canRunChecks:
+          type: boolean
+        canSendTestEmail:
+          type: boolean
+    MobileTokenExchangeRequest:
+      type: object
+      required: [code, code_verifier, redirect_uri, state]
+      properties:
+        code:
+          type: string
+          minLength: 1
+        code_verifier:
+          type: string
+          minLength: 1
+        redirect_uri:
+          type: string
+          minLength: 1
+        state:
+          type: string
+          minLength: 1
+        nonce:
+          type: string
+          minLength: 1
+    MobileTokenExchangeSuccess:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+    LogoutSuccess:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          const: true
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+    SpendPoint:
+      type: object
+      required: [date, spendUsd]
+      properties:
+        date:
+          type: string
+          description: UTC day of the snapshot (YYYY-MM-DD)
+        spendUsd:
+          type: number
+    Group:
+      type: object
+      required: [groupId, workspaceId, workspaceName, name, familyKey, familyName, role, isLegacy, teamName, type, spendLoaded, spendUsd, paceSpendLoaded, paceSpendUsd, projectSpendUsd, rollupSpendLoaded, rollupSpendUsd, rollupMemberCount, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentPercentUsed, agentRemainingUsd, agentBlocked, thresholdsFired, history]
+      properties:
+        groupId:
+          type: string
+        workspaceId:
+          type: string
+        workspaceName:
+          type: ["string", "null"]
+        name:
+          type: string
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        role:
+          $ref: "#/components/schemas/DirectoryRole"
+        isLegacy:
+          type: boolean
+        teamName:
+          type: ["string", "null"]
+          description: Team this group belongs to, null if unassigned
+        isLegacyDisplayOnly:
+          type: boolean
+          description: True when a legacy-workspace same-name group inherits team display membership but is never a group-limit target.
+        type:
+          type: string
+          description: Group type (custom, admin, member, guest)
+        isSynthetic:
+          type: boolean
+          description: True for a generated accounting row rather than a real Enterprise group
+        syntheticKind:
+          type: string
+          enum: [no_group]
+          description: Kind of generated accounting row; present only when isSynthetic is true
+        memberCount:
+          type: ["integer", "null"]
+          description: Number of members in the group, null while loading
+        rollupMemberCount:
+          type: integer
+          description: Unique members attributed to this group for team and org rollups
+        spendUsd:
+          type: number
+          description: Eligible per-group spend after internal Replit user exclusions
+        spendLoaded:
+          type: boolean
+        paceSpendUsd:
+          type: number
+          description: Member-deduplicated spend within the discovered pace period, excluding earlier reporting-cutoff spend
+        paceSpendLoaded:
+          type: boolean
+        projectSpendUsd:
+          type: number
+          description: Deduplicated project spend attributed to this group
+        rollupSpendUsd:
+          type: number
+          description: Member-deduplicated spend attributed to this group for team and org rollups
+        rollupSpendLoaded:
+          type: boolean
+        spendUpdatedAt:
+          type: ["string", "null"]
+          description: ISO timestamp when spend was last fetched
+        budgetUsd:
+          type: ["number", "null"]
+          description: Effective budget in USD (from app-level group budget if set), null if not set
+        budgetSource:
+          type: ["string", "null"]
+          description: Where the effective budget comes from ("app"), null if no budget set
+        remainingUsd:
+          type: ["number", "null"]
+          description: budget - spend, null if no budget or spend not loaded
+        percentUsed:
+          type: ["number", "null"]
+          description: spend / budget * 100, null if no budget or spend not loaded
+        monthlyAgentLimitUsd:
+          type: ["number", "null"]
+          description: Current upstream Replit Agent group limit.
+        cycleAgentSpendUsd:
+          type: ["number", "null"]
+          description: Agent spend in the current Replit billing cycle, null when cycle coverage is incomplete.
+        agentPercentUsed:
+          type: ["number", "null"]
+        agentRemainingUsd:
+          type: ["number", "null"]
+        agentBlocked:
+          type: ["boolean", "null"]
+          description: Whether the applied Agent limit is reached, null when cycle coverage is incomplete.
+        thresholdsFired:
+          type: array
+          description: Thresholds (50, 75, 90, 100) already alerted this billing period
+          items:
+            type: integer
+        history:
+          type: array
+          description: Daily spend snapshots for the current billing period, oldest first
+          items:
+            $ref: "#/components/schemas/SpendPoint"
+        projectedSpendUsd:
+          type: ["number", "null"]
+          description: Linear projection of end-of-period spend, null while loading or too early in the period
+    GroupsResponse:
+      type: object
+      required: [groups, hierarchy, grossSpendUsd, excludedInternalSpendUsd, eligibleSpendUsd, usageHealth, billingPeriodLabel, unattributedProjectSpendUsd, teamRawSpend, workspaceTeamRawSpend, teamBudgets]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/Group"
+        hierarchy:
+          type: array
+          description: Server-owned ordered workspace, team, and canonical family hierarchy.
+          items:
+            $ref: "#/components/schemas/GroupWorkspaceHierarchy"
+        grossSpendUsd:
+          type: number
+          description: Gross scoped spend before internal Replit user exclusions
+        excludedInternalSpendUsd:
+          type: number
+          description: Internal Replit user spend excluded from scoped accounting
+        eligibleSpendUsd:
+          type: number
+          description: Eligible scoped spend after internal exclusions
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
+        billingPeriodLabel:
+          type: string
+          description: Human label of the selected range, e.g. "Jul 2026" or "Year to date"
+        unattributedProjectSpendUsd:
+          type: number
+          description: True project attribution residual from rows without project IDs, missing creators, or creators who are no longer current members
+        teamRawSpend:
+          type: object
+          additionalProperties:
+            type: object
+            required: [spendUsd]
+            properties:
+              spendUsd:
+                type: number
+                description: Member-deduped rollup spend for this team (sum of rollup.byGroup across all groups in the team)
+          description: Per-team member-deduped rollup spend, with each member counted once across groups
+        workspaceTeamRawSpend:
+          type: array
+          description: Workspace-qualified team spend for rendering workspace/team sections without merging same-named teams across workspaces.
+          items:
+            $ref: "#/components/schemas/WorkspaceTeamSpend"
+        teamBudgets:
+          type: object
+          additionalProperties:
+            type: number
+          description: Effective visible team budgets, including budget-only teams for account-wide callers.
+    WorkspaceTeamSpend:
+      type: object
+      required: [workspaceId, teamName, spendUsd]
+      properties:
+        workspaceId:
+          type: string
+        teamName:
+          type: string
+        spendUsd:
+          type: number
+          description: Member-deduped rollup spend attributed to this team within this workspace.
+    GroupFamilyHierarchy:
+      type: object
+      required: [familyKey, familyName, isLegacy, memberCount, spendUsd, spendLoaded, groups]
+      properties:
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        isLegacy:
+          type: boolean
+        memberCount:
+          type: integer
+        spendUsd:
+          type: number
+        spendLoaded:
+          type: boolean
+        groups:
+          type: array
+          description: Canonical role groups in server-defined role order.
+          items:
+            $ref: "#/components/schemas/Group"
+    GroupTeamHierarchy:
+      type: object
+      required: [teamName, families]
+      properties:
+        teamName:
+          type: ["string", "null"]
+        families:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupFamilyHierarchy"
+    GroupWorkspaceHierarchy:
+      type: object
+      required: [workspaceId, workspaceName, teams]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: ["string", "null"]
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupTeamHierarchy"
+    ClusterHeadline:
+      type: object
+      required: [familyName, roles, spendUsd, usageHealth]
+      properties:
+        familyName:
+          type: string
+          description: Canonical family presentation name for the requested cluster.
+        roles:
+          type: array
+          description: Canonical roles present in the cluster, in server-defined role order.
+          items:
+            $ref: "#/components/schemas/DirectoryRole"
+        spendUsd:
+          type: number
+          description: Canonical member-deduped cluster spend
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
+    GroupMember:
+      type: object
+      required: [userId, isInternal, spendUsd, aiSpendUsd, nonAiSpendUsd, limitState, limitObservationStatus]
+      properties:
+        userId:
+          type: string
+        username:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        name:
+          type: ["string", "null"]
+          description: Full name if available
+        role:
+          type: ["string", "null"]
+          description: Workspace role (admin, member, viewer, guest)
+        isDisabled:
+          type: ["boolean", "null"]
+          description: Whether the member's workspace access is disabled
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user whose spend is excluded
+        allocatedBudgetUsd:
+          type: ["number", "null"]
+          description: Effective persisted Agent limit for this member in the displayed workspace.
+        budgetSource:
+          type: ["string", "null"]
+          enum: [workspace_user_limit, workspace_default_user_limit, null]
+        limitState:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
+        limitObservationStatus:
+          type: string
+          enum: [complete, failed, unavailable, refreshing]
+        spendUsd:
+          type: number
+          description: Eligible spend after internal Replit user exclusions
+        aiSpendUsd:
+          type: number
+          description: Deduplicated member-grouped AI spend for this user in the group
+        nonAiSpendUsd:
+          type: number
+          description: Non-AI project spend attributed to projects this current member created
+        remainingUsd:
+          type: ["number", "null"]
+        percentUsed:
+          type: ["number", "null"]
+    ProjectMetric:
+      type: object
+      required: [id, name, category, costUsd]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+          description: "Metric category: ai, hosting, storage, or other"
+        costUsd:
+          type: number
+    GroupProject:
+      type: object
+      required: [projectId, title, totalCostUsd, aiSpendUsd, nonAiSpendUsd, creatorId, creatorName, creatorIsCurrentMember, metrics, workspaceId, workspaceName]
+      properties:
+        projectId:
+          type: string
+        title:
+          type: ["string", "null"]
+          description: Project title, or null if untitled
+        totalCostUsd:
+          type: number
+        aiSpendUsd:
+          type: number
+          description: AI-category metrics included in this project's total
+        nonAiSpendUsd:
+          type: number
+          description: Authoritative project total minus AI-category metrics
+        creatorId:
+          type: ["string", "null"]
+        creatorName:
+          type: ["string", "null"]
+        creatorIsCurrentMember:
+          type: boolean
+          description: Whether this project's non-AI cost can be attributed to its creator
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMetric"
+        workspaceId:
+          type: ["string", "null"]
+          description: Workspace the project belongs to, null when unknown
+        workspaceName:
+          type: ["string", "null"]
+          description: Human-readable workspace name, null when unknown
+    GroupProjectsResponse:
+      type: object
+      required: [projects, unattributedSpendUsd, usageHealth, titlesComplete]
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupProject"
+        unattributedSpendUsd:
+          type: number
+          description: Group spend not attributable to any returned project row
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
+        titlesComplete:
+          type: boolean
+          description: True once project metadata has loaded for every workspace represented by the response
+    GroupDetail:
+      type: object
+      required: [group, members, usageHealth, rangeLabel, membersSpendUsd, unattributedSpendUsd]
+      properties:
+        group:
+          $ref: "#/components/schemas/Group"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupMember"
+        membersSpendUsd:
+          type: number
+          description: Sum of canonical per-user rows currently listed; informational and not a group budget accounting total
+        unattributedSpendUsd:
+          type: number
+          description: True residual from rows without a project ID, missing creators, and creators who are no longer current group members
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
+        rangeLabel:
+          type: string
+    UserActivityEntry:
+      type: object
+      required: [userId, username, email, isInternal, teamName, groupName, spendUsd, aiSpendUsd, nonAiSpendUsd, workspaceRole]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user whose spend is excluded
+        teamName:
+          type: string
+        groupName:
+          type: string
+        spendUsd:
+          type: number
+          description: Eligible spend after internal Replit user exclusions
+        aiSpendUsd:
+          type: number
+          description: Deduplicated member-grouped AI spend
+        nonAiSpendUsd:
+          type: number
+          description: Non-AI spend from deduplicated projects created by this current member
+        workspaceRole:
+          type: string
+    UserActivityResponse:
+      type: object
+      required: [usageHealth, grossSpendUsd, excludedInternalSpendUsd, eligibleSpendUsd, users]
+      properties:
+        usageHealth:
+          $ref: "#/components/schemas/UsageHealth"
+        grossSpendUsd:
+          type: number
+        excludedInternalSpendUsd:
+          type: number
+        eligibleSpendUsd:
+          type: number
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserActivityEntry"
+    UsageCoverageWorkspaceDay:
+      type: object
+      required: [workspaceId, usageDate]
+      properties:
+        workspaceId:
+          type: string
+        usageDate:
+          type: string
+          format: date
+    UsageCoverage:
+      type: object
+      required:
+        [
+          requestedDays,
+          requestedWorkspaceDays,
+          presentWorkspaceDays,
+          failedWorkspaceDays,
+          missingWorkspaceDays,
+          presentAccountDays,
+          missingAccountDays,
+          ratio,
+        ]
+      properties:
+        requestedDays:
+          type: integer
+        requestedWorkspaceDays:
+          type: integer
+        presentWorkspaceDays:
+          type: integer
+        failedWorkspaceDays:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageCoverageWorkspaceDay"
+        missingWorkspaceDays:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageCoverageWorkspaceDay"
+        presentAccountDays:
+          type: integer
+        missingAccountDays:
+          type: array
+          items:
+            type: string
+            format: date
+        ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+    UsageHealth:
+      type: object
+      required: [status, dataAsOf, coverage, accountWorkspaceUnreconciledUsd]
+      properties:
+        status:
+          type: string
+          enum: [complete, stale, partial, empty]
+        dataAsOf:
+          type: ["string", "null"]
+          format: date-time
+        coverage:
+          $ref: "#/components/schemas/UsageCoverage"
+        accountWorkspaceUnreconciledUsd:
+          type: number
+          description: Account daily total minus workspace daily totals for account-wide callers; zero for workspace-scoped callers to prevent account-total disclosure.
+    GroupBudget:
+      type: object
+      required: [groupId, amountUsd, updatedAt]
+      properties:
+        groupId:
+          type: string
+        amountUsd:
+          type: number
+        updatedAt:
+          type: string
+    GroupBudgetInput:
+      type: object
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+    VisibleWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, memberCount]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        memberCount:
+          type: integer
+          minimum: 0
+    BudgetConnectorState:
+      type: object
+      required: [status, canWrite, error]
+      properties:
+        status:
+          type: string
+          enum: [available, unavailable, error]
+        canWrite:
+          type: boolean
+          description: True when the configured Replit budgets credential grants write:budgets.
+        error:
+          type: [string, "null"]
+    WorkspaceMemberBudget:
+      type: object
+      required: [userId, username, name, email, isInternal, role, isDisabled, budgetUsd, effectiveLimitUsd, limitState, usageUsd, remainingUsd, percentUsed, blocked, effectiveBaselineUsd, baselineSourceType, baselineSourceId, isHandSetOverride]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        name:
+          type: [string, "null"]
+        email:
+          type: string
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user
+        role:
+          type: string
+        isDisabled:
+          type: boolean
+        budgetUsd:
+          type: [number, "null"]
+          description: Explicit member Agent limit; null means no explicit member override.
+        effectiveLimitUsd:
+          type: [number, "null"]
+          description: Applicable explicit or inherited current monthly Agent limit.
+        limitState:
+          type: string
+          enum: [explicit, inherited, no_limit, unavailable]
+        usageUsd:
+          type: [number, "null"]
+          description: Agent usage in the current billing cycle.
+        remainingUsd:
+          type: [number, "null"]
+          description: Budget minus current-cycle Agent usage; may be negative and is null when unset.
+        percentUsed:
+          type: [number, "null"]
+        blocked:
+          type: boolean
+          description: Current-cycle Agent usage is at or above the effective member limit.
+        effectiveBaselineUsd:
+          type: [number, "null"]
+        baselineSourceType:
+          type: [string, "null"]
+          enum: [group, workspace_default, null]
+        baselineSourceId:
+          type: [string, "null"]
+        isHandSetOverride:
+          type: boolean
+    WorkspaceMembersResponse:
+      type: object
+      required: [workspaceId, workspaceName, billingPeriod, connector, limitObservation, directoryFreshness, members]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        billingPeriod:
+          type: string
+          enum: [current]
+        connector:
+          $ref: "#/components/schemas/BudgetConnectorState"
+        limitObservation:
+          type: object
+          required: [status, observedAt, lastSuccessfulAt, lastAttemptAt, refreshStartedAt, generation, error]
+          properties:
+            status:
+              type: string
+              enum: [complete, failed, unavailable, refreshing]
+            observedAt: { type: [integer, "null"] }
+            lastSuccessfulAt: { type: [integer, "null"] }
+            lastAttemptAt: { type: [integer, "null"] }
+            refreshStartedAt: { type: [integer, "null"] }
+            generation: { type: [string, "null"] }
+            error: { type: [string, "null"] }
+        directoryFreshness:
+          type: object
+          required: [dataAsOf, isStale, isRefreshing]
+          properties:
+            dataAsOf: { type: [string, "null"], format: date-time }
+            isStale: { type: boolean }
+            isRefreshing: { type: boolean }
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceMemberBudget"
+    WorkspaceMemberBudgetInput:
+      type: object
+      additionalProperties: false
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+    WorkspaceMemberBudgetMutation:
+      type: object
+      required: [workspaceId, userId, budgetUsd]
+      properties:
+        workspaceId:
+          type: string
+        userId:
+          type: string
+        budgetUsd:
+          type: [number, "null"]
+    WorkspaceMemberBulkBudgetInput:
+      type: object
+      additionalProperties: false
+      required: [userIds, amountUsd]
+      properties:
+        userIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+    WorkspaceMemberBulkBudgetOutcome:
+      type: object
+      required: [userId, success, budgetUsd, error]
+      properties:
+        userId:
+          type: string
+        success:
+          type: boolean
+        budgetUsd:
+          type: [number, "null"]
+        error:
+          type: [string, "null"]
+    WorkspaceMemberBulkBudgetResult:
+      type: object
+      required: [workspaceId, amountUsd, outcomes]
+      properties:
+        workspaceId:
+          type: string
+        amountUsd:
+          type: number
+        outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceMemberBulkBudgetOutcome"
+    MemberLimitPolicyInput:
+      type: object
+      additionalProperties: false
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: [number, "null"]
+          exclusiveMinimum: 0
+    MemberLimitPolicyOutcome:
+      type: object
+      required: [workspaceId, userId, desiredAmountUsd, sourceType, sourceId, previousAmountUsd, state, status, error]
+      properties:
+        workspaceId: { type: string }
+        userId: { type: string }
+        desiredAmountUsd: { type: [number, "null"] }
+        sourceType:
+          type: [string, "null"]
+          enum: [group, workspace_default, null]
+        sourceId: { type: [string, "null"] }
+        previousAmountUsd: { type: [number, "null"] }
+        state:
+          type: string
+          enum: [no_limit, policy_managed, hand_set_override]
+        status:
+          type: string
+          enum: [applied, cleared, unchanged, no_policy, override_preserved, failed]
+        error: { type: [string, "null"] }
+    MemberLimitPolicyMutationResult:
+      type: object
+      required: [workspaceId, sourceType, sourceId, amountUsd, outcomes]
+      properties:
+        workspaceId: { type: string }
+        sourceType:
+          type: string
+          enum: [group, workspace_default]
+        sourceId: { type: string }
+        amountUsd: { type: [number, "null"] }
+        outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberLimitPolicyOutcome"
+    GroupMemberLimitPolicy:
+      type: object
+      required: [groupId, groupName, amountUsd, isEnabled]
+      properties:
+        groupId: { type: string }
+        groupName: { type: string }
+        amountUsd: { type: [number, "null"] }
+        isEnabled: { type: boolean }
+    MemberLimitOverride:
+      type: object
+      required: [userId, name, amountUsd]
+      properties:
+        userId: { type: string }
+        name: { type: [string, "null"] }
+        amountUsd: { type: number }
+    WorkspaceLimitPolicyView:
+      type: object
+      required: [workspaceId, workspaceName, defaultAmountUsd, groups, overrides]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: string }
+        defaultAmountUsd: { type: [number, "null"] }
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupMemberLimitPolicy"
+        overrides:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberLimitOverride"
+    UsageLimitAudit:
+      type: object
+      required:
+        [id, operatorUserId, operatorEmail, operatorName, workspaceId, workspaceName,
+         memberUserId, memberEmail, memberName, action, operation, requestedAmountUsd,
+         outcome, createdAt]
+      properties:
+        id:
+          type: integer
+        operatorUserId:
+          type: string
+        operatorEmail:
+          type: [string, "null"]
+        operatorName:
+          type: [string, "null"]
+        workspaceId:
+          type: string
+        workspaceName:
+          type: [string, "null"]
+        memberUserId:
+          type: string
+        memberEmail:
+          type: [string, "null"]
+        memberName:
+          type: [string, "null"]
+        action:
+          type: string
+          enum: [set, clear]
+        operation:
+          type: string
+          enum: [individual, bulk]
+        requestedAmountUsd:
+          type: [number, "null"]
+        outcome:
+          type: string
+          enum: [success, failed]
+        createdAt:
+          type: string
+          format: date-time
+    TeamBudget:
+      type: object
+      required: [teamName, amountUsd, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentRemainingUsd, agentPercentUsed, agentBlocked, workspaceIds]
+      properties:
+        teamName:
+          type: string
+        amountUsd:
+          type: ["number", "null"]
+        monthlyAgentLimitUsd:
+          type: ["number", "null"]
+        cycleAgentSpendUsd:
+          type: ["number", "null"]
+          description: Current-cycle Agent usage; null without complete contributing workspace metrics and verified billing context.
+        agentRemainingUsd:
+          type: ["number", "null"]
+        agentPercentUsed:
+          type: ["number", "null"]
+        agentBlocked:
+          type: ["boolean", "null"]
+          description: Unknown when usage or the upstream limit observation is unavailable.
+        workspaceIds:
+          type: array
+          description: Visible workspaces containing groups assigned to this team.
+          items:
+            type: string
+    TeamBudgetsResponse:
+      type: object
+      required: [budgets]
+      properties:
+        budgets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudget"
+    TeamBudgetInput:
+      type: object
+      required: [amountUsd]
+      properties:
+        amountUsd:
+          type: number
+          minimum: 0
+    TeamBudgetAdjustment:
+      type: object
+      required: [recordId, amountUsd, submissionPeriod, source, sourceKind, sourceBaseId, sourceTableId, sourceUrl, sourceCreatedAt, sourceUpdatedAt, ingestedAt]
+      properties:
+        recordId:
+          type: string
+        amountUsd:
+          type: number
+        submissionPeriod:
+          type: string
+          pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+        source: { type: string }
+        sourceKind: { type: string }
+        sourceBaseId: { type: [string, "null"] }
+        sourceTableId: { type: [string, "null"] }
+        sourceUrl: { type: [string, "null"] }
+        sourceCreatedAt: { type: [string, "null"] }
+        sourceUpdatedAt: { type: [string, "null"] }
+        ingestedAt: { type: string }
+    TeamBudgetHistoryTeam:
+      type: object
+      required: [teamName, originalAmountUsd, effectiveAmountUsd, annualAllocationUsd, monthlyLimitUsd, monthlyLimitSource, isHidden, adjustments]
+      properties:
+        teamName:
+          type: string
+        originalAmountUsd:
+          type: number
+        effectiveAmountUsd:
+          type: number
+        annualAllocationUsd:
+          type: number
+        monthlyLimitUsd:
+          type: number
+        monthlyLimitSource:
+          type: string
+          enum: [derived, manual]
+        isHidden:
+          type: boolean
+        adjustments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetAdjustment"
+    TeamBudgetMatchIssue:
+      type: object
+      required: [recordId, source, sourceKind, sourceBaseId, sourceTableId, sourceUrl, sourceTeamName, teamName, amountUsd, submissionPeriod, matchState, error, sourceCreatedAt, sourceUpdatedAt, ingestedAt]
+      properties:
+        recordId:
+          type: string
+        sourceTeamName:
+          type: [string, "null"]
+        source: { type: string }
+        sourceKind: { type: string }
+        sourceBaseId: { type: [string, "null"] }
+        sourceTableId: { type: [string, "null"] }
+        sourceUrl: { type: [string, "null"] }
+        teamName: { type: [string, "null"] }
+        amountUsd: { type: [number, "null"] }
+        submissionPeriod: { type: [string, "null"] }
+        matchState:
+          type: string
+          enum: [unmatched, invalid]
+        error:
+          type: [string, "null"]
+        sourceCreatedAt: { type: [string, "null"] }
+        sourceUpdatedAt: { type: [string, "null"] }
+        ingestedAt: { type: string }
+    TeamBudgetHistoryResponse:
+      type: object
+      required: [teams, issues]
+      properties:
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetHistoryTeam"
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetMatchIssue"
+    TeamAnnualAllocationUpdate:
+      type: object
+      additionalProperties: false
+      required: [annualAllocationUsd]
+      properties:
+        annualAllocationUsd:
+          type: number
+          minimum: 0
+    TeamMonthlyAllocationAddition:
+      type: object
+      additionalProperties: false
+      required: [month, amountUsd, idempotencyKey]
+      properties:
+        month:
+          type: string
+          pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+          multipleOf: 0.01
+        idempotencyKey:
+          type: string
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    TeamVisibilityUpdate:
+      type: object
+      additionalProperties: false
+      required: [isHidden]
+      properties:
+        isHidden:
+          type: boolean
+    TeamAllocationAudit:
+      type: object
+      required: [id, teamName, field, oldValue, newValue, actor, timestamp]
+      properties:
+        id:
+          type: integer
+        teamName:
+          type: string
+        field:
+          type: string
+          enum: [annualAllocationUsd, isHidden, monthlyAllocationAddition]
+        oldValue:
+          oneOf:
+            - type: number
+            - type: boolean
+            - $ref: "#/components/schemas/MonthlyAllocationAuditValue"
+        newValue:
+          oneOf:
+            - type: number
+            - type: boolean
+            - $ref: "#/components/schemas/MonthlyAllocationAuditValue"
+        actor:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    MonthlyAllocationAuditValue:
+      type: object
+      additionalProperties: false
+      required: [month, amountUsd]
+      properties:
+        month:
+          type: string
+          pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+        amountUsd:
+          type: number
+    TeamAllocationAuditResponse:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamAllocationAudit"
+    TeamBudgetSyncStatus:
+      type: object
+      required: [sourceTable, requiredApprovalStatus, sourceBaseId, sourceTableId, sourceAvailable, unavailableReason, lastAttemptAt, lastSuccessfulAt, lastError, fetchedCount, approvedCount, recordCount, acceptedCount, unmatchedCount, invalidCount, issueCount, teams]
+      properties:
+        sourceTable:
+          type: string
+          enum: [Replit Finance Approval]
+        requiredApprovalStatus:
+          type: string
+          enum: [Approved]
+        lastAttemptAt:
+          type: [string, "null"]
+        lastSuccessfulAt:
+          type: [string, "null"]
+        lastError:
+          type: [string, "null"]
+        sourceBaseId:
+          type: [string, "null"]
+        sourceTableId:
+          type: [string, "null"]
+        sourceAvailable:
+          type: boolean
+        unavailableReason:
+          type: [string, "null"]
+        fetchedCount:
+          type: integer
+        approvedCount:
+          type: integer
+        recordCount:
+          type: integer
+        acceptedCount:
+          type: integer
+        unmatchedCount:
+          type: integer
+        invalidCount:
+          type: integer
+        issueCount:
+          type: integer
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetUpstreamSync"
+    TeamBudgetUpstreamSync:
+      type: object
+      required: [teamName, workspaceId, targetGroupId, targetGroupName, targetType, desiredAmountUsd, upstreamAmountUsd, status, reason, lastAttemptAt]
+      properties:
+        teamName:
+          type: string
+        workspaceId:
+          type: [string, "null"]
+        targetGroupId:
+          type: [string, "null"]
+        targetGroupName:
+          type: [string, "null"]
+        targetType:
+          type: string
+          enum: [group, workspace_default]
+        desiredAmountUsd:
+          type: number
+        upstreamAmountUsd:
+          type: [number, "null"]
+        status:
+          type: string
+          enum: [synced, drift, failed]
+        reason:
+          type: [string, "null"]
+        lastAttemptAt:
+          type: [string, "null"]
+    TeamBudgetLimitUpdate:
+      type: object
+      additionalProperties: false
+      required: [monthlyLimitUsd]
+      properties:
+        monthlyLimitUsd:
+          type: [number, "null"]
+          minimum: 0
+    TeamBudgetApplySelection:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [teamNames]
+          properties:
+            teamNames:
+              type: array
+              minItems: 1
+              items:
+                type: string
+                minLength: 1
+        - type: object
+          additionalProperties: false
+          required: [all]
+          properties:
+            all:
+              type: boolean
+              const: true
+        - type: object
+          additionalProperties: false
+          required: [targets]
+          properties:
+            targets:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/TeamBudgetTargetIdentity"
+    TeamBudgetTargetIdentity:
+      type: object
+      additionalProperties: false
+      required: [workspaceId]
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+        groupId:
+          type: [string, "null"]
+    TeamBudgetApplyTargetOutcome:
+      type: object
+      required: [workspaceId, targetGroupId, targetGroupName, desiredAmountUsd, outcome, error]
+      properties:
+        workspaceId:
+          type: string
+        targetGroupId:
+          type: [string, "null"]
+        targetGroupName:
+          type: string
+        desiredAmountUsd:
+          type: number
+        outcome:
+          type: string
+          enum: [success, failed]
+        error:
+          type: [string, "null"]
+    TeamBudgetApplyTeamOutcome:
+      type: object
+      required: [teamName, outcome, targets]
+      properties:
+        teamName:
+          type: string
+        outcome:
+          type: string
+          enum: [success, failed]
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetApplyTargetOutcome"
+    TeamBudgetApplyResponse:
+      type: object
+      required: [teams]
+      properties:
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamBudgetApplyTeamOutcome"
+    TeamBudgetTargetAssignment:
+      type: object
+      additionalProperties: false
+      required: [teamName, workspaceId, groupId]
+      properties:
+        teamName: { type: string, minLength: 1 }
+        workspaceId: { type: string, minLength: 1 }
+        groupId: { type: string, minLength: 1 }
+    TeamBudgetTarget:
+      type: object
+      required: [teamName, workspaceId, groupId, groupName, monthlyLimitUsd, isEnabled, teamMonthlyLimitUsd, targetAmountUsd]
+      properties:
+        teamName: { type: string }
+        workspaceId: { type: string }
+        groupId: { type: string }
+        groupName: { type: string }
+        monthlyLimitUsd: { type: [number, "null"] }
+        isEnabled: { type: boolean }
+        teamMonthlyLimitUsd: { type: number }
+        targetAmountUsd: { type: number }
+    TeamBudgetTargetTeamSummary:
+      type: object
+      required: [teamName, monthlyLimitUsd, targetAmountSumUsd, differenceUsd]
+      properties:
+        teamName: { type: string }
+        monthlyLimitUsd: { type: number }
+        targetAmountSumUsd: { type: number }
+        differenceUsd: { type: number }
+    UnassignedTeamBudgetGroup:
+      type: object
+      required: [workspaceId, groupId, groupName]
+      properties:
+        workspaceId: { type: string }
+        groupId: { type: string }
+        groupName: { type: string }
+    LegacyWorkspaceLimitTarget:
+      type: object
+      required: [workspaceId, displayName, monthlyLimitUsd, isEnabled]
+      properties:
+        workspaceId: { type: string }
+        displayName: { type: string }
+        monthlyLimitUsd: { type: number }
+        isEnabled: { type: boolean }
+    TeamBudgetTargetConfiguration:
+      type: object
+      required: [targets, teams, legacy, unassignedGroups]
+      properties:
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/TeamBudgetTarget" }
+        teams:
+          type: array
+          items: { $ref: "#/components/schemas/TeamBudgetTargetTeamSummary" }
+        legacy:
+          type: array
+          items: { $ref: "#/components/schemas/LegacyWorkspaceLimitTarget" }
+        unassignedGroups:
+          type: array
+          items: { $ref: "#/components/schemas/UnassignedTeamBudgetGroup" }
+    TeamBudgetRefreshResult:
+      type: object
+      required: [sourceTable, requiredApprovalStatus, ok, fetchedCount, approvedCount, recordCount, acceptedCount, unmatchedCount, invalidCount, issueCount, error]
+      properties:
+        sourceTable:
+          type: string
+          enum: [Replit Finance Approval]
+        requiredApprovalStatus:
+          type: string
+          enum: [Approved]
+        ok:
+          type: boolean
+        recordCount:
+          type: integer
+        fetchedCount:
+          type: integer
+        approvedCount:
+          type: integer
+        acceptedCount:
+          type: integer
+        unmatchedCount:
+          type: integer
+        invalidCount:
+          type: integer
+        issueCount:
+          type: integer
+        error:
+          type: [string, "null"]
+    AdminEmail:
+      type: object
+      required: [id, email, createdAt]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        createdAt:
+          type: string
+    AdminEmailInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          minLength: 3
+    GroupAdminMember:
+      type: object
+      required: [userId, username]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        email:
+          type: ["string", "null"]
+        name:
+          type: ["string", "null"]
+    DirectoryMemberWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, role, isDisabled, spendLoaded, spendUsd]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        role:
+          type: string
+        isDisabled:
+          type: boolean
+        spendLoaded:
+          type: boolean
+          description: Whether usage for the selected range is complete enough to present
+        spendUsd:
+          type: number
+          description: Eligible member spend in this workspace for the selected range; internal Replit usage is zero
+        reAttributedSpendUsd:
+          type: number
+          description: Comcast spend folded into this workspace for the selected member and range
+    DirectoryMember:
+      type: object
+      required: [userId, username, name, email, isAccountAdmin, isInternal, workspaces]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        name:
+          type: ["string", "null"]
+        email:
+          type: string
+        isAccountAdmin:
+          type: boolean
+        isInternal:
+          type: boolean
+          description: Whether this is an internal Replit user whose spend is excluded from eligible accounting
+        workspaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/DirectoryMemberWorkspace"
+    DirectoryGroup:
+      type: object
+      required: [groupId, groupName, workspaceId, workspaceName, familyKey, familyName, role, isLegacy, teamName]
+      properties:
+        groupId:
+          type: string
+        groupName:
+          type: string
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        role:
+          $ref: "#/components/schemas/DirectoryRole"
+        isLegacy:
+          type: boolean
+        teamName:
+          type: ["string", "null"]
+    DirectoryFamilyHierarchy:
+      type: object
+      required: [familyKey, familyName, isLegacy, groups]
+      properties:
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        isLegacy:
+          type: boolean
+        groups:
+          type: array
+          description: Canonical role groups in server-defined role order.
+          items:
+            $ref: "#/components/schemas/DirectoryGroup"
+    DirectoryTeamHierarchy:
+      type: object
+      required: [teamName, families]
+      properties:
+        teamName:
+          type: ["string", "null"]
+        families:
+          type: array
+          items:
+            $ref: "#/components/schemas/DirectoryFamilyHierarchy"
+    DirectoryWorkspaceHierarchy:
+      type: object
+      required: [workspaceId, workspaceName, teams]
+      properties:
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/DirectoryTeamHierarchy"
+    DirectoryGroupsResponse:
+      type: object
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          description: Server-owned ordered workspace, team, and canonical family hierarchy.
+          items:
+            $ref: "#/components/schemas/DirectoryWorkspaceHierarchy"
+    DirectoryRole:
+      type: string
+      enum: [admin, member, viewer, guest, unsuffixed]
+    GroupAdminsItem:
+      type: object
+      required: [groupId, groupName, workspaceId, workspaceName, familyKey, familyName, isLegacy, teamName, admins]
+      properties:
+        groupId:
+          type: string
+        groupName:
+          type: string
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        teamName:
+          type: ["string", "null"]
+        familyKey:
+          type: string
+        familyName:
+          type: string
+        isLegacy:
+          type: boolean
+        admins:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupAdminMember"
+    AppAdmin:
+      type: object
+      required: [userId, email, createdAt]
+      properties:
+        userId:
+          type: string
+        email:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        createdBy:
+          type: ["string", "null"]
+    AppAdminInput:
+      type: object
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          minLength: 1
+    Alert:
+      type: object
+      required:
+        [id, entityType, entityId, entityName, alertType, blockedMemberCount, workspaceIds, threshold, spendUsd, budgetUsd, recipients, sentAt, status, currentSpendUsd, currentPercentUsed, currentUsageComplete]
+      properties:
+        id:
+          type: integer
+        entityType:
+          type: string
+          enum: [group, team]
+        entityId:
+          type: string
+        entityName:
+          type: string
+        alertType:
+          type: string
+          enum: [allocation_threshold, member_limit_reached]
+        blockedMemberCount:
+          type: integer
+          minimum: 0
+        workspaceIds:
+          type: array
+          items:
+            type: string
+        threshold:
+          type: integer
+          description: Threshold percent crossed (50, 75, 90, 100)
+        spendUsd:
+          type: number
+          description: Canonical spend snapshot captured when this delivery was attempted
+        budgetUsd:
+          type: number
+        recipients:
+          type: array
+          items:
+            type: string
+        sentAt:
+          type: string
+        status:
+          type: string
+          description: sent or failed
+        errorMessage:
+          type: ["string", "null"]
+        dataAsOf:
+          type: ["string", "null"]
+          description: Exclusive timestamp through which stored usage facts were evaluated
+        currentSpendUsd:
+          type: ["number", "null"]
+          description: Current canonical spend for the entity; null while usage is incomplete
+        currentPercentUsed:
+          type: ["number", "null"]
+          description: Current canonical spend as a percent of the current allocated pool
+        currentUsageComplete:
+          type: boolean
+    EmailTestSelection:
+      type: object
+      additionalProperties: false
+      required: [entityType, threshold]
+      properties:
+        entityType:
+          type: string
+          enum: [group, team]
+        threshold:
+          type: integer
+          enum: [50, 75, 90, 100]
+    EmailTestResult:
+      type: object
+      required: [ok, recipient, subject, error, messageId, senderEmail]
+      properties:
+        ok:
+          type: boolean
+        recipient:
+          type: string
+        subject:
+          type: string
+        error:
+          type: ["string", "null"]
+        messageId:
+          type: ["string", "null"]
+        senderEmail:
+          type: ["string", "null"]
+    CheckResult:
+      type: object
+      required: [checkedGroups, checkedTeams, alertsSent, evaluatedAt, dataAsOf, skipped, skipReason]
+      properties:
+        checkedGroups:
+          type: integer
+        checkedTeams:
+          type: integer
+        alertsSent:
+          type: integer
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+        evaluatedAt:
+          type: ["string", "null"]
+        dataAsOf:
+          type: ["string", "null"]
+        skipped:
+          type: boolean
+        skipReason:
+          type: ["string", "null"]
+    EmailSettings:
+      type: object
+      required: [automatedEmailEnabled, updatedAt]
+      properties:
+        automatedEmailEnabled:
+          type: boolean
+          description: Whether scheduled and manually triggered budget checks may send threshold emails
+        updatedAt:
+          type: string
+          format: date-time
+    EmailSettingsUpdate:
+      type: object
+      additionalProperties: false
+      required: [automatedEmailEnabled]
+      properties:
+        automatedEmailEnabled:
+          type: boolean
+    SystemStatus:
+      type: object
+      required:
+        [
+          enterpriseApiConfigured,
+          enterpriseApiOk,
+          emailConfigured,
+          automatedEmailEnabled,
+          checkerIntervalMinutes,
+          lastCheckAt,
+          lastSuccessfulEvaluationAt,
+          lastEvaluatedDataAsOf,
+          lastCheckerAttemptAt,
+          lastCheckerSkipReason,
+          billingPeriodStart,
+          billingPeriodEnd,
+          billingPeriodLabel,
+          billingPeriodFetchedAt,
+          billingPeriodFresh,
+          billingPeriodFallback,
+          billingPeriodDiffersFromReportingCutoff,
+          reportingCutoff,
+          reportingRangeStart,
+          reportingRangeEnd,
+          reportingRangeLabel,
+          recentRuns,
+          remainingBackfillCount,
+          currentMonthReconciliation,
+          directoryDataAsOf,
+          directoryAgeMs,
+          projectEnrichment,
+          rateLimitTelemetry,
+        ]
+      properties:
+        enterpriseApiConfigured:
+          type: boolean
+          description: Whether REPLIT_ENTERPRISE_API_KEY is set
+        enterpriseApiOk:
+          type: boolean
+          description: Whether the last Enterprise API call succeeded
+        enterpriseApiError:
+          type: ["string", "null"]
+          description: Last Enterprise API error message, if any
+        emailConfigured:
+          type: boolean
+          description: Whether the email connector transport is set up
+        automatedEmailEnabled:
+          type: boolean
+          description: Whether automated budget-alert delivery is enabled by persisted policy
+        checkerIntervalMinutes:
+          type: integer
+        lastCheckAt:
+          type: ["string", "null"]
+          deprecated: true
+          description: Alias for lastSuccessfulEvaluationAt
+        lastSuccessfulEvaluationAt:
+          type: ["string", "null"]
+        lastEvaluatedDataAsOf:
+          type: ["string", "null"]
+        lastCheckerAttemptAt:
+          type: ["string", "null"]
+        lastCheckerSkipReason:
+          type: ["string", "null"]
+        billingPeriodStart:
+          type: string
+        billingPeriodEnd:
+          type: string
+        billingPeriodLabel:
+          type: string
+        billingPeriodFetchedAt:
+          type: ["string", "null"]
+        billingPeriodFresh:
+          type: boolean
+        billingPeriodFallback:
+          type: boolean
+        billingPeriodDiffersFromReportingCutoff:
+          type: boolean
+        reportingCutoff:
+          type: string
+        reportingRangeStart:
+          type: string
+          description: Effective inclusive reporting start after applying the spend cutoff
+        reportingRangeEnd:
+          type: string
+          description: Effective exclusive reporting end, capped at now and the billing-period end
+        reportingRangeLabel:
+          type: string
+          description: Label that describes the effective reporting bounds
+        recentRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageIngestRun"
+        remainingBackfillCount:
+          type: integer
+        currentMonthReconciliation:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageReconciliationStatus"
+        directoryDataAsOf:
+          type: ["string", "null"]
+          format: date-time
+        directoryAgeMs:
+          type: ["integer", "null"]
+        projectEnrichment:
+          $ref: "#/components/schemas/ProjectEnrichmentStatus"
+        rateLimitTelemetry:
+          $ref: "#/components/schemas/UsageRateLimitTelemetry"
+    ProjectEnrichmentStatus:
+      type: object
+      required:
+        [
+          totalWorkspaces,
+          successfulWorkspaces,
+          failedWorkspaces,
+          pendingWorkspaces,
+          lastSuccessfulAt,
+        ]
+      properties:
+        totalWorkspaces:
+          type: integer
+        successfulWorkspaces:
+          type: integer
+        failedWorkspaces:
+          type: integer
+        pendingWorkspaces:
+          type: integer
+        lastSuccessfulAt:
+          type: ["string", "null"]
+          format: date-time
+    UsageIngestReconciliation:
+      type: object
+      required: [monthStart, scope, scopeId, upstreamUsd, storedUsd, deltaUsd]
+      properties:
+        monthStart:
+          type: string
+          format: date
+        scope:
+          type: string
+        scopeId:
+          type: string
+        upstreamUsd:
+          type: number
+        storedUsd:
+          type: number
+        deltaUsd:
+          type: number
+    UsageReconciliationStatus:
+      allOf:
+        - $ref: "#/components/schemas/UsageIngestReconciliation"
+        - type: object
+          required: [checkedAt]
+          properties:
+            checkedAt:
+              type: string
+              format: date-time
+    UsageRateLimitTelemetry:
+      type: object
+      required: [peakRequestsPerMinute, lowestRateLimitRemaining]
+      properties:
+        peakRequestsPerMinute:
+          type: ["integer", "null"]
+          description: Actual measured rate-window peak, or null when not durably recorded.
+        lowestRateLimitRemaining:
+          type: ["integer", "null"]
+    UsageIngestCycleResult:
+      type: object
+      required:
+        [
+          acquired,
+          unitsAttempted,
+          unitsSucceeded,
+          unitsFailed,
+          totalCalls,
+          durationMs,
+          reconciliations,
+          remainingBackfillCount,
+          peakRequestsPerMinute,
+          lowestRateLimitRemaining,
+        ]
+      properties:
+        acquired:
+          type: boolean
+        unitsAttempted:
+          type: integer
+        unitsSucceeded:
+          type: integer
+        unitsFailed:
+          type: integer
+        totalCalls:
+          type: integer
+        durationMs:
+          type: integer
+        reconciliations:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageIngestReconciliation"
+        remainingBackfillCount:
+          type: integer
+        peakRequestsPerMinute:
+          type: integer
+        lowestRateLimitRemaining:
+          type: ["integer", "null"]
+    UsageIngestRun:
+      type: object
+      required: [id, kind, startedAt, finishedAt, units, calls, failures, error, remaining, status]
+      properties:
+        id:
+          type: integer
+        kind:
+          type: string
+          enum: [live, backfill, reconcile]
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: ["string", "null"]
+          format: date-time
+        units:
+          type: integer
+        calls:
+          type: integer
+        failures:
+          type: integer
+        error:
+          type: ["string", "null"]
+        remaining:
+          type: ["integer", "null"]
+          description: Units remaining in the whole sweep after this run's slice completed
+        status:
+          type: string
+          enum: [running, succeeded, partial, failed]
