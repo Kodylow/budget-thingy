@@ -28,8 +28,16 @@ let root: Root;
 let state: ReturnType<typeof useAuth>;
 let fetcher: ReturnType<typeof vi.fn<typeof fetch>>;
 
-function Probe({ preview = null }: { preview?: string | null }) {
-  state = useAuth(preview);
+function Probe({
+  preview = null,
+  enabled,
+  developmentUserId,
+}: {
+  preview?: string | null;
+  enabled?: boolean;
+  developmentUserId?: string | null;
+}) {
+  state = useAuth(preview, { enabled, developmentUserId });
   return null;
 }
 
@@ -261,5 +269,79 @@ describe('authorization hook lifecycle', () => {
     });
     await vi.waitFor(() => expect(state.availability).toBe('authorized'));
     expect(state.auth?.authorizationRevision).toBe('preview-loaded');
+  });
+
+  it('bypasses an old real-session logout latch in development without changing it', async () => {
+    const latchKey = `budget-monitor:auth-signed-out:${window.location.origin}`;
+    localStorage.setItem(latchKey, '1');
+
+    await act(async () => root.render(createElement(Probe, { developmentUserId: 'dev-user' })));
+    expect(state.availability).toBe('authorized');
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('X-Dev-View-As')).toBe('dev-user');
+    expect(localStorage.getItem(latchKey)).toBe('1');
+
+    await act(async () => clearAuthCache());
+    expect(state.availability).toBe('authorized');
+    await act(async () => state.logout());
+    expect(fetcher.mock.calls.some(([url]) => String(url).startsWith('/api/logout'))).toBe(false);
+    expect(localStorage.getItem(latchKey)).toBe('1');
+
+    await act(async () => root.render(createElement(Probe)));
+    expect(state).toMatchObject({
+      availability: 'signed-out', user: null, auth: null, isLoading: false,
+    });
+  });
+
+  it('aborts pending authorization and stays loading without requests while disabled', async () => {
+    await act(async () => root.render(createElement(Probe)));
+    const pending = deferred<Response>();
+    let signal!: AbortSignal;
+    fetcher.mockImplementationOnce((_url, options) => {
+      signal = options!.signal!;
+      return pending.promise;
+    });
+    await act(async () => { void state.revalidateAuthorization(); });
+
+    await act(async () => root.render(createElement(Probe, { enabled: false })));
+    expect(signal.aborted).toBe(true);
+    expect(state).toMatchObject({
+      availability: 'loading', user: null, auth: null,
+      capabilities: null, isLoading: true, isAuthenticated: false,
+    });
+    const calls = fetcher.mock.calls.length;
+    await act(async () => { await state.revalidateAuthorization(); });
+    expect(fetcher).toHaveBeenCalledTimes(calls);
+  });
+
+  it('hides the old development identity synchronously and rejects its late result', async () => {
+    await act(async () => root.render(createElement(Probe, { developmentUserId: 'dev-one' })));
+    const oldResult = deferred<Response>();
+    let oldSignal!: AbortSignal;
+    fetcher.mockImplementationOnce((_url, options) => {
+      oldSignal = options!.signal!;
+      return oldResult.promise;
+    });
+    let refresh!: Promise<void>;
+    await act(async () => { refresh = state.revalidateAuthorization(); });
+
+    const newResult = deferred<Response>();
+    fetcher.mockImplementationOnce(() => newResult.promise);
+    await act(async () => root.render(createElement(Probe, { developmentUserId: 'dev-two' })));
+    expect(oldSignal.aborted).toBe(true);
+    expect(state).toMatchObject({
+      availability: 'loading', user: null, auth: null, isLoading: true,
+    });
+    expect(new Headers(fetcher.mock.calls[2][1]?.headers).get('X-Dev-View-As')).toBe('dev-two');
+
+    await act(async () => {
+      oldResult.resolve(Response.json(envelope('stale-dev')));
+      await refresh;
+    });
+    expect(state.auth).toBeNull();
+    await act(async () => {
+      newResult.resolve(Response.json(envelope('current-dev')));
+      await newResult.promise;
+    });
+    await vi.waitFor(() => expect(state.auth?.authorizationRevision).toBe('current-dev'));
   });
 });

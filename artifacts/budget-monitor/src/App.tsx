@@ -13,7 +13,7 @@ import {
   pollingRetryDelay,
   QUERY_STALE_TIME_MS,
 } from '@/lib/client-performance';
-import { setForbiddenHandler, setUnauthorizedHandler } from '@workspace/api-client-react';
+import { getDevelopmentUserId, setForbiddenHandler, setUnauthorizedHandler } from '@workspace/api-client-react';
 import { clearAuthCache, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@workspace/replit-auth-web';
 import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
 import { previewScopedQueryHash } from '@/lib/preview-query-cache';
@@ -37,6 +37,9 @@ const ProjectDetail = lazy(() => import('@/pages/project-detail'));
 const Limits = lazy(() => import('@/pages/limits'));
 const Reports = lazy(() => import('@/pages/reports'));
 
+const DevelopmentViewChip = import.meta.env.DEV
+  ? lazy(() => import('@/components/dev-view-chip').then(module => ({ default: module.DevViewChip })))
+  : null;
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -69,6 +72,11 @@ function recentlyRedirectedToLogin(): boolean {
 
 setUnauthorizedHandler(() => {
   logAuthDebug('api.unauthorized');
+  if (getDevelopmentUserId()) {
+    queryClient.clear();
+    window.dispatchEvent(new Event('development-authorization-invalid'));
+    return;
+  }
   if (isEmbeddedPreview()) {
     logAuthDebug('login.redirect-skipped', { reason: 'embedded-requires-click' });
     // A background 401 cannot open a tab; show the explicit sign-in link instead.
@@ -99,7 +107,14 @@ function ApiErrorToasts() {
 }
 
 function AuthorizationFailureBridge() {
-  const { availability, revalidateAuthorization } = useAuthContext();
+  const { availability, revalidateAuthorization, developmentView } = useAuthContext();
+
+  useEffect(() => {
+    if (!developmentView.enabled) return;
+    const recover = () => { void revalidateAuthorization(); };
+    window.addEventListener('development-authorization-invalid', recover);
+    return () => window.removeEventListener('development-authorization-invalid', recover);
+  }, [developmentView.enabled, revalidateAuthorization]);
 
   useEffect(() => {
     // Keep ordinary resource denials page-local. AuthProvider clears protected
@@ -335,6 +350,7 @@ function App() {
                 <AuthGate>
                   <AuthorizedRouter />
                 </AuthGate>
+                {DevelopmentViewChip && <Suspense fallback={null}><DevelopmentViewChip /></Suspense>}
               </WouterRouter>
             </RangeProvider>
           </AuthProvider>

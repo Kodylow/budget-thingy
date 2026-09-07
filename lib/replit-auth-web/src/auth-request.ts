@@ -10,8 +10,9 @@ export interface AuthRequestResult {
   envelope: AuthUserEnvelope | null;
 }
 
-interface LoadAuthorizationOptions {
+export interface LoadAuthorizationOptions {
   previewAs: string | null;
+  developmentUserId?: string | null;
   signal: AbortSignal;
   fetcher?: typeof fetch;
   sleep?: (delayMs: number) => Promise<void>;
@@ -31,6 +32,7 @@ export function nextAuthorizationRequestVersion(version: number): number {
 
 export async function loadAuthorization({
   previewAs,
+  developmentUserId = null,
   signal,
   fetcher = fetch,
   sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
@@ -39,6 +41,7 @@ export async function loadAuthorization({
   const request = ++requestSequence;
   const headers = new Headers();
   if (previewAs) headers.set("X-Preview-As", previewAs);
+  if (developmentUserId) headers.set("X-Dev-View-As", developmentUserId);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (signal.aborted) throw new AuthRequestCancelledError();
@@ -60,7 +63,7 @@ export async function loadAuthorization({
       if (response.status === 403) {
         return { availability: "denied", envelope: null };
       }
-      if (response.status === 400 && previewAs) {
+      if (response.status === 400 && (previewAs || developmentUserId)) {
         return { availability: "invalid-preview", envelope: null };
       }
       if (!response.ok) {

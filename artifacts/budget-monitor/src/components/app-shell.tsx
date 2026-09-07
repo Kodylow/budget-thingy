@@ -532,7 +532,7 @@ function PreviewPicker() {
 
 function IdentityPanel() {
   const {
-    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds, logout,
+    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds, logout, developmentView,
   } = useAuthContext();
   if (!user) return null;
 
@@ -582,7 +582,7 @@ function IdentityPanel() {
       </div>
       <AdminDataQualityTrigger />
       <ApiDiagnostics />
-      <Button
+      {!developmentView.enabled && <Button
         variant="outline"
         size="sm"
         className="w-full justify-start"
@@ -591,14 +591,14 @@ function IdentityPanel() {
       >
         <LogOut className="mr-2 h-4 w-4 shrink-0" />
         Log out
-      </Button>
+      </Button>}
     </div>
   );
 }
 
 function DesktopIdentityMenu() {
   const {
-    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds, logout, isPreviewing,
+    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds, logout, isPreviewing, developmentView,
   } = useAuthContext();
   if (!user) return null;
 
@@ -634,10 +634,10 @@ function DesktopIdentityMenu() {
         <PreviewPicker />
          <AdminDataQualityTrigger />
         <ApiDiagnostics />
-        <Button variant="outline" size="sm" className="w-full justify-start mt-1" onClick={logout}>
+        {!developmentView.enabled && <Button variant="outline" size="sm" className="w-full justify-start mt-1" onClick={logout}>
           <LogOut className="mr-2 h-4 w-4" />
           Log out
-        </Button>
+        </Button>}
       </PopoverContent>
     </Popover>
   );
@@ -800,6 +800,7 @@ function MobileSidebar({ location, isOpen, close }: SidebarProps) {
 export { getNavSections };
 export function AppShell({ children }: AppShellProps) {
   useVisibleViewport();
+  const { developmentView } = useAuthContext();
   const [location] = useLocation();
   const mobileNavigation = useMobileNavigation();
 
@@ -814,7 +815,7 @@ export function AppShell({ children }: AppShellProps) {
       <MobileTopBar isOpen={mobileNavigation.isOpen} open={mobileNavigation.open} />
       <MobileSidebar location={location} {...mobileNavigation} />
 
-      <main id="main-content" tabIndex={-1} className="min-h-0 min-w-0 flex-1 relative overflow-x-hidden overflow-y-auto focus:outline-none">
+      <main id="main-content" tabIndex={-1} className={`min-h-0 min-w-0 flex-1 relative overflow-x-hidden overflow-y-auto focus:outline-none${developmentView.enabled ? ' pb-20' : ''}`}>
         {children}
       </main>
       </div>

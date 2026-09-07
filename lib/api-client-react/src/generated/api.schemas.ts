@@ -1520,6 +1520,29 @@ export interface AuthUserEnvelope {
   capabilities: AuthCapabilities;
 }
 
+export interface DevViewUser {
+  userId: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  username: string | null;
+  /** @nullable */
+  email: string | null;
+}
+
+export type DevViewResponse = {
+  enabled: false;
+} | {
+  enabled: true;
+  users: DevViewUser[];
+};
+
+export interface DevViewUnavailableResponse {
+  enabled: true;
+  error: string;
+  retryable: boolean;
+}
+
 export interface MobileTokenExchangeRequest {
   /** @minLength 1 */
   code: string;

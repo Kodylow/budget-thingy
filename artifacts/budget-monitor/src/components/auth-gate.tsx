@@ -16,6 +16,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     resetPreview,
     availability,
     retryAuthorization,
+    developmentView,
   } = useAuthContext();
 
   useEffect(() => {
@@ -25,6 +26,34 @@ export function AuthGate({ children }: { children: ReactNode }) {
       import('@/pages/dashboard-chart');
     }
   }, [isAuthenticated, isDenied]);
+
+  if (!developmentView.ready || (developmentView.enabled && (
+    !developmentView.selectedId || (!isLoading && availability !== 'authorized')
+  ))) {
+    return (
+      <CenteredShell>
+        <Card data-testid="auth-development-recovery">
+          <CardHeader>
+            <CardTitle>Development view · read-only</CardTitle>
+            <CardDescription>
+              {developmentView.loading ? 'Loading the Comcast directory…'
+                : developmentView.error
+                  ?? (availability === 'invalid-preview'
+                    ? 'The selected user is no longer available. Choose another person using the development chip.'
+                    : availability === 'denied'
+                      ? 'This person has no enabled budget access. Choose another person using the development chip.'
+                      : 'Access could not be resolved. Retry or choose another person.')}
+            </CardDescription>
+          </CardHeader>
+          {!developmentView.loading && (
+            <CardContent>
+              <Button onClick={() => { developmentView.retry(); retryAuthorization(); }}>Retry development view</Button>
+            </CardContent>
+          )}
+        </Card>
+      </CenteredShell>
+    );
+  }
 
   if (isLoading) {
     return <LoadingShell />;

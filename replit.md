@@ -77,6 +77,16 @@ Monitors spending by group and team across the Comcast Replit Enterprise account
 - Comcast-inspired operational presentation: monochrome working surfaces, electric blue used selectively, Montserrat headings and Lato body text. This is a dashboard adaptation of public inspiration, not an official Comcast design-system implementation. Keep Budget Monitor identity; use no invented corporate logo or proprietary font binaries.
 - Reduce visible decisions: one compact Spend toolbar, a focused Overview rather than a second ledger, and responsive Groups/Members cards for Limits with editing revealed contextually. No reporting-range control in Limits.
 
+## Development identity viewing
+
+- Normal API development startup uses `NODE_ENV=development` and enables the floating **DEV: View as** switcher. A fresh tab chooses an enabled person from the configured Comcast Enterprise directory; the choice is kept in that tab's session storage across refreshes. No OAuth, administrator seeding, or persisted user/session record is needed.
+- Set `DEV_VIEW_AS=0` for the API development process and restart it to test real Replit login instead. Real OAuth sessions and deliberate sign-out state remain separate from development selections.
+- This mode is strictly read-only: the server rejects mutations even when viewing an administrator or when requests are forged. The directory-derived identity determines actual visible scopes; the chip does not grant builder-preview or account-wide authority.
+- **Keep the development preview private. Anyone who can reach it can read data available through its directory picker, without logging in.** This is not a way to share a public demo.
+- The server requires explicit development runtime and no deployment marker. Production/test/unset runtime and Replit deployment mode cannot enable the no-login path, including through saved selections, client flags, headers, or cookies. Production frontend builds exclude the chip.
+- Unavailable/empty directory data and removed selections fail closed. Retry or choose another available user; no synthetic people or OAuth redirects are substituted.
+- Run the standalone browser checks with `pnpm --filter @workspace/budget-monitor exec playwright test --config playwright.development.config.ts`. They use sample identities and do not require OAuth or real directory writes.
+
 ## Gotchas
 
 - After editing `lib/api-spec/openapi.yaml`, run codegen before touching server or frontend code. Avoid `format: email` in the spec — Orval emits `zod.email()` which doesn't exist in zod v3 index typings.

@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { DevelopmentView } from '@/lib/use-development-view';
 import type {
   AuthAuthorization,
   AuthAuthorizationRole,
@@ -15,6 +16,7 @@ export type PreviewSelection =
   | `member:${string}`;
 
 export interface AuthContextValue {
+  developmentView: DevelopmentView;
   user: AuthUser | null;
   auth: AuthAuthorization | null;
   isLoading: boolean;

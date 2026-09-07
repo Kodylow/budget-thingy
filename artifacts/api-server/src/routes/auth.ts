@@ -36,6 +36,11 @@ import {
   getDirectoryHydrationState,
 } from '../lib/enterprise';
 import { getConfigurationSnapshot } from '../lib/configuration-snapshot';
+import {
+  devViewReadOnly,
+  getDevViewUsers,
+  isDevViewEnabled,
+} from '../lib/dev-view';
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 const SAFE_GRANT_ERROR_CODES = new Set([
@@ -62,6 +67,29 @@ function setOidcCookie(res: Response, name: string, value: string) {
     maxAge: OIDC_COOKIE_TTL,
   });
 }
+
+router.get('/auth/dev-view', async (req: Request, res: Response) => {
+  if (!isDevViewEnabled()) {
+    res.json({ enabled: false });
+    return;
+  }
+  try {
+    res.json({
+      enabled: true,
+      users: await getDevViewUsers(),
+    });
+  } catch {
+    req.log.error(
+      { event: 'auth.dev-view', outcome: 'unavailable' },
+      'development directory lookup unavailable',
+    );
+    res.status(503).json({
+      enabled: true,
+      error: 'Development directory temporarily unavailable',
+      retryable: true,
+    });
+  }
+});
 
 export function getSafeReturnTo(value: unknown, origin: string): string {
   if (typeof value !== 'string' || !value.startsWith('/')) return '/';
@@ -171,7 +199,9 @@ router.get('/auth/user', async (req: Request, res: Response) => {
   try {
     const configuration = await getConfigurationSnapshot();
     realAuth = await resolveCurrentAuthorization(req.user.id, configuration);
-    auth = realAuth
+    auth = req.devViewAs === true && realAuth
+      ? devViewReadOnly(realAuth)
+      : realAuth
       ? await resolvePreviewAuthorization(
           realAuth,
           req.header('X-Preview-As'),
@@ -221,12 +251,15 @@ router.get('/auth/user', async (req: Request, res: Response) => {
               auth,
               realAuth ?? auth,
             ),
+            previewReadOnly: auth.previewReadOnly ?? false,
           }
         : null,
       capabilities: auth
         ? {
             ...auth.capabilities,
-            canPreviewRoles: realAuth?.capabilities.canPreviewRoles === true,
+            canPreviewRoles:
+              req.devViewAs !== true &&
+              realAuth?.capabilities.canPreviewRoles === true,
           }
         : {
             canViewAccountUsage: false,
@@ -245,6 +278,10 @@ router.get('/auth/user', async (req: Request, res: Response) => {
 });
 
 router.get('/login', async (req: Request, res: Response) => {
+  if (isDevViewEnabled()) {
+    res.status(403).json({ error: 'OAuth is disabled while development view-as is enabled' });
+    return;
+  }
   req.log.info({ event: 'auth.login', stage: 'begin' });
   const config = await getOidcConfig();
   const origin = getRequestOrigin(req);
@@ -279,6 +316,10 @@ router.get('/login', async (req: Request, res: Response) => {
 // Query params are not validated because the OIDC provider may include
 // parameters not expressed in the schema.
 router.get('/callback', async (req: Request, res: Response) => {
+  if (isDevViewEnabled()) {
+    res.status(403).json({ error: 'OAuth is disabled while development view-as is enabled' });
+    return;
+  }
   const incomingState =
     typeof req.query.state === 'string' ? req.query.state : undefined;
   const codePresent = typeof req.query.code === 'string';
@@ -389,6 +430,12 @@ router.get('/callback', async (req: Request, res: Response) => {
  * describes the caller — never exposes other users' data.
  */
 router.get('/auth/me/debug', async (req: Request, res: Response) => {
+  if (isDevViewEnabled()) {
+    res.status(403).json({
+      error: 'Authentication diagnostics are disabled in development view-as',
+    });
+    return;
+  }
   if (!req.isAuthenticated()) {
     res.status(401).json({ error: 'Not authenticated' });
     return;

@@ -32,6 +32,8 @@ import type {
   CheckResult,
   ClusterHeadline,
   DashboardResponse,
+  DevViewResponse,
+  DevViewUnavailableResponse,
   DirectoryGroupsResponse,
   DirectoryMember,
   EmailSettings,
@@ -154,6 +156,84 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetDevViewUrl = () => {
+
+
+
+
+  return `/api/auth/dev-view`
+}
+
+/**
+ * Available only in local development. Returns disabled in all other environments. The selected stable directory user ID is sent with protected requests in X-Dev-View-As.
+ * @summary List development view-as identities
+ */
+export const getDevView = async ( options?: RequestInit): Promise<DevViewResponse> => {
+
+  return customFetch<DevViewResponse>(getGetDevViewUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDevViewQueryKey = () => {
+    return [
+    `/api/auth/dev-view`
+    ] as const;
+    }
+
+
+export const getGetDevViewQueryOptions = <TData = Awaited<ReturnType<typeof getDevView>>, TError = ErrorType<DevViewUnavailableResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDevView>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDevViewQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDevView>>> = ({ signal }) => getDevView({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDevView>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDevViewQueryResult = NonNullable<Awaited<ReturnType<typeof getDevView>>>
+export type GetDevViewQueryError = ErrorType<DevViewUnavailableResponse>
+
+
+/**
+ * @summary List development view-as identities
+ */
+
+export function useGetDevView<TData = Awaited<ReturnType<typeof getDevView>>, TError = ErrorType<DevViewUnavailableResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDevView>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDevViewQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetCurrentAuthUserUrl = () => {
 

@@ -9,6 +9,23 @@ import * as zod from 'zod';
 
 
 /**
+ * Available only in local development. Returns disabled in all other environments. The selected stable directory user ID is sent with protected requests in X-Dev-View-As.
+ * @summary List development view-as identities
+ */
+export const GetDevViewResponse = zod.union([zod.object({
+  "enabled": zod.boolean()
+}),zod.object({
+  "enabled": zod.boolean(),
+  "users": zod.array(zod.object({
+  "userId": zod.string(),
+  "name": zod.string().nullable(),
+  "username": zod.string().nullable(),
+  "email": zod.string().nullable()
+}))
+})])
+
+
+/**
  * Returns the signed-in identity together with the resolved Enterprise authorization (role and workspace scope). `auth` is null when the request is unauthenticated.
  * @summary Get the currently authenticated user
  */

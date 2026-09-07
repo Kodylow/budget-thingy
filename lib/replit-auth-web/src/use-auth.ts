@@ -41,6 +41,11 @@ interface AuthState {
   revalidateAuthorization: () => Promise<void>;
 }
 
+export interface UseAuthOptions {
+  enabled?: boolean;
+  developmentUserId?: string | null;
+}
+
 type AuthCacheEvent = 'signed-out' | 'explicit-sign-in';
 type AuthCacheClearListener = (event: AuthCacheEvent) => void;
 const authCacheClearListeners = new Set<AuthCacheClearListener>();
@@ -115,19 +120,30 @@ function bestEffortInvalidateServerSession(): void {
   });
 }
 
-export function useAuth(previewAs: string | null = null): AuthState {
-  const [blockedOnMount] = useState(hasSignedOutLatch);
+export function useAuth(
+  previewAs: string | null = null,
+  options: UseAuthOptions = {},
+): AuthState {
+  const enabled = options.enabled ?? true;
+  const developmentUserId = options.developmentUserId || null;
+  const [initialSignedOutLatch] = useState(hasSignedOutLatch);
+  const blockedOnMount = !developmentUserId && initialSignedOutLatch;
   const [user, setUser] = useState<AuthUser | null>(null);
   const [auth, setAuth] = useState<AuthAuthorization | null>(null);
   const [capabilities, setCapabilities] = useState<AuthCapabilities | null>(null);
-  const [isLoading, setIsLoading] = useState(!blockedOnMount);
+  const [isLoading, setIsLoading] = useState(enabled && !blockedOnMount);
   const [availability, setAvailability] = useState<AuthAvailability>(
-    blockedOnMount ? 'signed-out' : 'loading',
+    enabled && blockedOnMount ? 'signed-out' : 'loading',
   );
   const [loadedPreviewAs, setLoadedPreviewAs] = useState<string | null>(
     blockedOnMount ? previewAs : null,
   );
-  const signedOutRef = useRef(blockedOnMount);
+  const [loadedDevelopmentUserId, setLoadedDevelopmentUserId] = useState<string | null>(
+    blockedOnMount ? developmentUserId : null,
+  );
+  const realSignedOutRef = useRef(initialSignedOutLatch);
+  const selectedScopeRef = useRef({ previewAs, developmentUserId, enabled });
+  selectedScopeRef.current = { previewAs, developmentUserId, enabled };
   const availabilityRef = useRef<AuthAvailability>(
     blockedOnMount ? 'signed-out' : 'loading',
   );
@@ -139,6 +155,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
   const requestRef = useRef<{
     controller: AbortController;
     previewAs: string | null;
+    developmentUserId: string | null;
     promise: Promise<void>;
   } | null>(null);
   const hasUser = Boolean(user);
@@ -170,34 +187,55 @@ export function useAuth(previewAs: string | null = null): AuthState {
 
   const scheduleRecovery = useCallback(() => {
     clearRecoveryTimer();
-    if (signedOutRef.current || recoveryAttemptsRef.current >= 2) {
-      logAuthDebug('recovery.skipped', { signedOut: signedOutRef.current, attempts: recoveryAttemptsRef.current });
+    if (!enabled || (!developmentUserId && realSignedOutRef.current) || recoveryAttemptsRef.current >= 2) {
+      logAuthDebug('recovery.skipped', { signedOut: realSignedOutRef.current, attempts: recoveryAttemptsRef.current });
       return;
     }
     const attempt = recoveryAttemptsRef.current++;
     logAuthDebug('recovery.scheduled', { attempt: attempt + 1, delayMs: 1_500 * 2 ** attempt });
     recoveryTimerRef.current = setTimeout(() => {
       recoveryTimerRef.current = null;
-      if (!signedOutRef.current && availabilityRef.current === 'unavailable') {
+      if (
+        selectedScopeRef.current.enabled
+        && (selectedScopeRef.current.developmentUserId || !realSignedOutRef.current)
+        && availabilityRef.current === 'unavailable'
+      ) {
         logAuthDebug('recovery.run', { attempt: attempt + 1 });
         void requestAuthorizationRef.current(true);
       }
     }, 1_500 * 2 ** attempt);
-  }, [clearRecoveryTimer]);
+  }, [clearRecoveryTimer, developmentUserId, enabled]);
 
   const requestAuthorization = useCallback((background = false): Promise<void> => {
-    if (signedOutRef.current) {
+    if (!enabled) {
+      logAuthDebug('authorization.skipped', { reason: 'disabled', background });
+      return Promise.resolve();
+    }
+    if (!developmentUserId && realSignedOutRef.current) {
       logAuthDebug('authorization.skipped', { reason: 'signed-out-latch', background });
       return Promise.resolve();
     }
     const pending = requestRef.current;
-    if (background && pending && !pending.controller.signal.aborted && pending.previewAs === previewAs) {
+    if (
+      background
+      && pending
+      && !pending.controller.signal.aborted
+      && pending.previewAs === previewAs
+      && pending.developmentUserId === developmentUserId
+    ) {
       logAuthDebug('authorization.coalesced');
       return pending.promise;
     }
     logAuthDebug('authorization.start', { background, replacingPending: Boolean(pending), previewSelected: Boolean(previewAs) });
     pending?.controller.abort();
     const controller = new AbortController();
+    const isCurrentRequest = () => {
+      const selected = selectedScopeRef.current;
+      return !controller.signal.aborted
+        && selected.enabled
+        && selected.previewAs === previewAs
+        && selected.developmentUserId === developmentUserId;
+    };
     if (!background) {
       setIsLoading(true);
       availabilityRef.current = 'loading';
@@ -206,13 +244,15 @@ export function useAuth(previewAs: string | null = null): AuthState {
       setAuth(null);
       setCapabilities(null);
       setLoadedPreviewAs(null);
+      setLoadedDevelopmentUserId(null);
     }
 
     const promise = loadAuthorization({
       previewAs,
+      developmentUserId,
       signal: controller.signal,
     }).then((result) => {
-      if (controller.signal.aborted) {
+      if (!isCurrentRequest()) {
         logAuthDebug('authorization.stale-result');
         return;
       }
@@ -232,7 +272,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
       setCapabilities(result.envelope?.capabilities ?? null);
     }).catch((error) => {
       logAuthDebug('authorization.failure', { cancelled: controller.signal.aborted || error instanceof AuthRequestCancelledError });
-      if (!controller.signal.aborted && !(error instanceof AuthRequestCancelledError)) {
+      if (isCurrentRequest() && !(error instanceof AuthRequestCancelledError)) {
         availabilityRef.current = 'unavailable';
         setAvailability('unavailable');
         setUser(null);
@@ -241,21 +281,41 @@ export function useAuth(previewAs: string | null = null): AuthState {
         scheduleRecovery();
       }
     }).finally(() => {
-      if (!controller.signal.aborted) {
-        requestRef.current = null;
+      if (isCurrentRequest()) {
+        if (requestRef.current?.controller === controller) requestRef.current = null;
         setLoadedPreviewAs(previewAs);
+        setLoadedDevelopmentUserId(developmentUserId);
         setIsLoading(false);
       }
     });
-    requestRef.current = { controller, previewAs, promise };
+    requestRef.current = { controller, previewAs, developmentUserId, promise };
     return promise;
-  }, [clearRecoveryTimer, previewAs, scheduleRecovery]);
+  }, [clearRecoveryTimer, developmentUserId, enabled, previewAs, scheduleRecovery]);
   requestAuthorizationRef.current = requestAuthorization;
 
   useEffect(() => {
-    if (signedOutRef.current) {
+    if (!enabled) {
+      requestRef.current?.controller.abort();
+      requestRef.current = null;
+      clearRecoveryTimer();
+      setUser(null);
+      setAuth(null);
+      setCapabilities(null);
+      setIsLoading(true);
+      availabilityRef.current = 'loading';
+      setAvailability('loading');
+      setLoadedPreviewAs(null);
+      setLoadedDevelopmentUserId(null);
+    } else if (!developmentUserId && realSignedOutRef.current) {
       // Clearing a selected preview during sign-out must not start a new fetch.
+      setUser(null);
+      setAuth(null);
+      setCapabilities(null);
+      setIsLoading(false);
+      availabilityRef.current = 'signed-out';
+      setAvailability('signed-out');
       setLoadedPreviewAs(previewAs);
+      setLoadedDevelopmentUserId(developmentUserId);
     } else {
       void requestAuthorization();
     }
@@ -264,16 +324,17 @@ export function useAuth(previewAs: string | null = null): AuthState {
       requestRef.current?.controller.abort();
       clearRecoveryTimer();
     };
-  }, [clearRecoveryTimer, requestAuthorization]);
+  }, [clearRecoveryTimer, developmentUserId, enabled, previewAs, requestAuthorization]);
 
   useEffect(() => {
     const handleAuthCacheEvent = (event: AuthCacheEvent) => {
+      if (developmentUserId) return;
       logAuthDebug('auth-cache.event', { reason: event });
       requestRef.current?.controller.abort();
       requestRef.current = null;
       clearRecoveryTimer();
       recoveryAttemptsRef.current = 0;
-      signedOutRef.current = event === 'signed-out';
+      realSignedOutRef.current = event === 'signed-out';
       if (event === 'signed-out') {
         availabilityRef.current = 'signed-out';
         setUser(null);
@@ -282,6 +343,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
         setIsLoading(false);
         setAvailability('signed-out');
         setLoadedPreviewAs(previewAs);
+        setLoadedDevelopmentUserId(developmentUserId);
       } else {
         availabilityRef.current = 'loading';
         void requestAuthorizationRef.current();
@@ -300,11 +362,16 @@ export function useAuth(previewAs: string | null = null): AuthState {
       authCacheClearListeners.delete(handleAuthCacheEvent);
       window.removeEventListener('storage', syncSignedOut);
     };
-  }, [clearRecoveryTimer, previewAs]);
+  }, [clearRecoveryTimer, developmentUserId, previewAs]);
 
   useEffect(() => {
     const recoverIfUnavailable = (event: Event) => {
-      if (signedOutRef.current || availabilityRef.current !== 'unavailable') return;
+      const selected = selectedScopeRef.current;
+      if (
+        !selected.enabled
+        || (!selected.developmentUserId && realSignedOutRef.current)
+        || availabilityRef.current !== 'unavailable'
+      ) return;
       logAuthDebug('recovery.browser-event', { reason: event.type === 'focus' ? 'focus' : 'online' });
       clearRecoveryTimer();
       void requestAuthorizationRef.current(true);
@@ -318,37 +385,50 @@ export function useAuth(previewAs: string | null = null): AuthState {
   }, [clearRecoveryTimer]);
 
   const retryAuthorization = useCallback(() => {
-    logAuthDebug('recovery.manual', { signedOut: signedOutRef.current });
-    if (signedOutRef.current) {
+    logAuthDebug('recovery.manual', { signedOut: realSignedOutRef.current });
+    if (!enabled) return;
+    if (!developmentUserId && realSignedOutRef.current) {
       beginExplicitSignIn();
       return;
     }
     recoveryAttemptsRef.current = 0;
     clearRecoveryTimer();
     void requestAuthorization();
-  }, [clearRecoveryTimer, requestAuthorization]);
+  }, [clearRecoveryTimer, developmentUserId, enabled, requestAuthorization]);
   const revalidateAuthorization = useCallback(
     () => requestAuthorization(true),
     [requestAuthorization],
   );
 
   const logout = useCallback(() => {
+    if (developmentUserId) {
+      logAuthDebug('sign-out.skipped', { reason: 'development-view-as' });
+      return;
+    }
     logAuthDebug('sign-out.begin');
     // Invalidate pending work immediately; server-cookie removal is best effort
     // and never navigates the user onto a failing API response.
     setSignedOutLatch();
     clearAuthCache();
     bestEffortInvalidateServerSession();
-  }, []);
+  }, [developmentUserId]);
+
+  const scopeResolved = enabled
+    && loadedPreviewAs === previewAs
+    && loadedDevelopmentUserId === developmentUserId;
+  const visibleUser = scopeResolved ? user : null;
+  const visibleAuth = scopeResolved ? auth : null;
+  const visibleCapabilities = scopeResolved ? capabilities : null;
+  const visibleAvailability: AuthAvailability = scopeResolved ? availability : 'loading';
 
   return {
-    user,
-    auth,
-    capabilities,
-    isLoading: isLoading || loadedPreviewAs !== previewAs,
-    availability,
-    isUnavailable: availability === 'unavailable',
-    isAuthenticated: availability === 'authorized' || availability === 'denied',
+    user: visibleUser,
+    auth: visibleAuth,
+    capabilities: visibleCapabilities,
+    isLoading: !scopeResolved || isLoading,
+    availability: visibleAvailability,
+    isUnavailable: visibleAvailability === 'unavailable',
+    isAuthenticated: visibleAvailability === 'authorized' || visibleAvailability === 'denied',
     logout,
     retryAuthorization,
     revalidateAuthorization,

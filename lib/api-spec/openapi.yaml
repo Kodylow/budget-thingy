@@ -29,6 +29,28 @@ tags:
   - name: Auth
     description: Browser and mobile authentication endpoints.
 paths:
+  /auth/dev-view:
+    get:
+      tags: [Auth]
+      operationId: getDevView
+      summary: List development view-as identities
+      description: >
+        Available only in local development. Returns disabled in all other
+        environments. The selected stable directory user ID is sent with
+        protected requests in X-Dev-View-As.
+      responses:
+        '200':
+          description: Development view-as status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevViewResponse'
+        '503':
+          description: The configured Enterprise directory is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevViewUnavailableResponse'
   /auth/user:
     get:
       tags: [Auth]
@@ -3901,6 +3923,47 @@ components:
             - type: 'null'
         capabilities:
           $ref: '#/components/schemas/AuthCapabilities'
+    DevViewUser:
+      type: object
+      required: [userId, name, username, email]
+      properties:
+        userId:
+          type: string
+        name:
+          type: [string, 'null']
+        username:
+          type: [string, 'null']
+        email:
+          type: [string, 'null']
+    DevViewResponse:
+      oneOf:
+        - type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+              const: false
+        - type: object
+          required: [enabled, users]
+          properties:
+            enabled:
+              type: boolean
+              const: true
+            users:
+              type: array
+              items:
+                $ref: '#/components/schemas/DevViewUser'
+    DevViewUnavailableResponse:
+      type: object
+      required: [enabled, error, retryable]
+      properties:
+        enabled:
+          type: boolean
+          const: true
+        error:
+          type: string
+        retryable:
+          type: boolean
     AuthCapabilities:
       type: object
       required: [canManageAccess, canEditAllocations, canPreviewRoles, canWriteGroupLimits, canWriteUserLimitsIn]

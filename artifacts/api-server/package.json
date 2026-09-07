@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
+    "dev": "NODE_ENV=development pnpm run build && NODE_ENV=development pnpm run start",
+    "dev:oauth": "DEV_VIEW_AS=0 pnpm run dev",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "ingest:once": "tsx ./src/ingest-once.ts",

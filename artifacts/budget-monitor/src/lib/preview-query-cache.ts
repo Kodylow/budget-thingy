@@ -1,4 +1,4 @@
-import { getPreviewAs } from '@workspace/api-client-react';
+import { getDevelopmentUserId, getPreviewAs } from '@workspace/api-client-react';
 
 /**
  * Partitions every React Query cache entry by the effective preview identity.
@@ -6,5 +6,5 @@ import { getPreviewAs } from '@workspace/api-client-react';
  * scopes while preserving the generated keys themselves.
  */
 export function previewScopedQueryHash(queryKey: readonly unknown[]): string {
-  return JSON.stringify([getPreviewAs(), queryKey]);
+  return JSON.stringify([getDevelopmentUserId(), getPreviewAs(), queryKey]);
 }

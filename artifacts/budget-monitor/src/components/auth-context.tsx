@@ -10,6 +10,7 @@ import {
   type AuthCapabilities,
 } from '@workspace/replit-auth-web';
 import { protectedAuthorizationFingerprint } from '@/lib/auth-transition';
+import { useDevelopmentView } from '@/lib/use-development-view';
 import {
   AuthContext,
   type AuthContextValue,
@@ -23,6 +24,12 @@ export { useAuthContext, useCanWrite } from './auth-context-definition';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
+  const clearProtectedState = useCallback(() => {
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    clearApiDiagnostics();
+  }, [queryClient]);
+  const developmentView = useDevelopmentView(clearProtectedState);
   const [preview, setPreviewState] = useState<PreviewSelection | null>(null);
   const previewRef = useRef<PreviewSelection | null>(null);
   const previewTransitionRef = useRef(0);
@@ -41,7 +48,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout,
     retryAuthorization,
     revalidateAuthorization,
-  } = useReplitAuth(preview);
+  } = useReplitAuth(preview, {
+    enabled: developmentView.ready && (!developmentView.enabled || Boolean(developmentView.selectedId)),
+    developmentUserId: developmentView.enabled ? developmentView.selectedId : null,
+  });
   const authorizationFingerprint = protectedAuthorizationFingerprint({
     availability,
     user,
@@ -63,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const cachedRealAuth = currentRealAuth
     ?? (lastRealEntry && lastRealEntry.userId === userId ? lastRealEntry.auth : null);
   const realRole = cachedRealAuth?.role ?? auth?.role ?? null;
-  const canPreviewRbac = capabilities?.canPreviewRoles === true;
+  const canPreviewRbac = !developmentView.enabled && capabilities?.canPreviewRoles === true;
 
   const setPreview = useCallback((next: PreviewSelection | null) => {
     if (!canPreviewRbac) return;
@@ -174,6 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const canWrite = !previewReadOnly && (effectiveCapabilities.canEditAllocations || effectiveCapabilities.canWriteGroupLimits || effectiveCapabilities.canWriteUserLimitsIn.length > 0);
 
     return {
+      developmentView,
       user,
       auth,
       isLoading,
@@ -202,7 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       revalidateAuthorization,
       authorizationKey: authorizationFingerprint,
     };
-  }, [user, auth, capabilities, isLoading, availability, isUnavailable, isAuthenticated, logoutAndClearPreview, retryAuthorization, revalidateAuthorization, preview, realRole, canPreviewRbac, setPreview, resetPreview, authorizationFingerprint]);
+  }, [user, auth, capabilities, isLoading, availability, isUnavailable, isAuthenticated, logoutAndClearPreview, retryAuthorization, revalidateAuthorization, preview, realRole, canPreviewRbac, setPreview, resetPreview, authorizationFingerprint, developmentView]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

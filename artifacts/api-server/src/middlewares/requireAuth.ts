@@ -14,6 +14,7 @@ import {
   getConfigurationSnapshot,
   type ConfigurationSnapshot,
 } from "../lib/configuration-snapshot";
+import { devViewReadOnly } from "../lib/dev-view";
 
 export { setAuthorizationResolver } from "../lib/authz";
 
@@ -44,11 +45,13 @@ export async function requireAuth(
       res.status(403).json({ error: "Access denied" });
       return;
     }
-    req.authz = await resolvePreviewAuthorization(
-      real,
-      req.header("X-Preview-As"),
-      configuration,
-    );
+    req.authz = req.devViewAs === true
+      ? devViewReadOnly(real)
+      : await resolvePreviewAuthorization(
+          real,
+          req.header("X-Preview-As"),
+          configuration,
+        );
     req.configurationSnapshot = configuration;
     req.log?.info({
       event: "auth.require",

@@ -10,8 +10,22 @@ import {
   requireSameOriginForCookieMutations,
 } from "./lib/auth";
 import { logger } from "./lib/logger";
+import { isDevViewEnabled } from "./lib/dev-view";
 
 const app: Express = express();
+const SAFE_DEV_VIEW_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+export function devViewReadOnlyBoundary(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  if (isDevViewEnabled() && !SAFE_DEV_VIEW_METHODS.has(req.method)) {
+    res.status(403).json({ error: "Development view-as is read-only" });
+    return;
+  }
+  next();
+}
 
 function diagnosticEndpoint(url: string | undefined): string {
   const segments = (url?.split("?")[0] ?? "/").split("/");
@@ -108,6 +122,7 @@ app.use((req, res, next) => {
     },
   })(req, res, next);
 });
+app.use(devViewReadOnlyBoundary);
 app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -117,7 +132,10 @@ app.use((_req, res, next) => {
   // Authenticated JSON and CSV must never be shared by browsers or proxies.
   // The in-process Spend cache remains authorization- and generation-scoped.
   res.setHeader("Cache-Control", "private, no-store");
-  res.setHeader("Vary", "Authorization, Cookie, Accept-Encoding");
+  res.setHeader(
+    "Vary",
+    "Authorization, Cookie, X-Dev-View-As, Accept-Encoding",
+  );
   next();
 });
 

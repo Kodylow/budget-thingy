@@ -8,6 +8,11 @@ import {
   SESSION_COOKIE,
   setSessionCookie,
 } from '../lib/auth';
+import {
+  InvalidDevViewSelectionError,
+  isDevViewEnabled,
+  resolveDevViewMember,
+} from '../lib/dev-view';
 
 const AUTH_DIAGNOSTIC_ENDPOINTS = new Set([
   '/api/auth/user',
@@ -65,6 +70,7 @@ declare global {
       isAuthenticated(): this is AuthedRequest;
 
       user?: User | undefined;
+      devViewAs?: boolean;
     }
 
     export interface AuthedRequest {
@@ -81,6 +87,49 @@ export async function authMiddleware(
   req.isAuthenticated = function (this: Request) {
     return this.user != null;
   } as Request['isAuthenticated'];
+
+  if (isDevViewEnabled()) {
+    const publicDevPath = req.path === '/api/auth/dev-view';
+    const publicPath =
+      publicDevPath ||
+      req.path === '/api/health' ||
+      req.path === '/api/healthz' ||
+      req.path === '/api/login' ||
+      req.path === '/api/callback';
+    if (publicPath) {
+      next();
+      return;
+    }
+
+    try {
+      const member = await resolveDevViewMember(req);
+      const nameParts = member.name?.trim().split(/\s+/) ?? [];
+      req.user = {
+        id: member.userId,
+        email: member.email,
+        firstName: nameParts.shift() ?? member.username,
+        lastName: nameParts.length > 0 ? nameParts.join(' ') : null,
+        profileImageUrl: null,
+      };
+      req.devViewAs = true;
+      next();
+    } catch (error) {
+      if (error instanceof InvalidDevViewSelectionError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      req.log.error(
+        { event: 'auth.dev-view', outcome: 'unavailable' },
+        'development directory lookup unavailable',
+      );
+      res.status(503).json({
+        enabled: true,
+        error: 'Development directory temporarily unavailable',
+        retryable: true,
+      });
+    }
+    return;
+  }
 
   const diagnostic = AUTH_DIAGNOSTIC_ENDPOINTS.has(req.path);
   const cookiePresent = typeof req.cookies?.[SESSION_COOKIE] === 'string';

@@ -2,14 +2,21 @@ export * from "./generated/api";
 export * from "./generated/api.schemas";
 export {
   customFetch,
+  getDevelopmentUserId,
   getPreviewAs,
   setBaseUrl,
   setAuthTokenGetter,
+  setDevelopmentUserIdGetter,
   setPreviewAsGetter,
   setForbiddenHandler,
   setUnauthorizedHandler,
 } from "./custom-fetch";
-export type { AuthTokenGetter, PreviewAsGetter, CustomFetchOptions } from "./custom-fetch";
+export type {
+  AuthTokenGetter,
+  CustomFetchOptions,
+  DevelopmentUserIdGetter,
+  PreviewAsGetter,
+} from "./custom-fetch";
 export {
   clearApiDiagnostics,
   currentDiagnosticRoute,

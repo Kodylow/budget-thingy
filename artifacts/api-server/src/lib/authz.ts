@@ -54,6 +54,8 @@ export interface Authorization {
     canWriteUserLimitsIn: string[];
   };
   isPreview?: boolean;
+  /** Effective identity is simulated and all mutations must be rejected. */
+  previewReadOnly?: boolean;
 }
 
 function canonicalAuthorizationValue(value: unknown): unknown {
@@ -94,6 +96,7 @@ function revisionAuthorization(authz: Authorization) {
     isTrueAccountAdmin: authz.isTrueAccountAdmin,
     capabilities: authz.capabilities,
     isPreview: authz.isPreview,
+    previewReadOnly: authz.previewReadOnly,
     effectiveScope: "kind" in scope
       ? scope
       : {

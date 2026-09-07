@@ -19,6 +19,7 @@ export type BodyType<T> = T;
 export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
 export type PreviewAsGetter = () => string | null;
+export type DevelopmentUserIdGetter = () => string | null;
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
@@ -30,6 +31,7 @@ let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
 
 let _previewAsGetter: PreviewAsGetter | null = null;
+let _developmentUserIdGetter: DevelopmentUserIdGetter | null = null;
 let _unauthorizedHandler: (() => void) | null = null;
 let _forbiddenHandler: (() => void) | null = null;
 
@@ -62,6 +64,11 @@ export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
 /** Register the current account-admin preview identity for generated requests. */
 export function setPreviewAsGetter(getter: PreviewAsGetter | null): void {
   _previewAsGetter = getter;
+}
+
+/** Register the development identity applied to protected generated requests. */
+export function setDevelopmentUserIdGetter(getter: DevelopmentUserIdGetter | null): void {
+  _developmentUserIdGetter = getter;
 }
 
 /**
@@ -400,6 +407,12 @@ export async function customFetch<T = unknown>(
     else headers.delete("x-preview-as");
   }
 
+  if (_developmentUserIdGetter) {
+    const developmentUserId = getDevelopmentUserId();
+    if (developmentUserId) headers.set("x-dev-view-as", developmentUserId);
+    else headers.delete("x-dev-view-as");
+  }
+
   const requestInfo = { method, url: resolveUrl(input) };
   const startedAt = typeof performance === "undefined" ? Date.now() : performance.now();
   let response: Response | undefined;
@@ -456,4 +469,9 @@ export async function customFetch<T = unknown>(
 /** Read the preview identity currently applied to generated requests. */
 export function getPreviewAs(): string | null {
   return _previewAsGetter?.() ?? null;
+}
+
+/** Read the development identity currently applied to generated requests. */
+export function getDevelopmentUserId(): string | null {
+  return _developmentUserIdGetter?.() ?? null;
 }
