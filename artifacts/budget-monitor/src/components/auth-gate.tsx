@@ -128,24 +128,17 @@ function SignedOutShell({
     <div className="flex min-h-[100dvh] flex-col bg-background md:flex-row" data-testid="auth-signed-out">
       <div className="relative h-44 w-full shrink-0 overflow-hidden bg-[#000A73] md:h-auto md:min-h-[100dvh] md:w-[62%]">
         <img
-          src={`${import.meta.env.BASE_URL}login-network-architecture.jpg`}
-          alt="Architectural network paths converging through modular structures"
-          width="1024"
-          height="1024"
+          src={`${import.meta.env.BASE_URL}comcast-technology-center.png`}
+          alt="Comcast Technology Center entrance and illuminated sign"
+          width="554"
+          height="554"
           className="absolute inset-0 h-full w-full object-cover object-[center_60%] md:object-center"
         />
-        <div className="absolute top-6 left-6 md:top-10 md:left-10 z-20">
-           <span className="font-display text-xl md:text-2xl font-bold tracking-tight text-white drop-shadow-md">Budget Monitor</span>
-        </div>
       </div>
 
       <div className="z-20 flex flex-1 flex-col justify-start bg-background px-6 py-12 md:w-[38%] md:justify-center md:px-12 lg:px-16">
         <div className="w-full max-w-sm mx-auto">
-          <p className="mb-2 text-xs md:text-sm font-semibold uppercase tracking-widest text-primary">Comcast Enterprise</p>
           <h1 className="mb-4 font-display text-3xl font-semibold tracking-tight text-foreground md:text-4xl">Sign in to Budget Monitor</h1>
-          <p className="text-muted-foreground text-sm md:text-base mb-8">
-            Monitor spending and manage authorized Agent limits across your workspaces.
-          </p>
            <Button className="h-11 w-full text-base" asChild>
             <a
               href={getLoginUrl(returnTo)}
@@ -173,11 +166,6 @@ function SignedOutShell({
                </Button>
              </div>
            )}
-          {embedded && (
-            <p className="mt-4 text-center text-xs text-muted-foreground">
-              Secure sign-in opens outside the preview. Continue using the app in that tab.
-            </p>
-          )}
         </div>
       </div>
     </div>
