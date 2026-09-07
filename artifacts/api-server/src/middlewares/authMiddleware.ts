@@ -9,6 +9,7 @@ import {
   setSessionCookie,
 } from '../lib/auth';
 import {
+  DEV_VIEW_AS_HEADER,
   InvalidDevViewSelectionError,
   isDevViewEnabled,
   resolveDevViewMember,
@@ -88,19 +89,7 @@ export async function authMiddleware(
     return this.user != null;
   } as Request['isAuthenticated'];
 
-  if (isDevViewEnabled()) {
-    const publicDevPath = req.path === '/api/auth/dev-view';
-    const publicPath =
-      publicDevPath ||
-      req.path === '/api/health' ||
-      req.path === '/api/healthz' ||
-      req.path === '/api/login' ||
-      req.path === '/api/callback';
-    if (publicPath) {
-      next();
-      return;
-    }
-
+  if (isDevViewEnabled() && req.header(DEV_VIEW_AS_HEADER)) {
     try {
       const member = await resolveDevViewMember(req);
       const nameParts = member.name?.trim().split(/\s+/) ?? [];

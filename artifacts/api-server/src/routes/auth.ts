@@ -278,8 +278,10 @@ router.get('/auth/user', async (req: Request, res: Response) => {
 });
 
 router.get('/login', async (req: Request, res: Response) => {
-  if (isDevViewEnabled()) {
-    res.status(403).json({ error: 'OAuth is disabled while development view-as is enabled' });
+  if (req.devViewAs === true) {
+    res.status(403).json({
+      error: 'OAuth is unavailable during a development preview',
+    });
     return;
   }
   req.log.info({ event: 'auth.login', stage: 'begin' });
@@ -316,8 +318,10 @@ router.get('/login', async (req: Request, res: Response) => {
 // Query params are not validated because the OIDC provider may include
 // parameters not expressed in the schema.
 router.get('/callback', async (req: Request, res: Response) => {
-  if (isDevViewEnabled()) {
-    res.status(403).json({ error: 'OAuth is disabled while development view-as is enabled' });
+  if (req.devViewAs === true) {
+    res.status(403).json({
+      error: 'OAuth is unavailable during a development preview',
+    });
     return;
   }
   const incomingState =
@@ -430,7 +434,7 @@ router.get('/callback', async (req: Request, res: Response) => {
  * describes the caller — never exposes other users' data.
  */
 router.get('/auth/me/debug', async (req: Request, res: Response) => {
-  if (isDevViewEnabled()) {
+  if (req.devViewAs === true) {
     res.status(403).json({
       error: 'Authentication diagnostics are disabled in development view-as',
     });

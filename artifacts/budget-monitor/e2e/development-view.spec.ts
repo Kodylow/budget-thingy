@@ -56,6 +56,23 @@ function authEnvelope(userId: string) {
   };
 }
 
+const signedOutEnvelope = {
+  user: null,
+  auth: null,
+  capabilities: {
+    canManageAccess: false,
+    canViewAccountUsage: false,
+    canEditAllocations: false,
+    canManageNotifications: false,
+    canManageSystem: false,
+    canPreviewRoles: false,
+    canWriteGroupLimits: false,
+    canWriteUserLimitsIn: [],
+    canRunChecks: false,
+    canSendTestEmail: false,
+  },
+};
+
 function spendFixture(userId: string) {
   const identity = users.find(user => user.userId === userId)?.name ?? userId;
   return {
@@ -148,7 +165,7 @@ async function installDevelopmentApi(
     const selected = await route.request().headerValue('x-dev-view-as');
     if (url.pathname === '/api/auth/user') {
       authHeaders.push(selected ?? '');
-      return fulfillJson(route, authEnvelope(selected ?? 'missing-development-user'));
+      return fulfillJson(route, selected ? authEnvelope(selected) : signedOutEnvelope);
     }
     if (url.pathname === '/api/status') return fulfillJson(route, {});
     return fulfillJson(route, spendFixture(selected ?? 'missing-development-user'));
@@ -161,19 +178,27 @@ async function chooseUser(page: Page, name: string) {
   await page.getByRole('option', { name: new RegExp(name) }).click();
 }
 
-test('selects an initial development identity despite an old signed-out latch', async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem(`budget-monitor:auth-signed-out:${location.origin}`, '1');
-  });
+test('starts signed out, previews only after selection, and exits without a stale header', async ({ page }) => {
   const authHeaders = await installDevelopmentApi(page);
 
   await page.goto('/help');
 
-  await expect(page.getByTestId('dev-view-chip')).toBeVisible();
+  await expect(page.getByTestId('auth-signed-out')).toBeVisible();
+  await expect(page.getByTestId('button-login')).toBeVisible();
+  await expect(page.getByTestId('dev-view-chip')).toContainText('Preview as a person');
+  expect(await page.evaluate(key => sessionStorage.getItem(key), selectionKey)).toBeNull();
+  expect(authHeaders.some(Boolean)).toBe(false);
+
+  await chooseUser(page, 'Alice Alpha');
   await expect(page.getByTestId('auth-signed-out')).toHaveCount(0);
-  await expect.poll(() => authHeaders.find(Boolean)).toMatch(/^user-(alpha|beta|gamma)$/);
-  const retained = await page.evaluate(key => sessionStorage.getItem(key), selectionKey);
-  expect(users.map(user => user.userId)).toContain(retained);
+  await expect(page.getByTestId('dev-view-chip')).toContainText('Alice Alpha');
+  await expect.poll(() => authHeaders.at(-1)).toBe('user-alpha');
+
+  await page.getByTestId('dev-view-chip').click();
+  await page.getByTestId('button-exit-dev-view').click();
+  await expect(page.getByTestId('auth-signed-out')).toBeVisible();
+  await expect.poll(() => authHeaders.at(-1)).toBe('');
+  expect(await page.evaluate(key => sessionStorage.getItem(key), selectionKey)).toBeNull();
 });
 
 test('retains the selected identity across navigation and reload', async ({ page }) => {
@@ -242,8 +267,9 @@ test('drops deferred authorization and protected responses during rapid switches
     if (url.pathname === '/api/auth/dev-view') {
       return fulfillJson(route, { enabled: true, users });
     }
-    const selected = await route.request().headerValue('x-dev-view-as') ?? 'missing-development-user';
+    const selected = await route.request().headerValue('x-dev-view-as');
     if (url.pathname === '/api/auth/user') {
+      if (!selected) return fulfillJson(route, signedOutEnvelope);
       if (selected === 'user-beta' && ++betaAuthRequests === 1) {
         firstBetaAuthStarted();
         await firstBetaAuthWaiting;
@@ -261,7 +287,7 @@ test('drops deferred authorization and protected responses during rapid switches
       await betaSpendWaiting;
     }
     try {
-      return await fulfillJson(route, spendFixture(selected));
+      return await fulfillJson(route, spendFixture(selected ?? 'missing-development-user'));
     } catch {
       // Switching identities is expected to abort an obsolete protected request.
     }
@@ -300,7 +326,10 @@ test('recovers from directory outage, empty directory, and an invalid retained s
     }
     const selected = await route.request().headerValue('x-dev-view-as');
     if (url.pathname === '/api/auth/user') {
-      if (!selected || selected === 'removed-user') {
+      if (!selected) {
+        return fulfillJson(route, signedOutEnvelope);
+      }
+      if (selected === 'removed-user') {
         return fulfillJson(route, { error: 'Invalid development identity' }, 400);
       }
       return fulfillJson(route, authEnvelope(selected));
@@ -313,12 +342,34 @@ test('recovers from directory outage, empty directory, and an invalid retained s
   await page.getByTestId('dev-view-chip').click();
   await expect(page.getByRole('alert')).toContainText('development directory is unavailable');
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(page.getByTestId('auth-development-recovery')).toContainText('No enabled users');
+  await expect(page.getByRole('alert')).toContainText('No enabled users');
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(page.getByTestId('auth-development-recovery')).toContainText('selected user is no longer available');
+  await expect(page.getByRole('option', { name: /Alice Alpha/ })).toBeVisible();
   await page.getByRole('option', { name: /Alice Alpha/ }).click();
   await expect(page.getByTestId('dev-view-chip')).toContainText('Alice Alpha');
   await expect(page.getByTestId('auth-development-recovery')).toHaveCount(0);
+});
+
+test('keeps OAuth navigation headerless while development preview is available', async ({ page }) => {
+  let loginHeader: string | null | undefined;
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/auth/dev-view') {
+      return fulfillJson(route, { enabled: true, users });
+    }
+    if (url.pathname === '/api/auth/user') {
+      return fulfillJson(route, signedOutEnvelope);
+    }
+    if (url.pathname === '/api/login') {
+      loginHeader = await route.request().headerValue('x-dev-view-as');
+      return fulfillJson(route, { reached: true });
+    }
+    return fulfillJson(route, {});
+  });
+
+  await page.goto('/help');
+  await page.getByTestId('button-login').click();
+  await expect.poll(() => loginHeader).toBeNull();
 });
 
 test('keeps the chip available on a forbidden route', async ({ page }) => {

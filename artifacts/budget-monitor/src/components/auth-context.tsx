@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     retryAuthorization,
     revalidateAuthorization,
   } = useReplitAuth(preview, {
-    enabled: developmentView.ready && (!developmentView.enabled || Boolean(developmentView.selectedId)),
+    enabled: true,
     developmentUserId: developmentView.enabled ? developmentView.selectedId : null,
   });
   const authorizationFingerprint = protectedAuthorizationFingerprint({

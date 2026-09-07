@@ -10,7 +10,7 @@ import {
   requireSameOriginForCookieMutations,
 } from "./lib/auth";
 import { logger } from "./lib/logger";
-import { isDevViewEnabled } from "./lib/dev-view";
+import { DEV_VIEW_AS_HEADER, isDevViewEnabled } from "./lib/dev-view";
 
 const app: Express = express();
 const SAFE_DEV_VIEW_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -20,7 +20,11 @@ export function devViewReadOnlyBoundary(
   res: express.Response,
   next: express.NextFunction,
 ): void {
-  if (isDevViewEnabled() && !SAFE_DEV_VIEW_METHODS.has(req.method)) {
+  if (
+    isDevViewEnabled() &&
+    req.header(DEV_VIEW_AS_HEADER) &&
+    !SAFE_DEV_VIEW_METHODS.has(req.method)
+  ) {
     res.status(403).json({ error: "Development view-as is read-only" });
     return;
   }

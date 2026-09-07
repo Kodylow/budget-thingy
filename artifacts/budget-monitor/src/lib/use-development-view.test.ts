@@ -36,15 +36,14 @@ afterEach(async () => {
 });
 
 describe('development directory bootstrap', () => {
-  it('chooses an eligible random identity once and retains it through remount', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.9);
+  it('starts without an identity and restores only an explicit retained choice', async () => {
     await act(async () => root.render(createElement(Probe)));
-    expect(state.selectedId).toBe('two');
-    expect(getDevelopmentUserId()).toBe('two');
-    expect(sessionStorage.getItem(key)).toBe('two');
+    expect(state.selectedId).toBeNull();
+    expect(getDevelopmentUserId()).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
     expect(fetcher.mock.calls[0][1]?.credentials).toBe('same-origin');
+    await act(async () => state.select('two'));
     await act(async () => root.unmount());
-    vi.spyOn(Math, 'random').mockReturnValue(0);
     root = createRoot(document.createElement('div'));
     await act(async () => root.render(createElement(Probe)));
     expect(state.selectedId).toBe('two');
@@ -65,21 +64,34 @@ describe('development directory bootstrap', () => {
     await act(async () => root.render(createElement(Probe)));
     fetcher.mockResolvedValueOnce(Response.json({ enabled: true, error: 'Unavailable' }, { status: 503 }));
     await act(async () => state.retry());
-    expect(state).toMatchObject({ enabled: true, ready: false, selectedId: 'two', loading: false });
+    expect(state).toMatchObject({ enabled: true, ready: true, selectedId: 'two', loading: false });
     expect(state.error).toContain('unavailable');
     await act(async () => state.retry());
     expect(state).toMatchObject({ ready: true, error: null, selectedId: 'two' });
   });
 
-  it('does not replace unknown retained IDs or fabricate people for an empty directory', async () => {
+  it('clears unknown retained IDs and does not fabricate people for an empty directory', async () => {
     sessionStorage.setItem(key, 'removed');
     await act(async () => root.render(createElement(Probe)));
-    expect(state.selectedId).toBe('removed');
+    expect(state.selectedId).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
     fetcher.mockResolvedValueOnce(Response.json({ enabled: true, users: [] }));
     await act(async () => state.retry());
     expect(state.users).toEqual([]);
-    expect(state.selectedId).toBe('removed');
+    expect(state.selectedId).toBeNull();
     expect(state.error).toContain('No enabled users');
+  });
+
+  it('exits preview synchronously and forgets the explicit selection', async () => {
+    await act(async () => root.render(createElement(Probe)));
+    await act(async () => state.select('two'));
+    await act(async () => {
+      state.exit();
+      expect(getDevelopmentUserId()).toBeNull();
+    });
+    expect(state.selectedId).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
+    expect(clear).toHaveBeenCalledTimes(2);
   });
 
   it('does not use a saved development selection when the server disables the mode', async () => {

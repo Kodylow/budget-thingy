@@ -8,11 +8,15 @@ import { beginExplicitSignIn, getLoginUrl } from '@workspace/replit-auth-web';
 const retryAuthorization = vi.fn();
 const logout = vi.fn();
 const resetPreview = vi.fn();
+const selectDevelopmentUser = vi.fn();
+const exitDevelopmentView = vi.fn();
+const retryDevelopmentView = vi.fn();
 let availability = 'signed-out';
 let embedded = false;
 let isLoading = false;
 let isAuthenticated = false;
 let isDenied = false;
+let developmentEnabled = false;
 
 vi.mock('@/components/auth-context', () => ({
   useAuthContext: () => ({
@@ -25,6 +29,19 @@ vi.mock('@/components/auth-context', () => ({
     resetPreview,
     availability,
     retryAuthorization,
+    developmentView: {
+      enabled: developmentEnabled,
+      ready: true,
+      users: [
+        { userId: 'one', name: 'One Person', username: 'one', email: null },
+      ],
+      selectedId: null,
+      loading: false,
+      error: null,
+      select: selectDevelopmentUser,
+      exit: exitDevelopmentView,
+      retry: retryDevelopmentView,
+    },
   }),
 }));
 
@@ -46,6 +63,7 @@ beforeEach(() => {
   isLoading = false;
   isAuthenticated = false;
   isDenied = false;
+  developmentEnabled = false;
   vi.clearAllMocks();
   window.history.replaceState({}, '', '/');
   container = document.createElement('div');
@@ -106,6 +124,17 @@ describe('AuthGate sign-in shell', () => {
     ));
     expect(container.querySelector('[data-testid="button-login"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="button-reconnect"]')).toBeNull();
+  });
+
+  it('keeps normal login and offers optional development preview when enabled', async () => {
+    developmentEnabled = true;
+    await act(async () => root.render(
+      createElement(AuthGate, null, createElement('div', null, 'protected')),
+    ));
+    expect(container.querySelector('[data-testid="button-login"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="dev-view-chip"]')?.textContent)
+      .toContain('Preview as a person');
+    expect(selectDevelopmentUser).not.toHaveBeenCalled();
   });
 
   it.each([

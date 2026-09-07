@@ -171,9 +171,9 @@ describe.sequential("development view-as HTTP boundary", () => {
     },
   );
 
-  it("fails closed for missing and unknown directory IDs", async () => {
+  it("uses normal authentication without a header and rejects unknown directory IDs", async () => {
     developmentEnvironment();
-    expect((await fetch(`${baseUrl}/protected`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/protected`)).status).toBe(401);
     expect((await fetch(`${baseUrl}/protected`, {
       headers: { "X-Dev-View-As": "unknown-user" },
     })).status).toBe(400);
@@ -376,10 +376,16 @@ describe.sequential("development view-as HTTP boundary", () => {
     });
   });
 
-  it("blocks unsafe methods globally without any identity or session", async () => {
+  it("blocks unsafe methods only while a development identity is selected", async () => {
     developmentEnvironment();
+    const normalResponse = await fetch(`${baseUrl}/unprotected-write`, {
+      method: "POST",
+    });
+    expect(normalResponse.status).toBe(204);
+
     const response = await fetch(`${baseUrl}/unprotected-write`, {
       method: "POST",
+      headers: { "X-Dev-View-As": "eligible-user" },
     });
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
@@ -412,11 +418,26 @@ describe.sequential("development view-as HTTP boundary", () => {
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 
-  it("blocks both safe-method OAuth entry points while enabled", async () => {
+  it("keeps normal auth endpoints available without a development header", async () => {
+    developmentEnvironment();
+    const response = await fetch(`${baseUrl}/api/auth/me/debug`);
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "Not authenticated",
+    });
+  });
+
+  it("blocks stateful OAuth GETs only for an active development preview", async () => {
     developmentEnvironment();
     for (const path of ["/api/login", "/api/callback?code=forged"]) {
-      const response = await fetch(`${baseUrl}${path}`, { redirect: "manual" });
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: { "X-Dev-View-As": "eligible-user" },
+        redirect: "manual",
+      });
       expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        error: "OAuth is unavailable during a development preview",
+      });
       expect(response.headers.get("set-cookie")).toBeNull();
     }
   });

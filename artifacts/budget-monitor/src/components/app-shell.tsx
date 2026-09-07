@@ -582,7 +582,7 @@ function IdentityPanel() {
       </div>
       <AdminDataQualityTrigger />
       <ApiDiagnostics />
-      {!developmentView.enabled && <Button
+       {!developmentView.selectedId && <Button
         variant="outline"
         size="sm"
         className="w-full justify-start"
@@ -634,7 +634,7 @@ function DesktopIdentityMenu() {
         <PreviewPicker />
          <AdminDataQualityTrigger />
         <ApiDiagnostics />
-        {!developmentView.enabled && <Button variant="outline" size="sm" className="w-full justify-start mt-1" onClick={logout}>
+         {!developmentView.selectedId && <Button variant="outline" size="sm" className="w-full justify-start mt-1" onClick={logout}>
           <LogOut className="mr-2 h-4 w-4" />
           Log out
         </Button>}

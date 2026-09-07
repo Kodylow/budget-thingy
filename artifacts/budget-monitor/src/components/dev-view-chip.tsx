@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Check, Eye, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Check, ChevronsUpDown, Eye, Shuffle, X } from 'lucide-react';
 import { useAuthContext } from '@/components/auth-context';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,8 +25,8 @@ function displayName(user: {
   return user.name || user.username || user.email || user.userId;
 }
 
-export function DevViewChip() {
-  const { developmentView } = useAuthContext();
+function DevelopmentViewControl({ inline = false }: { inline?: boolean }) {
+  const { developmentView, isAuthenticated } = useAuthContext();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -38,7 +38,10 @@ export function DevViewChip() {
     [developmentView.selectedId, developmentView.users],
   );
 
-  if (!developmentView.enabled) {
+  if (
+    !developmentView.enabled ||
+    (!inline && !isAuthenticated && !developmentView.selectedId)
+  ) {
     return null;
   }
 
@@ -54,22 +57,37 @@ export function DevViewChip() {
     setPopoverOpen(false);
   };
 
+  const selectRandomUser = () => {
+    if (!developmentView.users.length) return;
+    const choices = developmentView.users.filter(
+      user => user.userId !== developmentView.selectedId,
+    );
+    const users = choices.length ? choices : developmentView.users;
+    selectUser(users[Math.floor(Math.random() * users.length)].userId);
+  };
+
   return (
-    <div className="fixed bottom-4 right-4 z-40 max-w-[calc(100vw-2rem)] sm:bottom-6 sm:right-6">
+    <div className={inline
+      ? 'w-full'
+      : 'fixed bottom-4 right-4 z-40 max-w-[calc(100vw-2rem)] sm:bottom-6 sm:right-6'}>
       <Popover open={open} onOpenChange={setPopoverOpen}>
         <PopoverTrigger asChild>
           <Button
             type="button"
             variant="outline"
-            className="h-11 max-w-full border-amber-500 bg-background px-3 text-amber-700 [border-style:dashed] hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950"
+            className={inline
+              ? 'h-11 w-full justify-between rounded-lg border-white/40 bg-white/10 px-3 text-white hover:border-white/60 hover:bg-white/15 hover:text-white'
+              : 'h-10 max-w-full rounded-full border-primary/25 bg-background px-3 text-primary shadow-sm hover:bg-primary/5'}
             aria-label={`Development view as ${selectedUser ? displayName(selectedUser) : 'a user'}`}
             data-testid="dev-view-chip"
           >
             <Eye aria-hidden="true" />
             <span className="truncate">
-              DEV: View as{selectedUser ? ` ${displayName(selectedUser)}` : '…'}
+              {selectedUser ? `Viewing as ${displayName(selectedUser)}` : 'Preview as a person'}
             </span>
-            <span className="border-l border-amber-500/40 pl-2 text-[10px]">Read-only</span>
+            {inline ? <ChevronsUpDown className="size-4 opacity-60" aria-hidden="true" /> : (
+              <span className="border-l border-border pl-2 text-[10px] text-muted-foreground">Read-only</span>
+            )}
           </Button>
         </PopoverTrigger>
 
@@ -86,16 +104,31 @@ export function DevViewChip() {
                 Preview the app with another identity.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="-mr-2 -mt-1 h-8 min-h-0 w-8"
-              onClick={() => setPopoverOpen(false)}
-              aria-label="Close view-as menu"
-            >
-              <X aria-hidden="true" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 min-h-0 gap-1.5 px-2 text-xs text-primary"
+                onClick={selectRandomUser}
+                disabled={developmentView.loading || developmentView.users.length === 0}
+                data-testid="button-random-dev-view"
+              >
+                <Shuffle className="size-3.5" aria-hidden="true" />
+                Random
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="-mr-2 h-8 min-h-0 w-8"
+                onClick={() => setPopoverOpen(false)}
+                aria-label="Close view-as menu"
+                data-testid="button-close-dev-view"
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </div>
           </div>
 
           {developmentView.error ? (
@@ -128,6 +161,7 @@ export function DevViewChip() {
                   onValueChange={setSearch}
                   placeholder="Search name, username, or email"
                   aria-label="Search users"
+                    data-testid="input-dev-view-search"
                   className="pr-9"
                 />
                 {search ? (
@@ -169,6 +203,7 @@ export function DevViewChip() {
                           .join(' ')}
                         onSelect={() => selectUser(user.userId)}
                         className="items-start py-2.5"
+                        data-testid={`option-dev-view-${user.userId}`}
                       >
                         <div className="min-w-0 flex-1">
                           <p className="truncate font-medium">
@@ -197,14 +232,37 @@ export function DevViewChip() {
             </Command>
           )}
 
-          <div className="border-t bg-muted/40 px-4 py-2.5">
+          <div className="flex items-center justify-between gap-3 border-t bg-muted/40 px-4 py-2.5">
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Eye className="size-3.5" aria-hidden="true" />
               Read-only preview
             </p>
+            {developmentView.selectedId ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 min-h-0 text-xs text-primary"
+                onClick={() => {
+                  developmentView.exit();
+                  setPopoverOpen(false);
+                }}
+                data-testid="button-exit-dev-view"
+              >
+                Exit preview
+              </Button>
+            ) : null}
           </div>
         </PopoverContent>
       </Popover>
     </div>
   );
+}
+
+export function DevViewChip() {
+  return <DevelopmentViewControl />;
+}
+
+export function DevViewSignedOutPicker() {
+  return <DevelopmentViewControl inline />;
 }

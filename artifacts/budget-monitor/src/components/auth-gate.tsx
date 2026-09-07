@@ -3,6 +3,7 @@ import { ShieldAlert, LogIn, Loader2, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthContext } from '@/components/auth-context';
+import { DevViewSignedOutPicker } from '@/components/dev-view-chip';
 import { beginExplicitSignIn, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@workspace/replit-auth-web';
 
 export function AuthGate({ children }: { children: ReactNode }) {
@@ -27,9 +28,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   }, [isAuthenticated, isDenied]);
 
-  if (!developmentView.ready || (developmentView.enabled && (
-    !developmentView.selectedId || (!isLoading && availability !== 'authorized')
-  ))) {
+  if (developmentView.enabled && developmentView.selectedId && (
+    !isLoading && availability !== 'authorized'
+  )) {
     return (
       <CenteredShell>
         <Card data-testid="auth-development-recovery">
@@ -68,6 +69,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <SignedOutShell
         isUnavailable={availability === 'unavailable'}
         onReconnect={retryAuthorization}
+        showDevelopmentView={developmentView.enabled}
       />
     );
   }
@@ -147,9 +149,11 @@ function LoadingShell() {
 function SignedOutShell({
   isUnavailable,
   onReconnect,
+  showDevelopmentView,
 }: {
   isUnavailable: boolean;
   onReconnect: () => void;
+  showDevelopmentView: boolean;
 }) {
   const embedded = isEmbeddedPreview();
   const returnTo = `${window.location.pathname}${window.location.search}`;
@@ -195,6 +199,14 @@ function SignedOutShell({
               Log in
             </a>
           </Button>
+          {showDevelopmentView ? (
+            <div className="mt-4 space-y-2 border-t border-border pt-4">
+              <p className="text-xs font-medium text-white/75">
+                Or open a read-only development preview
+              </p>
+              <DevViewSignedOutPicker />
+            </div>
+          ) : null}
           {isUnavailable && (
             <div className="signed-out-shell__reconnect" data-testid="auth-unavailable" role="status">
               <span>Having trouble checking access.</span>
