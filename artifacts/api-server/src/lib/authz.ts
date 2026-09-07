@@ -210,9 +210,48 @@ export function getBootstrapAccountAdminEmail(): string | null {
   return EMAIL_PATTERN.test(normalized) ? normalized : null;
 }
 
+const SEED_ADMIN_EMAIL_PREFIX = "seed-admin:";
+
+/** Configured seed app-admin user IDs from `APP_ADMIN_USER_IDS` (comma-separated). */
+export function getSeedAppAdminUserIds(): string[] {
+  const configured = process.env.APP_ADMIN_USER_IDS ?? "";
+  return [...new Set(
+    configured
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => /^[A-Za-z0-9_-]+$/.test(value)),
+  )];
+}
+
+/** Placeholder email that marks a row as seeded from `APP_ADMIN_USER_IDS`. */
+export function seedAppAdminEmail(userId: string): string {
+  return `${SEED_ADMIN_EMAIL_PREFIX}${userId}`;
+}
+
+/**
+ * Insert configured seed IDs into the allowlist when no row exists for them.
+ * Existing rows (including revoked ones) are left untouched so that an
+ * explicit revocation by a true account admin survives restarts.
+ */
+export async function seedAppAdmins(): Promise<string[]> {
+  const userIds = getSeedAppAdminUserIds();
+  if (userIds.length === 0) return [];
+  const inserted = await db
+    .insert(appAdminsTable)
+    .values(userIds.map((userId) => ({
+      userId,
+      email: seedAppAdminEmail(userId),
+      createdBy: null,
+    })))
+    .onConflictDoNothing({ target: appAdminsTable.userId })
+    .returning({ userId: appAdminsTable.userId });
+  return inserted.map((row) => row.userId);
+}
+
 async function isPersistedBootstrapAccountAdmin(userId: string): Promise<boolean> {
   const bootstrapEmail = getBootstrapAccountAdminEmail();
-  if (!bootstrapEmail) return false;
+  const isSeed = getSeedAppAdminUserIds().includes(userId);
+  if (!bootstrapEmail && !isSeed) return false;
   const [row] = await db
     .select({
       email: appAdminsTable.email,
@@ -222,9 +261,9 @@ async function isPersistedBootstrapAccountAdmin(userId: string): Promise<boolean
     .from(appAdminsTable)
     .where(eq(appAdminsTable.userId, userId))
     .limit(1);
-  return row?.createdBy === null &&
-    row.revokedAt === null &&
-    normalizeEmail(row.email) === bootstrapEmail;
+  if (!row || row.createdBy !== null || row.revokedAt !== null) return false;
+  if (isSeed && row.email === seedAppAdminEmail(userId)) return true;
+  return bootstrapEmail !== null && normalizeEmail(row.email) === bootstrapEmail;
 }
 
 export async function revokeAppAdmin(
@@ -628,6 +667,9 @@ export async function maybeBootstrapAppAdmin(claims: {
   email?: unknown;
   email_verified?: unknown;
 }): Promise<boolean> {
+  if (typeof claims.sub === "string" && getSeedAppAdminUserIds().includes(claims.sub)) {
+    await seedAppAdmins();
+  }
   const bootstrapEmail = getBootstrapAccountAdminEmail();
   if (!bootstrapEmail) return false;
   if (claims.email_verified !== true) return false;

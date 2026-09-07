@@ -9,8 +9,11 @@ import {
   canSeeGroup,
   canSeeWorkspace,
   isPersistedAppAdmin,
+  getSeedAppAdminUserIds,
   maybeBootstrapAppAdmin,
   normalizeEmail,
+  seedAppAdmins,
+  seedAppAdminEmail,
   revokeAppAdmin,
   resolveAuthorization,
   resolvePreviewAuthorization,
@@ -710,5 +713,75 @@ describe("designated account-admin bootstrap", () => {
       "team_admin:Committed Revocation",
       snapshot("11", false),
     )).rejects.toThrow("Preview target is invalid");
+  });
+});
+describe("seed app admins by Replit user ID", () => {
+  const SEED_USER_ID = "authz-seed-admin";
+  const cleanup = () => db
+    .delete(appAdminsTable)
+    .where(inArray(appAdminsTable.userId, [SEED_USER_ID, OTHER_USER_ID]));
+
+  beforeEach(async () => {
+    process.env.APP_ADMIN_USER_IDS = ` ${SEED_USER_ID} ,, bad id!, `;
+    await cleanup();
+    __setDirectoryCacheForTests({
+      workspaces: new Map(WORKSPACE_IDS.map((id) => [
+        id,
+        { id, name: id, slug: id, memberCount: 2 },
+      ])),
+      groups: [],
+      groupMembers: new Map(),
+      members: new Map([[OTHER_USER_ID, directoryMember(OTHER_USER_ID)]]),
+    });
+  });
+
+  afterEach(async () => {
+    delete process.env.APP_ADMIN_USER_IDS;
+    __setDirectoryCacheForTests(null);
+    await cleanup();
+  });
+
+  it("parses the list, ignoring blanks and malformed entries", () => {
+    expect(getSeedAppAdminUserIds()).toEqual([SEED_USER_ID]);
+    delete process.env.APP_ADMIN_USER_IDS;
+    expect(getSeedAppAdminUserIds()).toEqual([]);
+  });
+
+  it("grants account access to a seeded non-directory user", async () => {
+    await expect(seedAppAdmins()).resolves.toEqual([SEED_USER_ID]);
+    await expect(seedAppAdmins()).resolves.toEqual([]);
+    const [row] = await db.select().from(appAdminsTable)
+      .where(inArray(appAdminsTable.userId, [SEED_USER_ID]));
+    expect(row).toMatchObject({
+      email: seedAppAdminEmail(SEED_USER_ID),
+      createdBy: null,
+      revokedAt: null,
+    });
+    const resolved = await resolveAuthorization(SEED_USER_ID);
+    expect(resolved).toMatchObject({ role: "account", isTrueAccountAdmin: true });
+    expect(resolved?.capabilities.canManageAccess).toBe(true);
+  });
+
+  it("seeds defensively during login without the email bootstrap", async () => {
+    delete process.env.BOOTSTRAP_ADMIN_EMAIL;
+    await maybeBootstrapAppAdmin({ sub: SEED_USER_ID, email: "x@example.test", email_verified: true });
+    expect(await isPersistedAppAdmin(SEED_USER_ID)).toBe(true);
+    await maybeBootstrapAppAdmin({ sub: OTHER_USER_ID, email: "y@example.test", email_verified: true });
+    expect(await isPersistedAppAdmin(OTHER_USER_ID)).toBe(false);
+  });
+
+  it("keeps a revoked seed ID revoked across restarts and logins", async () => {
+    await seedAppAdmins();
+    await expect(revokeAppAdmin(SEED_USER_ID, OTHER_USER_ID)).resolves.toBe(true);
+    await expect(seedAppAdmins()).resolves.toEqual([]);
+    await maybeBootstrapAppAdmin({ sub: SEED_USER_ID, email: "x@example.test", email_verified: true });
+    expect(await isPersistedAppAdmin(SEED_USER_ID)).toBe(false);
+    expect(await resolveAuthorization(SEED_USER_ID)).toBeNull();
+  });
+
+  it("grants nothing when unset", async () => {
+    delete process.env.APP_ADMIN_USER_IDS;
+    await expect(seedAppAdmins()).resolves.toEqual([]);
+    expect(await isPersistedAppAdmin(SEED_USER_ID)).toBe(false);
   });
 });

@@ -47,3 +47,4 @@ packages = ["glib", "nss", "nspr", "atk", "at-spi2-atk", "cups", "dbus", "expat"
 
 [userenv.shared]
 REPLIT_ENTERPRISE_API_KEY_BUDGETS_WRITE_ENABLED = "true"
+APP_ADMIN_USER_IDS = "48871191"

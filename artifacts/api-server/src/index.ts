@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { hydrateCheckerState } from "./lib/checker";
 import { initCache } from "./lib/enterprise";
+import { seedAppAdmins } from "./lib/authz";
 import { initializeUsageIngestScheduler } from "./lib/ingest";
 import { resumeDurableLimitOperations } from "./lib/limit-operations";
 import type { Server } from "node:http";
@@ -25,6 +26,8 @@ let server: Server | null = null;
 async function start(): Promise<void> {
   // Authorization-dependent traffic must not race persisted directory hydration.
   await initCache({ revalidateOnStartup: false });
+  const seeded = await seedAppAdmins();
+  if (seeded.length > 0) logger.info({ userIds: seeded }, "Seeded app admins from APP_ADMIN_USER_IDS");
   await resumeDurableLimitOperations();
   server = app.listen(port, (err) => {
     if (err) {
