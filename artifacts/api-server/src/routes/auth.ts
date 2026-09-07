@@ -323,7 +323,7 @@ router.get('/callback', async (req: Request, res: Response) => {
     `${callbackUrl}?${new URL(req.url, `http://${req.headers.host}`).searchParams}`,
   );
 
-  let tokens: oidc.TokenEndpointResponse & oidc.TokenEndpointResponseHelpers;
+  let tokens: Awaited<ReturnType<typeof oidc.authorizationCodeGrant>>;
   try {
     tokens = await oidc.authorizationCodeGrant(config, currentUrl, {
       pkceCodeVerifier: codeVerifier,
@@ -351,12 +351,7 @@ router.get('/callback', async (req: Request, res: Response) => {
 
   const claims = tokens.claims();
   if (!claims) {
-    req.log.info({
-      event: 'auth.callback',
-      stage: 'failed-redirect',
-      reason: 'missing-claims',
-    });
-    res.redirect('/api/login');
+    res.status(401).json({ error: 'No claims in ID token' });
     return;
   }
 

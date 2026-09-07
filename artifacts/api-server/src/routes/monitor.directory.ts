@@ -6,6 +6,11 @@ import {
   SetGroupMemberLimitPolicyResponse,
   SetWorkspaceDefaultLimitPolicyBody,
   SetWorkspaceDefaultLimitPolicyResponse,
+  ListWorkspaceGroupsQueryParams,
+  ListWorkspaceGroupsResponse,
+  ListWorkspaceGroupMembersParams,
+  ListWorkspaceGroupMembersQueryParams,
+  ListWorkspaceGroupMembersResponse,
 } from "@workspace/api-zod";
 import { and, lt } from "drizzle-orm";
 import {
@@ -30,6 +35,161 @@ import {
 import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsTable, teamLimitTargetsTable, teamBudgetsTable, adminEmailsTable, alertsTable, appAdminsTable, usersTable, apiProjectMetadataTable, apiProjectMetadataStateTable, usageLimitAuditsTable, ListGroupsResponse, ListBudgetsResponse, SetGroupBudgetBody, SetGroupBudgetResponse, DeleteGroupBudgetResponse, GetTeamsBudgetsResponse, ListAdminsResponse, AddAdminBody, AddAdminResponse, DeleteAdminResponse, ListWorkspaceAdminsResponse, ListAlertsQueryParams, ListAlertsResponse, RunAlertCheckResponse, SendTestAlertResponse, SendEmailTestExampleBody, SendEmailTestExampleResponse, GetStatusResponse, GetGroupDetailResponse, GetGroupProjectsResponse, GetCanonicalClusterHeadlineResponse, ListAppAdminsResponse, AddAppAdminBody, AddAppAdminResponse, DeleteAppAdminResponse, ListDirectoryGroupsResponse, GetTeamBudgetHistoryResponse, GetTeamAllocationAuditResponse, UpdateTeamAnnualAllocationParams, UpdateTeamAnnualAllocationBody, UpdateTeamAnnualAllocationResponse, UpdateTeamVisibilityParams, UpdateTeamVisibilityBody, UpdateTeamVisibilityResponse, GetTeamBudgetSyncStatusResponse, RetryTeamBudgetUpstreamSyncResponse, RefreshTeamBudgetsResponse, UpdateTeamBudgetLimitParams, UpdateTeamBudgetLimitBody, UpdateTeamBudgetLimitResponse, ApplyTeamBudgetLimitsBody, ApplyTeamBudgetLimitsResponse, GetTeamBudgetTargetsResponse, AssignTeamBudgetTargetBody, AssignTeamBudgetTargetResponse, UpdateTeamBudgetTargetParams, UpdateTeamBudgetTargetBody, UpdateTeamBudgetTargetResponse, ListVisibleWorkspacesResponse, ListVisibleWorkspaceMembersResponse, SetWorkspaceMemberBudgetBody, SetWorkspaceMemberBudgetResponse, ClearWorkspaceMemberBudgetResponse, BulkSetWorkspaceMemberBudgetsBody, BulkSetWorkspaceMemberBudgetsResponse, ListWorkspaceUsageLimitAuditsResponse, GetUserActivityResponse, GetAccountUsageObservationExportQueryParams, GetAccountUsageObservationExportResponse, GetEmailSettingsResponse, UpdateEmailSettingsBody, UpdateEmailSettingsResponse, isConfigured, getApiHealth, getDirectory, getDirectoryFreshness, getBillingPeriod, getBillingPeriodMetadata, buildCanonicalGroupMergePlan, buildCanonicalEffectiveTeams, type CanonicalAccountDirectory, resolveCanonicalMergedGroupBudget, type EnterpriseGroup, buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, getEmailTestRecipient, resolveAlertRecipients, runCheck, getFiredThresholds, getFiredThresholdsBatch, getLastCheckAt, getCheckerState, requireAuth, requireRole, requireCapability, requireTrueAccountAdmin, requireUserLimitWorkspace, canSeeGroup, isAccountWide, isAdminRole, scopeGroups, type Authorization, scopeFor, getRosterHistory, projectEndOfPeriod, getEffectiveTeamBudgets, applyTeamBudgetLimits, assignTeamLimitTarget, getFreshEligibleTeamLimitGroup, getTeamLimitTargetConfiguration, getTeamBudgetUpstreamSyncRows, getVisibleEffectiveTeamBudgetMap, queueTeamBudgetUpstreamReconciliation, reconcileTeamBudgetsUpstream, refreshTeamBudgetSnapshot, updateTeamMonthlyLimit, updateTeamAnnualAllocation, updateTeamVisibility, getTeamAllocationAudits, updateTeamLimitTargetOverride, TEAM_BUDGET_REQUIRED_APPROVAL_STATUS, TEAM_BUDGET_SOURCE_TABLE, listReplitMemberBudgets, ReplitBudgetConnectorError, setReplitMemberBudget, resolveUsageWindow, USAGE_DATA_CUTOFF_ISO, type UsageWindowSelection, readUsageSnapshot, type UsageSnapshot, computeDedupedMemberCounts, computeHistoricalSnapshotUsageRollups, computeSnapshotUsageRollup, projectAttributionKey, type SnapshotUsageRollup, BACKGROUND_CYCLE_INTERVAL_MINUTES, runCycle, getNotificationSettings, updateNotificationSettings, visibleGroups, visibleGroupMembers, visibleRosterMembers, buildTeamAlertCanonicalScope, canSeeAlertEntity, targetTeamForGroup, groupTeamKey, buildGroupTeamMap, windowFromQuery, workspaceScope, readProjectMetadata, usageForRequest, usageHealth, dailyUsageRollups, effectiveGroupBudget, mergedGroupMemberIds, canonicalUserAttribution, alertToJson } from "./monitor.shared";
 
 const router = Router();
+
+function workspaceGroupKind(group: { name: string; type: string }):
+  "admins" | "members" | "guests" | "custom" {
+  const type = group.type.toLowerCase();
+  if (type === "admin") return "admins";
+  if (type === "guest") return "guests";
+  if (type === "member") return "members";
+  return "custom";
+}
+
+function authorizedDirectoryWorkspaceIds(
+  authz: Authorization,
+  dir: Awaited<ReturnType<typeof getCachedDirectory>>,
+): Set<string> {
+  if (authz.roles.includes("account")) return new Set(dir.workspaces.keys());
+  return new Set([
+    ...authz.workspaceIds,
+    ...dir.allGroups
+      .filter((group) => authz.groupIds.includes(group.id))
+      .map((group) => group.workspaceId),
+  ]);
+}
+
+function workspaceGroupAvailability(
+  hasMembers: boolean,
+): "complete" | "stale" | "unavailable" {
+  if (!hasMembers) return "unavailable";
+  return getPersistedDirectoryFreshness().isStale ? "stale" : "complete";
+}
+
+router.get(
+  "/directory/workspace-groups",
+  requireCapability("canManageAccess"),
+  async (req, res): Promise<void> => {
+    const parsed = ListWorkspaceGroupsQueryParams.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.message });
+      return;
+    }
+    try {
+      const dir = await getCachedDirectory();
+      const allowed = authorizedDirectoryWorkspaceIds(req.authz!, dir);
+      const requested = parsed.data.workspaceId;
+      const workspaceIds = [...allowed]
+        .filter((id) => !requested || id === requested)
+        .filter((id) => dir.workspaces.has(id))
+        .sort((a, b) =>
+          (dir.workspaces.get(a)?.name ?? a).localeCompare(
+            dir.workspaces.get(b)?.name ?? b) || a.localeCompare(b));
+      const dataAsOf = Number.isFinite(dir.fetchedAt)
+        ? new Date(dir.fetchedAt).toISOString() : null;
+      const workspaces = workspaceIds.map((workspaceId) => ({
+        workspaceId,
+        workspaceName: dir.workspaces.get(workspaceId)?.name ?? null,
+        groups: dir.allGroups
+          .filter((group) => group.workspaceId === workspaceId)
+          .map((group) => {
+            const members = dir.groupMembers.get(group.id);
+            return {
+              workspaceId,
+              groupId: group.id,
+              name: group.name,
+              kind: workspaceGroupKind(group),
+              memberCount: members ? new Set(members).size : null,
+              membershipAvailability:
+                workspaceGroupAvailability(members !== undefined),
+              dataAsOf: members === undefined ? null : dataAsOf,
+            };
+          })
+          .sort((a, b) =>
+            a.kind.localeCompare(b.kind) ||
+            a.name.localeCompare(b.name) || a.groupId.localeCompare(b.groupId)),
+      }));
+      const groupAvailability = workspaces.flatMap((item) => item.groups)
+        .map((group) => group.membershipAvailability);
+      const availability = groupAvailability.includes("unavailable")
+        ? "unavailable" as const
+        : getPersistedDirectoryFreshness().isStale
+          ? "stale" as const : "complete" as const;
+      res.json(ListWorkspaceGroupsResponse.parse({
+        workspaces,
+        availability,
+        dataAsOf: availability === "unavailable" ? null : dataAsOf,
+      }));
+    } catch (error) {
+      req.log.error({ err: error }, "workspace group directory failed");
+      res.status(503).json({ error: "Cached workspace groups unavailable" });
+    }
+  },
+);
+
+router.get(
+  "/directory/workspaces/:workspaceId/groups/:groupId/members",
+  requireCapability("canManageAccess"),
+  async (req, res): Promise<void> => {
+    const params = ListWorkspaceGroupMembersParams.safeParse(req.params);
+    const query = ListWorkspaceGroupMembersQueryParams.safeParse(req.query);
+    if (!params.success || !query.success) {
+      res.status(400).json({ error: "Invalid workspace group member query" });
+      return;
+    }
+    try {
+      const dir = await getCachedDirectory();
+      const allowed = authorizedDirectoryWorkspaceIds(req.authz!, dir);
+      const group = dir.allGroups.find((candidate) =>
+        candidate.workspaceId === params.data.workspaceId &&
+        candidate.id === params.data.groupId);
+      if (!allowed.has(params.data.workspaceId) || !group) {
+        res.status(404).json({ error: "Workspace group not found" });
+        return;
+      }
+      const memberIds = dir.groupMembers.get(group.id);
+      const availability = workspaceGroupAvailability(memberIds !== undefined);
+      const dataAsOf = availability === "unavailable"
+        ? null : new Date(dir.fetchedAt).toISOString();
+      const uniqueIds = memberIds ? [...new Set(memberIds)].sort() : [];
+      const start = (query.data.page - 1) * query.data.pageSize;
+      const members = uniqueIds
+        .slice(start, start + query.data.pageSize)
+        .map((userId) => {
+          const member = dir.members.get(userId);
+          return {
+            userId,
+            username: member?.username ?? null,
+            name: member?.name ?? null,
+            email: member?.email ?? null,
+            fallbackLabel: member?.name ?? member?.username ??
+              member?.email ?? "Unknown member",
+          };
+        });
+      const summary = {
+        workspaceId: group.workspaceId,
+        groupId: group.id,
+        name: group.name,
+        kind: workspaceGroupKind(group),
+        memberCount: memberIds === undefined ? null : uniqueIds.length,
+        membershipAvailability: availability,
+        dataAsOf,
+      };
+      res.json(ListWorkspaceGroupMembersResponse.parse({
+        workspaceId: group.workspaceId,
+        group: summary,
+        members,
+        page: query.data.page,
+        pageSize: query.data.pageSize,
+        totalMembers: memberIds === undefined ? null : uniqueIds.length,
+        availability,
+        dataAsOf,
+      }));
+    } catch (error) {
+      req.log.error({ err: error }, "workspace group members failed");
+      res.status(503).json({ error: "Cached group membership unavailable" });
+    }
+  },
+);
 
 router.get("/directory/workspaces", async (req, res): Promise<void> => {
   try {

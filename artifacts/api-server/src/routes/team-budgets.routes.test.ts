@@ -303,7 +303,7 @@ beforeAll(async () => {
       projectId: SHARED_PROJECT_ID,
       title: "Persisted Project One",
       creatorId: "task158-workspace",
-      fetchedAt: new Date(),
+      fetchedAt: new Date(Date.now() - 2_000),
     },
     {
       workspaceId: "task158-ws-2",
@@ -355,6 +355,7 @@ beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
+    req.log = { info() {}, warn() {}, error() {} } as typeof req.log;
     const userId = req.headers["x-test-user"];
     req.isAuthenticated = function () { return this.user != null; };
     if (userId) req.user = { id: String(userId) };
@@ -987,7 +988,7 @@ test("directory groups are returned in server-owned hierarchy order", async () =
   expect(new Set(groupIds).size).toBe(groupIds.length);
 });
 
-test("project detail survives restart and isolates duplicate IDs by workspace", async () => {
+test("project history stays workspace-qualified while exports use the current UUID destination", async () => {
   invalidateUsageSnapshotMemo();
   const [first, second, cluster, projectExport, activity] = await Promise.all([
     request(`/groups/${GROUP_ID}/projects`, "task158-account"),
@@ -1034,7 +1035,7 @@ test("project detail survives restart and isolates duplicate IDs by workspace", 
     { projectId: SHARED_PROJECT_ID, workspaceId: "task158-ws-2", totalCostUsd: 13 },
   ]);
   expect(projectExport.status).toBe(200);
-  expect(projectExport.json.raw).toContain("Persisted Project One");
+  expect(projectExport.json.raw).not.toContain("Persisted Project One");
   expect(projectExport.json.raw).toContain("Persisted Project Two");
   expect(activity.status).toBe(200);
   expect(activity.json.usageHealth).toEqual(expect.objectContaining({
@@ -1045,8 +1046,11 @@ test("project detail survives restart and isolates duplicate IDs by workspace", 
 
 test("project export neutralizes formula-leading metadata", async () => {
   const formula = "=HYPERLINK(\"https://attacker.invalid\",\"Open\")";
+  const [prior] = await db.select({ fetchedAt: apiProjectMetadataTable.fetchedAt })
+    .from(apiProjectMetadataTable)
+    .where(eq(apiProjectMetadataTable.workspaceId, "task158-ws"));
   await db.update(apiProjectMetadataTable)
-    .set({ title: formula })
+    .set({ title: formula, fetchedAt: new Date() })
     .where(eq(apiProjectMetadataTable.workspaceId, "task158-ws"));
   try {
     const projectExport = await request("/projects/export", "task158-account");
@@ -1059,7 +1063,7 @@ test("project export neutralizes formula-leading metadata", async () => {
     );
   } finally {
     await db.update(apiProjectMetadataTable)
-      .set({ title: "Persisted Project One" })
+      .set({ title: "Persisted Project One", fetchedAt: prior!.fetchedAt })
       .where(eq(apiProjectMetadataTable.workspaceId, "task158-ws"));
   }
 });

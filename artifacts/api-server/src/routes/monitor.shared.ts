@@ -374,14 +374,29 @@ export async function usageForRequest(
   projectMetadata: ProjectMetadataSnapshot;
 }> {
   const selection = windowFromQuery(query);
-  const groups = visibleGroups(authz, dir.groups);
-  const workspaceIds = workspaceScope(authz, dir, groups);
+  const visible = visibleGroups(authz, dir.groups);
+  const authorizedWorkspaceIds = workspaceScope(authz, dir, visible);
+  const requestedWorkspaceId = typeof query["workspaceId"] === "string" &&
+      query["workspaceId"]
+    ? query["workspaceId"]
+    : null;
+  const workspaceIds = requestedWorkspaceId === null
+    ? authorizedWorkspaceIds
+    : authorizedWorkspaceIds.has(requestedWorkspaceId)
+      ? new Set([requestedWorkspaceId])
+      : new Set<string>();
+  const groups = requestedWorkspaceId === null
+    ? visible
+    : visible.filter((group) => group.workspaceId === requestedWorkspaceId);
   const [snapshot, projectMetadata] = await Promise.all([
     readUsageSnapshot({
       window: selection.window,
       workspaceIds,
       includeDailyMembers,
-      includeAccountAnchor: isAccountWide(authz),
+      // A workspace-filtered report must not pull an account-wide total into
+      // its reconciliation or disclose it through a workspace card.
+      includeAccountAnchor: isAccountWide(authz) &&
+        requestedWorkspaceId === null,
     }),
     readProjectMetadata(workspaceIds),
   ]);

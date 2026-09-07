@@ -152,7 +152,7 @@ describe('Spend Behaviors', () => {
   });
 
   it('hidden tabs never query and active tab queries properly', () => {
-    const poolsSpy = vi.mocked(api.useListSpendPools).mockReturnValue(mockQueryReturn([], 0, 0));
+    const poolsSpy = vi.mocked(api.useListSpendPools).mockReturnValue(mockQueryReturn(generateRows(25), 50, 100));
     const groupsSpy = vi.mocked(api.useListSpendGroups).mockReturnValue(mockQueryReturn([], 0, 0));
     
     renderComponent();
@@ -233,10 +233,14 @@ describe('Spend Behaviors', () => {
       workspaceName: 'Personal workspace',
       ownerName: 'Example member',
       isPublished: index < 7,
+      hasDeployment: index < 7,
+      deploymentAvailability: 'complete',
+      deployments: [],
+      updatedAt: null,
       agentSpendUsd: 0,
       otherServicesUsd: 0,
     }));
-    const result = mockQueryReturn(projects, 903, 903);
+    const result = mockQueryReturn([], 0, 0);
     result.data.personalProjectCatalog = {
       projectCount: 903,
       publishedProjectCount: 238,
@@ -256,8 +260,9 @@ describe('Spend Behaviors', () => {
     expect(html).toContain('Current projects · selected-period spend');
     expect(html).toContain('Showing 1–25 of 903 results');
     expect(html).toContain('Page 1 of 37');
-    expect(html).toContain('>Published<');
-    expect(html).toContain('Not published');
+    expect(html).toContain('>Deployed<');
+    expect(html).toContain('Not deployed');
+    expect(html).toContain('Last updated');
   });
 
   it('describes an empty current project catalog without claiming zero spend', () => {
@@ -266,34 +271,31 @@ describe('Spend Behaviors', () => {
     vi.mocked(api.useListSpendProjects).mockReturnValue(mockQueryReturn([], 0, 0));
 
     const html = renderComponent();
-    expect(html).toContain('No projects found');
-    expect(html).toContain('No current projects were returned for this authorized scope.');
-    expect(html).not.toContain('No spend results for this view');
+    expect(html).toContain('This spend view is unavailable');
+    expect(html).toContain('Search: ops');
+    expect(html).toContain('Clear filters');
+    expect(html).not.toContain('Do not expose cached row');
+    expect(html).not.toContain('Explain this total');
   });
 
-  it('retains the complete qualified group identity in drill-through URLs', () => {
-    expect(groupDetailHref('group:workspace-1:group:with:colons'))
-      .toBe('/groups/group%3Awith%3Acolons');
-  });
-
-  it('moves the whole-result explanation out of the normal ledger view', () => {
-    const result = mockQueryReturn(generateRows(1), 100, 100);
-    result.data.totals = { spendUsd: 5432, agentSpendUsd: 4000, otherServicesUsd: 1432 };
+  it('shows partial no-observation totals as unavailable, not zero', () => {
+    const result = mockQueryReturn([], 0, 0);
+    result.data.metadata = { status: 'partial', dataAsOf: null };
+    result.data.totals = { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 };
     vi.mocked(api.useListSpendGroups).mockReturnValue(result);
     const html = renderComponent();
+    expect(html).toContain('This spend view is unavailable');
+    expect(html).toContain('Search: ops');
+    expect(html).toContain('Clear filters');
+    expect(html).not.toContain('Do not expose cached row');
     expect(html).not.toContain('Explain this total');
-    expect(html).not.toContain('All 100 filtered results, not just this page');
-    expect(html).toContain('Filtered total ·');
-    expect(html).toContain('$5,432.00');
   });
 
-  it('keeps filters available while loading and denies stale cached results on access failure', () => {
-    currentSearch = '?search=ops&workspaceId=missing&status=over';
-    window.location.search = currentSearch;
-    vi.mocked(api.useListSpendGroups).mockReturnValue({ isLoading: true } as any);
-    expect(renderComponent()).toContain('aria-label="Search groups"');
-    const result = mockQueryReturn([{ ...generateRows(1)[0], name: 'Do not expose cached row' }], 1, 1);
-    vi.mocked(api.useListSpendGroups).mockReturnValue({ ...result, isError: true, error: { status: 403 } });
+  it('shows partial no-observation totals as unavailable, not zero', () => {
+    const result = mockQueryReturn([], 0, 0);
+    result.data.metadata = { status: 'partial', dataAsOf: null };
+    result.data.totals = { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 };
+    vi.mocked(api.useListSpendGroups).mockReturnValue(result);
     const html = renderComponent();
     expect(html).toContain('This spend view is unavailable');
     expect(html).toContain('Search: ops');

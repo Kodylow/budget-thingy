@@ -56,6 +56,7 @@ import type {
   GetReportingDetailParams,
   GetTeamAllocationAuditParams,
   GetUserActivityParams,
+  GetWorkspaceProjectParams,
   GroupAdminsItem,
   GroupBudget,
   GroupBudgetInput,
@@ -77,6 +78,9 @@ import type {
   ListSpendPeopleParams,
   ListSpendPoolsParams,
   ListSpendProjectsParams,
+  ListUserOwnedProjectsParams,
+  ListWorkspaceGroupMembersParams,
+  ListWorkspaceGroupsParams,
   ListWorkspaceUsageLimitAuditsParams,
   LogoutBrowserSessionParams,
   LogoutSuccess,
@@ -85,9 +89,11 @@ import type {
   MobileTokenExchangeRequest,
   MobileTokenExchangeSuccess,
   OkResponse,
+  ProjectDetailResponse,
   ReportingDetail,
   SetLimitsWorkspace,
   SpendCsvResponse,
+  SpendProjectsResponse,
   SpendTableResponse,
   SystemStatus,
   TeamAllocationAuditResponse,
@@ -110,7 +116,10 @@ import type {
   UsageIngestRun,
   UsageLimitAudit,
   UserActivityResponse,
+  UserOwnedProjectsResponse,
   VisibleWorkspace,
+  WorkspaceGroupMembersResponse,
+  WorkspaceGroupsResponse,
   WorkspaceLimitPolicyView,
   WorkspaceMemberBudgetInput,
   WorkspaceMemberBudgetMutation,
@@ -1668,11 +1677,12 @@ export const getListSpendProjectsUrl = (params?: ListSpendProjectsParams,) => {
 }
 
 /**
+ * Returns current project identity and lifecycle observations joined to authorized selected-range and current-UTC-month usage. Lifecycle availability is independent of usage availability. A project is stale but spending only when updatedAt is known and is at least 30 elapsed days before evaluatedAt, and authorized currentMonthSpendUsd is positive.
  * @summary List authorized workspace-qualified project usage
  */
-export const listSpendProjects = async (params?: ListSpendProjectsParams, options?: RequestInit): Promise<SpendTableResponse> => {
+export const listSpendProjects = async (params?: ListSpendProjectsParams, options?: RequestInit): Promise<SpendProjectsResponse> => {
 
-  return customFetch<SpendTableResponse>(getListSpendProjectsUrl(params),
+  return customFetch<SpendProjectsResponse>(getListSpendProjectsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1724,6 +1734,191 @@ export function useListSpendProjects<TData = Awaited<ReturnType<typeof listSpend
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListSpendProjectsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetWorkspaceProjectUrl = (workspaceId: string,
+    projectId: string,
+    params?: GetWorkspaceProjectParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/workspaces/${encodeURIComponent(String(workspaceId))}/projects/${encodeURIComponent(String(projectId))}?${stringifiedParams}` : `/api/workspaces/${encodeURIComponent(String(workspaceId))}/projects/${encodeURIComponent(String(projectId))}`
+}
+
+/**
+ * Returns only the current cached project identity, lifecycle and authorized spend facts. This read never initiates an Enterprise API refresh. The workspace qualifier is part of the identity and prevents cross-workspace project-ID guessing.
+ * @summary Get an authorized workspace-qualified project
+ */
+export const getWorkspaceProject = async (workspaceId: string,
+    projectId: string,
+    params?: GetWorkspaceProjectParams, options?: RequestInit): Promise<ProjectDetailResponse> => {
+
+  return customFetch<ProjectDetailResponse>(getGetWorkspaceProjectUrl(workspaceId,projectId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWorkspaceProjectQueryKey = (workspaceId: string,
+    projectId: string,
+    params?: GetWorkspaceProjectParams,) => {
+    return [
+    `/api/workspaces/${workspaceId}/projects/${projectId}`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetWorkspaceProjectQueryOptions = <TData = Awaited<ReturnType<typeof getWorkspaceProject>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(workspaceId: string,
+    projectId: string,
+    params?: GetWorkspaceProjectParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceProject>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkspaceProjectQueryKey(workspaceId,projectId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkspaceProject>>> = ({ signal }) => getWorkspaceProject(workspaceId,projectId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workspaceId !== null && workspaceId !== undefined && projectId !== null && projectId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceProject>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWorkspaceProjectQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkspaceProject>>>
+export type GetWorkspaceProjectQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Get an authorized workspace-qualified project
+ */
+
+export function useGetWorkspaceProject<TData = Awaited<ReturnType<typeof getWorkspaceProject>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ workspaceId: string,
+    projectId: string,
+    params?: GetWorkspaceProjectParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceProject>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWorkspaceProjectQueryOptions(workspaceId,projectId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListUserOwnedProjectsUrl = (userId: string,
+    params?: ListUserOwnedProjectsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/users/${encodeURIComponent(String(userId))}/projects?${stringifiedParams}` : `/api/users/${encodeURIComponent(String(userId))}/projects`
+}
+
+/**
+ * Includes cached current-catalog projects with no selected-range spend. Ownership is current metadata, not an audit trail. Results are restricted to the effective viewer's workspace and presentation scope.
+ * @summary List projects currently owned by an authorized user
+ */
+export const listUserOwnedProjects = async (userId: string,
+    params?: ListUserOwnedProjectsParams, options?: RequestInit): Promise<UserOwnedProjectsResponse> => {
+
+  return customFetch<UserOwnedProjectsResponse>(getListUserOwnedProjectsUrl(userId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListUserOwnedProjectsQueryKey = (userId: string,
+    params?: ListUserOwnedProjectsParams,) => {
+    return [
+    `/api/users/${userId}/projects`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListUserOwnedProjectsQueryOptions = <TData = Awaited<ReturnType<typeof listUserOwnedProjects>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(userId: string,
+    params?: ListUserOwnedProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUserOwnedProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListUserOwnedProjectsQueryKey(userId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listUserOwnedProjects>>> = ({ signal }) => listUserOwnedProjects(userId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: userId !== null && userId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listUserOwnedProjects>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListUserOwnedProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof listUserOwnedProjects>>>
+export type ListUserOwnedProjectsQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List projects currently owned by an authorized user
+ */
+
+export function useListUserOwnedProjects<TData = Awaited<ReturnType<typeof listUserOwnedProjects>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ userId: string,
+    params?: ListUserOwnedProjectsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUserOwnedProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListUserOwnedProjectsQueryOptions(userId,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -5036,6 +5231,186 @@ export function useListDirectoryGroups<TData = Awaited<ReturnType<typeof listDir
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListDirectoryGroupsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListWorkspaceGroupsUrl = (params?: ListWorkspaceGroupsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/directory/workspace-groups?${stringifiedParams}` : `/api/directory/workspace-groups`
+}
+
+/**
+ * Read-only administrative directory grouped by authorized workspace. Includes Admins, Members, Guests and custom groups. Membership availability is explicit and a complete zero count means an authoritatively empty group. This read never initiates upstream traffic.
+ * @summary List cached built-in and custom groups by workspace
+ */
+export const listWorkspaceGroups = async (params?: ListWorkspaceGroupsParams, options?: RequestInit): Promise<WorkspaceGroupsResponse> => {
+
+  return customFetch<WorkspaceGroupsResponse>(getListWorkspaceGroupsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWorkspaceGroupsQueryKey = (params?: ListWorkspaceGroupsParams,) => {
+    return [
+    `/api/directory/workspace-groups`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListWorkspaceGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkspaceGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(params?: ListWorkspaceGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWorkspaceGroupsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkspaceGroups>>> = ({ signal }) => listWorkspaceGroups(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceGroups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListWorkspaceGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkspaceGroups>>>
+export type ListWorkspaceGroupsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary List cached built-in and custom groups by workspace
+ */
+
+export function useListWorkspaceGroups<TData = Awaited<ReturnType<typeof listWorkspaceGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ params?: ListWorkspaceGroupsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListWorkspaceGroupsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListWorkspaceGroupMembersUrl = (workspaceId: string,
+    groupId: string,
+    params?: ListWorkspaceGroupMembersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/groups/${encodeURIComponent(String(groupId))}/members?${stringifiedParams}` : `/api/directory/workspaces/${encodeURIComponent(String(workspaceId))}/groups/${encodeURIComponent(String(groupId))}/members`
+}
+
+/**
+ * Returns a bounded page from the cached complete membership observation; expansion never initiates an Enterprise API request. Both workspace and group identifiers are checked against the effective administrative scope.
+ * @summary Page through cached members of a workspace group
+ */
+export const listWorkspaceGroupMembers = async (workspaceId: string,
+    groupId: string,
+    params?: ListWorkspaceGroupMembersParams, options?: RequestInit): Promise<WorkspaceGroupMembersResponse> => {
+
+  return customFetch<WorkspaceGroupMembersResponse>(getListWorkspaceGroupMembersUrl(workspaceId,groupId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWorkspaceGroupMembersQueryKey = (workspaceId: string,
+    groupId: string,
+    params?: ListWorkspaceGroupMembersParams,) => {
+    return [
+    `/api/directory/workspaces/${workspaceId}/groups/${groupId}/members`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListWorkspaceGroupMembersQueryOptions = <TData = Awaited<ReturnType<typeof listWorkspaceGroupMembers>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(workspaceId: string,
+    groupId: string,
+    params?: ListWorkspaceGroupMembersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceGroupMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWorkspaceGroupMembersQueryKey(workspaceId,groupId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkspaceGroupMembers>>> = ({ signal }) => listWorkspaceGroupMembers(workspaceId,groupId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workspaceId !== null && workspaceId !== undefined && groupId !== null && groupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceGroupMembers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListWorkspaceGroupMembersQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkspaceGroupMembers>>>
+export type ListWorkspaceGroupMembersQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Page through cached members of a workspace group
+ */
+
+export function useListWorkspaceGroupMembers<TData = Awaited<ReturnType<typeof listWorkspaceGroupMembers>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ workspaceId: string,
+    groupId: string,
+    params?: ListWorkspaceGroupMembersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWorkspaceGroupMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListWorkspaceGroupMembersQueryOptions(workspaceId,groupId,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

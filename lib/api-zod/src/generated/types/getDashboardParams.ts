@@ -9,6 +9,7 @@ import type { EndDateParameter } from './endDateParameter';
 import type { PlanningEndDateParameter } from './planningEndDateParameter';
 import type { ProjectionHorizonParameter } from './projectionHorizonParameter';
 import type { RangeTypeParameter } from './rangeTypeParameter';
+import type { SpendWorkspaceParameter } from './spendWorkspaceParameter';
 import type { StartDateParameter } from './startDateParameter';
 import type { TrendGranularityParameter } from './trendGranularityParameter';
 import type { TrendModeParameter } from './trendModeParameter';
@@ -31,6 +32,11 @@ endDate?: EndDateParameter;
  * Server-resolved presentation scope; managed excludes unrelated self-only grants.
  */
 viewScope?: ViewScopeParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 granularity?: TrendGranularityParameter;
 trendMode?: TrendModeParameter;
 /**

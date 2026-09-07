@@ -7,6 +7,7 @@ import {
   useListSpendPeople,
   useListSpendProjects,
   SpendTableRow,
+  SpendProjectRow,
   getExportSpendPoolsCsvUrl,
   getExportSpendGroupsCsvUrl,
   getExportSpendPeopleCsvUrl,
@@ -16,6 +17,7 @@ import {
   getListSpendPeopleQueryKey,
   getListSpendProjectsQueryKey,
   SpendSortParameter,
+  ProjectSortParameter,
   SpendStatusParameter
 } from '@workspace/api-client-react';
 import { useAuthContext } from '@/components/auth-context';
@@ -56,6 +58,7 @@ import {
   isUnknownSelectedRangeValue,
   isUnknownSpendTotal,
 } from '@/lib/spend-presentation';
+import { DeploymentChip, DeploymentLink, StaleSpendingChip } from '@/components/project-observation';
 
 export function getAvailableSpendViews({
   isAccountAdmin,
@@ -239,8 +242,8 @@ const columnSets: Record<'pools' | 'groups' | 'people' | 'projects', { defaults:
     all: ['name', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'otherServicesUsd', 'currentCycleAgentSpendUsd', 'allocationUsd', 'currentCycleRemainingUsd', 'currentCyclePercentUsed', 'limitState', 'limitObservationStatus'],
   },
   projects: {
-    defaults: ['name', 'isPublished', 'ownerName', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'otherServicesUsd'],
-    all: ['name', 'isPublished', 'ownerName', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'otherServicesUsd'],
+    defaults: ['name', 'hasDeployment', 'deployments', 'ownerName', 'workspaceName', 'spendUsd', 'agentSpendUsd', 'updatedAt'],
+    all: ['name', 'isPublished', 'hasDeployment', 'deployments', 'ownerName', 'workspaceName', 'spendUsd', 'currentMonthSpendUsd', 'agentSpendUsd', 'otherServicesUsd', 'updatedAt'],
   },
 };
 
@@ -268,8 +271,12 @@ function columnLabel(column: string, tableType: 'pools' | 'groups' | 'people' | 
     workspaceName: 'Workspace',
     ownerName: 'Owner',
     isPublished: 'Published',
+    hasDeployment: 'Deployed',
+    deployments: 'Deployments',
     limitState: 'Limit state',
     limitObservationStatus: 'Observation status',
+    currentMonthSpendUsd: 'Current month total',
+    updatedAt: 'Last updated',
   };
   return labels[column] || column;
 }
@@ -321,11 +328,17 @@ function SpendTable({
   const sort = (searchParams.get('sort') || 'spend_desc') as SpendSortParameter;
   const status = searchParams.get('status') as SpendStatusParameter | undefined;
   const workspaceId = searchParams.get('workspaceId') || undefined;
+  const deployedOnly = searchParams.get('deployedOnly') === 'true';
+  const staleButSpending = searchParams.get('staleButSpending') === 'true';
   const visibleColumns = spendColumns(columnSets[type].all, columnSets[type].defaults, searchParams.get(`columns_${type}`));
 
   const queryParams: any = { rangeType, search: search || undefined, viewScope, workspaceId, page, pageSize };
   if (sort) queryParams.sort = sort;
   if (status && status !== 'all') queryParams.status = status;
+  if (type === 'projects') {
+    if (deployedOnly) queryParams.deployedOnly = true;
+    if (staleButSpending) queryParams.staleButSpending = true;
+  }
   if (rangeType === "custom") {
     queryParams.startDate = startDate;
     queryParams.endDate = endDate;
@@ -370,10 +383,10 @@ function SpendTable({
     return s.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
   const workspaceName = workspaces.find((workspace) => workspace.id === workspaceId)?.name;
-  const activeFilterCount = Number(Boolean(status && status !== 'all')) + Number(Boolean(workspaceId)) + Number(Boolean(searchValue));
+  const activeFilterCount = Number(Boolean(status && status !== 'all')) + Number(Boolean(workspaceId)) + Number(Boolean(searchValue)) + Number(deployedOnly) + Number(staleButSpending);
   const clearFilters = () => {
     setSearch('');
-    updateUrlParams({ search: null, status: null, workspaceId: null });
+    updateUrlParams({ search: null, status: null, workspaceId: null, deployedOnly: null, staleButSpending: null });
   };
   const exportDisabled = isExporting || searchValue !== search || !data || query.isFetching || query.isError;
 
@@ -499,6 +512,31 @@ function SpendTable({
                     </Select>
                   </div>
                 )}
+                {type === 'projects' && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium">Project status</label>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={deployedOnly}
+                          onChange={(e) => updateUrlParams({ deployedOnly: e.target.checked ? 'true' : null })}
+                          className="rounded border-border text-primary focus:ring-primary"
+                        />
+                        Deployed only
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={staleButSpending}
+                          onChange={(e) => updateUrlParams({ staleButSpending: e.target.checked ? 'true' : null })}
+                          className="rounded border-border text-primary focus:ring-primary"
+                        />
+                        Stale but spending
+                      </label>
+                    </div>
+                  </div>
+                )}
                 {activeFilterCount > 0 && <Button variant="ghost" size="sm" className="w-full" onClick={clearFilters}>Clear filters</Button>}
               </PopoverContent>
             </Popover>
@@ -509,6 +547,12 @@ function SpendTable({
                 <SelectItem value="spend_asc">Spend: low to high</SelectItem>
                 <SelectItem value="name_asc">Name: A–Z</SelectItem>
                 <SelectItem value="name_desc">Name: Z–A</SelectItem>
+                {type === 'projects' && (
+                  <>
+                    <SelectItem value="updated_at_desc">Last updated: newest</SelectItem>
+                    <SelectItem value="updated_at_asc">Last updated: oldest</SelectItem>
+                  </>
+                )}
                 <SelectItem value="status">Status priority</SelectItem>
               </SelectContent>
             </Select>
@@ -540,6 +584,8 @@ function SpendTable({
             {searchValue && <FilterChip label={`Search: ${searchValue}`} onRemove={() => { setSearch(''); updateUrlParams({ search: null }); }} />}
             {workspaceId && <FilterChip label={`Workspace: ${workspaceName || workspaceId}`} onRemove={() => updateUrlParams({ workspaceId: null })} />}
             {status && status !== 'all' && <FilterChip label={`Status: ${getStatusLabel(status)}`} onRemove={() => updateUrlParams({ status: null })} />}
+            {deployedOnly && <FilterChip label="Deployed only" onRemove={() => updateUrlParams({ deployedOnly: null })} />}
+            {staleButSpending && <FilterChip label="Stale but spending" onRemove={() => updateUrlParams({ staleButSpending: null })} />}
             <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={clearFilters}>Clear filters</Button>
           </div>
         )}
@@ -612,7 +658,7 @@ function SpendTable({
            dataThrough={data.metadata.dataAsOf}
            stale={Boolean(data.metadata.stale || query.isError)}
            incomplete={Boolean(data.metadata.status && data.metadata.status !== 'complete' && data.metadata.status !== 'stale')}
-          onSort={(col) => {
+           onSort={(col) => {
             let newSort: string | null = null;
             if (col === 'name') {
               newSort = sort === 'name_asc' ? 'name_desc' : 'name_asc';
@@ -620,6 +666,8 @@ function SpendTable({
               newSort = sort === 'spend_desc' ? 'spend_asc' : 'spend_desc';
             } else if (col === 'status') {
               newSort = 'status';
+            } else if (col === 'updatedAt') {
+              newSort = String(sort) === 'updated_at_desc' ? 'updated_at_asc' : 'updated_at_desc';
             }
             if (newSort) updateUrlParams({ sort: newSort });
           }}
@@ -706,13 +754,13 @@ function GenericSpendTable({
   incomplete,
   rangeType,
 }: {
-  rows: SpendTableRow[];
+  rows: SpendTableRow[] | SpendProjectRow[];
   logicalRowCount: number;
   logicalRowIndexOffset: number;
   columns: string[];
   tableType: 'pools' | 'groups' | 'people' | 'projects';
   density: string;
-  sort: SpendSortParameter;
+  sort: SpendSortParameter | ProjectSortParameter;
   onSort: (val: string) => void;
   dataThrough: string | null;
   stale: boolean;
@@ -726,22 +774,14 @@ function GenericSpendTable({
     return String(val);
   };
 
-  const isSortable = (col: string) => ['name', 'spendUsd', 'status'].includes(col);
+  const isSortable = (col: string) => ['name', 'spendUsd', 'status', 'updatedAt'].includes(col);
 
-  const currentSortField = sort.replace(/_desc|_asc$/, '');
+  const currentSortField = sort.replace(/_desc|_asc$/, '') === 'updated_at' ? 'updatedAt' : sort.replace(/_desc|_asc$/, '');
   const currentSortDir = sort.endsWith('_asc') ? 'asc' : 'desc';
 
   const handleSort = (field: string) => {
     if (!isSortable(field)) return;
-    if (field === 'status') {
-      onSort('status');
-      return;
-    }
-    if (currentSortField === field) {
-      onSort(`${field}_${currentSortDir === 'desc' ? 'asc' : 'desc'}`);
-    } else {
-      onSort(`${field}_desc`);
-    }
+    onSort(field);
   };
 
   return (
@@ -787,21 +827,47 @@ function GenericSpendTable({
           {rows.map((row) => (
             <TableRow key={row.id} className="transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
               {columns.map((col) => {
-                const isNumeric = ['spendUsd', 'agentSpendUsd', 'otherServicesUsd', 'allocationUsd', 'remainingUsd', 'percentUsed', 'memberCount', 'currentCycleAgentSpendUsd', 'currentCycleRemainingUsd', 'currentCyclePercentUsed'].includes(col);
+                const isNumeric = ['spendUsd', 'agentSpendUsd', 'otherServicesUsd', 'allocationUsd', 'remainingUsd', 'percentUsed', 'memberCount', 'currentCycleAgentSpendUsd', 'currentCycleRemainingUsd', 'currentCyclePercentUsed', 'currentMonthSpendUsd'].includes(col);
                 const val = (row as any)[col];
                  const selectedRangeUnknown = isUnknownSelectedRangeValue(row.usageObserved, col);
                   let displayVal: React.ReactNode = selectedRangeUnknown ? 'Unavailable' : val == null ? 'Unavailable' : val;
 
-                if (['spendUsd', 'agentSpendUsd', 'otherServicesUsd', 'allocationUsd', 'remainingUsd', 'currentCycleAgentSpendUsd', 'currentCycleRemainingUsd'].includes(col)) {
+                if (['spendUsd', 'agentSpendUsd', 'otherServicesUsd', 'allocationUsd', 'remainingUsd', 'currentCycleAgentSpendUsd', 'currentCycleRemainingUsd', 'currentMonthSpendUsd'].includes(col)) {
                     displayVal = selectedRangeUnknown ? 'Unavailable' : val == null ? 'Unavailable' : formatObservedCurrency(val, true);
                 } else if (col === 'percentUsed' || col === 'currentCyclePercentUsed') {
                     displayVal = selectedRangeUnknown ? 'Unavailable' : val == null ? 'Unavailable' : `${Number(val).toFixed(1)}%`;
+                } else if (col === 'updatedAt') {
+                    displayVal = val == null ? 'Unknown' : <time dateTime={val}>{new Date(val).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</time>;
+                } else if (col === 'ownerName' && row.kind === 'project' && (row as any).ownerId) {
+                    displayVal = (
+                      <Link href={spendDetailHref(`/users/${(row as any).ownerId}`, window.location.pathname + window.location.search)} className="hover:text-primary hover:underline transition-colors">
+                        {val || (row as any).ownerId}
+                      </Link>
+                    );
+                } else if (col === 'name' && row.kind === 'person') {
+                    displayVal = (
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Link href={spendDetailHref(`/users/${row.id.split(':').pop()}`, window.location.pathname + window.location.search)} className="font-medium hover:text-primary hover:underline transition-colors truncate">
+                          {val}
+                        </Link>
+                      </div>
+                    );
                 }
 
                 if (col === 'name') {
                    displayVal = (
                      <div className="flex items-center gap-2 min-w-0">
-                       <span className="font-medium hover:text-primary transition-colors truncate">{val}</span>
+                       <span className="font-medium hover:text-primary transition-colors truncate">
+                         {row.kind === 'project' ? (
+                           <Link href={spendDetailHref(`/workspaces/${row.workspaceId}/projects/${(row as any).projectId}`, window.location.pathname + window.location.search)}>
+                             {val}
+                           </Link>
+                         ) : row.kind === 'person' ? (
+                           <Link href={spendDetailHref(`/users/${row.id.split(':').pop()}`, window.location.pathname + window.location.search)}>
+                             {val}
+                           </Link>
+                         ) : val}
+                       </span>
                        {row.workspaceName && !columns.includes('workspaceName') && (
                          <span className="text-[10px] bg-secondary/10 text-secondary border border-secondary/25 px-1.5 py-0.5 rounded-full shrink-0">
                            {row.workspaceName}
@@ -817,13 +883,26 @@ function GenericSpendTable({
                            NO LIMIT
                          </span>
                        )}
+                        {row.kind === 'project' && <StaleSpendingChip visible={(row as SpendProjectRow).staleButSpending} />}
                      </div>
                    );
                 }
 
                 return (
                   <TableCell key={col} className={`${isNumeric ? 'text-right font-mono' : ''} ${col === 'spendUsd' ? 'font-medium' : ''}`}>
-                     {col === 'percentUsed' && row.kind === 'pool' ? (
+                     {col === 'deployments' && row.kind === 'project' ? (
+                       <div className="flex flex-col gap-1 items-start justify-center">
+                          {(row as SpendProjectRow).deploymentAvailability === 'unavailable'
+                            ? <span className="text-xs text-muted-foreground">Deployment observation unavailable</span>
+                            : (val as any[] | null | undefined)?.length ? (val as any[]).map((d: any) => (
+                              <span key={d.id} className="text-xs text-primary" onClick={(e) => e.stopPropagation()}>
+                                <DeploymentLink url={d.url} />
+                              </span>
+                            )) : <span className="text-xs text-muted-foreground">{(row as SpendProjectRow).hasDeployment ? 'Observed, URL unavailable' : 'No deployments'}</span>}
+                       </div>
+                     ) : col === 'hasDeployment' ? (
+                        <DeploymentChip value={val as boolean | null} availability={row.kind === 'project' ? (row as SpendProjectRow).deploymentAvailability : undefined} />
+                     ) : col === 'percentUsed' && row.kind === 'pool' ? (
                        rangeType === 'full-term' ? (
                          <BudgetMeter
                            actualUsd={row.usageObserved === false ? null : row.spendUsd}

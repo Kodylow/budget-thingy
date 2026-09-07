@@ -6,11 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { EndDateParameter } from './endDateParameter';
+import type { ProjectDeployedOnlyParameter } from './projectDeployedOnlyParameter';
+import type { ProjectSortParameter } from './projectSortParameter';
+import type { ProjectStaleButSpendingParameter } from './projectStaleButSpendingParameter';
 import type { RangeTypeParameter } from './rangeTypeParameter';
 import type { SpendPageParameter } from './spendPageParameter';
 import type { SpendPageSizeParameter } from './spendPageSizeParameter';
 import type { SpendSearchParameter } from './spendSearchParameter';
-import type { SpendSortParameter } from './spendSortParameter';
 import type { SpendStatusParameter } from './spendStatusParameter';
 import type { SpendWorkspaceParameter } from './spendWorkspaceParameter';
 import type { StartDateParameter } from './startDateParameter';
@@ -43,7 +45,15 @@ status?: SpendStatusParameter;
  * @maxLength 200
  */
 workspaceId?: SpendWorkspaceParameter;
-sort?: SpendSortParameter;
+/**
+ * When true, include only projects whose authoritative cached hasDeployment value is true. Unknown deployment state does not match.
+ */
+deployedOnly?: ProjectDeployedOnlyParameter;
+/**
+ * When true, include only projects with a known updatedAt at least 30 elapsed days before evaluation and positive authorized spend in the current UTC calendar month. Missing timestamps do not match.
+ */
+staleButSpending?: ProjectStaleButSpendingParameter;
+sort?: ProjectSortParameter;
 /**
  * @minimum 1
  */

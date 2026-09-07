@@ -165,4 +165,65 @@ describe("Enterprise directory refresh write mode", () => {
     expect(requests.filter((request) => request.path.endsWith("/workspaces")))
       .toHaveLength(2);
   });
+
+  test("retains built-in groups only for presentation with complete membership", async () => {
+    process.env["REPLIT_ENTERPRISE_API_KEY"] = "test-key";
+    const workspaceId = dataWorkspaceId;
+    const requestedMemberships: string[] = [];
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/workspaces")) {
+        return Response.json({
+          data: [{ id: workspaceId, name: "Workspace", slug: workspaceId, memberCount: 1 }],
+          pagination: { hasMore: false },
+        });
+      }
+      if (url.pathname.endsWith("/groups")) {
+        return Response.json({
+          data: [
+            { id: "builtin", workspaceId, name: "Members", type: "member" },
+            { id: "custom", workspaceId, name: "Finance - Members", type: "custom" },
+          ],
+          pagination: { hasMore: false },
+        });
+      }
+      if (url.pathname.includes("/groups/") && url.pathname.endsWith("/users")) {
+        const id = decodeURIComponent(url.pathname.split("/").at(-2)!);
+        requestedMemberships.push(id);
+        return Response.json({
+          data: [{ userId: "123" }],
+          pagination: { hasMore: false },
+        });
+      }
+      if (url.pathname.endsWith("/members")) {
+        return Response.json({
+          data: [{
+            user: {
+              id: "123",
+              username: "member",
+              email: "member@example.com",
+              firstName: null,
+              lastName: null,
+            },
+            workspaces: [{ id: workspaceId, role: "member", isDisabled: false }],
+          }],
+          pagination: { hasMore: false },
+        });
+      }
+      if (url.pathname.endsWith("/budgets")) {
+        return Response.json({ data: [], pagination: { hasMore: false } });
+      }
+      return new Response("unexpected route", { status: 404 });
+    });
+
+    const directory = await refreshDirectoryForIngest(true);
+
+    expect(requestedMemberships.sort()).toEqual(["builtin", "custom"]);
+    expect(directory.allGroups.map((group) => group.id).sort())
+      .toEqual(["builtin", "custom"]);
+    expect(directory.groupMembers.get("builtin")).toEqual(["123"]);
+    expect(directory.groups.map((group) => group.id)).toEqual(["custom"]);
+    expect(directory.account.roleGroupsById.has("builtin")).toBe(false);
+    expect(directory.account.roleGroupsById.get("custom")?.members.has("123")).toBe(true);
+  });
 });

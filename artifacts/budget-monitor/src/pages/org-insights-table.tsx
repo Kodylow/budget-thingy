@@ -9,13 +9,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatObservedCurrency, isUnknownSpendTotal } from "@/lib/spend-presentation";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { DataTable } from "@/components/journey-primitives";
+import { Link, useSearch } from "wouter";
+import { spendDetailHref } from "@/lib/spend-exploration";
 
 export function OrgInsightsPeopleTable() {
   const { rangeType, startDate, endDate } = useRange();
+  const searchString = useSearch();
   const [page, setPage] = useState(1);
   const pageSize = 10;
   const [search, setSearch] = useState("");
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() => new URLSearchParams(searchString).get("workspaceId"));
   
   const queryParams: any = { rangeType, search: search || undefined, viewScope: "all_authorized", workspaceId, page, pageSize, sort: "spend_desc" };
   if (rangeType === "custom") {
@@ -98,7 +101,9 @@ export function OrgInsightsPeopleTable() {
              ]}
              rows={data.rows.map((row, idx) => [
                <span className="font-mono text-xs text-muted-foreground">#{(page - 1) * pageSize + idx + 1}</span>,
-               <span className="font-medium">{row.name || "Unknown User"}</span>,
+                <Link href={spendDetailHref(`/users/${row.id.split(':').pop()}`, window.location.pathname + window.location.search)} className="font-medium hover:text-primary hover:underline">
+                  {row.name || "Unknown User"}
+                </Link>,
                <span className="text-muted-foreground">{row.workspaceName || row.workspaceId}</span>,
                <span className="font-mono">{formatObservedCurrency(row.spendUsd, knownTotal && row.usageObserved !== false)}</span>,
                <span className="font-mono text-muted-foreground">{row.currentCycleAgentSpendUsd != null ? formatObservedCurrency(row.currentCycleAgentSpendUsd, true) : "Unavailable"}</span>,

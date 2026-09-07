@@ -32,6 +32,8 @@ const Settings = lazy(() => import('@/pages/settings'));
 const Help = lazy(() => import('@/pages/user-guide'));
 const GroupDetail = lazy(() => import('@/pages/group-detail'));
 const ClusterDetail = lazy(() => import('@/pages/cluster-detail'));
+
+const ProjectDetail = lazy(() => import('@/pages/project-detail'));
 const Limits = lazy(() => import('@/pages/limits'));
 const Reports = lazy(() => import('@/pages/reports'));
 
@@ -262,6 +264,8 @@ function Router() {
           <Route path="/user-guide" component={() => <PreserveQueryRedirect to="/help" />} />
 
           <Route path="/groups/:groupId" component={GroupDetail} />
+          <Route path="/workspaces/:workspaceId/projects/:projectId" component={ProjectDetail} />
+          <Route path="/users/:userId" component={UserProjects} />
           <Route path="/clusters" component={ClusterDetail} />
           <Route component={NotFound} />
         </Switch>
@@ -342,3 +346,5 @@ function App() {
 }
 
 export default App;
+
+const UserProjects = lazy(() => import('@/pages/user-projects'));

@@ -155,6 +155,17 @@ const baseData: DashboardResponse = {
       error: null,
     },
   },
+  staleSpend: {
+    spendUsd: 0,
+    projectCount: 0,
+    availability: 'complete',
+    coverage: { requestedDays: 30, requestedWorkspaceDays: 30, presentWorkspaceDays: 30, failedWorkspaceDays: [], missingWorkspaceDays: [], presentAccountDays: 30, missingAccountDays: [], ratio: 1.0 },
+    evaluatedAt: '2026-09-15T00:00:00Z',
+    staleCutoff: '2026-08-16T00:00:00Z',
+    monthStart: '2026-09-01T00:00:00Z',
+    monthEndExclusive: '2026-10-01T00:00:00Z',
+    drillThrough: null,
+  },
   projection: null as unknown as DashboardResponse['projection'],
 };
 

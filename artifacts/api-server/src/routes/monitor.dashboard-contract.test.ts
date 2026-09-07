@@ -189,6 +189,30 @@ describe("dashboard and spend endpoint contracts", () => {
         methodology: "Arithmetic mean of complete UTC days.",
         trajectory: [],
       },
+      staleSpend: {
+        spendUsd: 4,
+        projectCount: 1,
+        availability: "partial",
+        coverage: {
+          requestedDays: 2,
+          requestedWorkspaceDays: 2,
+          presentWorkspaceDays: 1,
+          failedWorkspaceDays: [],
+          missingWorkspaceDays: [{
+            workspaceId: "w1",
+            usageDate: "2026-09-02",
+          }],
+          presentAccountDays: 0,
+          missingAccountDays: [],
+          ratio: 0.5,
+        },
+        evaluatedAt: "2026-09-02T12:00:00.000Z",
+        staleCutoff: "2026-08-03T12:00:00.000Z",
+        monthStart: "2026-09-01T00:00:00.000Z",
+        monthEndExclusive: "2026-10-01T00:00:00.000Z",
+        drillThrough:
+          "/spend?view=projects&viewScope=managed&rangeType=mtd&staleButSpending=true",
+      },
     });
     expect(dashboard.accounting).toMatchObject({
       agentSpendUsd: 6,

@@ -38,13 +38,15 @@ function OrgInsightsView() {
   const { rangeType, startDate, endDate } = useRange();
 
   const queryParams = useMemo(() => {
+    const workspaceId = new URLSearchParams(searchString).get('workspaceId') || undefined;
     return dashboardRequestParams({
       rangeType,
       startDate,
       endDate,
       viewScope: "all_authorized",
+      workspaceId,
     });
-  }, [rangeType, startDate, endDate]);
+  }, [rangeType, startDate, endDate, searchString]);
 
   const { data, isLoading, isError, isFetching, refetch } = useGetDashboard(queryParams);
   const displayData = data;
@@ -139,6 +141,14 @@ function OrgInsightsView() {
           {metadata.qualifications.map((qualification) => <p key={qualification}>{qualification}</p>)}
         </AdminDataQualityNote>
       )}
+      {displayData.staleSpend && <AdminDataQualityNote title="Stale project spend data quality">
+        <p>
+          Stale project spend is current UTC-month authorized spend for projects last updated on or before{' '}
+          <time dateTime={displayData.staleSpend.staleCutoff}>{new Date(displayData.staleSpend.staleCutoff).toLocaleDateString()}</time>.
+          {' '}Project update time is metadata freshness, not an activity audit trail.
+          {displayData.staleSpend.availability !== 'complete' ? ` Observation availability is ${displayData.staleSpend.availability}.` : ''}
+        </p>
+      </AdminDataQualityNote>}
 
       <div className="flex flex-col gap-3 rounded-md border bg-card p-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex items-start gap-2 text-xs text-muted-foreground">
@@ -159,7 +169,7 @@ function OrgInsightsView() {
       </div>
 
       {/* Top Cards */}
-      <section className="grid min-w-0 gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+      <section className="grid min-w-0 gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6">
         <InsightCard 
           title="Total Spend" 
           icon={DollarSign} 
@@ -190,6 +200,24 @@ function OrgInsightsView() {
         />
         <div className="relative group">
           <InsightCard 
+            title="Stale spend This month"
+            icon={AlertTriangle}
+            value={displayData.staleSpend?.spendUsd != null ? formatFinancialUsd(displayData.staleSpend.spendUsd) : "Unavailable"}
+            subtitle={displayData.staleSpend?.projectCount != null ? `${displayData.staleSpend.projectCount} stale projects` : undefined}
+            testId="org-card-stale"
+          />
+          {displayData.staleSpend?.drillThrough && (
+            <Link href={displayData.staleSpend.drillThrough}
+                  className="absolute inset-0 z-10 rounded-xl ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 opacity-0 group-hover:opacity-100 transition-opacity bg-primary/5 flex items-center justify-center backdrop-blur-[1px]"
+                  aria-label="View Stale Projects">
+               <span className="bg-primary text-primary-foreground text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm">
+                 View projects
+               </span>
+            </Link>
+          )}
+        </div>
+        <div className="relative group">
+          <InsightCard
             title="Projected Total" 
             icon={Target} 
             value={projection?.projectedKnownTotalUsd != null ? `~${formatFinancialUsd(projection.projectedKnownTotalUsd)}` : (projection?.projectedTotalUsd != null ? `~${formatFinancialUsd(projection.projectedTotalUsd)}` : "Unavailable")} 

@@ -571,23 +571,74 @@ describe("Enterprise project metadata enrichment", () => {
   it("retains last-good project data and does not invent missing attribution after failure", async () => {
     const workspaceId = workspaceIds[3]!;
     process.env["REPLIT_ENTERPRISE_API_KEY"] = "test-key";
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      data: [{ id: "known", title: "Known", creatorId: "creator" }],
-      pagination: { hasMore: false },
-    }), { status: 200 });
+    globalThis.fetch = async (input) => {
+      const path = new URL(String(input)).pathname;
+      return Response.json({
+        data: path.endsWith("/deployments")
+          ? [
+              {
+                id: "deployment-one",
+                project: { id: "known" },
+                workspace: { id: workspaceId },
+                url: "https://known.example",
+                deploymentPrivacy: "public",
+                status: "success",
+              },
+              {
+                id: "deployment-two",
+                project: { id: "known" },
+                workspace: { id: workspaceId },
+                url: "javascript:alert(1)",
+              },
+            ]
+          : [{ id: "known", title: "Known", creatorId: "creator" }],
+        pagination: { hasMore: false },
+      });
+    };
     await refreshProjectMetadata(workspaceId, true);
     const [successfulState] = await db.select().from(apiProjectMetadataStateTable)
       .where(eq(apiProjectMetadataStateTable.workspaceId, workspaceId));
 
-    globalThis.fetch = async () => new Response("sensitive provider payload", { status: 500 });
+    globalThis.fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/deployments")) {
+        if (url.searchParams.has("cursor")) {
+          return new Response("sensitive provider payload", { status: 500 });
+        }
+        return Response.json({
+          data: [],
+          pagination: { hasMore: true, nextCursor: "deployment-page-two" },
+        });
+      }
+      return Response.json({
+        data: [{ id: "known", title: "Changed", creatorId: "new-owner" }],
+        pagination: { hasMore: false },
+      });
+    };
     const error = await refreshProjectMetadata(workspaceId, true).catch((caught) => caught);
-    expect(error).toMatchObject({ message: "Enterprise API /projects failed (500)" });
+    expect(error).toMatchObject({ message: "Enterprise API /deployments failed (500)" });
     expect(error.message).not.toContain("sensitive provider payload");
 
     expect(getProjectInfo(workspaceId, "known")).toEqual({
       title: "Known",
       creatorId: "creator",
+      createdAt: null,
+      updatedAt: null,
       hasDeployment: true,
+      deployments: [
+        expect.objectContaining({
+          id: "deployment-one",
+          url: "https://known.example/",
+        }),
+        expect.objectContaining({
+          id: "deployment-two",
+          url: null,
+          privacy: null,
+          status: null,
+        }),
+      ],
+      deploymentsObservedAt: expect.any(String),
+      fetchedAt: expect.any(String),
     });
     expect(getProjectInfo(workspaceId, "missing")).toBeUndefined();
     const [state] = await db.select().from(apiProjectMetadataStateTable)
@@ -608,6 +659,10 @@ describe("Enterprise project metadata enrichment", () => {
         title: "Known",
         creatorId: "creator",
         hasDeployment: true,
+        deployments: expect.arrayContaining([
+          expect.objectContaining({ id: "deployment-one" }),
+          expect.objectContaining({ id: "deployment-two" }),
+        ]),
       }),
     ]);
   });
@@ -653,14 +708,20 @@ describe("Enterprise project metadata enrichment", () => {
       workspaceIds[0]!,
     ]);
 
-    expect(fetched).toEqual([null, null]);
+    expect(fetched).toEqual([
+      null,
+      null,
+      workspaceIds[2]!,
+      workspaceIds[1]!,
+      workspaceIds[0]!,
+    ]);
     expect(counters).toEqual({
       considered: 3,
       attempted: 3,
       succeeded: 3,
       failed: 0,
       deferred: 0,
-      requests: 2,
+      requests: 5,
       remaining: 0,
     });
   });

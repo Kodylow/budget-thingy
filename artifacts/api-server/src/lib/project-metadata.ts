@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { inArray } from "drizzle-orm";
+import { asc, desc, inArray } from "drizzle-orm";
 import {
   apiProjectMetadataStateTable,
   apiProjectMetadataTable,
@@ -9,14 +9,30 @@ import type { UsageSnapshot } from "./usage-store";
 
 export const PROJECT_METADATA_COMPLETE_MAX_AGE_MS = 15 * 60_000;
 
+export interface ProjectDeploymentMetadata {
+  id: string;
+  url: string | null;
+  privacy: string | null;
+  status: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ProjectMetadata {
+  creatorId: string | null;
+  title: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  hasDeployment: boolean | null;
+  deployments: ProjectDeploymentMetadata[] | null;
+  deploymentsObservedAt: string | null;
+  fetchedAt: string;
+}
+
 export interface ProjectMetadataSnapshot {
   byWorkspace: Map<
     string,
-    Map<string, {
-      creatorId: string | null;
-      title: string | null;
-      hasDeployment: boolean | null;
-    }>
+    Map<string, ProjectMetadata>
   >;
   /** Workspaces with a complete catalog observation, including stale/empty ones. */
   observedWorkspaceIds: Set<string>;
@@ -37,7 +53,11 @@ interface ProjectMetadataRow {
   projectId: string;
   creatorId: string | null;
   title: string | null;
+  createdAt?: Date | null;
+  updatedAt?: Date | null;
   hasDeployment?: boolean | null;
+  deployments?: unknown;
+  deploymentsObservedAt?: Date | null;
   fetchedAt: Date;
 }
 
@@ -58,11 +78,7 @@ export function buildProjectMetadataSnapshot(
     state.lastSuccessfulAt ? [state.workspaceId] : []));
   const byWorkspace = new Map<
     string,
-    Map<string, {
-      creatorId: string | null;
-      title: string | null;
-      hasDeployment: boolean | null;
-    }>
+    Map<string, ProjectMetadata>
   >();
   for (const row of rows) {
     if (!successfullyObservedWorkspaces.has(row.workspaceId)) continue;
@@ -70,7 +86,14 @@ export function buildProjectMetadataSnapshot(
     projects.set(row.projectId, {
       creatorId: row.creatorId,
       title: row.title,
+      createdAt: row.createdAt?.toISOString() ?? null,
+      updatedAt: row.updatedAt?.toISOString() ?? null,
       hasDeployment: row.hasDeployment ?? null,
+      deployments: Array.isArray(row.deployments)
+        ? row.deployments as ProjectDeploymentMetadata[]
+        : null,
+      deploymentsObservedAt: row.deploymentsObservedAt?.toISOString() ?? null,
+      fetchedAt: row.fetchedAt.toISOString(),
     });
     byWorkspace.set(row.workspaceId, projects);
   }
@@ -125,7 +148,11 @@ export function buildProjectMetadataSnapshot(
         row.projectId,
         row.creatorId,
         row.title,
+        row.createdAt?.toISOString() ?? null,
+        row.updatedAt?.toISOString() ?? null,
         row.hasDeployment ?? null,
+        row.deployments ?? null,
+        row.deploymentsObservedAt?.toISOString() ?? null,
         row.fetchedAt.toISOString(),
       ] as const).sort(([aWorkspace, aProject], [bWorkspace, bProject]) =>
         aWorkspace.localeCompare(bWorkspace) || aProject.localeCompare(bProject)),
@@ -156,6 +183,59 @@ export async function readProjectMetadata(
       .where(inArray(apiProjectMetadataStateTable.workspaceId, ids)),
   }), { isolationLevel: "repeatable read", accessMode: "read only" });
   return buildProjectMetadataSnapshot(rows, states, now);
+}
+
+/**
+ * Elect current workspace identity globally for only the caller's candidate
+ * project IDs. Lifecycle/owner fields are deliberately not returned, so an
+ * inaccessible transfer destination can suppress an old scoped row without
+ * exposing destination metadata.
+ */
+export async function readCurrentProjectIdentities(
+  projectIds: Iterable<string>,
+): Promise<Map<string, {
+  workspaceId: string | null;
+  fetchedAt: string;
+}>> {
+  const ids = [...new Set(projectIds)].sort();
+  if (ids.length === 0) return new Map();
+  const rows = await db.select({
+    projectId: apiProjectMetadataTable.projectId,
+    workspaceId: apiProjectMetadataTable.workspaceId,
+    fetchedAt: apiProjectMetadataTable.fetchedAt,
+  }).from(apiProjectMetadataTable)
+    .where(inArray(apiProjectMetadataTable.projectId, ids))
+    .orderBy(
+      asc(apiProjectMetadataTable.projectId),
+      desc(apiProjectMetadataTable.fetchedAt),
+      asc(apiProjectMetadataTable.workspaceId),
+    );
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const values = grouped.get(row.projectId) ?? [];
+    values.push(row);
+    grouped.set(row.projectId, values);
+  }
+  const result = new Map<string, {
+    workspaceId: string | null;
+    fetchedAt: string;
+  }>();
+  for (const [projectId, values] of grouped) {
+    const newestAt = values[0]!.fetchedAt.getTime();
+    const newest = values.filter((row) => row.fetchedAt.getTime() === newestAt);
+    if (newest.length !== 1) {
+      result.set(projectId, {
+        workspaceId: null,
+        fetchedAt: newest[0]!.fetchedAt.toISOString(),
+      });
+      continue;
+    }
+    result.set(projectId, {
+      workspaceId: newest[0]!.workspaceId,
+      fetchedAt: newest[0]!.fetchedAt.toISOString(),
+    });
+  }
+  return result;
 }
 
 export function hasCompleteRequiredProjectMetadata(

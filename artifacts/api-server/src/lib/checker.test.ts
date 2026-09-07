@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import * as schema from "@workspace/db/schema";
 
 const { pglite, testDb } = await vi.hoisted(async () => {
@@ -277,6 +278,10 @@ beforeEach(async () => {
     INSERT INTO notification_settings(id, automated_email_enabled)
     VALUES ('singleton', true);
   `);
+  await pglite.exec(readFileSync(
+    new URL("../../../../lib/db/drizzle/0012_richer_project_metadata.sql", import.meta.url),
+    "utf8",
+  ));
   groups = [GROUP];
   groupMembers = new Map([[GROUP.id, ["u-1"]]]);
   userLimits = new Map();

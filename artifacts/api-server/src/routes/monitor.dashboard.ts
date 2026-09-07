@@ -6,6 +6,7 @@ import {
 import {
   bucketRollupSpend,
   buildScopedAccounting,
+  buildProjectIntelligenceFromResult,
   currentCycleLimitMetrics,
   prepareScopedAccounting,
   personalProjectCatalog,
@@ -425,6 +426,15 @@ router.get("/dashboard", async (req, res): Promise<void> => {
     );
     await afterAccountingHookForTests?.();
     assertDashboardUsageGeneration(prepared.usageGeneration);
+    const projectIntelligence = await buildProjectIntelligenceFromResult(
+      result,
+      prepared,
+      new Date(),
+      typeof (parsed.data as Record<string, unknown>)["workspaceId"] === "string"
+        ? String((parsed.data as Record<string, unknown>)["workspaceId"])
+        : undefined,
+    );
+    assertDashboardUsageGeneration(prepared.usageGeneration);
     accountingMs = performance.now() - accountingStartedAt;
     const rollupsStartedAt = performance.now();
     const granularity = parsed.data.granularity ??
@@ -458,6 +468,13 @@ router.get("/dashboard", async (req, res): Promise<void> => {
           rangeType: "custom",
           startDate: extraStart,
           endDate: today,
+          ...(typeof (parsed.data as Record<string, unknown>)["workspaceId"] ===
+              "string"
+            ? {
+                workspaceId: String(
+                  (parsed.data as Record<string, unknown>)["workspaceId"]),
+              }
+            : {}),
         },
         true,
       );
@@ -530,6 +547,36 @@ router.get("/dashboard", async (req, res): Promise<void> => {
     const personalProjectCatalogSummary = projectCatalog
       ? (({ projects: _projects, ...summary }) => summary)(projectCatalog)
       : undefined;
+    const staleProjectRows = projectIntelligence.result.projectRows
+      .filter((row) => row.staleButSpending === true);
+    const staleAvailability = projectIntelligence.staleEvaluation.availability;
+    const staleParams = new URLSearchParams({
+      view: "projects",
+      viewScope: result.scope.viewScope,
+      rangeType: "mtd",
+      staleButSpending: "true",
+    });
+    const requestedWorkspace = (parsed.data as Record<string, unknown>)
+      ["workspaceId"];
+    if (typeof requestedWorkspace === "string" && requestedWorkspace) {
+      staleParams.set("workspaceId", requestedWorkspace);
+    }
+    const staleSpend = {
+      spendUsd: staleAvailability === "unavailable"
+        ? null
+        : staleProjectRows.reduce(
+          (sum, row) => sum + (row.currentMonthSpendUsd ?? 0), 0),
+      projectCount: staleAvailability === "unavailable"
+        ? null : staleProjectRows.length,
+      availability: staleAvailability,
+      coverage: projectIntelligence.staleEvaluation.coverage,
+      evaluatedAt: projectIntelligence.staleEvaluation.evaluatedAt,
+      staleCutoff: projectIntelligence.staleEvaluation.staleCutoff,
+      monthStart: projectIntelligence.staleEvaluation.monthStart,
+      monthEndExclusive:
+        projectIntelligence.staleEvaluation.monthEndExclusive,
+      drillThrough: `/spend?${staleParams.toString()}`,
+    };
 
     const isPersonal = result.scope.isPersonal;
     const isBilling = selectedRangeType === "billing";
@@ -637,6 +684,7 @@ router.get("/dashboard", async (req, res): Promise<void> => {
       scope: result.scope, period: result.period, cardVariant, cards,
       trend: { granularity, mode, buckets }, breakdown,
         accounting: result.accounting, metadata: result.metadata, projection,
+        staleSpend,
         insights,
         personalLimits: dashboardPersonalLimits(
           result,

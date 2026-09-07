@@ -468,6 +468,7 @@ paths:
         - $ref: "#/components/parameters/StartDate"
         - $ref: "#/components/parameters/EndDate"
         - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/TrendGranularity"
         - $ref: "#/components/parameters/TrendMode"
         - $ref: "#/components/parameters/ProjectionHorizon"
@@ -581,6 +582,12 @@ paths:
       operationId: listSpendProjects
       tags: [groups]
       summary: List authorized workspace-qualified project usage
+      description: >
+        Returns current project identity and lifecycle observations joined to
+        authorized selected-range and current-UTC-month usage. Lifecycle
+        availability is independent of usage availability. A project is stale
+        but spending only when updatedAt is known and is at least 30 elapsed
+        days before evaluatedAt, and authorized currentMonthSpendUsd is positive.
       parameters:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
@@ -589,7 +596,9 @@ paths:
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendStatus"
         - $ref: "#/components/parameters/SpendWorkspace"
-        - $ref: "#/components/parameters/SpendSort"
+        - $ref: "#/components/parameters/ProjectDeployedOnly"
+        - $ref: "#/components/parameters/ProjectStaleButSpending"
+        - $ref: "#/components/parameters/ProjectSort"
         - $ref: "#/components/parameters/SpendPage"
         - $ref: "#/components/parameters/SpendPageSize"
       responses:
@@ -598,11 +607,112 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SpendTableResponse"
+                $ref: "#/components/schemas/SpendProjectsResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /workspaces/{workspaceId}/projects/{projectId}:
+    parameters:
+      - $ref: "#/components/parameters/PreviewAsHeader"
+    get:
+      operationId: getWorkspaceProject
+      tags: [groups]
+      summary: Get an authorized workspace-qualified project
+      description: >
+        Returns only the current cached project identity, lifecycle and
+        authorized spend facts. This read never initiates an Enterprise API
+        refresh. The workspace qualifier is part of the identity and prevents
+        cross-workspace project-ID guessing.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - $ref: "#/components/parameters/ProjectIdPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+      responses:
+        "200":
+          description: Authorized project detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetailResponse"
+        "400":
+          description: Invalid reporting range or scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Project not found in the authorized workspace scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Cached project intelligence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /users/{userId}/projects:
+    parameters:
+      - $ref: "#/components/parameters/PreviewAsHeader"
+    get:
+      operationId: listUserOwnedProjects
+      tags: [groups]
+      summary: List projects currently owned by an authorized user
+      description: >
+        Includes cached current-catalog projects with no selected-range spend.
+        Ownership is current metadata, not an audit trail. Results are restricted
+        to the effective viewer's workspace and presentation scope.
+      parameters:
+        - $ref: "#/components/parameters/UserIdPath"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/ViewScope"
+        - $ref: "#/components/parameters/SpendSearch"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/ProjectDeployedOnly"
+        - $ref: "#/components/parameters/ProjectStaleButSpending"
+        - $ref: "#/components/parameters/ProjectSort"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Authorized current owned-project page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserOwnedProjectsResponse"
+        "400":
+          description: Invalid reporting range, scope, or filters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found in the authorized workspace scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Cached project intelligence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /spend/pools.csv:
     get:
       operationId: exportSpendPoolsCsv
@@ -1888,6 +1998,76 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /directory/workspace-groups:
+    parameters:
+      - $ref: "#/components/parameters/PreviewAsHeader"
+    get:
+      operationId: listWorkspaceGroups
+      tags: [directory]
+      summary: List cached built-in and custom groups by workspace
+      description: >
+        Read-only administrative directory grouped by authorized workspace.
+        Includes Admins, Members, Guests and custom groups. Membership
+        availability is explicit and a complete zero count means an
+        authoritatively empty group. This read never initiates upstream traffic.
+      parameters:
+        - $ref: "#/components/parameters/SpendWorkspace"
+      responses:
+        "200":
+          description: Authorized workspace group directory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceGroupsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Cached workspace group directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /directory/workspaces/{workspaceId}/groups/{groupId}/members:
+    parameters:
+      - $ref: "#/components/parameters/PreviewAsHeader"
+    get:
+      operationId: listWorkspaceGroupMembers
+      tags: [directory]
+      summary: Page through cached members of a workspace group
+      description: >
+        Returns a bounded page from the cached complete membership observation;
+        expansion never initiates an Enterprise API request. Both workspace and
+        group identifiers are checked against the effective administrative scope.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - $ref: "#/components/parameters/GroupIdPath"
+        - $ref: "#/components/parameters/SpendPage"
+        - $ref: "#/components/parameters/SpendPageSize"
+      responses:
+        "200":
+          description: Cached workspace-group member page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceGroupMembersResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace or group not found in the authorized scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Cached workspace group membership unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /workspace-admins:
     get:
       operationId: listWorkspaceAdmins
@@ -2330,6 +2510,14 @@ components:
       schema:
         type: string
         minLength: 1
+    ProjectIdPath:
+      name: projectId
+      in: path
+      required: true
+      description: Project UUID, qualified by the workspaceId path segment.
+      schema:
+        type: string
+        minLength: 1
     GroupIdPath:
       name: groupId
       in: path
@@ -2424,6 +2612,34 @@ components:
       schema:
         type: string
         enum: [status, spend_desc, spend_asc, name_asc, name_desc]
+    ProjectDeployedOnly:
+      name: deployedOnly
+      in: query
+      required: false
+      description: >
+        When true, include only projects whose authoritative cached
+        hasDeployment value is true. Unknown deployment state does not match.
+      schema:
+        type: boolean
+        default: false
+    ProjectStaleButSpending:
+      name: staleButSpending
+      in: query
+      required: false
+      description: >
+        When true, include only projects with a known updatedAt at least 30
+        elapsed days before evaluation and positive authorized spend in the
+        current UTC calendar month. Missing timestamps do not match.
+      schema:
+        type: boolean
+        default: false
+    ProjectSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [status, spend_desc, spend_asc, name_asc, name_desc, updated_at_desc, updated_at_asc]
     SpendPage:
       name: page
       in: query
@@ -3026,7 +3242,7 @@ components:
             $ref: "#/components/schemas/DashboardProjectionPoint"
     DashboardResponse:
       type: object
-      required: [scope, period, cardVariant, cards, trend, breakdown, accounting, metadata, projection]
+      required: [scope, period, cardVariant, cards, trend, breakdown, accounting, metadata, projection, staleSpend]
       properties:
         scope:
           $ref: "#/components/schemas/DashboardScope"
@@ -3080,6 +3296,8 @@ components:
           $ref: "#/components/schemas/AccountingMetadata"
         projection:
           $ref: "#/components/schemas/DashboardProjection"
+        staleSpend:
+          $ref: "#/components/schemas/StaleSpendAggregate"
         insights:
           $ref: "#/components/schemas/DashboardInsights"
     DashboardInsightCategory:
@@ -3140,6 +3358,323 @@ components:
           items:
             $ref: "#/components/schemas/DashboardInsightSpender"
         projectCount: { type: [number, "null"] }
+    ProjectObservationAvailability:
+      type: string
+      enum: [complete, stale, unavailable]
+      description: >
+        Complete is a fresh successful cached observation; stale is retained
+        last-good data older than the directory freshness policy; unavailable
+        means no successful observation exists. This is independent of usage
+        coverage.
+    ProjectUsageAvailability:
+      type: string
+      enum: [complete, partial, unavailable]
+      description: Qualification of authorized current-UTC-month project usage.
+    ProjectDeploymentObservation:
+      type: object
+      required: [id, url, privacy, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        url:
+          type: ["string", "null"]
+          description: Reported deployment URL, not a verified uptime claim.
+        privacy:
+          type: ["string", "null"]
+          description: Reported deploymentPrivacy value, or null when absent.
+        status:
+          type: ["string", "null"]
+          description: Reported deployment lifecycle status, or null when absent.
+        createdAt:
+          type: ["string", "null"]
+          format: date-time
+        updatedAt:
+          type: ["string", "null"]
+          format: date-time
+    StaleSpendEvaluation:
+      type: object
+      required: [evaluatedAt, staleCutoff, monthStart, monthEndExclusive, availability, coverage]
+      properties:
+        evaluatedAt:
+          type: string
+          format: date-time
+          description: Stable evaluation instant shared by every row in the response.
+        staleCutoff:
+          type: string
+          format: date-time
+          description: evaluatedAt minus exactly 30 elapsed days; equality is stale.
+        monthStart:
+          type: string
+          format: date-time
+          description: Inclusive start of the current UTC calendar month.
+        monthEndExclusive:
+          type: string
+          format: date-time
+          description: Exclusive start of the next UTC calendar month.
+        availability:
+          $ref: "#/components/schemas/ProjectUsageAvailability"
+        coverage:
+          $ref: "#/components/schemas/UsageCoverage"
+    SpendProjectRow:
+      type: object
+      required:
+        - id
+        - projectId
+        - kind
+        - name
+        - workspaceId
+        - workspaceName
+        - ownerId
+        - ownerName
+        - createdAt
+        - updatedAt
+        - metadataAvailability
+        - hasDeployment
+        - deploymentAvailability
+        - deployments
+        - usageObserved
+        - spendUsd
+        - agentSpendUsd
+        - otherServicesUsd
+        - allocationUsd
+        - remainingUsd
+        - percentUsed
+        - currentMonthSpendUsd
+        - currentMonthUsageAvailability
+        - staleButSpending
+        - status
+        - memberCount
+        - limitState
+        - limitObservationStatus
+        - sharedPool
+      properties:
+        id:
+          type: string
+          description: >
+            Existing qualified spend-row identity in project:workspaceId:projectId
+            form. Retained for table selection, links, and cache compatibility.
+        projectId:
+          type: string
+          description: Raw Enterprise project ID, qualified by workspaceId.
+        kind:
+          type: string
+          enum: [project]
+        name:
+          type: string
+        workspaceId:
+          type: string
+        workspaceName:
+          type: ["string", "null"]
+        ownerId:
+          type: ["string", "null"]
+          description: Current cached creatorId (current owner), not ownership history.
+        ownerName:
+          type: ["string", "null"]
+        createdAt:
+          type: ["string", "null"]
+          format: date-time
+        updatedAt:
+          type: ["string", "null"]
+          format: date-time
+          description: Project update timestamp; not an activity or audit trail.
+        metadataAvailability:
+          $ref: "#/components/schemas/ProjectObservationAvailability"
+        hasDeployment:
+          type: ["boolean", "null"]
+          description: >
+            Authoritative current result of the cached projects deployment
+            observation. Null means it has never been successfully observed.
+        isPublished:
+          type: ["boolean", "null"]
+          deprecated: true
+          description: Compatibility alias for hasDeployment.
+        deploymentAvailability:
+          $ref: "#/components/schemas/ProjectObservationAvailability"
+        deployments:
+          type: array
+          description: >
+            All cached deployment observations for this workspace-qualified
+            project. Consult deploymentAvailability and hasDeployment before
+            interpreting an empty array.
+          items:
+            $ref: "#/components/schemas/ProjectDeploymentObservation"
+        usageObserved:
+          type: boolean
+          description: Whether selected-range authorized usage has been observed.
+        spendUsd:
+          type: number
+          description: Authorized selected-range spend, not necessarily the full project total.
+        agentSpendUsd:
+          type: number
+        otherServicesUsd:
+          type: number
+        allocationUsd:
+          type: [number, "null"]
+          description: Retained SpendTableRow field; normally null for projects.
+        remainingUsd:
+          type: [number, "null"]
+          description: Retained SpendTableRow field; normally null for projects.
+        percentUsed:
+          type: [number, "null"]
+          description: Retained SpendTableRow field; normally null for projects.
+        currentCycleAgentSpendUsd:
+          type: [number, "null"]
+          description: Retained SpendTableRow field; normally null for projects.
+        currentCycleRemainingUsd:
+          type: [number, "null"]
+          description: Retained SpendTableRow field; normally null for projects.
+        currentCyclePercentUsed:
+          type: [number, "null"]
+          description: Retained SpendTableRow field; normally null for projects.
+        currentMonthSpendUsd:
+          type: ["number", "null"]
+          description: >
+            Authorized spend in the current UTC calendar month, independent of
+            the selected reporting range. Null means unavailable, never zero.
+        currentMonthUsageAvailability:
+          $ref: "#/components/schemas/ProjectUsageAvailability"
+        staleButSpending:
+          type: boolean
+          description: >
+            True only when updatedAt is known and no later than staleCutoff and
+            currentMonthSpendUsd is positive. A future or missing timestamp is false.
+        status:
+          type: string
+        memberCount:
+          type: [integer, "null"]
+          description: Retained SpendTableRow field; normally null for projects.
+        limitState:
+          type: string
+          enum: [not_applicable, explicit, inherited, no_limit, unavailable]
+        limitObservationStatus:
+          type: string
+          enum: [not_applicable, complete, failed, unavailable, refreshing]
+        sharedPool:
+          type: boolean
+        sourceGroupIds:
+          type: array
+          uniqueItems: true
+          description: Retained optional SpendTableRow compatibility field.
+          items: { type: string }
+    SpendProjectsResponse:
+      type: object
+      required: [view, scope, period, rows, page, pageSize, totalRows, filteredRows, totals, facets, metadata, staleEvaluation]
+      properties:
+        view:
+          type: string
+          enum: [projects]
+        scope:
+          $ref: "#/components/schemas/DashboardScope"
+        period:
+          $ref: "#/components/schemas/ReportingPeriod"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpendProjectRow"
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        totalRows: { type: integer, minimum: 0 }
+        filteredRows: { type: integer, minimum: 0 }
+        totals:
+          type: object
+          required: [spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, internalExcludedUsd, unbudgetedUsd, unattributedUsd, reconciliationUsd, currentMonthSpendUsd]
+          properties:
+            spendUsd: { type: number }
+            agentSpendUsd: { type: number }
+            otherServicesUsd: { type: number }
+            allocationUsd: { type: number }
+            internalExcludedUsd: { type: number }
+            unbudgetedUsd: { type: number }
+            unattributedUsd: { type: number }
+            reconciliationUsd: { type: number }
+            currentMonthSpendUsd:
+              type: ["number", "null"]
+              description: Sum across the filtered stale/deployment-qualified population, independent of page size.
+        facets:
+          type: object
+          required: [statuses, workspaces]
+          properties:
+            statuses:
+              type: object
+              additionalProperties: { type: integer, minimum: 0 }
+            workspaces:
+              type: array
+              items:
+                type: object
+                required: [id, name, count]
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  count: { type: integer, minimum: 0 }
+        metadata:
+          $ref: "#/components/schemas/AccountingMetadata"
+        staleEvaluation:
+          $ref: "#/components/schemas/StaleSpendEvaluation"
+        personalProjectCatalog:
+          description: Current self-owned catalog summary. Present only for the personal Projects view.
+          $ref: "#/components/schemas/PersonalProjectCatalog"
+    ProjectDetailResponse:
+      type: object
+      required: [scope, period, project, metadata, staleEvaluation]
+      properties:
+        scope:
+          $ref: "#/components/schemas/DashboardScope"
+        period:
+          $ref: "#/components/schemas/ReportingPeriod"
+        project:
+          $ref: "#/components/schemas/SpendProjectRow"
+        metadata:
+          $ref: "#/components/schemas/AccountingMetadata"
+        staleEvaluation:
+          $ref: "#/components/schemas/StaleSpendEvaluation"
+    UserProjectOwner:
+      type: object
+      required: [userId, username, name, email]
+      properties:
+        userId: { type: string }
+        username: { type: ["string", "null"] }
+        name: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+    UserOwnedProjectsResponse:
+      type: object
+      required: [user, projects]
+      properties:
+        user:
+          $ref: "#/components/schemas/UserProjectOwner"
+        projects:
+          $ref: "#/components/schemas/SpendProjectsResponse"
+    StaleSpendAggregate:
+      type: object
+      required: [spendUsd, projectCount, availability, coverage, evaluatedAt, staleCutoff, monthStart, monthEndExclusive, drillThrough]
+      properties:
+        spendUsd:
+          type: ["number", "null"]
+          description: Authorized current-month spend of stale-but-spending projects; null when unavailable.
+        projectCount:
+          type: ["integer", "null"]
+          minimum: 0
+        availability:
+          $ref: "#/components/schemas/ProjectUsageAvailability"
+        coverage:
+          $ref: "#/components/schemas/UsageCoverage"
+        evaluatedAt: { type: string, format: date-time }
+        staleCutoff:
+          type: string
+          format: date-time
+          description: evaluatedAt minus exactly 30 elapsed days; equality is stale.
+        monthStart:
+          type: string
+          format: date-time
+          description: Inclusive current UTC calendar-month boundary.
+        monthEndExclusive:
+          type: string
+          format: date-time
+          description: Exclusive next UTC calendar-month boundary.
+        drillThrough:
+          type: ["string", "null"]
+          description: >
+            Projects-table link preserving effective viewScope and workspace,
+            selecting month-to-date and staleButSpending=true.
     SpendTableRow:
       type: object
       required: [id, kind, name, workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, status, memberCount, ownerName, limitState, limitObservationStatus, sharedPool]
@@ -4762,6 +5297,98 @@ components:
           description: Server-owned ordered workspace, team, and canonical family hierarchy.
           items:
             $ref: "#/components/schemas/DirectoryWorkspaceHierarchy"
+    WorkspaceGroupMembershipAvailability:
+      type: string
+      enum: [complete, stale, unavailable]
+      description: >
+        Complete and stale both represent a successful, fully paginated cached
+        observation. Unavailable means there is no complete last-good member list.
+    WorkspaceGroupSummary:
+      type: object
+      required: [workspaceId, groupId, name, kind, memberCount, membershipAvailability, dataAsOf]
+      properties:
+        workspaceId:
+          type: string
+        groupId:
+          type: string
+          description: Group ID qualified by workspaceId.
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [admins, members, guests, custom]
+        memberCount:
+          type: [integer, "null"]
+          minimum: 0
+          description: >
+            Zero with complete availability is an authoritative empty group;
+            null means no complete membership observation is available.
+        membershipAvailability:
+          $ref: "#/components/schemas/WorkspaceGroupMembershipAvailability"
+        dataAsOf:
+          type: ["string", "null"]
+          format: date-time
+    WorkspaceGroupDirectoryWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, groups]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: ["string", "null"] }
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceGroupSummary"
+    WorkspaceGroupsResponse:
+      type: object
+      required: [workspaces, availability, dataAsOf]
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceGroupDirectoryWorkspace"
+        availability:
+          $ref: "#/components/schemas/WorkspaceGroupMembershipAvailability"
+        dataAsOf:
+          type: ["string", "null"]
+          format: date-time
+    WorkspaceGroupMember:
+      type: object
+      required: [userId, username, name, email, fallbackLabel]
+      properties:
+        userId:
+          type: ["string", "null"]
+        username:
+          type: ["string", "null"]
+        name:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        fallbackLabel:
+          type: string
+          description: Safe non-secret label for an identity with no display fields.
+    WorkspaceGroupMembersResponse:
+      type: object
+      required: [workspaceId, group, members, page, pageSize, totalMembers, availability, dataAsOf]
+      properties:
+        workspaceId:
+          type: string
+        group:
+          $ref: "#/components/schemas/WorkspaceGroupSummary"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceGroupMember"
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        totalMembers:
+          type: [integer, "null"]
+          minimum: 0
+          description: Null only when no complete cached membership exists.
+        availability:
+          $ref: "#/components/schemas/WorkspaceGroupMembershipAvailability"
+        dataAsOf:
+          type: ["string", "null"]
+          format: date-time
     DirectoryRole:
       type: string
       enum: [admin, member, viewer, guest, unsuffixed]

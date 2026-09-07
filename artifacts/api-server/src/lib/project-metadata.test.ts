@@ -82,4 +82,76 @@ describe("required project metadata qualification", () => {
     expect(snapshot.deploymentObservedWorkspaceIds).toEqual(new Set(["empty"]));
     expect(snapshot.deploymentCompleteWorkspaceIds).toEqual(new Set());
   });
+
+  test("keeps legacy enrichment unknown and projects current transferred ownership", () => {
+    const observedAt = new Date("2026-09-07T12:00:00.000Z");
+    const snapshot = buildProjectMetadataSnapshot([
+      {
+        workspaceId: "legacy",
+        projectId: "old",
+        creatorId: null,
+        title: "Legacy",
+        fetchedAt: observedAt,
+      },
+      {
+        workspaceId: "current",
+        projectId: "transferred",
+        creatorId: "new-owner",
+        title: "Transferred",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+        hasDeployment: true,
+        deployments: [
+          {
+            id: "deployment-1",
+            url: "https://one.example/",
+            privacy: "public",
+            status: "success",
+            createdAt: null,
+            updatedAt: null,
+          },
+          {
+            id: "deployment-2",
+            url: null,
+            privacy: null,
+            status: null,
+            createdAt: null,
+            updatedAt: null,
+          },
+        ],
+        deploymentsObservedAt: observedAt,
+        fetchedAt: observedAt,
+      },
+    ], [
+      {
+        workspaceId: "legacy",
+        status: "success",
+        deploymentStatusObserved: false,
+        completedAt: observedAt,
+        lastSuccessfulAt: observedAt,
+      },
+      {
+        workspaceId: "current",
+        status: "success",
+        deploymentStatusObserved: true,
+        completedAt: observedAt,
+        lastSuccessfulAt: observedAt,
+      },
+    ], observedAt.getTime() + 1_000);
+
+    expect(snapshot.byWorkspace.get("legacy")?.get("old")).toMatchObject({
+      creatorId: null,
+      createdAt: null,
+      updatedAt: null,
+      hasDeployment: null,
+      deployments: null,
+      deploymentsObservedAt: null,
+    });
+    expect(snapshot.byWorkspace.get("current")?.get("transferred")).toMatchObject({
+      creatorId: "new-owner",
+      hasDeployment: true,
+      deployments: [{ id: "deployment-1" }, { id: "deployment-2" }],
+      deploymentsObservedAt: observedAt.toISOString(),
+    });
+  });
 });

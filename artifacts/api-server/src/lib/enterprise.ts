@@ -915,7 +915,9 @@ async function refreshDirectory(
           .map((group) => ({ ...group, workspaceId: group.workspaceId || workspace.id }))
       ))).flat();
       const groups = allGroups.filter(isCustomGroup);
-      const memberships = await Promise.all(groups.map(async (group) => [
+      // Presentation retains every raw group and complete membership. Only
+      // custom groups are passed to canonical authorization/financial models.
+      const memberships = await Promise.all(allGroups.map(async (group) => [
         group.id,
         (await paginate<{ userId: string }>(
           `/groups/${encodeURIComponent(group.id)}/users`,
@@ -1153,13 +1155,38 @@ export function __setDirectoryCacheForTests(
 export interface ProjectInfo {
   title: string | null;
   creatorId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
   hasDeployment: boolean | null;
+  deployments: ProjectDeploymentInfo[] | null;
+  deploymentsObservedAt: string | null;
+  fetchedAt: string;
 }
 interface RawProject {
   id: string;
   title?: string | null;
   creatorId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   workspace?: { id?: string | null } | null;
+}
+export interface ProjectDeploymentInfo {
+  id: string;
+  url: string | null;
+  privacy: string | null;
+  status: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+interface RawDeployment {
+  id: string;
+  project?: { id?: string | null } | null;
+  workspace?: { id?: string | null } | null;
+  url?: string | null;
+  deploymentPrivacy?: string | null;
+  status?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 class ProjectMetadataDeferredError extends Error {}
 const projectInfoCache = new Map<string, Map<string, ProjectInfo>>();
@@ -1231,6 +1258,62 @@ function validateProject(row: RawProject): void {
       (typeof row.creatorId !== "string" || row.creatorId.trim() === "")) {
     throw new Error("Enterprise API /projects row has invalid creatorId");
   }
+  validateOptionalIso(row.createdAt, "/projects", "createdAt");
+  validateOptionalIso(row.updatedAt, "/projects", "updatedAt");
+}
+
+function validateOptionalIso(
+  value: unknown,
+  path: string,
+  field: string,
+): void {
+  if (
+    value !== undefined &&
+    value !== null &&
+    (typeof value !== "string" || !Number.isFinite(Date.parse(value)))
+  ) {
+    throw new Error(`Enterprise API ${path} row has invalid ${field}`);
+  }
+}
+
+function validateDeployment(row: RawDeployment): void {
+  requiredString(row?.id, "/deployments", "id");
+  requiredString(row?.project?.id, "/deployments", "project.id");
+  requiredString(row?.workspace?.id, "/deployments", "workspace.id");
+  for (const [field, value] of [
+    ["deploymentPrivacy", row.deploymentPrivacy],
+    ["status", row.status],
+  ] as const) {
+    if (value !== undefined && value !== null && typeof value !== "string") {
+      throw new Error(`Enterprise API /deployments row has invalid ${field}`);
+    }
+  }
+  if (row.url !== undefined && row.url !== null && typeof row.url !== "string") {
+    throw new Error("Enterprise API /deployments row has invalid url");
+  }
+  validateOptionalIso(row.createdAt, "/deployments", "createdAt");
+  validateOptionalIso(row.updatedAt, "/deployments", "updatedAt");
+}
+
+function safeDeploymentUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectDeploymentInfo(row: RawDeployment): ProjectDeploymentInfo {
+  return {
+    id: row.id,
+    url: safeDeploymentUrl(row.url),
+    privacy: row.deploymentPrivacy ?? null,
+    status: row.status ?? null,
+    createdAt: row.createdAt ?? null,
+    updatedAt: row.updatedAt ?? null,
+  };
 }
 
 function validateAccountProject(row: RawProject): void {
@@ -1319,6 +1402,13 @@ export async function refreshProjectMetadata(
       onRequest,
       validateProject,
     );
+    const deployments = await paginate<RawDeployment>(
+      "/deployments",
+      { workspaceId },
+      PROJECT_METADATA_ATOMIC_MAX_REQUESTS / 10,
+      onRequest,
+      validateDeployment,
+    );
     const projectIds = new Set(projects.map((project) => project.id));
     const deployedProjectIds = new Set(
       deployedProjects.map((project) => project.id),
@@ -1329,6 +1419,18 @@ export async function refreshProjectMetadata(
           "Enterprise API /projects?hasDeployment=true returned a project absent from the workspace project listing",
         );
       }
+    }
+    const deploymentsByProject = new Map<string, ProjectDeploymentInfo[]>();
+    for (const deployment of deployments) {
+      if (deployment.workspace!.id !== workspaceId ||
+          !projectIds.has(deployment.project!.id!)) {
+        throw new Error(
+          "Enterprise API /deployments returned a deployment outside the workspace project listing",
+        );
+      }
+      const values = deploymentsByProject.get(deployment.project!.id!) ?? [];
+      values.push(projectDeploymentInfo(deployment));
+      deploymentsByProject.set(deployment.project!.id!, values);
     }
     sliceSignal?.throwIfAborted();
     const completedAt = new Date();
@@ -1342,7 +1444,11 @@ export async function refreshProjectMetadata(
           projectId: project.id,
           title: project.title ?? null,
           creatorId: project.creatorId ?? null,
+           createdAt: project.createdAt ? new Date(project.createdAt) : null,
+           updatedAt: project.updatedAt ? new Date(project.updatedAt) : null,
            hasDeployment: deployedProjectIds.has(project.id),
+           deployments: deploymentsByProject.get(project.id) ?? [],
+           deploymentsObservedAt: completedAt,
           fetchedAt: completedAt,
         })));
       }
@@ -1371,7 +1477,12 @@ export async function refreshProjectMetadata(
       {
         title: project.title ?? null,
         creatorId: project.creatorId ?? null,
+        createdAt: project.createdAt ?? null,
+        updatedAt: project.updatedAt ?? null,
         hasDeployment: deployedProjectIds.has(project.id),
+        deployments: deploymentsByProject.get(project.id) ?? [],
+        deploymentsObservedAt: completedAt.toISOString(),
+        fetchedAt: completedAt.toISOString(),
       },
     ])));
     projectInfoFetchedAt.set(workspaceId, completedAt.getTime());
@@ -1401,8 +1512,8 @@ export async function refreshProjectMetadata(
 }
 
 /**
- * Refreshes the account project catalog and live-deployment projection with
- * two complete paginated listings. Publishing is atomic across workspaces, so
+ * Refreshes the account project catalog and deployment facts with complete
+ * paginated listings. Publishing is atomic across workspaces, so
  * neither a first page nor a failed deployment listing can replace last-good
  * catalog/deployment facts.
  */
@@ -1426,20 +1537,45 @@ async function refreshAccountProjectMetadata(
     set: { status: "syncing", errorMessage: null, startedAt },
   });
   try {
+    let requests = 0;
+    const observeRequest = (): void => {
+      requests++;
+      if (requests > PROJECT_METADATA_ATOMIC_MAX_REQUESTS) {
+        throw new Error("Enterprise project metadata refresh exceeded request bound");
+      }
+      onRequest?.();
+    };
     const projects = dedupeAccountProjects(await paginate<RawProject>(
       "/projects",
       {},
       PROJECT_METADATA_ATOMIC_MAX_REQUESTS / 10,
-      onRequest,
+      observeRequest,
       validateAccountProject,
     ), "/projects");
     const deployedProjects = dedupeAccountProjects(await paginate<RawProject>(
       "/projects",
       { hasDeployment: "true" },
       PROJECT_METADATA_ATOMIC_MAX_REQUESTS / 10,
-      onRequest,
+      observeRequest,
       validateAccountProject,
     ), "/projects?hasDeployment=true");
+    const deploymentWorkspaceIds = [...new Set([
+      ...expectedIds,
+      ...projects.map((project) => project.workspace!.id!),
+    ])];
+    if (deploymentWorkspaceIds.length >
+        PROJECT_METADATA_ATOMIC_MAX_REQUESTS - requests) {
+      throw new Error("Enterprise project metadata refresh exceeded request bound");
+    }
+    const deployments = (await Promise.all(deploymentWorkspaceIds.map(
+      (workspaceId) => paginate<RawDeployment>(
+        "/deployments",
+        { workspaceId },
+        200,
+        observeRequest,
+        validateDeployment,
+      ),
+    ))).flat();
     const projectsById = new Map(projects.map((project) =>
       [project.id, project] as const));
     const deployedProjectKeys = new Set(deployedProjects.map((project) =>
@@ -1457,6 +1593,20 @@ async function refreshAccountProjectMetadata(
         );
       }
     }
+    const deploymentsByProject = new Map<string, ProjectDeploymentInfo[]>();
+    for (const deployment of deployments) {
+      const project = projectsById.get(deployment.project!.id!);
+      if (!project ||
+          project.workspace!.id !== deployment.workspace!.id) {
+        throw new Error(
+          "Enterprise API /deployments returned a deployment inconsistent with the account project listing",
+        );
+      }
+      const key = `${deployment.workspace!.id!}\0${deployment.project!.id!}`;
+      const values = deploymentsByProject.get(key) ?? [];
+      values.push(projectDeploymentInfo(deployment));
+      deploymentsByProject.set(key, values);
+    }
     projectMetadataSliceContext.getStore()?.throwIfAborted();
     const completedAt = new Date();
     const observedWorkspaceIds = new Set([
@@ -1473,8 +1623,13 @@ async function refreshAccountProjectMetadata(
           projectId: project.id,
           title: project.title ?? null,
           creatorId: project.creatorId ?? null,
+          createdAt: project.createdAt ? new Date(project.createdAt) : null,
+          updatedAt: project.updatedAt ? new Date(project.updatedAt) : null,
           hasDeployment: deployedProjectKeys.has(
             `${project.workspace!.id!}\0${project.id}`),
+          deployments: deploymentsByProject.get(
+            `${project.workspace!.id!}\0${project.id}`) ?? [],
+          deploymentsObservedAt: completedAt,
           fetchedAt: completedAt,
         })));
       }
@@ -1509,7 +1664,12 @@ async function refreshAccountProjectMetadata(
       projectInfoCache.get(workspaceId)!.set(project.id, {
         title: project.title ?? null,
         creatorId: project.creatorId ?? null,
+        createdAt: project.createdAt ?? null,
+        updatedAt: project.updatedAt ?? null,
         hasDeployment: deployedProjectKeys.has(`${workspaceId}\0${project.id}`),
+        deployments: deploymentsByProject.get(`${workspaceId}\0${project.id}`) ?? [],
+        deploymentsObservedAt: completedAt.toISOString(),
+        fetchedAt: completedAt.toISOString(),
       });
     }
     return observedWorkspaceIds.size;
@@ -1744,7 +1904,14 @@ export async function initCache(
       workspace.set(row.projectId, {
         title: row.title,
         creatorId: row.creatorId,
+        createdAt: row.createdAt?.toISOString() ?? null,
+        updatedAt: row.updatedAt?.toISOString() ?? null,
         hasDeployment: row.hasDeployment,
+        deployments: Array.isArray(row.deployments)
+          ? row.deployments as ProjectDeploymentInfo[]
+          : null,
+        deploymentsObservedAt: row.deploymentsObservedAt?.toISOString() ?? null,
+        fetchedAt: row.fetchedAt.toISOString(),
       });
       projectInfoCache.set(row.workspaceId, workspace);
     }

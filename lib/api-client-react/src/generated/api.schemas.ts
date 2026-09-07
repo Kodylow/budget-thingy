@@ -844,6 +844,65 @@ export type DashboardResponseTrend = {
   buckets: DashboardTrendBucket[];
 };
 
+/**
+ * Qualification of authorized current-UTC-month project usage.
+ */
+export type ProjectUsageAvailability = typeof ProjectUsageAvailability[keyof typeof ProjectUsageAvailability];
+
+
+export const ProjectUsageAvailability = {
+  complete: 'complete',
+  partial: 'partial',
+  unavailable: 'unavailable',
+} as const;
+
+export interface UsageCoverageWorkspaceDay {
+  workspaceId: string;
+  usageDate: string;
+}
+
+export interface UsageCoverage {
+  requestedDays: number;
+  requestedWorkspaceDays: number;
+  presentWorkspaceDays: number;
+  failedWorkspaceDays: UsageCoverageWorkspaceDay[];
+  missingWorkspaceDays: UsageCoverageWorkspaceDay[];
+  presentAccountDays: number;
+  missingAccountDays: string[];
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  ratio: number;
+}
+
+export interface StaleSpendAggregate {
+  /**
+     * Authorized current-month spend of stale-but-spending projects; null when unavailable.
+     * @nullable
+     */
+  spendUsd: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  projectCount: number | null;
+  availability: ProjectUsageAvailability;
+  coverage: UsageCoverage;
+  evaluatedAt: string;
+  /** evaluatedAt minus exactly 30 elapsed days; equality is stale. */
+  staleCutoff: string;
+  /** Inclusive current UTC calendar-month boundary. */
+  monthStart: string;
+  /** Exclusive next UTC calendar-month boundary. */
+  monthEndExclusive: string;
+  /**
+     * Projects-table link preserving effective viewScope and workspace, selecting month-to-date and staleButSpending=true.
+     * @nullable
+     */
+  drillThrough: string | null;
+}
+
 export interface DashboardInsightCategory {
   key: string;
   label: string;
@@ -929,7 +988,265 @@ export interface DashboardResponse {
   personalProjectCatalog?: PersonalProjectCatalog;
   metadata: AccountingMetadata;
   projection: DashboardProjection;
+  staleSpend: StaleSpendAggregate;
   insights?: DashboardInsights;
+}
+
+/**
+ * Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.
+ */
+export type ProjectObservationAvailability = typeof ProjectObservationAvailability[keyof typeof ProjectObservationAvailability];
+
+
+export const ProjectObservationAvailability = {
+  complete: 'complete',
+  stale: 'stale',
+  unavailable: 'unavailable',
+} as const;
+
+export interface ProjectDeploymentObservation {
+  id: string;
+  /**
+     * Reported deployment URL, not a verified uptime claim.
+     * @nullable
+     */
+  url: string | null;
+  /**
+     * Reported deploymentPrivacy value, or null when absent.
+     * @nullable
+     */
+  privacy: string | null;
+  /**
+     * Reported deployment lifecycle status, or null when absent.
+     * @nullable
+     */
+  status: string | null;
+  /** @nullable */
+  createdAt: string | null;
+  /** @nullable */
+  updatedAt: string | null;
+}
+
+export interface StaleSpendEvaluation {
+  /** Stable evaluation instant shared by every row in the response. */
+  evaluatedAt: string;
+  /** evaluatedAt minus exactly 30 elapsed days; equality is stale. */
+  staleCutoff: string;
+  /** Inclusive start of the current UTC calendar month. */
+  monthStart: string;
+  /** Exclusive start of the next UTC calendar month. */
+  monthEndExclusive: string;
+  availability: ProjectUsageAvailability;
+  coverage: UsageCoverage;
+}
+
+export type SpendProjectRowKind = typeof SpendProjectRowKind[keyof typeof SpendProjectRowKind];
+
+
+export const SpendProjectRowKind = {
+  project: 'project',
+} as const;
+
+export type SpendProjectRowLimitState = typeof SpendProjectRowLimitState[keyof typeof SpendProjectRowLimitState];
+
+
+export const SpendProjectRowLimitState = {
+  not_applicable: 'not_applicable',
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+export type SpendProjectRowLimitObservationStatus = typeof SpendProjectRowLimitObservationStatus[keyof typeof SpendProjectRowLimitObservationStatus];
+
+
+export const SpendProjectRowLimitObservationStatus = {
+  not_applicable: 'not_applicable',
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+  refreshing: 'refreshing',
+} as const;
+
+export interface SpendProjectRow {
+  /** Existing qualified spend-row identity in project:workspaceId:projectId form. Retained for table selection, links, and cache compatibility. */
+  id: string;
+  /** Raw Enterprise project ID, qualified by workspaceId. */
+  projectId: string;
+  kind: SpendProjectRowKind;
+  name: string;
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  /**
+     * Current cached creatorId (current owner), not ownership history.
+     * @nullable
+     */
+  ownerId: string | null;
+  /** @nullable */
+  ownerName: string | null;
+  /** @nullable */
+  createdAt: string | null;
+  /**
+     * Project update timestamp; not an activity or audit trail.
+     * @nullable
+     */
+  updatedAt: string | null;
+  metadataAvailability: ProjectObservationAvailability;
+  /**
+     * Authoritative current result of the cached projects deployment observation. Null means it has never been successfully observed.
+     * @nullable
+     */
+  hasDeployment: boolean | null;
+  /**
+     * Compatibility alias for hasDeployment.
+     * @deprecated
+     * @nullable
+     */
+  isPublished?: boolean | null;
+  deploymentAvailability: ProjectObservationAvailability;
+  /** All cached deployment observations for this workspace-qualified project. Consult deploymentAvailability and hasDeployment before interpreting an empty array. */
+  deployments: ProjectDeploymentObservation[];
+  /** Whether selected-range authorized usage has been observed. */
+  usageObserved: boolean;
+  /** Authorized selected-range spend, not necessarily the full project total. */
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  /**
+     * Retained SpendTableRow field; normally null for projects.
+     * @nullable
+     */
+  allocationUsd: number | null;
+  /**
+     * Retained SpendTableRow field; normally null for projects.
+     * @nullable
+     */
+  remainingUsd: number | null;
+  /**
+     * Retained SpendTableRow field; normally null for projects.
+     * @nullable
+     */
+  percentUsed: number | null;
+  /**
+     * Retained SpendTableRow field; normally null for projects.
+     * @nullable
+     */
+  currentCycleAgentSpendUsd?: number | null;
+  /**
+     * Retained SpendTableRow field; normally null for projects.
+     * @nullable
+     */
+  currentCycleRemainingUsd?: number | null;
+  /**
+     * Retained SpendTableRow field; normally null for projects.
+     * @nullable
+     */
+  currentCyclePercentUsed?: number | null;
+  /**
+     * Authorized spend in the current UTC calendar month, independent of the selected reporting range. Null means unavailable, never zero.
+     * @nullable
+     */
+  currentMonthSpendUsd: number | null;
+  currentMonthUsageAvailability: ProjectUsageAvailability;
+  /** True only when updatedAt is known and no later than staleCutoff and currentMonthSpendUsd is positive. A future or missing timestamp is false. */
+  staleButSpending: boolean;
+  status: string;
+  /**
+     * Retained SpendTableRow field; normally null for projects.
+     * @nullable
+     */
+  memberCount: number | null;
+  limitState: SpendProjectRowLimitState;
+  limitObservationStatus: SpendProjectRowLimitObservationStatus;
+  sharedPool: boolean;
+  /** Retained optional SpendTableRow compatibility field. */
+  sourceGroupIds?: string[];
+}
+
+export type SpendProjectsResponseView = typeof SpendProjectsResponseView[keyof typeof SpendProjectsResponseView];
+
+
+export const SpendProjectsResponseView = {
+  projects: 'projects',
+} as const;
+
+export type SpendProjectsResponseTotals = {
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  allocationUsd: number;
+  internalExcludedUsd: number;
+  unbudgetedUsd: number;
+  unattributedUsd: number;
+  reconciliationUsd: number;
+  /**
+     * Sum across the filtered stale/deployment-qualified population, independent of page size.
+     * @nullable
+     */
+  currentMonthSpendUsd: number | null;
+};
+
+export type SpendProjectsResponseFacetsStatuses = {[key: string]: number};
+
+export type SpendProjectsResponseFacetsWorkspacesItem = {
+  id: string;
+  name: string;
+  /** @minimum 0 */
+  count: number;
+};
+
+export type SpendProjectsResponseFacets = {
+  statuses: SpendProjectsResponseFacetsStatuses;
+  workspaces: SpendProjectsResponseFacetsWorkspacesItem[];
+};
+
+export interface SpendProjectsResponse {
+  view: SpendProjectsResponseView;
+  scope: DashboardScope;
+  period: ReportingPeriod;
+  rows: SpendProjectRow[];
+  /** @minimum 1 */
+  page: number;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  pageSize: number;
+  /** @minimum 0 */
+  totalRows: number;
+  /** @minimum 0 */
+  filteredRows: number;
+  totals: SpendProjectsResponseTotals;
+  facets: SpendProjectsResponseFacets;
+  metadata: AccountingMetadata;
+  staleEvaluation: StaleSpendEvaluation;
+  /** Current self-owned catalog summary. Present only for the personal Projects view. */
+  personalProjectCatalog?: PersonalProjectCatalog;
+}
+
+export interface ProjectDetailResponse {
+  scope: DashboardScope;
+  period: ReportingPeriod;
+  project: SpendProjectRow;
+  metadata: AccountingMetadata;
+  staleEvaluation: StaleSpendEvaluation;
+}
+
+export interface UserProjectOwner {
+  userId: string;
+  /** @nullable */
+  username: string | null;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  email: string | null;
+}
+
+export interface UserOwnedProjectsResponse {
+  user: UserProjectOwner;
+  projects: SpendProjectsResponse;
 }
 
 export type SpendTableRowKind = typeof SpendTableRowKind[keyof typeof SpendTableRowKind];
@@ -1387,26 +1704,6 @@ export const UsageHealthStatus = {
   partial: 'partial',
   empty: 'empty',
 } as const;
-
-export interface UsageCoverageWorkspaceDay {
-  workspaceId: string;
-  usageDate: string;
-}
-
-export interface UsageCoverage {
-  requestedDays: number;
-  requestedWorkspaceDays: number;
-  presentWorkspaceDays: number;
-  failedWorkspaceDays: UsageCoverageWorkspaceDay[];
-  missingWorkspaceDays: UsageCoverageWorkspaceDay[];
-  presentAccountDays: number;
-  missingAccountDays: string[];
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  ratio: number;
-}
 
 export interface UsageHealth {
   status: UsageHealthStatus;
@@ -2410,6 +2707,94 @@ export interface DirectoryGroupsResponse {
   workspaces: DirectoryWorkspaceHierarchy[];
 }
 
+/**
+ * Complete and stale both represent a successful, fully paginated cached observation. Unavailable means there is no complete last-good member list.
+ */
+export type WorkspaceGroupMembershipAvailability = typeof WorkspaceGroupMembershipAvailability[keyof typeof WorkspaceGroupMembershipAvailability];
+
+
+export const WorkspaceGroupMembershipAvailability = {
+  complete: 'complete',
+  stale: 'stale',
+  unavailable: 'unavailable',
+} as const;
+
+export type WorkspaceGroupSummaryKind = typeof WorkspaceGroupSummaryKind[keyof typeof WorkspaceGroupSummaryKind];
+
+
+export const WorkspaceGroupSummaryKind = {
+  admins: 'admins',
+  members: 'members',
+  guests: 'guests',
+  custom: 'custom',
+} as const;
+
+export interface WorkspaceGroupSummary {
+  workspaceId: string;
+  /** Group ID qualified by workspaceId. */
+  groupId: string;
+  name: string;
+  kind: WorkspaceGroupSummaryKind;
+  /**
+     * Zero with complete availability is an authoritative empty group; null means no complete membership observation is available.
+     * @minimum 0
+     * @nullable
+     */
+  memberCount: number | null;
+  membershipAvailability: WorkspaceGroupMembershipAvailability;
+  /** @nullable */
+  dataAsOf: string | null;
+}
+
+export interface WorkspaceGroupDirectoryWorkspace {
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  groups: WorkspaceGroupSummary[];
+}
+
+export interface WorkspaceGroupsResponse {
+  workspaces: WorkspaceGroupDirectoryWorkspace[];
+  availability: WorkspaceGroupMembershipAvailability;
+  /** @nullable */
+  dataAsOf: string | null;
+}
+
+export interface WorkspaceGroupMember {
+  /** @nullable */
+  userId: string | null;
+  /** @nullable */
+  username: string | null;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  email: string | null;
+  /** Safe non-secret label for an identity with no display fields. */
+  fallbackLabel: string;
+}
+
+export interface WorkspaceGroupMembersResponse {
+  workspaceId: string;
+  group: WorkspaceGroupSummary;
+  members: WorkspaceGroupMember[];
+  /** @minimum 1 */
+  page: number;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  pageSize: number;
+  /**
+     * Null only when no complete cached membership exists.
+     * @minimum 0
+     * @nullable
+     */
+  totalMembers: number | null;
+  availability: WorkspaceGroupMembershipAvailability;
+  /** @nullable */
+  dataAsOf: string | null;
+}
+
 export interface GroupAdminsItem {
   groupId: string;
   groupName: string;
@@ -2792,6 +3177,29 @@ export const SpendSortParameter = {
   name_desc: 'name_desc',
 } as const;
 
+/**
+ * When true, include only projects whose authoritative cached hasDeployment value is true. Unknown deployment state does not match.
+ */
+export type ProjectDeployedOnlyParameter = boolean;
+
+/**
+ * When true, include only projects with a known updatedAt at least 30 elapsed days before evaluation and positive authorized spend in the current UTC calendar month. Missing timestamps do not match.
+ */
+export type ProjectStaleButSpendingParameter = boolean;
+
+export type ProjectSortParameter = typeof ProjectSortParameter[keyof typeof ProjectSortParameter];
+
+
+export const ProjectSortParameter = {
+  status: 'status',
+  spend_desc: 'spend_desc',
+  spend_asc: 'spend_asc',
+  name_asc: 'name_asc',
+  name_desc: 'name_desc',
+  updated_at_desc: 'updated_at_desc',
+  updated_at_asc: 'updated_at_asc',
+} as const;
+
 export type SpendPageParameter = number;
 
 export type SpendPageSizeParameter = number;
@@ -2964,6 +3372,11 @@ endDate?: EndDateParameter;
  * Server-resolved presentation scope; managed excludes unrelated self-only grants.
  */
 viewScope?: ViewScopeParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 granularity?: TrendGranularityParameter;
 trendMode?: TrendModeParameter;
 /**
@@ -3120,7 +3533,80 @@ status?: SpendStatusParameter;
  * @maxLength 200
  */
 workspaceId?: SpendWorkspaceParameter;
-sort?: SpendSortParameter;
+/**
+ * When true, include only projects whose authoritative cached hasDeployment value is true. Unknown deployment state does not match.
+ */
+deployedOnly?: ProjectDeployedOnlyParameter;
+/**
+ * When true, include only projects with a known updatedAt at least 30 elapsed days before evaluation and positive authorized spend in the current UTC calendar month. Missing timestamps do not match.
+ */
+staleButSpending?: ProjectStaleButSpendingParameter;
+sort?: ProjectSortParameter;
+/**
+ * @minimum 1
+ */
+page?: SpendPageParameter;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+pageSize?: SpendPageSizeParameter;
+};
+
+export type GetWorkspaceProjectParams = {
+/**
+ * Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+};
+
+export type ListUserOwnedProjectsParams = {
+/**
+ * Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * @maxLength 200
+ */
+search?: SpendSearchParameter;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
+/**
+ * When true, include only projects whose authoritative cached hasDeployment value is true. Unknown deployment state does not match.
+ */
+deployedOnly?: ProjectDeployedOnlyParameter;
+/**
+ * When true, include only projects with a known updatedAt at least 30 elapsed days before evaluation and positive authorized spend in the current UTC calendar month. Missing timestamps do not match.
+ */
+staleButSpending?: ProjectStaleButSpendingParameter;
+sort?: ProjectSortParameter;
 /**
  * @minimum 1
  */
@@ -3356,6 +3842,26 @@ export type ListWorkspaceUsageLimitAuditsParams = {
  * @maximum 2147483647
  */
 beforeId?: number;
+};
+
+export type ListWorkspaceGroupsParams = {
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
+};
+
+export type ListWorkspaceGroupMembersParams = {
+/**
+ * @minimum 1
+ */
+page?: SpendPageParameter;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+pageSize?: SpendPageSizeParameter;
 };
 
 export type ListAlertsParams = {

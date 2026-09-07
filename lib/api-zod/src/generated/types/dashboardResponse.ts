@@ -18,6 +18,7 @@ import type { DashboardResponseTrend } from './dashboardResponseTrend';
 import type { DashboardScope } from './dashboardScope';
 import type { PersonalProjectCatalog } from './personalProjectCatalog';
 import type { ReportingPeriod } from './reportingPeriod';
+import type { StaleSpendAggregate } from './staleSpendAggregate';
 
 export interface DashboardResponse {
   scope: DashboardScope;
@@ -40,5 +41,6 @@ export interface DashboardResponse {
   personalProjectCatalog?: PersonalProjectCatalog;
   metadata: AccountingMetadata;
   projection: DashboardProjection;
+  staleSpend: StaleSpendAggregate;
   insights?: DashboardInsights;
 }

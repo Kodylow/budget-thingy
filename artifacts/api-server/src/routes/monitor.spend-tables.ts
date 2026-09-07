@@ -15,6 +15,7 @@ import {
 } from "@workspace/api-zod";
 import {
   buildScopedAccounting,
+  buildProjectIntelligence,
   personalProjectCatalog,
   prepareScopedAccounting,
   rowsForView,
@@ -27,6 +28,18 @@ import { escapeCsvCell, windowFromQuery } from "./monitor.shared";
 const router: IRouter = Router();
 
 function compareRows(sort: string, a: SpendRow, b: SpendRow): number {
+  if (sort === "updated_at_asc" || sort === "updated_at_desc") {
+    const aTime = a.updatedAt == null ? null : Date.parse(a.updatedAt);
+    const bTime = b.updatedAt == null ? null : Date.parse(b.updatedAt);
+    if (aTime === null && bTime !== null) return 1;
+    if (aTime !== null && bTime === null) return -1;
+    if (aTime !== null && bTime !== null && aTime !== bTime) {
+      return sort === "updated_at_asc" ? aTime - bTime : bTime - aTime;
+    }
+    return a.name.localeCompare(b.name) ||
+      (a.workspaceId ?? "").localeCompare(b.workspaceId ?? "") ||
+      a.id.localeCompare(b.id);
+  }
   if (sort === "spend_asc") return a.spendUsd - b.spendUsd || a.name.localeCompare(b.name);
   if (sort === "name_asc") return a.name.localeCompare(b.name);
   if (sort === "name_desc") return b.name.localeCompare(a.name);
@@ -66,11 +79,15 @@ export function filterAndSortSpendRows(
   const search = String(query["search"] ?? "").trim().toLocaleLowerCase();
   const status = String(query["status"] ?? "all");
   const workspaceId = String(query["workspaceId"] ?? "");
+  const deployedOnly = query["deployedOnly"] === true;
+  const staleButSpending = query["staleButSpending"] === true;
   const filtered = allRows.filter((row) =>
     (!search || [
       row.name, row.workspaceName ?? "", row.ownerName ?? "",
     ].some((value) => value.toLocaleLowerCase().includes(search))) &&
     (!workspaceId || row.workspaceId === workspaceId) &&
+    (!deployedOnly || row.hasDeployment === true) &&
+    (!staleButSpending || row.staleButSpending === true) &&
     matchesSpendStatus(row, status));
   filtered.sort((a, b) => compareRows(String(query["sort"] ?? "status"), a, b));
   return filtered;
@@ -89,9 +106,15 @@ export async function buildSpendTablePayload(
   view: TableView,
   query: Record<string, unknown>,
   prepared?: Awaited<ReturnType<typeof prepareScopedAccounting>>,
+  ownerId?: string,
 ) {
-  const result = await buildScopedAccounting(authz, query, view, prepared);
-  const allRows = rowsForView(result, view);
+  const intelligence = view === "projects"
+    ? await buildProjectIntelligence(authz, query, prepared)
+    : null;
+  const result = intelligence?.result ??
+    await buildScopedAccounting(authz, query, view, prepared);
+  const allRows = rowsForView(result, view).filter((row) =>
+    ownerId === undefined || row.ownerId === ownerId);
   const filtered = filterAndSortSpendRows(allRows, query);
   const page = Number(query["page"] ?? 1);
   const pageSize = Number(query["pageSize"] ?? 25);
@@ -125,6 +148,11 @@ export async function buildSpendTablePayload(
       unbudgetedUsd: result.accounting.unbudgetedUsd,
       unattributedUsd: result.accounting.unattributedUsd,
       reconciliationUsd: result.accounting.reconciliationUsd,
+      currentMonthSpendUsd: view === "projects" &&
+          intelligence?.staleEvaluation.availability === "unavailable"
+        ? null
+        : filtered.reduce(
+          (sum, row) => sum + (row.currentMonthSpendUsd ?? 0), 0),
     },
     facets: {
       statuses,
@@ -143,6 +171,7 @@ export async function buildSpendTablePayload(
         return summary;
       })()
       : undefined,
+    staleEvaluation: intelligence?.staleEvaluation,
     filteredAllRows: filtered,
   };
 }

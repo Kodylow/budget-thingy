@@ -89,6 +89,12 @@ skipped older entries. A migration with new prerequisites may require extending
 the generator's disposable fixtures; never generate expectations from a shared
 database or weaken the runtime check to accept its current state.
 
+The Enterprise Project Intelligence release adds nullable project creation and
+update timestamps plus JSON deployment observations. Apply it with the reviewed
+`migrate` command before starting code that reads those columns. The migration
+is additive only; it does not initialize financial configuration, and legacy
+rows remain explicit unknowns until a successful metadata observation.
+
 ## Transactions, concurrency, and configuration
 
 The runner acquires a transaction-scoped advisory lock for the target schema

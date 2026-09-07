@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { Authorization } from "../lib/authz";
 import type { SnapshotUsageRollup } from "../lib/usage-rollup";
-import type { ProjectMetadataSnapshot } from "../lib/project-metadata";
+import type {
+  ProjectMetadata,
+  ProjectMetadataSnapshot,
+} from "../lib/project-metadata";
 import { buildDashboardBuckets, utcBucketStart } from "./dashboard-buckets";
 import {
   bucketRollupSpend,
@@ -22,16 +25,17 @@ test("personal catalog chooses freshest ownership and qualifies ambiguous duplic
   const newer = new Date("2026-09-07T00:01:00.000Z");
   const metadata = (secondObservedAt: Date, secondOwner: string):
       ProjectMetadataSnapshot => ({
-    byWorkspace: new Map<string, Map<string, {
-      creatorId: string | null;
-      title: string | null;
-      hasDeployment: boolean | null;
-    }>>([
+    byWorkspace: new Map<string, Map<string, ProjectMetadata>>([
       ["old", new Map([["same-project", {
         creatorId: "self", title: "old", hasDeployment: false,
+        createdAt: null, updatedAt: null, deployments: [],
+        deploymentsObservedAt: older.toISOString(), fetchedAt: older.toISOString(),
       }]])],
       ["new", new Map([["same-project", {
         creatorId: secondOwner, title: "new", hasDeployment: true,
+        createdAt: null, updatedAt: null, deployments: [],
+        deploymentsObservedAt: secondObservedAt.toISOString(),
+        fetchedAt: secondObservedAt.toISOString(),
       }]])],
     ]),
     completeWorkspaceIds: new Set(["old", "new"]),

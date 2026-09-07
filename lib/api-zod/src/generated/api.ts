@@ -868,6 +868,8 @@ export const GetCanonicalClusterHeadlineResponse = zod.object({
  * Returns one committed, stored-data dashboard generation. Period boundaries and trend buckets are UTC and end-exclusive. This endpoint never refreshes upstream limits and does not include people, project, or hierarchy tables.
  * @summary Compact scoped dashboard cards and charts
  */
+export const getDashboardQueryWorkspaceIdMax = 200;
+
 export const getDashboardQueryProjectionHorizonDefault = `month_end`;
 
 export const GetDashboardQueryParams = zod.object({
@@ -875,6 +877,7 @@ export const GetDashboardQueryParams = zod.object({
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "workspaceId": zod.coerce.string().max(getDashboardQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "granularity": zod.enum(['day', 'week', 'month']).optional(),
   "trendMode": zod.enum(['period', 'cumulative']).optional(),
   "projectionHorizon": zod.enum(['month_end', 'year_end', 'term_end', 'cycle_end', 'planning_end']).default(getDashboardQueryProjectionHorizonDefault).describe('Future boundary for the deterministic projection. year_end ends at January 1 of the next calendar year; term_end is the fixed confirmed contract through May 20, 2027 (exclusive end May 21). cycle_end remains available only when verified billing-cycle metadata exists; planning_end requires planningEndDate.'),
@@ -920,6 +923,11 @@ export const getDashboardResponseProjectionRateCompleteDaysMin = 0;
 export const getDashboardResponseProjectionRateCompleteDaysMax = 28;
 
 export const getDashboardResponseProjectionTrajectoryMax = 400;
+
+export const getDashboardResponseStaleSpendProjectCountMin = 0;
+
+export const getDashboardResponseStaleSpendCoverageRatioMin = 0;
+export const getDashboardResponseStaleSpendCoverageRatioMax = 1;
 
 export const getDashboardResponseInsightsMonthlyMin = 6;
 export const getDashboardResponseInsightsMonthlyMax = 6;
@@ -1079,6 +1087,32 @@ export const GetDashboardResponse = zod.object({
   "sevenDayScenarioUsd": zod.number().nullable(),
   "twentyEightDayScenarioUsd": zod.number().nullable()
 })).max(getDashboardResponseProjectionTrajectoryMax)
+}),
+  "staleSpend": zod.object({
+  "spendUsd": zod.number().nullable().describe('Authorized current-month spend of stale-but-spending projects; null when unavailable.'),
+  "projectCount": zod.number().min(getDashboardResponseStaleSpendProjectCountMin).nullable(),
+  "availability": zod.enum(['complete', 'partial', 'unavailable']).describe('Qualification of authorized current-UTC-month project usage.'),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getDashboardResponseStaleSpendCoverageRatioMin).max(getDashboardResponseStaleSpendCoverageRatioMax)
+}),
+  "evaluatedAt": zod.coerce.date(),
+  "staleCutoff": zod.coerce.date().describe('evaluatedAt minus exactly 30 elapsed days; equality is stale.'),
+  "monthStart": zod.coerce.date().describe('Inclusive current UTC calendar-month boundary.'),
+  "monthEndExclusive": zod.coerce.date().describe('Exclusive next UTC calendar-month boundary.'),
+  "drillThrough": zod.string().nullable().describe('Projects-table link preserving effective viewScope and workspace, selecting month-to-date and staleButSpending=true.\n')
 }),
   "insights": zod.object({
   "activeUsers": zod.number().nullable(),
@@ -1567,12 +1601,15 @@ export const ListSpendPeopleResponse = zod.object({
 
 
 /**
+ * Returns current project identity and lifecycle observations joined to authorized selected-range and current-UTC-month usage. Lifecycle availability is independent of usage availability. A project is stale but spending only when updatedAt is known and is at least 30 elapsed days before evaluatedAt, and authorized currentMonthSpendUsd is positive.
  * @summary List authorized workspace-qualified project usage
  */
 export const listSpendProjectsQuerySearchMax = 200;
 
 export const listSpendProjectsQueryWorkspaceIdMax = 200;
 
+export const listSpendProjectsQueryDeployedOnlyDefault = false;
+export const listSpendProjectsQueryStaleButSpendingDefault = false;
 export const listSpendProjectsQueryPageDefault = 1;
 
 export const listSpendProjectsQueryPageSizeDefault = 25;
@@ -1588,7 +1625,9 @@ export const ListSpendProjectsQueryParams = zod.object({
   "search": zod.coerce.string().max(listSpendProjectsQuerySearchMax).optional(),
   "status": zod.enum(['all', 'over', 'attention', 'budgeted', 'unbudgeted', 'no_allocation', 'shared', 'explicit', 'inherited', 'no_limit', 'unavailable']).optional(),
   "workspaceId": zod.coerce.string().max(listSpendProjectsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
-  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc']).optional(),
+  "deployedOnly": zod.coerce.boolean().default(listSpendProjectsQueryDeployedOnlyDefault).describe('When true, include only projects whose authoritative cached hasDeployment value is true. Unknown deployment state does not match.\n'),
+  "staleButSpending": zod.coerce.boolean().default(listSpendProjectsQueryStaleButSpendingDefault).describe('When true, include only projects with a known updatedAt at least 30 elapsed days before evaluation and positive authorized spend in the current UTC calendar month. Missing timestamps do not match.\n'),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc', 'updated_at_desc', 'updated_at_asc']).optional(),
   "page": zod.coerce.number().min(1).default(listSpendProjectsQueryPageDefault),
   "pageSize": zod.coerce.number().min(1).max(listSpendProjectsQueryPageSizeMax).default(listSpendProjectsQueryPageSizeDefault)
 })
@@ -1609,6 +1648,9 @@ export const listSpendProjectsResponseMetadataCoverageRatioMax = 1;
 
 export const listSpendProjectsResponseMetadataCoverageRequestedDaysMin = 0;
 
+export const listSpendProjectsResponseStaleEvaluationCoverageRatioMin = 0;
+export const listSpendProjectsResponseStaleEvaluationCoverageRatioMax = 1;
+
 export const listSpendProjectsResponsePersonalProjectCatalogProjectCountMin = 0;
 
 export const listSpendProjectsResponsePersonalProjectCatalogPublishedProjectCountMin = 0;
@@ -1620,7 +1662,7 @@ export const listSpendProjectsResponsePersonalProjectCatalogPublicationUnknownPr
 
 
 export const ListSpendProjectsResponse = zod.object({
-  "view": zod.enum(['pools', 'groups', 'people', 'projects']),
+  "view": zod.enum(['projects']),
   "scope": zod.object({
   "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
   "label": zod.string(),
@@ -1635,29 +1677,47 @@ export const ListSpendProjectsResponse = zod.object({
   "label": zod.string()
 }),
   "rows": zod.array(zod.object({
-  "id": zod.string(),
-  "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
+  "id": zod.string().describe('Existing qualified spend-row identity in project:workspaceId:projectId form. Retained for table selection, links, and cache compatibility.\n'),
+  "projectId": zod.string().describe('Raw Enterprise project ID, qualified by workspaceId.'),
+  "kind": zod.enum(['project']),
   "name": zod.string(),
-  "workspaceId": zod.string().nullable(),
+  "workspaceId": zod.string(),
   "workspaceName": zod.string().nullable(),
-  "usageObserved": zod.boolean().optional().describe('False when this row has no valid workspace usage observation in the selected range. Numeric usage accumulators then represent no known facts, not confirmed zero; display them as unknown.'),
-  "isPublished": zod.boolean().nullish().describe('Current cached deployment state for personal catalog project rows. Null means publication state has not been observed.'),
-  "spendUsd": zod.number(),
+  "ownerId": zod.string().nullable().describe('Current cached creatorId (current owner), not ownership history.'),
+  "ownerName": zod.string().nullable(),
+  "createdAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date().nullable().describe('Project update timestamp; not an activity or audit trail.'),
+  "metadataAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.\n'),
+  "hasDeployment": zod.boolean().nullable().describe('Authoritative current result of the cached projects deployment observation. Null means it has never been successfully observed.\n'),
+  "isPublished": zod.boolean().nullish().describe('Compatibility alias for hasDeployment.'),
+  "deploymentAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.\n'),
+  "deployments": zod.array(zod.object({
+  "id": zod.string(),
+  "url": zod.string().nullable().describe('Reported deployment URL, not a verified uptime claim.'),
+  "privacy": zod.string().nullable().describe('Reported deploymentPrivacy value, or null when absent.'),
+  "status": zod.string().nullable().describe('Reported deployment lifecycle status, or null when absent.'),
+  "createdAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date().nullable()
+})).describe('All cached deployment observations for this workspace-qualified project. Consult deploymentAvailability and hasDeployment before interpreting an empty array.\n'),
+  "usageObserved": zod.boolean().describe('Whether selected-range authorized usage has been observed.'),
+  "spendUsd": zod.number().describe('Authorized selected-range spend, not necessarily the full project total.'),
   "agentSpendUsd": zod.number(),
   "otherServicesUsd": zod.number(),
-  "allocationUsd": zod.number().nullable(),
-  "remainingUsd": zod.number().nullable(),
-  "percentUsed": zod.number().nullable(),
-  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Agent spend in the current billing cycle; populated for People independently of the selected reporting range.'),
-  "currentCycleRemainingUsd": zod.number().nullish().describe('Current monthly limit minus current-cycle Agent spend; never selected-range spend.'),
-  "currentCyclePercentUsed": zod.number().nullish().describe('Current-cycle Agent spend as a percentage of the current monthly limit.'),
+  "allocationUsd": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "remainingUsd": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "percentUsed": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCycleRemainingUsd": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCyclePercentUsed": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentMonthSpendUsd": zod.number().nullable().describe('Authorized spend in the current UTC calendar month, independent of the selected reporting range. Null means unavailable, never zero.\n'),
+  "currentMonthUsageAvailability": zod.enum(['complete', 'partial', 'unavailable']).describe('Qualification of authorized current-UTC-month project usage.'),
+  "staleButSpending": zod.boolean().describe('True only when updatedAt is known and no later than staleCutoff and currentMonthSpendUsd is positive. A future or missing timestamp is false.\n'),
   "status": zod.string(),
-  "memberCount": zod.number().nullable(),
-  "ownerName": zod.string().nullable(),
+  "memberCount": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
-  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']),
   "sharedPool": zod.boolean(),
-  "sourceGroupIds": zod.array(zod.string()).optional().describe('Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows.\n')
+  "sourceGroupIds": zod.array(zod.string()).optional().describe('Retained optional SpendTableRow compatibility field.')
 })),
   "page": zod.number().min(1),
   "pageSize": zod.number().min(1).max(listSpendProjectsResponsePageSizeMax),
@@ -1671,7 +1731,8 @@ export const ListSpendProjectsResponse = zod.object({
   "internalExcludedUsd": zod.number(),
   "unbudgetedUsd": zod.number(),
   "unattributedUsd": zod.number(),
-  "reconciliationUsd": zod.number()
+  "reconciliationUsd": zod.number(),
+  "currentMonthSpendUsd": zod.number().nullable().describe('Sum across the filtered stale\/deployment-qualified population, independent of page size.')
 }),
   "facets": zod.object({
   "statuses": zod.record(zod.string(), zod.number().min(listSpendProjectsResponseFacetsStatusesMinOne)),
@@ -1705,6 +1766,29 @@ export const ListSpendProjectsResponse = zod.object({
   "error": zod.string().nullable()
 })
 }),
+  "staleEvaluation": zod.object({
+  "evaluatedAt": zod.coerce.date().describe('Stable evaluation instant shared by every row in the response.'),
+  "staleCutoff": zod.coerce.date().describe('evaluatedAt minus exactly 30 elapsed days; equality is stale.'),
+  "monthStart": zod.coerce.date().describe('Inclusive start of the current UTC calendar month.'),
+  "monthEndExclusive": zod.coerce.date().describe('Exclusive start of the next UTC calendar month.'),
+  "availability": zod.enum(['complete', 'partial', 'unavailable']).describe('Qualification of authorized current-UTC-month project usage.'),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(listSpendProjectsResponseStaleEvaluationCoverageRatioMin).max(listSpendProjectsResponseStaleEvaluationCoverageRatioMax)
+})
+}),
   "personalProjectCatalog": zod.object({
   "projectCount": zod.number().min(listSpendProjectsResponsePersonalProjectCatalogProjectCountMin).describe('Current cached catalog projects owned by the signed-in user in their active authorized workspaces, deduplicated by project ID.'),
   "publishedProjectCount": zod.number().min(listSpendProjectsResponsePersonalProjectCatalogPublishedProjectCountMin).describe('Catalog projects currently known to have a deployment. Consult coverage and publicationUnknownProjectCount before treating this as a complete total.'),
@@ -1713,6 +1797,371 @@ export const ListSpendProjectsResponse = zod.object({
   "coverage": zod.enum(['complete', 'partial', 'missing']),
   "dataAsOf": zod.coerce.date().nullable()
 }).optional().describe('Current self-owned catalog summary. Present only for the personal Projects view.')
+})
+
+
+/**
+ * Returns only the current cached project identity, lifecycle and authorized spend facts. This read never initiates an Enterprise API refresh. The workspace qualifier is part of the identity and prevents cross-workspace project-ID guessing.
+ * @summary Get an authorized workspace-qualified project
+ */
+
+
+
+
+export const GetWorkspaceProjectParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1),
+  "projectId": zod.coerce.string().min(1).describe('Project UUID, qualified by the workspaceId path segment.')
+})
+
+export const GetWorkspaceProjectQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.')
+})
+
+export const getWorkspaceProjectHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetWorkspaceProjectHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getWorkspaceProjectHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
+})
+
+export const getWorkspaceProjectResponseMetadataCoverageRatioMin = 0;
+export const getWorkspaceProjectResponseMetadataCoverageRatioMax = 1;
+
+export const getWorkspaceProjectResponseMetadataCoverageRequestedDaysMin = 0;
+
+export const getWorkspaceProjectResponseStaleEvaluationCoverageRatioMin = 0;
+export const getWorkspaceProjectResponseStaleEvaluationCoverageRatioMax = 1;
+
+
+
+export const GetWorkspaceProjectResponse = zod.object({
+  "scope": zod.object({
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
+  "label": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "isPersonal": zod.boolean()
+}),
+  "period": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}),
+  "project": zod.object({
+  "id": zod.string().describe('Existing qualified spend-row identity in project:workspaceId:projectId form. Retained for table selection, links, and cache compatibility.\n'),
+  "projectId": zod.string().describe('Raw Enterprise project ID, qualified by workspaceId.'),
+  "kind": zod.enum(['project']),
+  "name": zod.string(),
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "ownerId": zod.string().nullable().describe('Current cached creatorId (current owner), not ownership history.'),
+  "ownerName": zod.string().nullable(),
+  "createdAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date().nullable().describe('Project update timestamp; not an activity or audit trail.'),
+  "metadataAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.\n'),
+  "hasDeployment": zod.boolean().nullable().describe('Authoritative current result of the cached projects deployment observation. Null means it has never been successfully observed.\n'),
+  "isPublished": zod.boolean().nullish().describe('Compatibility alias for hasDeployment.'),
+  "deploymentAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.\n'),
+  "deployments": zod.array(zod.object({
+  "id": zod.string(),
+  "url": zod.string().nullable().describe('Reported deployment URL, not a verified uptime claim.'),
+  "privacy": zod.string().nullable().describe('Reported deploymentPrivacy value, or null when absent.'),
+  "status": zod.string().nullable().describe('Reported deployment lifecycle status, or null when absent.'),
+  "createdAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date().nullable()
+})).describe('All cached deployment observations for this workspace-qualified project. Consult deploymentAvailability and hasDeployment before interpreting an empty array.\n'),
+  "usageObserved": zod.boolean().describe('Whether selected-range authorized usage has been observed.'),
+  "spendUsd": zod.number().describe('Authorized selected-range spend, not necessarily the full project total.'),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "remainingUsd": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "percentUsed": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCycleRemainingUsd": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCyclePercentUsed": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentMonthSpendUsd": zod.number().nullable().describe('Authorized spend in the current UTC calendar month, independent of the selected reporting range. Null means unavailable, never zero.\n'),
+  "currentMonthUsageAvailability": zod.enum(['complete', 'partial', 'unavailable']).describe('Qualification of authorized current-UTC-month project usage.'),
+  "staleButSpending": zod.boolean().describe('True only when updatedAt is known and no later than staleCutoff and currentMonthSpendUsd is positive. A future or missing timestamp is false.\n'),
+  "status": zod.string(),
+  "memberCount": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']),
+  "sharedPool": zod.boolean(),
+  "sourceGroupIds": zod.array(zod.string()).optional().describe('Retained optional SpendTableRow compatibility field.')
+}),
+  "metadata": zod.object({
+  "generationId": zod.string(),
+  "costBasis": zod.enum(['allocation_eligible_committed']),
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "stale": zod.boolean(),
+  "coverage": zod.object({
+  "ratio": zod.number().min(getWorkspaceProjectResponseMetadataCoverageRatioMin).max(getWorkspaceProjectResponseMetadataCoverageRatioMax),
+  "requestedDays": zod.number().min(getWorkspaceProjectResponseMetadataCoverageRequestedDaysMin),
+  "missingDays": zod.array(zod.string()),
+  "failedWorkspaceDays": zod.array(zod.string())
+}),
+  "qualifications": zod.array(zod.string()),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
+  "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable().describe('Time of the last authoritative complete observation, retained through later failures.'),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable().describe('Durable identity of the last successful set of limit values.'),
+  "error": zod.string().nullable()
+})
+}),
+  "staleEvaluation": zod.object({
+  "evaluatedAt": zod.coerce.date().describe('Stable evaluation instant shared by every row in the response.'),
+  "staleCutoff": zod.coerce.date().describe('evaluatedAt minus exactly 30 elapsed days; equality is stale.'),
+  "monthStart": zod.coerce.date().describe('Inclusive start of the current UTC calendar month.'),
+  "monthEndExclusive": zod.coerce.date().describe('Exclusive start of the next UTC calendar month.'),
+  "availability": zod.enum(['complete', 'partial', 'unavailable']).describe('Qualification of authorized current-UTC-month project usage.'),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(getWorkspaceProjectResponseStaleEvaluationCoverageRatioMin).max(getWorkspaceProjectResponseStaleEvaluationCoverageRatioMax)
+})
+})
+})
+
+
+/**
+ * Includes cached current-catalog projects with no selected-range spend. Ownership is current metadata, not an audit trail. Results are restricted to the effective viewer's workspace and presentation scope.
+ * @summary List projects currently owned by an authorized user
+ */
+
+
+
+export const ListUserOwnedProjectsParams = zod.object({
+  "userId": zod.coerce.string().min(1)
+})
+
+export const listUserOwnedProjectsQuerySearchMax = 200;
+
+export const listUserOwnedProjectsQueryWorkspaceIdMax = 200;
+
+export const listUserOwnedProjectsQueryDeployedOnlyDefault = false;
+export const listUserOwnedProjectsQueryStaleButSpendingDefault = false;
+export const listUserOwnedProjectsQueryPageDefault = 1;
+
+export const listUserOwnedProjectsQueryPageSizeDefault = 25;
+export const listUserOwnedProjectsQueryPageSizeMax = 100;
+
+
+
+export const ListUserOwnedProjectsQueryParams = zod.object({
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "search": zod.coerce.string().max(listUserOwnedProjectsQuerySearchMax).optional(),
+  "workspaceId": zod.coerce.string().max(listUserOwnedProjectsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
+  "deployedOnly": zod.coerce.boolean().default(listUserOwnedProjectsQueryDeployedOnlyDefault).describe('When true, include only projects whose authoritative cached hasDeployment value is true. Unknown deployment state does not match.\n'),
+  "staleButSpending": zod.coerce.boolean().default(listUserOwnedProjectsQueryStaleButSpendingDefault).describe('When true, include only projects with a known updatedAt at least 30 elapsed days before evaluation and positive authorized spend in the current UTC calendar month. Missing timestamps do not match.\n'),
+  "sort": zod.enum(['status', 'spend_desc', 'spend_asc', 'name_asc', 'name_desc', 'updated_at_desc', 'updated_at_asc']).optional(),
+  "page": zod.coerce.number().min(1).default(listUserOwnedProjectsQueryPageDefault),
+  "pageSize": zod.coerce.number().min(1).max(listUserOwnedProjectsQueryPageSizeMax).default(listUserOwnedProjectsQueryPageSizeDefault)
+})
+
+export const listUserOwnedProjectsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const ListUserOwnedProjectsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(listUserOwnedProjectsHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
+})
+
+
+export const listUserOwnedProjectsResponseProjectsPageSizeMax = 100;
+
+export const listUserOwnedProjectsResponseProjectsTotalRowsMin = 0;
+
+export const listUserOwnedProjectsResponseProjectsFilteredRowsMin = 0;
+
+export const listUserOwnedProjectsResponseProjectsFacetsStatusesMinOne = 0;
+
+export const listUserOwnedProjectsResponseProjectsFacetsWorkspacesItemCountMin = 0;
+
+export const listUserOwnedProjectsResponseProjectsMetadataCoverageRatioMin = 0;
+export const listUserOwnedProjectsResponseProjectsMetadataCoverageRatioMax = 1;
+
+export const listUserOwnedProjectsResponseProjectsMetadataCoverageRequestedDaysMin = 0;
+
+export const listUserOwnedProjectsResponseProjectsStaleEvaluationCoverageRatioMin = 0;
+export const listUserOwnedProjectsResponseProjectsStaleEvaluationCoverageRatioMax = 1;
+
+export const listUserOwnedProjectsResponseProjectsPersonalProjectCatalogProjectCountMin = 0;
+
+export const listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublishedProjectCountMin = 0;
+
+export const listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublicationKnownProjectCountMin = 0;
+
+export const listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublicationUnknownProjectCountMin = 0;
+
+
+
+export const ListUserOwnedProjectsResponse = zod.object({
+  "user": zod.object({
+  "userId": zod.string(),
+  "username": zod.string().nullable(),
+  "name": zod.string().nullable(),
+  "email": zod.string().nullable()
+}),
+  "projects": zod.object({
+  "view": zod.enum(['projects']),
+  "scope": zod.object({
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']),
+  "label": zod.string(),
+  "workspaceIds": zod.array(zod.string()),
+  "groupIds": zod.array(zod.string()),
+  "isPersonal": zod.boolean()
+}),
+  "period": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}),
+  "rows": zod.array(zod.object({
+  "id": zod.string().describe('Existing qualified spend-row identity in project:workspaceId:projectId form. Retained for table selection, links, and cache compatibility.\n'),
+  "projectId": zod.string().describe('Raw Enterprise project ID, qualified by workspaceId.'),
+  "kind": zod.enum(['project']),
+  "name": zod.string(),
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "ownerId": zod.string().nullable().describe('Current cached creatorId (current owner), not ownership history.'),
+  "ownerName": zod.string().nullable(),
+  "createdAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date().nullable().describe('Project update timestamp; not an activity or audit trail.'),
+  "metadataAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.\n'),
+  "hasDeployment": zod.boolean().nullable().describe('Authoritative current result of the cached projects deployment observation. Null means it has never been successfully observed.\n'),
+  "isPublished": zod.boolean().nullish().describe('Compatibility alias for hasDeployment.'),
+  "deploymentAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.\n'),
+  "deployments": zod.array(zod.object({
+  "id": zod.string(),
+  "url": zod.string().nullable().describe('Reported deployment URL, not a verified uptime claim.'),
+  "privacy": zod.string().nullable().describe('Reported deploymentPrivacy value, or null when absent.'),
+  "status": zod.string().nullable().describe('Reported deployment lifecycle status, or null when absent.'),
+  "createdAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date().nullable()
+})).describe('All cached deployment observations for this workspace-qualified project. Consult deploymentAvailability and hasDeployment before interpreting an empty array.\n'),
+  "usageObserved": zod.boolean().describe('Whether selected-range authorized usage has been observed.'),
+  "spendUsd": zod.number().describe('Authorized selected-range spend, not necessarily the full project total.'),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "remainingUsd": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "percentUsed": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCycleAgentSpendUsd": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCycleRemainingUsd": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentCyclePercentUsed": zod.number().nullish().describe('Retained SpendTableRow field; normally null for projects.'),
+  "currentMonthSpendUsd": zod.number().nullable().describe('Authorized spend in the current UTC calendar month, independent of the selected reporting range. Null means unavailable, never zero.\n'),
+  "currentMonthUsageAvailability": zod.enum(['complete', 'partial', 'unavailable']).describe('Qualification of authorized current-UTC-month project usage.'),
+  "staleButSpending": zod.boolean().describe('True only when updatedAt is known and no later than staleCutoff and currentMonthSpendUsd is positive. A future or missing timestamp is false.\n'),
+  "status": zod.string(),
+  "memberCount": zod.number().nullable().describe('Retained SpendTableRow field; normally null for projects.'),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']),
+  "sharedPool": zod.boolean(),
+  "sourceGroupIds": zod.array(zod.string()).optional().describe('Retained optional SpendTableRow compatibility field.')
+})),
+  "page": zod.number().min(1),
+  "pageSize": zod.number().min(1).max(listUserOwnedProjectsResponseProjectsPageSizeMax),
+  "totalRows": zod.number().min(listUserOwnedProjectsResponseProjectsTotalRowsMin),
+  "filteredRows": zod.number().min(listUserOwnedProjectsResponseProjectsFilteredRowsMin),
+  "totals": zod.object({
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number(),
+  "internalExcludedUsd": zod.number(),
+  "unbudgetedUsd": zod.number(),
+  "unattributedUsd": zod.number(),
+  "reconciliationUsd": zod.number(),
+  "currentMonthSpendUsd": zod.number().nullable().describe('Sum across the filtered stale\/deployment-qualified population, independent of page size.')
+}),
+  "facets": zod.object({
+  "statuses": zod.record(zod.string(), zod.number().min(listUserOwnedProjectsResponseProjectsFacetsStatusesMinOne)),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "count": zod.number().min(listUserOwnedProjectsResponseProjectsFacetsWorkspacesItemCountMin)
+}))
+}),
+  "metadata": zod.object({
+  "generationId": zod.string(),
+  "costBasis": zod.enum(['allocation_eligible_committed']),
+  "status": zod.enum(['complete', 'stale', 'partial', 'empty']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "directoryDataAsOf": zod.coerce.date().nullable(),
+  "stale": zod.boolean(),
+  "coverage": zod.object({
+  "ratio": zod.number().min(listUserOwnedProjectsResponseProjectsMetadataCoverageRatioMin).max(listUserOwnedProjectsResponseProjectsMetadataCoverageRatioMax),
+  "requestedDays": zod.number().min(listUserOwnedProjectsResponseProjectsMetadataCoverageRequestedDaysMin),
+  "missingDays": zod.array(zod.string()),
+  "failedWorkspaceDays": zod.array(zod.string())
+}),
+  "qualifications": zod.array(zod.string()),
+  "limitObservation": zod.object({
+  "status": zod.enum(['complete', 'failed', 'unavailable', 'refreshing']),
+  "observedAt": zod.number().nullable(),
+  "lastSuccessfulAt": zod.number().nullable().describe('Time of the last authoritative complete observation, retained through later failures.'),
+  "lastAttemptAt": zod.number().nullable(),
+  "refreshStartedAt": zod.number().nullable(),
+  "generation": zod.string().nullable().describe('Durable identity of the last successful set of limit values.'),
+  "error": zod.string().nullable()
+})
+}),
+  "staleEvaluation": zod.object({
+  "evaluatedAt": zod.coerce.date().describe('Stable evaluation instant shared by every row in the response.'),
+  "staleCutoff": zod.coerce.date().describe('evaluatedAt minus exactly 30 elapsed days; equality is stale.'),
+  "monthStart": zod.coerce.date().describe('Inclusive start of the current UTC calendar month.'),
+  "monthEndExclusive": zod.coerce.date().describe('Exclusive start of the next UTC calendar month.'),
+  "availability": zod.enum(['complete', 'partial', 'unavailable']).describe('Qualification of authorized current-UTC-month project usage.'),
+  "coverage": zod.object({
+  "requestedDays": zod.number(),
+  "requestedWorkspaceDays": zod.number(),
+  "presentWorkspaceDays": zod.number(),
+  "failedWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "missingWorkspaceDays": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "usageDate": zod.coerce.date()
+})),
+  "presentAccountDays": zod.number(),
+  "missingAccountDays": zod.array(zod.coerce.date()),
+  "ratio": zod.number().min(listUserOwnedProjectsResponseProjectsStaleEvaluationCoverageRatioMin).max(listUserOwnedProjectsResponseProjectsStaleEvaluationCoverageRatioMax)
+})
+}),
+  "personalProjectCatalog": zod.object({
+  "projectCount": zod.number().min(listUserOwnedProjectsResponseProjectsPersonalProjectCatalogProjectCountMin).describe('Current cached catalog projects owned by the signed-in user in their active authorized workspaces, deduplicated by project ID.'),
+  "publishedProjectCount": zod.number().min(listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublishedProjectCountMin).describe('Catalog projects currently known to have a deployment. Consult coverage and publicationUnknownProjectCount before treating this as a complete total.'),
+  "publicationKnownProjectCount": zod.number().min(listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublicationKnownProjectCountMin),
+  "publicationUnknownProjectCount": zod.number().min(listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublicationUnknownProjectCountMin),
+  "coverage": zod.enum(['complete', 'partial', 'missing']),
+  "dataAsOf": zod.coerce.date().nullable()
+}).optional().describe('Current self-owned catalog summary. Present only for the personal Projects view.')
+})
 })
 
 
@@ -2957,6 +3406,114 @@ export const ListDirectoryGroupsResponse = zod.object({
 }))
 }))
 })).describe('Server-owned ordered workspace, team, and canonical family hierarchy.')
+})
+
+
+/**
+ * Read-only administrative directory grouped by authorized workspace. Includes Admins, Members, Guests and custom groups. Membership availability is explicit and a complete zero count means an authoritatively empty group. This read never initiates upstream traffic.
+ * @summary List cached built-in and custom groups by workspace
+ */
+export const listWorkspaceGroupsQueryWorkspaceIdMax = 200;
+
+
+
+export const ListWorkspaceGroupsQueryParams = zod.object({
+  "workspaceId": zod.coerce.string().max(listWorkspaceGroupsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.')
+})
+
+export const listWorkspaceGroupsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const ListWorkspaceGroupsHeader = zod.object({
+  "X-Preview-As": zod.string().regex(listWorkspaceGroupsHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
+})
+
+export const listWorkspaceGroupsResponseWorkspacesItemGroupsItemMemberCountMin = 0;
+
+
+
+export const ListWorkspaceGroupsResponse = zod.object({
+  "workspaces": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "groups": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "groupId": zod.string().describe('Group ID qualified by workspaceId.'),
+  "name": zod.string(),
+  "kind": zod.enum(['admins', 'members', 'guests', 'custom']),
+  "memberCount": zod.number().min(listWorkspaceGroupsResponseWorkspacesItemGroupsItemMemberCountMin).nullable().describe('Zero with complete availability is an authoritative empty group; null means no complete membership observation is available.\n'),
+  "membershipAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete and stale both represent a successful, fully paginated cached observation. Unavailable means there is no complete last-good member list.\n'),
+  "dataAsOf": zod.coerce.date().nullable()
+}))
+})),
+  "availability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete and stale both represent a successful, fully paginated cached observation. Unavailable means there is no complete last-good member list.\n'),
+  "dataAsOf": zod.coerce.date().nullable()
+})
+
+
+/**
+ * Returns a bounded page from the cached complete membership observation; expansion never initiates an Enterprise API request. Both workspace and group identifiers are checked against the effective administrative scope.
+ * @summary Page through cached members of a workspace group
+ */
+
+
+
+export const ListWorkspaceGroupMembersParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1),
+  "groupId": zod.coerce.string()
+})
+
+export const listWorkspaceGroupMembersQueryPageDefault = 1;
+
+export const listWorkspaceGroupMembersQueryPageSizeDefault = 25;
+export const listWorkspaceGroupMembersQueryPageSizeMax = 100;
+
+
+
+export const ListWorkspaceGroupMembersQueryParams = zod.object({
+  "page": zod.coerce.number().min(1).default(listWorkspaceGroupMembersQueryPageDefault),
+  "pageSize": zod.coerce.number().min(1).max(listWorkspaceGroupMembersQueryPageSizeMax).default(listWorkspaceGroupMembersQueryPageSizeDefault)
+})
+
+export const listWorkspaceGroupMembersHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const ListWorkspaceGroupMembersHeader = zod.object({
+  "X-Preview-As": zod.string().regex(listWorkspaceGroupMembersHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
+})
+
+export const listWorkspaceGroupMembersResponseGroupMemberCountMin = 0;
+
+
+export const listWorkspaceGroupMembersResponsePageSizeMax = 100;
+
+export const listWorkspaceGroupMembersResponseTotalMembersMin = 0;
+
+
+
+export const ListWorkspaceGroupMembersResponse = zod.object({
+  "workspaceId": zod.string(),
+  "group": zod.object({
+  "workspaceId": zod.string(),
+  "groupId": zod.string().describe('Group ID qualified by workspaceId.'),
+  "name": zod.string(),
+  "kind": zod.enum(['admins', 'members', 'guests', 'custom']),
+  "memberCount": zod.number().min(listWorkspaceGroupMembersResponseGroupMemberCountMin).nullable().describe('Zero with complete availability is an authoritative empty group; null means no complete membership observation is available.\n'),
+  "membershipAvailability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete and stale both represent a successful, fully paginated cached observation. Unavailable means there is no complete last-good member list.\n'),
+  "dataAsOf": zod.coerce.date().nullable()
+}),
+  "members": zod.array(zod.object({
+  "userId": zod.string().nullable(),
+  "username": zod.string().nullable(),
+  "name": zod.string().nullable(),
+  "email": zod.string().nullable(),
+  "fallbackLabel": zod.string().describe('Safe non-secret label for an identity with no display fields.')
+})),
+  "page": zod.number().min(1),
+  "pageSize": zod.number().min(1).max(listWorkspaceGroupMembersResponsePageSizeMax),
+  "totalMembers": zod.number().min(listWorkspaceGroupMembersResponseTotalMembersMin).nullable().describe('Null only when no complete cached membership exists.'),
+  "availability": zod.enum(['complete', 'stale', 'unavailable']).describe('Complete and stale both represent a successful, fully paginated cached observation. Unavailable means there is no complete last-good member list.\n'),
+  "dataAsOf": zod.coerce.date().nullable()
 })
 
 

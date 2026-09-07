@@ -34,7 +34,10 @@ import {
   isUsageGenerationUpdateActive,
   readUsageSnapshot,
 } from "../lib/usage-store";
-import { readProjectMetadata } from "../lib/project-metadata";
+import {
+  readCurrentProjectIdentities,
+  readProjectMetadata,
+} from "../lib/project-metadata";
 import { logger } from "../lib/logger";
 
 export type ViewScope = "managed" | "my" | "all_authorized";
@@ -90,6 +93,7 @@ export function computeProjectMetadataRevision(
 
 export interface SpendRow {
   id: string;
+  projectId?: string;
   kind: "pool" | "group" | "person" | "project" | "unattributed" | "reconciliation";
   name: string;
   workspaceId: string | null;
@@ -117,6 +121,73 @@ export interface SpendRow {
   usageObserved: boolean;
   isPublished?: boolean | null;
   sourceGroupIds?: string[];
+  ownerId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  metadataAvailability?: "complete" | "stale" | "unavailable";
+  hasDeployment?: boolean | null;
+  deploymentAvailability?: "complete" | "stale" | "unavailable";
+  deployments?: Array<{
+    id: string;
+    url: string | null;
+    privacy: string | null;
+    status: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  }>;
+  currentMonthSpendUsd?: number | null;
+  currentMonthUsageAvailability?: "complete" | "partial" | "unavailable";
+  staleButSpending?: boolean;
+}
+
+export interface StaleSpendEvaluation {
+  evaluatedAt: string;
+  staleCutoff: string;
+  monthStart: string;
+  monthEndExclusive: string;
+  availability: "complete" | "partial" | "unavailable";
+  coverage: Awaited<ReturnType<typeof usageForRequest>>["snapshot"]["coverage"];
+}
+
+export function staleSpendEvaluation(
+  snapshot: Awaited<ReturnType<typeof usageForRequest>>["snapshot"],
+  evaluatedAt = new Date(),
+): StaleSpendEvaluation {
+  const evaluatedMs = evaluatedAt.getTime();
+  const monthStart = new Date(Date.UTC(
+    evaluatedAt.getUTCFullYear(), evaluatedAt.getUTCMonth(), 1,
+  ));
+  const monthEndExclusive = new Date(Date.UTC(
+    evaluatedAt.getUTCFullYear(), evaluatedAt.getUTCMonth() + 1, 1,
+  ));
+  const coverage = snapshot.coverage;
+  const availability = coverage.presentWorkspaceDays === 0
+    ? "unavailable" as const
+    : coverage.failedWorkspaceDays.length === 0 &&
+        coverage.missingWorkspaceDays.length === 0 &&
+        coverage.ratio === 1
+      ? "complete" as const
+      : "partial" as const;
+  return {
+    evaluatedAt: evaluatedAt.toISOString(),
+    staleCutoff: new Date(evaluatedMs - 30 * 86_400_000).toISOString(),
+    monthStart: monthStart.toISOString(),
+    monthEndExclusive: monthEndExclusive.toISOString(),
+    availability,
+    coverage,
+  };
+}
+
+export function isStaleButSpending(
+  updatedAt: string | Date | null | undefined,
+  currentMonthSpendUsd: number | null,
+  staleCutoff: string | Date,
+): boolean {
+  if (updatedAt == null || currentMonthSpendUsd == null ||
+      currentMonthSpendUsd <= 0) return false;
+  const updatedMs = new Date(updatedAt).getTime();
+  const cutoffMs = new Date(staleCutoff).getTime();
+  return Number.isFinite(updatedMs) && updatedMs <= cutoffMs;
 }
 
 export function personalProjectCatalog(
@@ -667,11 +738,20 @@ export async function prepareScopedAccounting(
   const configuration =
     suppliedConfiguration ?? await getConfigurationSnapshot();
   const allocationRevision = configuration.revision;
-  const projectWorkspaceIds = [...workspaceScope(
+  const authorizedProjectWorkspaceIds = [...workspaceScope(
     effectiveAuth,
     dir,
     visibleGroups(effectiveAuth, dir.groups),
   )];
+  const requestedWorkspaceId = typeof query["workspaceId"] === "string" &&
+      query["workspaceId"]
+    ? query["workspaceId"]
+    : null;
+  const projectWorkspaceIds = requestedWorkspaceId === null
+    ? authorizedProjectWorkspaceIds
+    : authorizedProjectWorkspaceIds.includes(requestedWorkspaceId)
+      ? [requestedWorkspaceId]
+      : [];
   const projectMetadataRevision =
     (await readProjectMetadata(projectWorkspaceIds)).revision;
   const allocationMs = performance.now() - allocationStartedAt;
@@ -685,7 +765,10 @@ export async function prepareScopedAccounting(
     period: window,
     utcDay: utcAccountingDay(),
     directoryIsStale: getDirectoryFreshness().isStale,
-    scope: sortedAuthorization(effectiveAuth),
+    scope: {
+      authorization: sortedAuthorization(effectiveAuth),
+      workspaceFilter: requestedWorkspaceId,
+    },
     allocationRevision,
   };
   const baseCacheIdentity = committedGenerationId({
@@ -1223,6 +1306,32 @@ function freezeAccountingResult<T extends Awaited<ReturnType<typeof computeScope
   return Object.freeze(result);
 }
 
+function qualifiedProjectComponents(
+  authz: Authorization,
+  groups: readonly { id: string; workspaceId: string }[],
+  workspaceId: string,
+  creatorId: string | null,
+  projectGroupId: string | undefined,
+  agent: number,
+  other: number,
+): { agent: number; other: number } | null {
+  if (authz.roles.includes("account") ||
+      authz.workspaceIds.includes(workspaceId)) {
+    return { agent, other };
+  }
+  if (isSelfOnly(authz) && creatorId === authz.userId) {
+    // Project Agent totals are not user-granular. Personal views may show the
+    // non-Agent amount attributed by current ownership, but must not claim the
+    // entire project's Agent spend belongs to the viewer.
+    return { agent: 0, other };
+  }
+  const groupQualified = creatorId !== null &&
+    projectGroupId !== undefined && groups.some((group) =>
+    group.id === projectGroupId && group.workspaceId === workspaceId &&
+    (authz.groupUserIds?.[group.id] ?? []).includes(creatorId));
+  return groupQualified ? { agent, other } : null;
+}
+
 function qualifyFailedAccountingRefresh(
   result: Awaited<ReturnType<typeof computeScopedAccounting>>,
 ) {
@@ -1355,11 +1464,21 @@ async function buildDetailProjection(
         for (const key of keys) {
           const [workspaceId, projectId] = key.split("\u0000");
           if (!workspaceId || !projectId) continue;
+          const creatorId =
+            rollup.projectAttribution.creatorByProject.get(key) ?? null;
+          const qualified = qualifiedProjectComponents(
+            effectiveAuth,
+            usage.groups,
+            workspaceId,
+            creatorId,
+            rollup.projectAttribution.projectToGroup.get(key),
+            rollup.projectAttribution.aiSpendByProject.get(key) ?? 0,
+            rollup.projectAttribution.nonAiSpendByProject.get(key) ?? 0,
+          );
+          if (!qualified) continue;
           const current = totalsByKey.get(key) ?? { agent: 0, other: 0 };
-          current.agent +=
-            rollup.projectAttribution.aiSpendByProject.get(key) ?? 0;
-          current.other +=
-            rollup.projectAttribution.nonAiSpendByProject.get(key) ?? 0;
+          current.agent += qualified.agent;
+          current.other += qualified.other;
           totalsByKey.set(key, current);
         }
       }
@@ -1397,29 +1516,29 @@ async function buildDetailProjection(
     for (const workspaceId of usage.workspaceIds) {
       const projectTotals = new Map<string, { agent: number; other: number }>();
       for (const rollup of daily.values()) {
-        for (const [key, agent] of
-          rollup.projectAttribution.aiSpendByProject) {
+        const projectKeys = new Set([
+          ...rollup.projectAttribution.aiSpendByProject.keys(),
+          ...rollup.projectAttribution.nonAiSpendByProject.keys(),
+        ]);
+        for (const key of projectKeys) {
           const [projectWorkspaceId, projectId] = key.split("\u0000");
           if (projectWorkspaceId !== workspaceId || !projectId) continue;
           const creatorId =
             rollup.projectAttribution.creatorByProject.get(key) ?? null;
-          const groupId =
-            rollup.projectAttribution.projectToGroup.get(key);
-          const qualified = effectiveAuth.roles.includes("account") ||
-            effectiveAuth.workspaceIds.includes(workspaceId) ||
-            (isSelfOnly(effectiveAuth) &&
-              creatorId === effectiveAuth.userId) ||
-            (!!groupId && usage.groups.some((group) =>
-              group.id === groupId && group.workspaceId === workspaceId) &&
-              creatorId !== null &&
-              (effectiveAuth.groupUserIds?.[groupId] ?? [])
-                .includes(creatorId));
+          const qualified = qualifiedProjectComponents(
+            effectiveAuth,
+            usage.groups,
+            workspaceId,
+            creatorId,
+            rollup.projectAttribution.projectToGroup.get(key),
+            rollup.projectAttribution.aiSpendByProject.get(key) ?? 0,
+            rollup.projectAttribution.nonAiSpendByProject.get(key) ?? 0,
+          );
           if (!qualified) continue;
           const current = projectTotals.get(projectId) ??
             { agent: 0, other: 0 };
-          current.agent += agent;
-          current.other +=
-            rollup.projectAttribution.nonAiSpendByProject.get(key) ?? 0;
+          current.agent += qualified.agent;
+          current.other += qualified.other;
           projectTotals.set(projectId, current);
         }
       }
@@ -1455,6 +1574,405 @@ async function buildDetailProjection(
     }
   }
   return freezeAccountingResult({ ...base, peopleRows, projectRows });
+}
+
+type AccountingResult = Awaited<ReturnType<typeof buildScopedAccounting>>;
+
+type ProjectObservation = {
+  creatorId: string | null;
+  title: string | null;
+  hasDeployment: boolean | null;
+  createdAt?: string | Date | null;
+  updatedAt?: string | Date | null;
+  deployments?: readonly {
+    id?: string;
+    deploymentId?: string;
+    url?: string | null;
+    privacy?: string | null;
+    deploymentPrivacy?: string | null;
+    status?: string | null;
+    createdAt?: string | Date | null;
+    updatedAt?: string | Date | null;
+  }[] | null;
+  deploymentsObservedAt?: string | Date | null;
+  fetchedAt?: string | Date | null;
+};
+
+function isoOrNull(value: string | Date | null | undefined): string | null {
+  if (value == null) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function safeDeploymentUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectRowKey(row: SpendRow): string | null {
+  if (!row.workspaceId) return null;
+  const prefix = `project:${row.workspaceId}:`;
+  return row.id.startsWith(prefix)
+    ? `${row.workspaceId}\u0000${row.id.slice(prefix.length)}`
+    : `${row.workspaceId}\u0000${row.id}`;
+}
+
+function currentCatalog(
+  result: AccountingResult,
+  globalIdentities: ReadonlyMap<string, { workspaceId: string | null }>,
+): Map<string, { workspaceId: string; projectId: string; metadata: ProjectObservation }> {
+  const candidates = new Map<string, Array<{
+    workspaceId: string;
+    projectId: string;
+    metadata: ProjectObservation;
+    observedAt: number;
+  }>>();
+  for (const workspaceId of result.usage.workspaceIds) {
+    for (const [projectId, value] of
+      result.usage.projectMetadata.byWorkspace.get(workspaceId) ?? []) {
+      const metadata = value as ProjectObservation;
+      const fetchedAt = metadata.fetchedAt == null
+        ? Number.NaN : new Date(metadata.fetchedAt).getTime();
+      const observedAt = Number.isFinite(fetchedAt)
+        ? fetchedAt
+        : result.usage.projectMetadata.freshnessByWorkspace
+          .get(workspaceId)?.lastSuccessfulAt?.getTime() ??
+            Number.NEGATIVE_INFINITY;
+      const rows = candidates.get(projectId) ?? [];
+      rows.push({
+        workspaceId,
+        projectId,
+        metadata,
+        observedAt,
+      });
+      candidates.set(projectId, rows);
+    }
+  }
+  const catalog = new Map<string, {
+    workspaceId: string;
+    projectId: string;
+    metadata: ProjectObservation;
+  }>();
+  for (const [projectId, rows] of candidates) {
+    const globalIdentity = globalIdentities.get(projectId);
+    const newest = Math.max(...rows.map((row) => row.observedAt));
+    const current = rows.filter((row) => row.observedAt === newest)
+      .sort((a, b) => a.workspaceId.localeCompare(b.workspaceId));
+    // Conflicting equally-current workspace observations do not establish a
+    // safe transfer destination. Omit rather than disclose the old workspace.
+    if (current.length !== 1) continue;
+    const row = current[0]!;
+    if (globalIdentity && globalIdentity.workspaceId !== row.workspaceId) {
+      continue;
+    }
+    const ownerId = row.metadata.creatorId;
+    const canSee = result.authz.roles.includes("account") ||
+      result.authz.workspaceIds.includes(row.workspaceId) ||
+      (ownerId !== null && ownerId === result.authz.userId &&
+        result.scope.isPersonal) ||
+      (ownerId !== null && Object.entries(result.authz.groupUserIds ?? {})
+        .some(([groupId, userIds]) =>
+          userIds.includes(ownerId) && result.usage.groups.some((group) =>
+            group.id === groupId && group.workspaceId === row.workspaceId)));
+    if (canSee) catalog.set(projectId, row);
+  }
+  return catalog;
+}
+
+function enrichedProjectRows(
+  selected: AccountingResult,
+  currentMonth: AccountingResult,
+  evaluation: StaleSpendEvaluation,
+  globalIdentities: ReadonlyMap<string, { workspaceId: string | null }>,
+): SpendRow[] {
+  const monthAvailabilityFor = (
+    workspaceId: string,
+  ): "complete" | "partial" | "unavailable" => {
+    const snapshot = currentMonth.usage.snapshot;
+    const presentDays = [...(snapshot.dailyWorkspaces ?? [])].filter(
+      ([, workspaces]) => workspaces.has(workspaceId)).length;
+    const hasFailed = snapshot.coverage.failedWorkspaceDays.some(
+      (item) => item.workspaceId === workspaceId);
+    const hasMissing = snapshot.coverage.missingWorkspaceDays.some(
+      (item) => item.workspaceId === workspaceId);
+    if (presentDays === 0) return "unavailable";
+    return !hasFailed && !hasMissing &&
+        presentDays === snapshot.coverage.requestedDays
+      ? "complete" : "partial";
+  };
+  const selectedByKey = new Map(selected.projectRows.flatMap((row) => {
+    const key = projectRowKey(row);
+    return key ? [[key, row] as const] : [];
+  }));
+  const monthByKey = new Map(currentMonth.projectRows.flatMap((row) => {
+    const key = projectRowKey(row);
+    return key ? [[key, row] as const] : [];
+  }));
+  const rows: SpendRow[] = [];
+  const catalog = currentCatalog(selected, globalIdentities);
+  for (const { workspaceId, projectId, metadata } of catalog.values()) {
+    const key = `${workspaceId}\u0000${projectId}`;
+    const selectedSpend = selectedByKey.get(key);
+    const monthSpend = monthByKey.get(key);
+    const freshness = selected.usage.projectMetadata.freshnessByWorkspace
+      .get(workspaceId);
+    const metadataAvailability = !freshness?.lastSuccessfulAt
+      ? "unavailable" as const
+      : selected.usage.projectMetadata.completeWorkspaceIds.has(workspaceId)
+        ? "complete" as const : "stale" as const;
+    const deploymentObserved =
+      selected.usage.projectMetadata.deploymentObservedWorkspaceIds
+        .has(workspaceId);
+    const richDeploymentObserved = deploymentObserved &&
+      metadata.deployments !== null &&
+      isoOrNull(metadata.deploymentsObservedAt) !== null;
+    const deploymentAvailability = !richDeploymentObserved
+      ? "unavailable" as const
+      : selected.usage.projectMetadata.deploymentCompleteWorkspaceIds
+          .has(workspaceId)
+        ? "complete" as const : "stale" as const;
+    const currentMonthUsageAvailability = monthAvailabilityFor(workspaceId);
+    const currentMonthSpendUsd =
+      currentMonthUsageAvailability === "unavailable"
+      ? null
+      : round(monthSpend?.spendUsd ?? 0);
+    const updatedAt = isoOrNull(metadata.updatedAt);
+    const owner = metadata.creatorId
+      ? selected.dir.members.get(metadata.creatorId) : undefined;
+    const deployments = richDeploymentObserved
+      ? [...(metadata.deployments ?? [])].map((deployment, index) => ({
+          id: deployment.id ?? deployment.deploymentId ??
+            `${projectId}:deployment:${index}`,
+          url: safeDeploymentUrl(deployment.url),
+          privacy: deployment.privacy ?? deployment.deploymentPrivacy ?? null,
+          status: deployment.status ?? null,
+          createdAt: isoOrNull(deployment.createdAt),
+          updatedAt: isoOrNull(deployment.updatedAt),
+        }))
+      : [];
+    rows.push({
+      id: `project:${workspaceId}:${projectId}`,
+      projectId,
+      kind: "project",
+      name: metadata.title ?? projectId,
+      workspaceId,
+      workspaceName: selected.dir.workspaces.get(workspaceId)?.name ?? null,
+      spendUsd: selectedSpend?.spendUsd ?? 0,
+      agentSpendUsd: selectedSpend?.agentSpendUsd ?? 0,
+      otherServicesUsd: selectedSpend?.otherServicesUsd ?? 0,
+      allocationUsd: null,
+      remainingUsd: null,
+      percentUsed: null,
+      status: selectedSpend?.status ?? "attributed",
+      memberCount: null,
+      ownerId: metadata.creatorId,
+      ownerName: owner?.name ?? owner?.username ?? null,
+      limitState: "not_applicable",
+      limitObservationStatus: "not_applicable",
+      sharedPool: false,
+      usageObserved: selectedSpend?.usageObserved ??
+        observedWorkspaceIds(selected.usage.snapshot).has(workspaceId),
+      createdAt: isoOrNull(metadata.createdAt),
+      updatedAt,
+      metadataAvailability,
+      hasDeployment: deploymentObserved ? metadata.hasDeployment : null,
+      isPublished: deploymentObserved ? metadata.hasDeployment : null,
+      deploymentAvailability,
+      deployments,
+      currentMonthSpendUsd,
+      currentMonthUsageAvailability:
+        currentMonthUsageAvailability === "complete" &&
+          !currentMonth.usage.rollup.projectAttribution.isComplete
+          ? "partial"
+          : currentMonthUsageAvailability,
+      staleButSpending: isStaleButSpending(
+        updatedAt, currentMonthSpendUsd, evaluation.staleCutoff),
+    });
+  }
+  const observedCatalogIds = new Set(
+    [...selected.usage.projectMetadata.byWorkspace.values()]
+      .flatMap((projects) => [...projects.keys()]),
+  );
+  for (const selectedSpend of selected.projectRows) {
+    const key = projectRowKey(selectedSpend);
+    if (!key) continue;
+    const [workspaceId, projectId] = key.split("\u0000");
+    if (!workspaceId || !projectId || catalog.has(projectId) ||
+        observedCatalogIds.has(projectId) ||
+        globalIdentities.has(projectId)) continue;
+    const monthSpend = monthByKey.get(key);
+    const currentMonthUsageAvailability = monthAvailabilityFor(workspaceId);
+    const currentMonthSpendUsd =
+      currentMonthUsageAvailability === "unavailable"
+      ? null : round(monthSpend?.spendUsd ?? 0);
+    rows.push({
+      ...selectedSpend,
+      id: `project:${workspaceId}:${projectId}`,
+      projectId,
+      ownerId: null,
+      ownerName: null,
+      createdAt: null,
+      updatedAt: null,
+      metadataAvailability: "unavailable",
+      hasDeployment: null,
+      isPublished: null,
+      deploymentAvailability: "unavailable",
+      deployments: [],
+      currentMonthSpendUsd,
+      currentMonthUsageAvailability:
+        currentMonthUsageAvailability === "complete" &&
+          !currentMonth.usage.rollup.projectAttribution.isComplete
+          ? "partial"
+          : currentMonthUsageAvailability,
+      staleButSpending: false,
+    });
+  }
+  return rows;
+}
+
+function projectSpendRowsForUsage(
+  selected: AccountingResult,
+  usage: AccountingResult["usage"],
+  daily: AccountingResult["daily"],
+  globalIdentities: ReadonlyMap<string, { workspaceId: string | null }>,
+): SpendRow[] {
+  const catalog = currentCatalog(selected, globalIdentities);
+  const totals = new Map<string, { agent: number; other: number }>();
+  for (const rollup of daily.values()) {
+    for (const key of new Set([
+      ...rollup.projectAttribution.aiSpendByProject.keys(),
+      ...rollup.projectAttribution.nonAiSpendByProject.keys(),
+    ])) {
+      const [workspaceId, projectId] = key.split("\u0000");
+      const current = projectId ? catalog.get(projectId) : undefined;
+      if (!workspaceId || !projectId || current?.workspaceId !== workspaceId) {
+        continue;
+      }
+      const qualified = qualifiedProjectComponents(
+        selected.authz,
+        usage.groups,
+        workspaceId,
+        current.metadata.creatorId,
+        rollup.projectAttribution.projectToGroup.get(key),
+        rollup.projectAttribution.aiSpendByProject.get(key) ?? 0,
+        rollup.projectAttribution.nonAiSpendByProject.get(key) ?? 0,
+      );
+      if (!qualified) continue;
+      const value = totals.get(key) ?? { agent: 0, other: 0 };
+      value.agent += qualified.agent;
+      value.other += qualified.other;
+      totals.set(key, value);
+    }
+  }
+  return [...catalog.values()].map(({ workspaceId, projectId }) => {
+    const value = totals.get(`${workspaceId}\u0000${projectId}`) ??
+      { agent: 0, other: 0 };
+    return {
+      id: `project:${workspaceId}:${projectId}`,
+      projectId,
+      kind: "project" as const,
+      name: projectId,
+      workspaceId,
+      workspaceName: null,
+      spendUsd: round(value.agent + value.other),
+      agentSpendUsd: round(value.agent),
+      otherServicesUsd: round(value.other),
+      allocationUsd: null,
+      remainingUsd: null,
+      percentUsed: null,
+      status: "attributed",
+      memberCount: null,
+      ownerName: null,
+      limitState: "not_applicable" as const,
+      limitObservationStatus: "not_applicable" as const,
+      sharedPool: false,
+      usageObserved: workspaceUsageIsComplete(usage.snapshot, workspaceId),
+    };
+  });
+}
+
+export async function buildProjectIntelligence(
+  authz: Authorization,
+  query: Record<string, unknown>,
+  prepared?: ScopedAccountingContext,
+  evaluatedAt = new Date(),
+) {
+  const context = prepared ?? await prepareScopedAccounting(
+    authz, query, "projects");
+  const selected = await buildScopedAccounting(
+    authz, query, "projects", context);
+  return buildProjectIntelligenceFromResult(
+    selected,
+    context,
+    evaluatedAt,
+    typeof query["workspaceId"] === "string" ? query["workspaceId"] : undefined,
+  );
+}
+
+export async function buildProjectIntelligenceFromResult(
+  selected: AccountingResult,
+  context: ScopedAccountingContext,
+  evaluatedAt = new Date(),
+  workspaceId?: string,
+) {
+  const candidateProjectIds = new Set<string>();
+  for (const projects of selected.usage.projectMetadata.byWorkspace.values()) {
+    for (const projectId of projects.keys()) candidateProjectIds.add(projectId);
+  }
+  for (const row of selected.projectRows) {
+    if (row.projectId) candidateProjectIds.add(row.projectId);
+    else {
+      const key = projectRowKey(row);
+      const projectId = key?.split("\u0000")[1];
+      if (projectId) candidateProjectIds.add(projectId);
+    }
+  }
+  const globalIdentities =
+    await readCurrentProjectIdentities(candidateProjectIds);
+  const monthQuery = {
+    rangeType: "mtd",
+    viewScope: context.viewScope,
+    ...(workspaceId ? { workspaceId } : {}),
+  };
+  const monthWindow = windowFromQuery(monthQuery).window;
+  let currentMonth = {
+    ...selected,
+    projectRows: projectSpendRowsForUsage(
+      selected, selected.usage, selected.daily, globalIdentities),
+  };
+  if (selected.usage.selection.window.start !== monthWindow.start ||
+      selected.usage.selection.window.end !== monthWindow.end) {
+    const usage = await usageForRequest(
+      context.effectiveAuth, context.dir, monthQuery, true);
+    const daily = await dailyUsageRollups(context.dir, usage);
+    currentMonth = {
+      ...selected,
+      usage,
+      daily,
+      projectRows: projectSpendRowsForUsage(
+        selected, usage, daily, globalIdentities),
+    };
+  }
+  const staleEvaluation = staleSpendEvaluation(
+    currentMonth.usage.snapshot, evaluatedAt);
+  if (staleEvaluation.availability === "complete" &&
+      !currentMonth.usage.rollup.projectAttribution.isComplete) {
+    staleEvaluation.availability = "partial";
+  }
+  return {
+    result: {
+      ...selected,
+      projectRows: enrichedProjectRows(
+        selected, currentMonth, staleEvaluation, globalIdentities),
+    },
+    staleEvaluation,
+  };
 }
 
 function withRequestContext(

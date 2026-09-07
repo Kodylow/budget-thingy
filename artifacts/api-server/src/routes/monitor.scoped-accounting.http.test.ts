@@ -170,7 +170,12 @@ const authorizations: Record<string, Authorization> = {
       [DETAIL_GROUP]: [DETAIL_MEMBER, DETAIL_COWORKER, DETAIL_FAMILY_ADMIN],
     },
     userIds: [DETAIL_MEMBER, DETAIL_COWORKER, DETAIL_FAMILY_ADMIN],
-    isTrueAccountAdmin: true, capabilities: capabilities(),
+    isTrueAccountAdmin: true,
+    capabilities: {
+      ...capabilities(),
+      canManageAccess: true,
+      canPreviewRoles: true,
+    },
   },
   [DETAIL_OUTSIDER]: {
     userId: DETAIL_OUTSIDER, role: "member", roles: ["member"],
@@ -212,9 +217,13 @@ function internalMember(userId: string, workspaceIds: string[]) {
 let server: ReturnType<ReturnType<typeof express>["listen"]>;
 let baseUrl = "";
 
-async function get(path: string, userId: string): Promise<Response> {
+async function get(
+  path: string,
+  userId: string,
+  headers: Record<string, string> = {},
+): Promise<Response> {
   return fetch(`${baseUrl}/api${path}`, {
-    headers: { "x-test-user": userId },
+    headers: { "x-test-user": userId, ...headers },
   });
 }
 
@@ -448,6 +457,19 @@ beforeAll(async () => {
     capturedAt: new Date(),
   });
   await db.insert(usageProjectDayTable).values([
+    {
+      workspaceId: W3,
+      usageDate: TODAY,
+      projectId: `${PREFIX}-group-coworker-project`,
+      totalCostUsd: 10,
+      metricsJson: [{
+        id: "ai_agent",
+        name: "Agent",
+        category: "ai",
+        costUsd: 10,
+      }],
+      fetchedAt: new Date(),
+    },
     { workspaceId: W5, usageDate: TODAY, projectId: `${PREFIX}-self-project`, totalCostUsd: 5, metricsJson: [], fetchedAt: new Date() },
     { workspaceId: W5, usageDate: TODAY, projectId: `${PREFIX}-coworker-project`, totalCostUsd: 7, metricsJson: [], fetchedAt: new Date() },
     { workspaceId: W5, usageDate: TODAY, projectId: `${PREFIX}-family-project`, totalCostUsd: 3, metricsJson: [], fetchedAt: new Date() },
@@ -460,9 +482,57 @@ beforeAll(async () => {
   const olderProjectMetadataObservedAt =
     new Date(projectMetadataObservedAt.getTime() - 1_000);
   await db.insert(apiProjectMetadataTable).values([
-    { workspaceId: W5, projectId: `${PREFIX}-self-project`, title: "Visible self project", creatorId: DETAIL_MEMBER, fetchedAt: projectMetadataObservedAt },
+    {
+      workspaceId: W5,
+      projectId: `${PREFIX}-self-project`,
+      title: "Visible self project",
+      creatorId: DETAIL_MEMBER,
+      createdAt: new Date(Date.now() - 90 * 86_400_000),
+      updatedAt: new Date(Date.now() - 31 * 86_400_000),
+      deployments: [
+        {
+          id: `${PREFIX}-unsafe-deployment`,
+          url: "javascript:alert(1)",
+          privacy: "private",
+          status: "running",
+          createdAt: null,
+          updatedAt: null,
+        },
+        {
+          id: `${PREFIX}-safe-deployment`,
+          url: "https://example.test/deployed",
+          privacy: "public",
+          status: "running",
+          createdAt: null,
+          updatedAt: null,
+        },
+      ],
+      deploymentsObservedAt: projectMetadataObservedAt,
+      fetchedAt: projectMetadataObservedAt,
+    },
     { workspaceId: W5, projectId: `${PREFIX}-coworker-project`, title: "Secret coworker project", creatorId: DETAIL_COWORKER, fetchedAt: projectMetadataObservedAt },
     { workspaceId: W5, projectId: `${PREFIX}-family-project`, title: "Family admin project", creatorId: DETAIL_FAMILY_ADMIN, fetchedAt: projectMetadataObservedAt },
+    {
+      workspaceId: W3,
+      projectId: `${PREFIX}-group-coworker-project`,
+      title: "Authorized coworker Agent project",
+      creatorId: COWORKER,
+      fetchedAt: projectMetadataObservedAt,
+    },
+    {
+      workspaceId: W3,
+      projectId: `${PREFIX}-inaccessible-transfer`,
+      title: "Old authorized transfer source",
+      creatorId: COWORKER,
+      fetchedAt: olderProjectMetadataObservedAt,
+    },
+    {
+      workspaceId: W8,
+      projectId: `${PREFIX}-inaccessible-transfer`,
+      title: "Current inaccessible transfer destination",
+      creatorId: INTERNAL_PEER,
+      fetchedAt: projectMetadataObservedAt,
+    },
     { workspaceId: W7, projectId: `${PREFIX}-internal-self-project-1`, title: "Internal self project 1", creatorId: INTERNAL_SELF, fetchedAt: projectMetadataObservedAt },
     { workspaceId: W7, projectId: `${PREFIX}-internal-peer-project`, title: "Internal peer project", creatorId: INTERNAL_PEER, fetchedAt: projectMetadataObservedAt },
     { workspaceId: W8, projectId: `${PREFIX}-internal-self-project-2`, title: "Internal self project 2", creatorId: INTERNAL_SELF, fetchedAt: projectMetadataObservedAt },
@@ -472,7 +542,7 @@ beforeAll(async () => {
     { workspaceId: W7, projectId: `${PREFIX}-transferred-project`, title: "Transferred old project", creatorId: INTERNAL_SELF, fetchedAt: olderProjectMetadataObservedAt },
     { workspaceId: W8, projectId: `${PREFIX}-transferred-project`, title: "Transferred current project", creatorId: INTERNAL_PEER, fetchedAt: projectMetadataObservedAt },
   ]);
-  await db.insert(apiProjectMetadataStateTable).values([W5, W7, W8].map(
+  await db.insert(apiProjectMetadataStateTable).values([W3, W5, W7, W8].map(
     (workspaceId) => ({
       workspaceId,
       status: "success" as const,
@@ -482,7 +552,7 @@ beforeAll(async () => {
       lastSuccessfulAt: workspaceId === W7
         ? olderProjectMetadataObservedAt
         : projectMetadataObservedAt,
-      deploymentStatusObserved: workspaceId === W7,
+      deploymentStatusObserved: workspaceId === W7 || workspaceId === W5,
     }),
   ));
   await db.insert(apiProjectMetadataStateTable).values({
@@ -500,6 +570,18 @@ beforeAll(async () => {
     const mutable = req as unknown as {
       isAuthenticated: () => boolean;
       user?: { id: string };
+      log?: {
+        info: () => void;
+        error: () => void;
+        warn: () => void;
+        debug: () => void;
+      };
+    };
+    mutable.log = {
+      info: () => undefined,
+      error: () => undefined,
+      warn: () => undefined,
+      debug: () => undefined,
     };
     mutable.isAuthenticated = () => !!id;
     if (id) mutable.user = { id };
@@ -708,6 +790,7 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
         id: string;
         ownerName: string | null;
         spendUsd: number;
+        agentSpendUsd: number;
         usageObserved: boolean;
         isPublished?: boolean | null;
       }>;
@@ -727,7 +810,10 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
       .toBe(true);
     expect(projects.rows.some((row) =>
       row.id.includes(`${PREFIX}-transferred-project`))).toBe(false);
-    expect(projects.rows.reduce((sum, row) => sum + row.spendUsd, 0)).toBe(15);
+    // Project Agent usage is not user-granular and must not be assigned to a
+    // self-only viewer merely because they currently own the project.
+    expect(projects.rows.reduce((sum, row) => sum + row.spendUsd, 0)).toBe(3);
+    expect(projects.rows.every((row) => row.agentSpendUsd === 0)).toBe(true);
     expect(projects.rows).toContainEqual(expect.objectContaining({
       spendUsd: 0,
       usageObserved: true,
@@ -830,6 +916,244 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
       rows: Array<{ name: string }>;
     };
     expect(scoped.rows.some((row) => row.name === ZERO_SPEND_TEAM)).toBe(false);
+  });
+
+  test("project intelligence deep links fail closed and reject invalid ranges", async () => {
+    const projectId = `${PREFIX}-self-project`;
+    const visible = await get(
+      `/workspaces/${W5}/projects/${projectId}?${RANGE}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(visible.status).toBe(200);
+    const project = await visible.json() as {
+      project: {
+        projectId: string;
+        ownerId: string;
+        spendUsd: number;
+        deploymentAvailability: string;
+        deployments: Array<{ id: string; url: string | null }>;
+      };
+    };
+    expect(project.project).toMatchObject({
+      projectId,
+      ownerId: DETAIL_MEMBER,
+      spendUsd: 5,
+      deploymentAvailability: "complete",
+    });
+    expect(project.project.deployments).toContainEqual({
+      id: `${PREFIX}-unsafe-deployment`,
+      url: null,
+      privacy: "private",
+      status: "running",
+      createdAt: null,
+      updatedAt: null,
+    });
+    expect(project.project.deployments).toContainEqual(expect.objectContaining({
+      id: `${PREFIX}-safe-deployment`,
+      url: "https://example.test/deployed",
+    }));
+
+    expect((await get(
+      `/workspaces/${W6}/projects/${projectId}?${RANGE}`,
+      DETAIL_ACCOUNT_ADMIN,
+    )).status).toBe(404);
+    expect((await get(
+      `/workspaces/${W5}/projects/${projectId}?rangeType=custom&startDate=nope&endDate=${TODAY}`,
+      DETAIL_ACCOUNT_ADMIN,
+    )).status).toBe(400);
+    expect((await get(
+      `/workspaces/${W5}/projects/${projectId}?${RANGE}`,
+      DETAIL_OUTSIDER,
+    )).status).toBe(404);
+    expect((await get(
+      `/users/${DETAIL_MEMBER}/projects?${RANGE}`,
+      DETAIL_OUTSIDER,
+    )).status).toBe(404);
+    expect((await get(
+      `/users/${DETAIL_MEMBER}/projects?workspaceId=${W6}&${RANGE}`,
+      DETAIL_ACCOUNT_ADMIN,
+    )).status).toBe(404);
+  });
+
+  test("owned projects retain zero spend and one current transfer identity", async () => {
+    const owned = await get(
+      `/users/${INTERNAL_SELF}/projects?viewScope=all_authorized&${RANGE}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(owned.status).toBe(200);
+    const body = await owned.json() as {
+      projects: { rows: Array<{
+        projectId: string;
+        workspaceId: string;
+        spendUsd: number;
+        hasDeployment: boolean | null;
+        deploymentAvailability: string;
+      }> };
+    };
+    expect(body.projects.rows).toContainEqual(expect.objectContaining({
+      projectId: `${PREFIX}-internal-self-zero-project`,
+      workspaceId: W7,
+      spendUsd: 0,
+      hasDeployment: true,
+      deploymentAvailability: "unavailable",
+    }));
+    expect(body.projects.rows.some((row) =>
+      row.projectId === `${PREFIX}-transferred-project`)).toBe(false);
+
+    const transferred = await get(
+      `/users/${INTERNAL_PEER}/projects?viewScope=all_authorized&search=${encodeURIComponent("Transferred current")}&${RANGE}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(transferred.status).toBe(200);
+    const transferredBody = await transferred.json() as {
+      projects: { rows: Array<{ projectId: string; workspaceId: string }> };
+    };
+    expect(transferredBody.projects.rows).toEqual([expect.objectContaining({
+      projectId: `${PREFIX}-transferred-project`,
+      workspaceId: W8,
+    })]);
+  });
+
+  test("project spend uses viewer qualification and global transfer identity", async () => {
+    const personal = await get(
+      `/spend/projects?viewScope=my&search=${encodeURIComponent("Visible self project")}&${RANGE}`,
+      DETAIL_MEMBER,
+    );
+    expect(personal.status).toBe(200);
+    const personalBody = await personal.json() as {
+      rows: Array<{ agentSpendUsd: number; spendUsd: number }>;
+    };
+    expect(personalBody.rows).toEqual([expect.objectContaining({
+      agentSpendUsd: 0,
+      spendUsd: 5,
+    })]);
+
+    const group = await get(
+      `/spend/projects?viewScope=all_authorized&search=${encodeURIComponent("Authorized coworker Agent project")}&${RANGE}`,
+      FAMILY_ADMIN,
+    );
+    expect(group.status).toBe(200);
+    const groupBody = await group.json() as {
+      rows: Array<{ agentSpendUsd: number; spendUsd: number }>;
+    };
+    expect(groupBody.rows).toEqual([expect.objectContaining({
+      agentSpendUsd: 10,
+      spendUsd: 10,
+    })]);
+
+    const inaccessibleTransfer = await get(
+      `/spend/projects?viewScope=all_authorized&search=${encodeURIComponent("Old authorized transfer source")}&${RANGE}`,
+      FAMILY_ADMIN,
+    );
+    expect(inaccessibleTransfer.status).toBe(200);
+    expect((await inaccessibleTransfer.json() as { rows: unknown[] }).rows)
+      .toEqual([]);
+    expect((await get(
+      `/workspaces/${W3}/projects/${PREFIX}-inaccessible-transfer?${RANGE}`,
+      FAMILY_ADMIN,
+    )).status).toBe(404);
+  });
+
+  test("dashboard stale spend reconciles to the MTD list from a non-month range", async () => {
+    const dashboardResponse = await get(
+      `/dashboard?viewScope=all_authorized&${RANGE}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(dashboardResponse.status).toBe(200);
+    const dashboard = await dashboardResponse.json() as {
+      staleSpend: {
+        spendUsd: number | null;
+        projectCount: number | null;
+        availability: string;
+        drillThrough: string;
+      };
+    };
+    expect(dashboard.staleSpend).toMatchObject({
+      spendUsd: 5,
+      projectCount: 1,
+      availability: "partial",
+    });
+    expect(dashboard.staleSpend.drillThrough)
+      .toContain("staleButSpending=true");
+
+    const listResponse = await get(
+      "/spend/projects?viewScope=all_authorized&rangeType=mtd&staleButSpending=true",
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(listResponse.status).toBe(200);
+    const list = await listResponse.json() as {
+      rows: Array<{ projectId: string; currentMonthSpendUsd: number | null }>;
+      totals: { currentMonthSpendUsd: number | null };
+      staleEvaluation: { availability: string };
+    };
+    expect(list.rows.map((row) => row.projectId))
+      .toEqual([`${PREFIX}-self-project`]);
+    expect(list.totals.currentMonthSpendUsd)
+      .toBe(dashboard.staleSpend.spendUsd);
+    expect(list.staleEvaluation.availability).toBe("partial");
+
+    const otherWorkspace = await get(
+      `/spend/projects?viewScope=all_authorized&rangeType=mtd&staleButSpending=true&workspaceId=${W7}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(otherWorkspace.status).toBe(200);
+    expect((await otherWorkspace.json() as { rows: unknown[] }).rows).toEqual([]);
+
+    const workspaceDashboardResponse = await get(
+      `/dashboard?viewScope=all_authorized&workspaceId=${W5}&${RANGE}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(workspaceDashboardResponse.status).toBe(200);
+    const workspaceDashboard = await workspaceDashboardResponse.json() as {
+      scope: { workspaceIds: string[] };
+      accounting: { eligibleSpendUsd: number };
+      staleSpend: { spendUsd: number | null; drillThrough: string };
+    };
+    expect(workspaceDashboard.scope.workspaceIds).toEqual([W5]);
+    expect(workspaceDashboard.accounting.eligibleSpendUsd).toBe(30);
+    expect(workspaceDashboard.staleSpend.spendUsd).toBe(5);
+    expect(workspaceDashboard.staleSpend.drillThrough)
+      .toContain(`workspaceId=${W5}`);
+  });
+
+  test("workspace group directory uses effective capability and qualified IDs", async () => {
+    const groupsResponse = await get(
+      `/directory/workspace-groups?workspaceId=${W5}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(groupsResponse.status).toBe(200);
+    const groups = await groupsResponse.json() as {
+      workspaces: Array<{ groups: Array<{ groupId: string; memberCount: number }> }>;
+    };
+    expect(groups.workspaces[0]?.groups).toContainEqual(expect.objectContaining({
+      groupId: DETAIL_GROUP,
+      memberCount: 3,
+    }));
+
+    const membersResponse = await get(
+      `/directory/workspaces/${W5}/groups/${DETAIL_GROUP}/members?page=1&pageSize=2`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(membersResponse.status).toBe(200);
+    const members = await membersResponse.json() as {
+      members: unknown[];
+      totalMembers: number;
+    };
+    expect(members.members).toHaveLength(2);
+    expect(members.totalMembers).toBe(3);
+    expect((await get(
+      `/directory/workspaces/${W6}/groups/${DETAIL_GROUP}/members`,
+      DETAIL_ACCOUNT_ADMIN,
+    )).status).toBe(404);
+    expect((await get(
+      "/directory/workspace-groups",
+      DETAIL_OUTSIDER,
+    )).status).toBe(403);
+    expect((await get(
+      "/directory/workspace-groups",
+      DETAIL_ACCOUNT_ADMIN,
+      { "x-preview-as": `member:${DETAIL_MEMBER}` },
+    )).status).toBe(403);
   });
 
   test("a committed metadata-only creator/title change invalidates warm accounting", async () => {

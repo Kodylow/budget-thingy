@@ -50,8 +50,13 @@ export const apiProjectMetadataTable = pgTable(
     projectId: text("project_id").notNull(),
     title: text("title"),
     creatorId: text("creator_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
     /** Authoritative current result of the Enterprise /projects hasDeployment filter. */
     hasDeployment: boolean("has_deployment"),
+    /** Complete /deployments observations retained as provider facts. */
+    deployments: jsonb("deployments"),
+    deploymentsObservedAt: timestamp("deployments_observed_at", { withTimezone: true }),
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
   },
   (t) => [

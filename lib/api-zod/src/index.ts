@@ -9,5 +9,8 @@ export { GetCanonicalClusterHeadlineParams } from "./generated/api";
 export { GetReportingDetailParams } from "./generated/api";
 export { GetBudgetTeamReportParams } from "./generated/api";
 export { ListWorkspaceUsageLimitAuditsParams } from "./generated/api";
+export { GetWorkspaceProjectParams } from "./generated/api";
+export { ListUserOwnedProjectsParams } from "./generated/api";
+export { ListWorkspaceGroupMembersParams } from "./generated/api";
 export * from './generated/api';
 export * from './generated/types';

@@ -360,6 +360,7 @@ beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
+    req.log = { info() {}, warn() {}, error() {} } as typeof req.log;
     const id = req.header("x-test-user");
     req.isAuthenticated = () => !!id;
     if (id) req.user = { id };
