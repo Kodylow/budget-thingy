@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { clearApiDiagnostics, setPreviewAsGetter } from '@workspace/api-client-react';
 import {
   useAuth as useReplitAuth,
+  logAuthDebug,
   type AuthUser,
   type AuthAuthorization,
   type AuthAuthorizationRole,
@@ -66,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setPreview = useCallback((next: PreviewSelection | null) => {
     if (!canPreviewRbac) return;
+    logAuthDebug('protected-cache.clear', { reason: 'preview-change', previewSelected: Boolean(next) });
     ++previewTransitionRef.current;
     previewRef.current = next;
     void queryClient.cancelQueries();
@@ -74,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPreviewState(next);
   }, [canPreviewRbac, queryClient]);
   const resetPreview = useCallback(() => {
+    logAuthDebug('protected-cache.clear', { reason: 'preview-reset' });
     ++previewTransitionRef.current;
     previewRef.current = null;
     void queryClient.cancelQueries();
@@ -82,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPreviewState(null);
   }, [queryClient]);
   const logoutAndClearPreview = useCallback(() => {
+    logAuthDebug('protected-cache.clear', { reason: 'logout' });
     ++previewTransitionRef.current;
     previewRef.current = null;
     setLastRealEntry(null);
@@ -101,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const identity = user?.id ?? null;
     if (identityRef.current !== undefined && identityRef.current !== identity) {
+      logAuthDebug('protected-cache.clear', { reason: 'identity-change' });
       ++previewTransitionRef.current;
       previewRef.current = null;
       setLastRealEntry(null);
@@ -112,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [availability, queryClient, user?.id]);
   useLayoutEffect(() => {
     if (availability === 'authorized') return;
+    logAuthDebug('protected-cache.clear', { reason: 'not-authorized', availability });
     void queryClient.cancelQueries();
     queryClient.clear();
     clearApiDiagnostics();
@@ -125,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const previous = authorizedFingerprintRef.current;
     authorizedFingerprintRef.current = authorizationFingerprint;
     if (previous && previous !== authorizationFingerprint) {
+      logAuthDebug('protected-cache.clear', { reason: 'authorization-change' });
       void queryClient.cancelQueries();
       queryClient.clear();
       clearApiDiagnostics();

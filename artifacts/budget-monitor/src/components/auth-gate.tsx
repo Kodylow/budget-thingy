@@ -3,7 +3,7 @@ import { ShieldAlert, LogIn, Loader2, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthContext } from '@/components/auth-context';
-import { beginExplicitSignIn, getLoginUrl, isEmbeddedPreview } from '@workspace/replit-auth-web';
+import { beginExplicitSignIn, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@workspace/replit-auth-web';
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const {
@@ -148,7 +148,10 @@ function SignedOutShell({
                   target={embedded ? '_top' : '_self'}
                   rel="noopener noreferrer"
                   data-testid="button-login"
-                  onClick={beginExplicitSignIn}
+                  onClick={() => {
+                    logAuthDebug('login.click', { target: embedded ? '_top' : '_self' });
+                    beginExplicitSignIn();
+                  }}
                 >
                   <LogIn className="mr-2.5 h-5 w-5" />
                   Log in

@@ -29,6 +29,14 @@ vi.mock("../lib/configuration-snapshot", async (importOriginal) => {
   };
 });
 
+vi.mock("../lib/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/auth")>();
+  return {
+    ...actual,
+    getOidcConfig: vi.fn(async () => ({})),
+  };
+});
+
 import {
   buildAuthorization,
   setAuthorizationResolver,
@@ -40,6 +48,7 @@ import authRouter from "./auth";
 let server: Server;
 let baseUrl: string;
 let outcome: Authorization | null | Error;
+let authLogs: Array<{ level: string; details: unknown; message?: string }> = [];
 
 function memberAuthorization(overrides: Partial<Authorization> = {}): Authorization {
   return {
@@ -93,7 +102,14 @@ beforeAll(async () => {
   const app = express();
   app.use((req, _res, next) => {
     const userId = req.header("x-test-user");
-    req.log = { error: vi.fn() } as never;
+    req.log = {
+      error: (details: unknown, message?: string) => {
+        authLogs.push({ level: "error", details, message });
+      },
+      info: (details: unknown, message?: string) => {
+        authLogs.push({ level: "info", details, message });
+      },
+    } as never;
     req.isAuthenticated = (() => userId != null) as typeof req.isAuthenticated;
     if (userId) {
       req.user = {
@@ -115,6 +131,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   outcome = memberAuthorization();
+  authLogs = [];
 });
 
 afterAll(async () => {
@@ -126,6 +143,34 @@ afterAll(async () => {
 });
 
 describe.sequential("GET /auth/user authorization revision contract", () => {
+  it("logs signed-out, denied, authorized, and unavailable outcomes safely", async () => {
+    const secret = "authorization-secret-message";
+
+    const signedOut = await fetch(`${baseUrl}/auth/user`);
+    expect(signedOut.status).toBe(200);
+
+    outcome = null;
+    await getAuth();
+    outcome = memberAuthorization();
+    await getAuth();
+    outcome = new Error(secret);
+    await getAuth();
+
+    expect(authLogs.map((entry) => entry.details)).toEqual(
+      expect.arrayContaining([
+        { event: "auth.user", outcome: "signed-out" },
+        { event: "auth.user", outcome: "denied", preview: false },
+        { event: "auth.user", outcome: "authorized", preview: false },
+        expect.objectContaining({
+          event: "auth.user",
+          outcome: "unavailable",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(authLogs)).not.toContain(secret);
+    expect(JSON.stringify(authLogs)).not.toContain("auth-http-user");
+  });
+
   it.each([
     {
       name: "managedGroupIds",
@@ -240,6 +285,37 @@ describe.sequential("GET /auth/user authorization revision contract", () => {
   });
 });
 
+describe.sequential("GET /callback diagnostics", () => {
+  it("logs presence booleans and a fixed missing-cookie reason without secrets", async () => {
+    const response = await fetch(
+      `${baseUrl}/callback?code=secret-code&state=secret-state`,
+      { redirect: "manual" },
+    );
+
+    expect(response.status).toBe(302);
+    expect(authLogs.map((entry) => entry.details)).toEqual([
+      {
+        event: "auth.callback",
+        stage: "incoming",
+        codePresent: true,
+        statePresent: true,
+        verifierCookiePresent: false,
+        nonceCookiePresent: false,
+        stateCookiePresent: false,
+        returnCookiePresent: false,
+        stateMatches: false,
+      },
+      {
+        event: "auth.callback",
+        stage: "failed-redirect",
+        reason: "missing-code-verifier-cookie",
+      },
+    ]);
+    expect(JSON.stringify(authLogs)).not.toContain("secret-code");
+    expect(JSON.stringify(authLogs)).not.toContain("secret-state");
+  });
+});
+
 describe.sequential("POST /logout", () => {
   it("clears the local session cookie without requiring OIDC provider discovery", async () => {
     const response = await fetch(`${baseUrl}/logout`, {
@@ -250,5 +326,10 @@ describe.sequential("POST /logout", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("set-cookie")).toContain("sid=");
     expect(response.headers.get("location")).toBeNull();
+    expect(authLogs.map((entry) => entry.details)).toContainEqual({
+      event: "auth.logout",
+      stage: "start",
+      sessionPresent: false,
+    });
   });
 });

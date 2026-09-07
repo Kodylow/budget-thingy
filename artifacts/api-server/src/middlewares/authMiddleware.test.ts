@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 import { db, sessionsTable } from '@workspace/db';
 import { eq, inArray, sql } from 'drizzle-orm';
 import cookieParser from 'cookie-parser';
@@ -13,6 +13,7 @@ import { authMiddleware } from './authMiddleware';
 const sessionIds: string[] = [];
 let server: Server;
 let baseUrl: string;
+let sessionLogs: unknown[] = [];
 
 function testUser(id: string) {
   return {
@@ -50,7 +51,16 @@ beforeAll(async () => {
 
   const app = express();
   app.use(cookieParser());
+  app.use((req, _res, next) => {
+    req.log = {
+      info: (details: unknown) => sessionLogs.push(details),
+    } as never;
+    next();
+  });
   app.use(authMiddleware);
+  app.get('/api/auth/user', (req, res) => {
+    res.json({ authenticated: req.isAuthenticated() });
+  });
   app.get('/protected', (req, res) => {
     if (!req.isAuthenticated()) {
       res.status(401).json({ error: 'Not authenticated' });
@@ -63,6 +73,11 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const address = server.address() as AddressInfo;
   baseUrl = `http://127.0.0.1:${address.port}`;
+});
+
+beforeEach(() => {
+  sessionLogs = [];
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -167,4 +182,54 @@ test('a cross-site GET cannot extend a cookie session', async () => {
     .from(sessionsTable)
     .where(eq(sessionsTable.sid, sid));
   expect(unchanged.expire.getTime()).toBe(originalExpire.getTime());
+});
+
+test('auth endpoint session diagnostics expose only safe presence and status fields', async () => {
+  const sid = randomUUID();
+  sessionIds.push(sid);
+  await db.insert(sessionsTable).values({
+    sid,
+    sess: { user: testUser('diagnostic-user') },
+    expire: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+    lastExtendedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+  });
+
+  await fetch(`${baseUrl}/api/auth/user`, {
+    headers: {
+      cookie: `${SESSION_COOKIE}=${sid}`,
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-dest': 'document',
+    },
+  });
+  await fetch(`${baseUrl}/api/auth/user`, {
+    headers: {
+      cookie: `${SESSION_COOKIE}=not-a-real-session-secret`,
+      'sec-fetch-site': 'unexpected-secret-site',
+      'sec-fetch-dest': 'unexpected-secret-dest',
+    },
+  });
+
+  expect(sessionLogs).toEqual([
+    {
+      event: 'auth.session',
+      cookiePresent: true,
+      bearerPresent: false,
+      sessionStatus: 'valid',
+      refreshed: true,
+      secFetchSite: 'same-origin',
+      secFetchDest: 'document',
+    },
+    {
+      event: 'auth.session',
+      cookiePresent: true,
+      bearerPresent: false,
+      sessionStatus: 'invalid',
+      refreshed: false,
+    },
+  ]);
+  const serialized = JSON.stringify(sessionLogs);
+  expect(serialized).not.toContain(sid);
+  expect(serialized).not.toContain('not-a-real-session-secret');
+  expect(serialized).not.toContain('unexpected-secret');
+  expect(serialized).not.toContain('diagnostic-user');
 });

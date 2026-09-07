@@ -1,6 +1,9 @@
 import type { AuthUserEnvelope } from "@workspace/api-client-react";
 
 import type { AuthAvailability } from "./use-auth";
+import { logAuthDebug } from "./auth-debug";
+
+let requestSequence = 0;
 
 export interface AuthRequestResult {
   availability: Exclude<AuthAvailability, "loading">;
@@ -33,16 +36,23 @@ export async function loadAuthorization({
   sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
   maxAttempts = 3,
 }: LoadAuthorizationOptions): Promise<AuthRequestResult> {
+  const request = ++requestSequence;
   const headers = new Headers();
   if (previewAs) headers.set("X-Preview-As", previewAs);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (signal.aborted) throw new AuthRequestCancelledError();
+    const started = Date.now();
+    logAuthDebug('request.start', { request, attempt: attempt + 1, previewSelected: Boolean(previewAs) });
     try {
       const response = await fetcher("/api/auth/user", {
         credentials: "include",
         headers,
         signal,
+      });
+      logAuthDebug('request.response', {
+        request, attempt: attempt + 1, status: response.status,
+        durationMs: Date.now() - started, redirected: response.redirected,
       });
       if (response.status === 401) {
         return { availability: "signed-out", envelope: null };
@@ -58,6 +68,7 @@ export async function loadAuthorization({
           (response.status === 429 || response.status >= 500) &&
           attempt + 1 < maxAttempts
         ) {
+          logAuthDebug('request.retry', { request, reason: 'http-status', delayMs: 250 * 2 ** attempt });
           await sleep(250 * 2 ** attempt);
           continue;
         }
@@ -71,8 +82,10 @@ export async function loadAuthorization({
         typeof envelope.auth.authorizationRevision !== "string" ||
         !envelope.auth.authorizationRevision
       )) {
+        logAuthDebug('request.invalid-envelope', { request, reason: 'missing-authorization-revision' });
         return { availability: "unavailable", envelope: null };
       }
+      logAuthDebug('request.identity', { request, hasUser: Boolean(envelope.user), hasAuthorization: Boolean(envelope.auth) });
       return {
         availability: !envelope.user
           ? "signed-out"
@@ -82,10 +95,16 @@ export async function loadAuthorization({
         envelope,
       };
     } catch (error) {
+      logAuthDebug('request.failure', {
+        request, attempt: attempt + 1, aborted: signal.aborted,
+        durationMs: Date.now() - started,
+        reason: signal.aborted ? 'cancelled' : 'network-or-response-parse',
+      });
       if (signal.aborted) throw new AuthRequestCancelledError();
       if (attempt + 1 >= maxAttempts) {
         return { availability: "unavailable", envelope: null };
       }
+      logAuthDebug('request.retry', { request, reason: 'network-or-response-parse', delayMs: 250 * 2 ** attempt });
       await sleep(250 * 2 ** attempt);
     }
   }

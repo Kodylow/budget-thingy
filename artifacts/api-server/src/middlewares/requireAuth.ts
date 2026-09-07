@@ -32,6 +32,7 @@ export async function requireAuth(
   next: NextFunction,
 ): Promise<void> {
   if (!req.isAuthenticated()) {
+    req.log.info?.({ event: "auth.require", outcome: "signed-out" });
     res.status(401).json({ error: "Authentication required" });
     return;
   }
@@ -39,6 +40,7 @@ export async function requireAuth(
     const configuration = await getConfigurationSnapshot();
     const real = await resolveCurrentAuthorization(req.user.id, configuration);
     if (!real) {
+      req.log.info?.({ event: "auth.require", outcome: "denied" });
       res.status(403).json({ error: "Access denied" });
       return;
     }
@@ -48,15 +50,26 @@ export async function requireAuth(
       configuration,
     );
     req.configurationSnapshot = configuration;
+    req.log.info?.({
+      event: "auth.require",
+      outcome: "authorized",
+      preview: req.authz.isPreview === true,
+    });
     next();
   } catch (err) {
     if (err instanceof InvalidPreviewError) {
+      req.log.info?.({ event: "auth.require", outcome: "invalid-preview" });
       res.status(400).json({ error: err.message, previewInvalid: true });
       return;
     }
     const unavailable = asAuthorizationUnavailable(err, "authorization");
     req.log.error(
-      { errorName: unavailable.name, source: unavailable.source },
+      {
+        event: "auth.require",
+        outcome: "unavailable",
+        errorName: unavailable.name,
+        source: unavailable.source,
+      },
       "authorization resolution unavailable",
     );
     res.status(503).json({

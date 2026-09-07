@@ -9,6 +9,7 @@ import {
   AuthRequestCancelledError,
   loadAuthorization,
 } from './auth-request';
+import { logAuthDebug } from './auth-debug';
 
 export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities };
 export type AuthAvailability =
@@ -74,11 +75,13 @@ function setSignedOutLatch(): void {
 
 /** Clears the fail-closed latch immediately before an explicit login attempt. */
 export function beginExplicitSignIn(): void {
+  logAuthDebug('sign-in.begin', { signedOutLatch: hasSignedOutLatch(), listeners: authCacheClearListeners.size });
   const key = signedOutLatchKey();
   if (key) {
     try {
       window.localStorage.removeItem(key);
     } catch {
+      logAuthDebug('storage.unavailable', { operation: 'clear-sign-out-latch' });
       // The in-memory notification below also recovers hooks when storage is blocked.
     }
   }
@@ -91,6 +94,7 @@ export function beginExplicitSignIn(): void {
  * document must be allowed to verify the newly established server session.
  */
 export function clearAuthCache(): void {
+  logAuthDebug('auth-cache.clear', { listeners: authCacheClearListeners.size });
   authCacheClearListeners.forEach((listener) => listener('signed-out'));
 }
 
@@ -137,6 +141,25 @@ export function useAuth(previewAs: string | null = null): AuthState {
     previewAs: string | null;
     promise: Promise<void>;
   } | null>(null);
+  const hasUser = Boolean(user);
+  const hasAuthorization = Boolean(auth);
+
+  useEffect(() => {
+    logAuthDebug('hook.mount', { blockedOnMount });
+    const onPageHide = (event: PageTransitionEvent) => logAuthDebug('document.pagehide', { persisted: event.persisted });
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      logAuthDebug('hook.unmount');
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, [blockedOnMount]);
+
+  useEffect(() => {
+    logAuthDebug('state.change', {
+      availability, isLoading, hasUser, hasAuthorization,
+      previewSelected: Boolean(previewAs), previewResolved: loadedPreviewAs === previewAs,
+    });
+  }, [availability, isLoading, hasUser, hasAuthorization, previewAs, loadedPreviewAs]);
 
   const clearRecoveryTimer = useCallback(() => {
     if (recoveryTimerRef.current !== null) {
@@ -147,22 +170,32 @@ export function useAuth(previewAs: string | null = null): AuthState {
 
   const scheduleRecovery = useCallback(() => {
     clearRecoveryTimer();
-    if (signedOutRef.current || recoveryAttemptsRef.current >= 2) return;
+    if (signedOutRef.current || recoveryAttemptsRef.current >= 2) {
+      logAuthDebug('recovery.skipped', { signedOut: signedOutRef.current, attempts: recoveryAttemptsRef.current });
+      return;
+    }
     const attempt = recoveryAttemptsRef.current++;
+    logAuthDebug('recovery.scheduled', { attempt: attempt + 1, delayMs: 1_500 * 2 ** attempt });
     recoveryTimerRef.current = setTimeout(() => {
       recoveryTimerRef.current = null;
       if (!signedOutRef.current && availabilityRef.current === 'unavailable') {
+        logAuthDebug('recovery.run', { attempt: attempt + 1 });
         void requestAuthorizationRef.current(true);
       }
     }, 1_500 * 2 ** attempt);
   }, [clearRecoveryTimer]);
 
   const requestAuthorization = useCallback((background = false): Promise<void> => {
-    if (signedOutRef.current) return Promise.resolve();
+    if (signedOutRef.current) {
+      logAuthDebug('authorization.skipped', { reason: 'signed-out-latch', background });
+      return Promise.resolve();
+    }
     const pending = requestRef.current;
     if (background && pending && !pending.controller.signal.aborted && pending.previewAs === previewAs) {
+      logAuthDebug('authorization.coalesced');
       return pending.promise;
     }
+    logAuthDebug('authorization.start', { background, replacingPending: Boolean(pending), previewSelected: Boolean(previewAs) });
     pending?.controller.abort();
     const controller = new AbortController();
     if (!background) {
@@ -179,7 +212,11 @@ export function useAuth(previewAs: string | null = null): AuthState {
       previewAs,
       signal: controller.signal,
     }).then((result) => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        logAuthDebug('authorization.stale-result');
+        return;
+      }
+      logAuthDebug('authorization.result', { availability: result.availability, background });
       availabilityRef.current = result.availability;
       setAvailability(result.availability);
       // An unavailable access check proves no identity or scope. Clear every
@@ -194,6 +231,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
       setAuth(result.envelope?.auth ?? null);
       setCapabilities(result.envelope?.capabilities ?? null);
     }).catch((error) => {
+      logAuthDebug('authorization.failure', { cancelled: controller.signal.aborted || error instanceof AuthRequestCancelledError });
       if (!controller.signal.aborted && !(error instanceof AuthRequestCancelledError)) {
         availabilityRef.current = 'unavailable';
         setAvailability('unavailable');
@@ -222,6 +260,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
       void requestAuthorization();
     }
     return () => {
+      logAuthDebug('authorization.effect-cleanup', { pending: Boolean(requestRef.current) });
       requestRef.current?.controller.abort();
       clearRecoveryTimer();
     };
@@ -229,6 +268,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
 
   useEffect(() => {
     const handleAuthCacheEvent = (event: AuthCacheEvent) => {
+      logAuthDebug('auth-cache.event', { reason: event });
       requestRef.current?.controller.abort();
       requestRef.current = null;
       clearRecoveryTimer();
@@ -263,8 +303,9 @@ export function useAuth(previewAs: string | null = null): AuthState {
   }, [clearRecoveryTimer, previewAs]);
 
   useEffect(() => {
-    const recoverIfUnavailable = () => {
+    const recoverIfUnavailable = (event: Event) => {
       if (signedOutRef.current || availabilityRef.current !== 'unavailable') return;
+      logAuthDebug('recovery.browser-event', { reason: event.type === 'focus' ? 'focus' : 'online' });
       clearRecoveryTimer();
       void requestAuthorizationRef.current(true);
     };
@@ -277,6 +318,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
   }, [clearRecoveryTimer]);
 
   const retryAuthorization = useCallback(() => {
+    logAuthDebug('recovery.manual', { signedOut: signedOutRef.current });
     if (signedOutRef.current) {
       beginExplicitSignIn();
       return;
@@ -291,6 +333,7 @@ export function useAuth(previewAs: string | null = null): AuthState {
   );
 
   const logout = useCallback(() => {
+    logAuthDebug('sign-out.begin');
     // Invalidate pending work immediately; server-cookie removal is best effort
     // and never navigates the user onto a failing API response.
     setSignedOutLatch();

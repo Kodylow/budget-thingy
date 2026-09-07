@@ -14,7 +14,7 @@ import {
   QUERY_STALE_TIME_MS,
 } from '@/lib/client-performance';
 import { setForbiddenHandler, setUnauthorizedHandler } from '@workspace/api-client-react';
-import { clearAuthCache, getLoginUrl, isEmbeddedPreview } from '@workspace/replit-auth-web';
+import { clearAuthCache, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@workspace/replit-auth-web';
 import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
 import { previewScopedQueryHash } from '@/lib/preview-query-cache';
 import { createForbiddenRevalidator } from '@/lib/auth-transition';
@@ -66,13 +66,18 @@ function recentlyRedirectedToLogin(): boolean {
 }
 
 setUnauthorizedHandler(() => {
+  logAuthDebug('api.unauthorized');
   if (isEmbeddedPreview()) {
+    logAuthDebug('login.redirect-skipped', { reason: 'embedded-requires-click' });
     // A background 401 cannot open a tab; show the explicit sign-in link instead.
     clearAuthCache();
     queryClient.clear();
     return;
   }
-  if (loginRedirectStarted || recentlyRedirectedToLogin()) return;
+  if (loginRedirectStarted || recentlyRedirectedToLogin()) {
+    logAuthDebug('login.redirect-skipped', { reason: 'debounced' });
+    return;
+  }
   loginRedirectStarted = true;
   try {
     window.sessionStorage.setItem(LOGIN_REDIRECT_DEBOUNCE_KEY, String(Date.now()));
@@ -82,6 +87,7 @@ setUnauthorizedHandler(() => {
   clearAuthCache();
   queryClient.clear();
   const returnTo = `${window.location.pathname}${window.location.search}`;
+  logAuthDebug('login.redirect', { reason: 'api-401', target: '_self' });
   window.location.assign(getLoginUrl(returnTo));
 });
 

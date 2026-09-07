@@ -38,6 +38,19 @@ import {
 import { getConfigurationSnapshot } from '../lib/configuration-snapshot';
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
+const SAFE_GRANT_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'ERR_JWS_SIGNATURE_VERIFICATION_FAILED',
+  'ERR_JWT_CLAIM_COMPARISON',
+  'ERR_JWT_EXPIRED',
+  'OAUTH_INVALID_REQUEST',
+  'OAUTH_INVALID_RESPONSE',
+  'OAUTH_INVALID_SERVER_RESPONSE',
+  'OAUTH_RESPONSE_BODY_ERROR',
+]);
 
 const router: IRouter = Router();
 function setOidcCookie(res: Response, name: string, value: string) {
@@ -97,6 +110,16 @@ function getSafeErrorMetadata(error: unknown) {
   };
 }
 
+function classifyGrantException(error: unknown): string {
+  const directCode = isRecord(error) ? error.code : undefined;
+  const causeCode =
+    isRecord(error) && isRecord(error.cause) ? error.cause.code : undefined;
+  const code = typeof directCode === 'string' ? directCode : causeCode;
+  return typeof code === 'string' && SAFE_GRANT_ERROR_CODES.has(code)
+    ? code
+    : 'unclassified';
+}
+
 async function upsertUser(claims: Record<string, unknown>) {
   const userData = {
     id: claims.sub as string,
@@ -124,6 +147,7 @@ async function upsertUser(claims: Record<string, unknown>) {
 
 router.get('/auth/user', async (req: Request, res: Response) => {
   if (!req.isAuthenticated()) {
+    req.log.info({ event: 'auth.user', outcome: 'signed-out' });
     res.json(GetCurrentAuthUserResponse.parse({
       user: null,
       auth: null,
@@ -156,12 +180,18 @@ router.get('/auth/user', async (req: Request, res: Response) => {
       : null;
   } catch (err) {
     if (err instanceof InvalidPreviewError) {
+      req.log.info({ event: 'auth.user', outcome: 'invalid-preview' });
       res.status(400).json({ error: err.message, previewInvalid: true });
       return;
     }
     const unavailable = asAuthorizationUnavailable(err, 'authorization');
     req.log.error(
-      { errorName: unavailable.name, source: unavailable.source },
+      {
+        event: 'auth.user',
+        outcome: 'unavailable',
+        errorName: unavailable.name,
+        source: unavailable.source,
+      },
       'authorization lookup unavailable',
     );
     res.status(503).json({
@@ -170,6 +200,11 @@ router.get('/auth/user', async (req: Request, res: Response) => {
     });
     return;
   }
+  req.log.info({
+    event: 'auth.user',
+    outcome: auth ? 'authorized' : 'denied',
+    preview: auth?.isPreview === true,
+  });
   res.json(
     GetCurrentAuthUserResponse.parse({
       user: req.user,
@@ -210,6 +245,7 @@ router.get('/auth/user', async (req: Request, res: Response) => {
 });
 
 router.get('/login', async (req: Request, res: Response) => {
+  req.log.info({ event: 'auth.login', stage: 'begin' });
   const config = await getOidcConfig();
   const origin = getRequestOrigin(req);
   const callbackUrl = `${origin}/api/callback`;
@@ -236,12 +272,35 @@ router.get('/login', async (req: Request, res: Response) => {
   setOidcCookie(res, 'state', state);
   setOidcCookie(res, 'return_to', returnTo);
 
+  req.log.info({ event: 'auth.login', stage: 'provider-redirect' });
   res.redirect(redirectTo.href);
 });
 
 // Query params are not validated because the OIDC provider may include
 // parameters not expressed in the schema.
 router.get('/callback', async (req: Request, res: Response) => {
+  const incomingState =
+    typeof req.query.state === 'string' ? req.query.state : undefined;
+  const codePresent = typeof req.query.code === 'string';
+  const verifierCookiePresent =
+    typeof req.cookies?.code_verifier === 'string';
+  const nonceCookiePresent = typeof req.cookies?.nonce === 'string';
+  const stateCookiePresent = typeof req.cookies?.state === 'string';
+  const returnCookiePresent = typeof req.cookies?.return_to === 'string';
+  req.log.info({
+    event: 'auth.callback',
+    stage: 'incoming',
+    codePresent,
+    statePresent: incomingState !== undefined,
+    verifierCookiePresent,
+    nonceCookiePresent,
+    stateCookiePresent,
+    returnCookiePresent,
+    stateMatches:
+      incomingState !== undefined &&
+      stateCookiePresent &&
+      incomingState === req.cookies.state,
+  });
   const config = await getOidcConfig();
   const origin = getRequestOrigin(req);
   const callbackUrl = `${origin}/api/callback`;
@@ -251,6 +310,11 @@ router.get('/callback', async (req: Request, res: Response) => {
   const expectedState = req.cookies?.state;
 
   if (!codeVerifier || !expectedState) {
+    req.log.info({
+      event: 'auth.callback',
+      stage: 'failed-redirect',
+      reason: !codeVerifier ? 'missing-code-verifier-cookie' : 'missing-state-cookie',
+    });
     res.redirect('/api/login');
     return;
   }
@@ -267,7 +331,13 @@ router.get('/callback', async (req: Request, res: Response) => {
       expectedState,
       idTokenExpected: true,
     });
-  } catch {
+  } catch (error) {
+    req.log.info({
+      event: 'auth.callback',
+      stage: 'failed-redirect',
+      reason: 'grant-rejected',
+      grantErrorCode: classifyGrantException(error),
+    });
     res.redirect('/api/login');
     return;
   }
@@ -281,6 +351,11 @@ router.get('/callback', async (req: Request, res: Response) => {
 
   const claims = tokens.claims();
   if (!claims) {
+    req.log.info({
+      event: 'auth.callback',
+      stage: 'failed-redirect',
+      reason: 'missing-claims',
+    });
     res.redirect('/api/login');
     return;
   }
@@ -288,7 +363,7 @@ router.get('/callback', async (req: Request, res: Response) => {
   const claimsRecord = claims as unknown as Record<string, unknown>;
   const dbUser = await upsertUser(claimsRecord);
   await maybeBootstrapAppAdmin(claimsRecord).catch((err) => {
-    req.log.error({ err }, 'app admin bootstrap failed');
+    req.log.error(getSafeErrorMetadata(err), 'app admin bootstrap failed');
   });
 
   const sessionData: SessionData = {
@@ -303,6 +378,8 @@ router.get('/callback', async (req: Request, res: Response) => {
 
   const sid = await createSession(sessionData);
   setSessionCookie(res, sid);
+  req.log.info({ event: 'auth.callback', stage: 'session-issued' });
+  req.log.info({ event: 'auth.callback', stage: 'success-redirect' });
   res.redirect(returnTo);
 });
 
@@ -389,6 +466,11 @@ router.get('/auth/me/debug', async (req: Request, res: Response) => {
 
 router.post('/logout', async (req: Request, res: Response) => {
   const sid = getSessionId(req);
+  req.log.info({
+    event: 'auth.logout',
+    stage: 'start',
+    sessionPresent: sid !== undefined,
+  });
   await clearSession(res, sid);
   res.status(204).end();
 });
@@ -428,7 +510,7 @@ router.post(
       const claimsRecord = claims as unknown as Record<string, unknown>;
       const dbUser = await upsertUser(claimsRecord);
       await maybeBootstrapAppAdmin(claimsRecord).catch((err) => {
-        req.log.error({ err }, 'app admin bootstrap failed');
+        req.log.error(getSafeErrorMetadata(err), 'app admin bootstrap failed');
       });
 
       const sessionData: SessionData = {
