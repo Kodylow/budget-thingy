@@ -6,6 +6,7 @@ import { AuthGate } from './auth-gate';
 
 const retryAuthorization = vi.fn();
 let availability = 'signed-out';
+let embedded = false;
 
 vi.mock('@/components/auth-context', () => ({
   useAuthContext: () => ({
@@ -24,7 +25,7 @@ vi.mock('@/components/auth-context', () => ({
 vi.mock('@workspace/replit-auth-web', () => ({
   beginExplicitSignIn: vi.fn(),
   getLoginUrl: () => '/api/login?returnTo=%2F',
-  isEmbeddedPreview: () => false,
+  isEmbeddedPreview: () => embedded,
 }));
 
 let root: Root;
@@ -33,6 +34,7 @@ let container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   availability = 'signed-out';
+  embedded = false;
   retryAuthorization.mockClear();
   container = document.createElement('div');
   root = createRoot(container);
@@ -44,6 +46,20 @@ afterEach(async () => {
 });
 
 describe('AuthGate sign-in shell', () => {
+  it.each([
+    { inPreview: false, target: '_self' },
+    { inPreview: true, target: '_top' },
+  ])('uses the current browser tab with preview=$inPreview', async ({ inPreview, target }) => {
+    embedded = inPreview;
+    await act(async () => root.render(
+      createElement(AuthGate, null, createElement('div', null, 'protected')),
+    ));
+    const login = container.querySelector<HTMLAnchorElement>('[data-testid="button-login"]');
+    expect(login?.textContent?.trim()).toBe('Log in');
+    expect(login?.getAttribute('href')).toBe('/api/login?returnTo=%2F');
+    expect(login?.getAttribute('target')).toBe(target);
+  });
+
   it('keeps the normal login shell for an unavailable check and offers reconnect', async () => {
     availability = 'unavailable';
     await act(async () => root.render(

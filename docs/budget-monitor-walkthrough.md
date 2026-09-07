@@ -6,7 +6,7 @@
 
 ## Sign in and understand your access
 
-- Choose Log in; embedded previews open sign-in in a new tab
+- Choose Log in; sign-in continues in the current browser tab
 - Members can review their own spending
 - Administrators see additional information only within their authorized scope
 - Management tools appear only when your permissions allow them

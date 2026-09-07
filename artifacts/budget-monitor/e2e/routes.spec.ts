@@ -1230,7 +1230,7 @@ test('signed-out users see only the login gate after direct refresh', async ({ p
   await mockApi(page, 'signed_out');
   await page.goto('/workspace-admins');
   await expectReady(page, '[data-testid="auth-signed-out"]');
-  await expect(page.getByRole('heading', { name: 'Sign in to Budget Monitor' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Replit Budget Monitor' })).toBeVisible();
   await page.reload();
   await expectReady(page, '[data-testid="auth-signed-out"]');
   expect(failures).toEqual([]);

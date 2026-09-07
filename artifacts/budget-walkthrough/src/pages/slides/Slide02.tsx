@@ -9,7 +9,7 @@ export default function Slide02() {
       </header>
       <div className="walkthrough-content">
         <ul className="walkthrough-list">
-          <li><p>Choose Log in; embedded previews open sign-in in a new tab</p></li>
+          <li><p>Choose Log in; sign-in continues in the current browser tab</p></li>
           <li><p>Members can review their own spending</p></li>
           <li><p>Administrators see additional information only within their authorized scope</p></li>
           <li><p>Management tools appear only when your permissions allow them</p></li>

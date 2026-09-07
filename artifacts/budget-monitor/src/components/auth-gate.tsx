@@ -138,17 +138,20 @@ function SignedOutShell({
 
       <div className="z-20 flex flex-1 flex-col justify-start bg-background px-6 py-12 md:w-[38%] md:justify-center md:px-12 lg:px-16">
         <div className="w-full max-w-sm mx-auto">
-          <h1 className="mb-4 font-display text-3xl font-semibold tracking-tight text-foreground md:text-4xl">Sign in to Budget Monitor</h1>
+          <h1 className="mb-4 flex items-start gap-3 font-display text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
+            <img src={`${import.meta.env.BASE_URL}replit-logo.svg`} alt="" width="36" height="36" className="mt-1 h-9 w-9 shrink-0" />
+            <span>Replit Budget Monitor</span>
+          </h1>
            <Button className="h-11 w-full text-base" asChild>
             <a
               href={getLoginUrl(returnTo)}
-              target={embedded ? '_blank' : '_self'}
+              target={embedded ? '_top' : '_self'}
               rel="noopener noreferrer"
               data-testid="button-login"
               onClick={beginExplicitSignIn}
             >
               <LogIn className="mr-2 h-4 w-4" />
-              {embedded ? 'Log in in a new tab' : 'Log in'}
+              Log in
             </a>
           </Button>
            {isUnavailable && (
