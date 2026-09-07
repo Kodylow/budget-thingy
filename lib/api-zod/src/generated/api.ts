@@ -1168,6 +1168,50 @@ export const GetDashboardResponse = zod.object({
 
 
 /**
+ * Returns cumulative personal Agent spend and canonical own-team all-service spend aligned by cycle day. The three periods are derived from verified billing metadata using clamped calendar-month arithmetic. Reads stored local snapshots only and never triggers upstream usage. A null point is unobserved, incomplete, or future; zero is returned only for an observed zero-spend day. Cycle completeness qualifies later known cumulative values after a coverage gap.
+ * @summary Compare current and prior monthly billing cycles
+ */
+export const getBillingCycleComparisonHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetBillingCycleComparisonHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getBillingCycleComparisonHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
+})
+
+export const getBillingCycleComparisonResponseCyclesItemStartDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getBillingCycleComparisonResponseCyclesItemEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getBillingCycleComparisonResponseCyclesItemPointsItemDayMax = 31;
+
+export const getBillingCycleComparisonResponseCyclesItemPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getBillingCycleComparisonResponseCyclesItemPointsMin = 28;
+export const getBillingCycleComparisonResponseCyclesItemPointsMax = 31;
+
+export const getBillingCycleComparisonResponseCyclesMin = 3;
+export const getBillingCycleComparisonResponseCyclesMax = 3;
+
+
+
+export const GetBillingCycleComparisonResponse = zod.object({
+  "cycles": zod.array(zod.object({
+  "key": zod.enum(['current', 'previous', 'twoAgo']),
+  "label": zod.string(),
+  "startDate": zod.string().regex(getBillingCycleComparisonResponseCyclesItemStartDateRegExp),
+  "endDate": zod.string().regex(getBillingCycleComparisonResponseCyclesItemEndDateRegExp).describe('Inclusive final cycle day.'),
+  "personalComplete": zod.boolean().describe('Whether every elapsed personal Agent day in this cycle is complete.'),
+  "teamComplete": zod.boolean().describe('Whether every elapsed own-team all-service day in this cycle is complete.'),
+  "points": zod.array(zod.object({
+  "day": zod.number().min(1).max(getBillingCycleComparisonResponseCyclesItemPointsItemDayMax),
+  "date": zod.string().regex(getBillingCycleComparisonResponseCyclesItemPointsItemDateRegExp),
+  "personalSpendUsd": zod.number().nullable().describe('Known cumulative personal Agent spend, or null when this day is incomplete or future.'),
+  "teamSpendUsd": zod.number().nullable().describe('Known cumulative canonical own-team all-service spend, or null when this day is incomplete or future.')
+})).min(getBillingCycleComparisonResponseCyclesItemPointsMin).max(getBillingCycleComparisonResponseCyclesItemPointsMax)
+})).min(getBillingCycleComparisonResponseCyclesMin).max(getBillingCycleComparisonResponseCyclesMax),
+  "teamScope": zod.enum(['complete', 'partial']).describe('Complete only for account-wide authorization; partial otherwise.'),
+  "hasTeams": zod.boolean().describe('Whether membership-derived own teams contain authorized groups.')
+})
+
+
+/**
  * @summary List authorized canonical budget pools
  */
 export const listSpendPoolsQuerySearchMax = 200;

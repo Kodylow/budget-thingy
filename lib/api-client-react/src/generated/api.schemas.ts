@@ -992,6 +992,79 @@ export interface DashboardResponse {
   insights?: DashboardInsights;
 }
 
+export interface BillingCycleComparisonPoint {
+  /**
+     * @minimum 1
+     * @maximum 31
+     */
+  day: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  date: string;
+  /**
+     * Known cumulative personal Agent spend, or null when this day is incomplete or future.
+     * @nullable
+     */
+  personalSpendUsd: number | null;
+  /**
+     * Known cumulative canonical own-team all-service spend, or null when this day is incomplete or future.
+     * @nullable
+     */
+  teamSpendUsd: number | null;
+}
+
+export type BillingCycleComparisonCycleKey = typeof BillingCycleComparisonCycleKey[keyof typeof BillingCycleComparisonCycleKey];
+
+
+export const BillingCycleComparisonCycleKey = {
+  current: 'current',
+  previous: 'previous',
+  twoAgo: 'twoAgo',
+} as const;
+
+export interface BillingCycleComparisonCycle {
+  key: BillingCycleComparisonCycleKey;
+  label: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  startDate: string;
+  /**
+     * Inclusive final cycle day.
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  endDate: string;
+  /** Whether every elapsed personal Agent day in this cycle is complete. */
+  personalComplete: boolean;
+  /** Whether every elapsed own-team all-service day in this cycle is complete. */
+  teamComplete: boolean;
+  /**
+     * @minItems 28
+     * @maxItems 31
+     */
+  points: BillingCycleComparisonPoint[];
+}
+
+/**
+ * Complete only for account-wide authorization; partial otherwise.
+ */
+export type BillingCycleComparisonResponseTeamScope = typeof BillingCycleComparisonResponseTeamScope[keyof typeof BillingCycleComparisonResponseTeamScope];
+
+
+export const BillingCycleComparisonResponseTeamScope = {
+  complete: 'complete',
+  partial: 'partial',
+} as const;
+
+export interface BillingCycleComparisonResponse {
+  /**
+     * @minItems 3
+     * @maxItems 3
+     */
+  cycles: BillingCycleComparisonCycle[];
+  /** Complete only for account-wide authorization; partial otherwise. */
+  teamScope: BillingCycleComparisonResponseTeamScope;
+  /** Whether membership-derived own teams contain authorized groups. */
+  hasTeams: boolean;
+}
+
 /**
  * Complete is a fresh successful cached observation; stale is retained last-good data older than the directory freshness policy; unavailable means no successful observation exists. This is independent of usage coverage.
  */

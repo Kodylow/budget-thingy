@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DashboardResponseTrend } from '@workspace/api-client-react';
 import TrendChart from './dashboard-chart';
-import { MonthMiniBars, SpendStoryChart } from './home-components/spend-story-chart';
+import { MonthMiniBars } from './home-components/spend-story-chart';
 
 const observed = vi.hoisted(() => ({
   chart: {} as Record<string, any>,
@@ -82,24 +82,6 @@ describe('spend trend presentation', () => {
     expect(html).toContain('No trend data available');
     expect(html).not.toContain('$0.00');
   });
-
-  it.each(['cumulative', 'period'] as const)(
-    'keeps Home %s charts and tooltips free of coverage labels',
-    (mode) => {
-      observed.bucket = 1;
-      const html = renderToStaticMarkup(<SpendStoryChart trend={{ ...trend, mode }} />);
-      expect(html).not.toMatch(/Partial coverage|Missing coverage|Partial month/);
-      expect(observed.adminNotes).toContain('Partial coverage. Missing buckets are not zero.');
-      expect(observed.line.radius).toEqual([2, 2, 0, 0]);
-      if (mode === 'period') {
-        expect(observed.chart.data[1].val).toBeNull();
-        expect(html).toContain('Unavailable');
-        expect(html).not.toContain('$0.00');
-      } else {
-        expect(html).toContain('$1,234.56');
-      }
-    },
-  );
 
   it.each([
     { spendUsd: 42, isPartial: true, isMissing: false },

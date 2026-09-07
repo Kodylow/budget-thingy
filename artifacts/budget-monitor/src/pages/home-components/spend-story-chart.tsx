@@ -1,77 +1,137 @@
 import React from 'react';
-import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell, LineChart, Line } from 'recharts';
 import { formatFinancialAxis, formatFinancialUsd } from '@/lib/financial-format';
-import type { DashboardResponseTrend } from '@workspace/api-client-react';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
+import { ChartTooltip } from '@/components/financial-chart';
+import type { BillingCycleComparisonCycle } from '@workspace/api-client-react';
 
-export function SpendStoryChart({ trend }: { trend?: DashboardResponseTrend }) {
-  if (!trend?.buckets || trend.buckets.length === 0) {
-    return <div className="h-full flex items-center justify-center text-sm text-muted-foreground">No trend data available</div>;
+const cycleSeries = [
+  { key: 'current', label: 'This month', color: '#0D62FF', dash: undefined },
+  { key: 'previous', label: 'Last month', color: '#64748B', dash: '7 4' },
+  { key: 'twoAgo', label: '2 months ago', color: '#A1A1AA', dash: '2 4' },
+] as const;
+
+export function billingCycleSeriesData(cycles: BillingCycleComparisonCycle[], scope: 'personal' | 'team') {
+  const byKey = new Map(cycles.map((cycle) => [cycle.key, cycle]));
+  const maxDay = Math.max(0, ...cycles.flatMap((cycle) => cycle.points.map((point) => point.day)));
+  return Array.from({ length: maxDay }, (_, index) => {
+    const day = index + 1;
+    const row: Record<string, number | string | null> = { day };
+    cycleSeries.forEach(({ key }) => {
+      const point = byKey.get(key)?.points.find((candidate) => candidate.day === day);
+      row[key] = point?.[scope === 'personal' ? 'personalSpendUsd' : 'teamSpendUsd'] ?? null;
+      row[`${key}Date`] = point?.date ?? null;
+    });
+    return row;
+  });
+}
+
+function formatCycleDate(value: string) {
+  return new Date(value).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+export function SpendStoryChart({
+  cycles,
+  scope,
+}: {
+  cycles: BillingCycleComparisonCycle[];
+  scope: 'personal' | 'team';
+}) {
+  const chartData = billingCycleSeriesData(cycles, scope);
+  const hasSpend = chartData.some((row) => cycleSeries.some(({ key }) => row[key] != null));
+
+  if (!chartData.length || !hasSpend) {
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No billing-cycle spend available</div>;
   }
 
-  const chartData = trend.buckets.map(b => ({
-    ...b,
-    dateLabel: new Date(b.start).toLocaleDateString(undefined, trend.granularity === 'month'
-      ? { month: 'short', year: '2-digit', timeZone: 'UTC' }
-      : { month: 'short', day: 'numeric', timeZone: 'UTC' }),
-    val: trend.mode === 'cumulative' ? (b.valueUsd ?? null) : (b.spendUsd ?? null),
-  }));
-
-  const hasIncomplete = trend.buckets.some(b => b.isPartial || b.isMissing);
-
   return (
-    <div className="h-full w-full min-w-0 relative">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" opacity={0.5} />
-          <XAxis
-            dataKey="dateLabel"
-            axisLine={false}
-            tickLine={false}
-            tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
-            dy={10}
-            minTickGap={32}
-            interval="preserveStartEnd"
-          />
-          <YAxis
-            axisLine={false}
-            tickLine={false}
-            tick={{ fontSize: 11, fill: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}
-            tickFormatter={formatFinancialAxis}
-            width={56}
-            tickCount={5}
-          />
-          <Tooltip
-            cursor={{ stroke: 'var(--border)', strokeWidth: 1, strokeDasharray: '4 4' }}
-            content={({ active, payload }) => {
-              if (active && payload && payload.length) {
-                const b = payload[0].payload;
+    <div className="h-full w-full min-w-0">
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1" aria-label="Spend comparison legend">
+        {cycleSeries.map((series) => (
+          <span key={series.key} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <svg width="18" height="10" viewBox="0 0 18 10" aria-hidden="true">
+              <path d="M0 5h18" stroke={series.color} strokeWidth="2" strokeDasharray={series.dash} />
+            </svg>
+            {series.label}
+          </span>
+        ))}
+      </div>
+      <div className="h-[calc(100%-1.5rem)]">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart
+            data={chartData}
+            margin={{ top: 8, right: 12, left: -12, bottom: 0 }}
+            accessibilityLayer
+            aria-label={`${scope === 'personal' ? 'My' : 'Team'} cumulative spend by billing-cycle day`}
+          >
+            <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" opacity={0.5} />
+            <XAxis
+              dataKey="day"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
+              dy={8}
+              minTickGap={28}
+              label={{ value: 'Cycle day', position: 'insideBottomRight', offset: -2, fontSize: 10, fill: 'var(--muted-foreground)' }}
+            />
+            <YAxis
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 11, fill: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}
+              tickFormatter={formatFinancialAxis}
+              width={62}
+              tickCount={5}
+            />
+            <Tooltip
+              cursor={{ stroke: 'var(--border)', strokeWidth: 1, strokeDasharray: '4 4' }}
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload as Record<string, number | string | null>;
                 return (
-                  <div className="bg-popover border border-border shadow-md rounded-md p-2 text-xs">
-                    <div className="font-medium mb-1">{b.dateLabel}</div>
-                    <div className="font-mono text-foreground font-semibold">
-                      {formatFinancialUsd(b.val)}
-                    </div>
-                  </div>
+                  <ChartTooltip title={`Cycle day ${label}`}>
+                    {cycleSeries.map((series) => {
+                      const value = row[series.key];
+                      const date = row[`${series.key}Date`];
+                      if (typeof date !== 'string') return null;
+                      return (
+                        <div key={series.key} className="flex items-start justify-between gap-5">
+                          <span className="text-muted-foreground">
+                            {series.label}
+                            <span className="block text-[10px]">{formatCycleDate(date)}</span>
+                          </span>
+                          <span className="font-mono font-semibold">
+                            {typeof value === 'number' ? formatFinancialUsd(value) : 'Unavailable'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </ChartTooltip>
                 );
-              }
-              return null;
-            }}
-          />
-          <Bar
-            isAnimationActive={false}
-            dataKey="val"
-            fill="#0D62FF"
-            radius={[2, 2, 0, 0]}
-            maxBarSize={48}
-          />
-        </BarChart>
-      </ResponsiveContainer>
-      {hasIncomplete && (
-        <AdminDataQualityNote title="My Spend Story">
-          Partial coverage. Missing buckets are not zero.
-        </AdminDataQualityNote>
-      )}
+              }}
+            />
+            {cycleSeries.map((series) => (
+              <Line
+                key={series.key}
+                type="monotone"
+                dataKey={series.key}
+                name={series.label}
+                stroke={series.color}
+                strokeWidth={series.key === 'current' ? 2.5 : 2}
+                strokeDasharray={series.dash}
+                dot={false}
+                activeDot={{ r: 3 }}
+                connectNulls={false}
+                isAnimationActive={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

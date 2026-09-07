@@ -3,6 +3,7 @@ import { useAuthContext } from '@/components/auth-context';
 import { useRange } from '@/components/range-context';
 import {
   useGetDashboard,
+  useGetBillingCycleComparison,
   useGetTeamsBudgets,
   useListSpendProjects,
   type TeamBudget,
@@ -133,6 +134,7 @@ export default function Home() {
   const searchString = useSearch();
   const { user } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
+  const billingCyclesQuery = useGetBillingCycleComparison();
 
   const myDashboardQuery = useGetDashboard({
     viewScope: 'my',
@@ -181,6 +183,11 @@ export default function Home() {
     { label: 'Project', className: 'min-w-[220px]' },
     { label: 'Spend', className: 'text-right' },
   ];
+  const billingCycles = billingCyclesQuery.data?.cycles ?? [];
+  const currentCycle = billingCycles.find((cycle) => cycle.key === 'current');
+  const billingPeriodLabel = currentCycle
+    ? `${new Date(currentCycle.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}–${new Date(currentCycle.endDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
+    : 'Current billing cycle';
 
   if (myLoading) {
     return (
@@ -312,21 +319,70 @@ export default function Home() {
         </AdminDataQualityNote>
       )}
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]">
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Billing-cycle spend comparisons">
+        <div className="lg:col-span-2">
+          <h2 className="text-lg font-semibold">My Spend Story</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Three billing cycles aligned by day, independent of the reporting range</p>
+        </div>
         <Card className="rounded-md shadow-none">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
-              <TrendingUp className="w-4 h-4 text-primary" /> My Spend Story · {myDashboard?.period?.label || 'This period'}
+              <TrendingUp className="w-4 h-4 text-primary" /> My spend
             </CardTitle>
-            <CardDescription>Cumulative posted spend, day by day</CardDescription>
+            <CardDescription>{billingPeriodLabel} · Cumulative by billing-cycle day</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-56 rounded-sm border bg-muted/25 p-2">
-              <SpendStoryChart trend={myDashboard?.trend} />
+            <div className="h-64 rounded-sm border bg-muted/25 p-3">
+              {billingCyclesQuery.isLoading ? (
+                <Skeleton className="h-full w-full" />
+              ) : billingCyclesQuery.isError ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+                  Spend comparison unavailable
+                  <Button size="sm" variant="outline" onClick={() => void billingCyclesQuery.refetch()} data-testid="button-retry-billing-cycles-personal">Retry</Button>
+                </div>
+              ) : (
+                <SpendStoryChart cycles={billingCycles} scope="personal" />
+              )}
             </div>
+            {!billingCyclesQuery.isLoading && !billingCyclesQuery.isError && billingCycles.some((cycle) => !cycle.personalComplete) && (
+              <p className="mt-2 text-xs text-muted-foreground" data-testid="status-personal-cycle-coverage">Known spend · gaps preserved</p>
+            )}
           </CardContent>
         </Card>
-        <div className="space-y-4">
+        <Card className="rounded-md shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Users className="w-4 h-4 text-primary" /> Team spend
+            </CardTitle>
+            <CardDescription>{billingPeriodLabel} · Cumulative by billing-cycle day</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-64 rounded-sm border bg-muted/25 p-3">
+              {billingCyclesQuery.isLoading ? (
+                <Skeleton className="h-full w-full" />
+              ) : billingCyclesQuery.isError ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+                  Team comparison unavailable
+                  <Button size="sm" variant="outline" onClick={() => void billingCyclesQuery.refetch()} data-testid="button-retry-billing-cycles-team">Retry</Button>
+                </div>
+              ) : !billingCyclesQuery.data?.hasTeams ? (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground" data-testid="status-team-cycle-unavailable">No team spend available</div>
+              ) : (
+                <SpendStoryChart cycles={billingCycles} scope="team" />
+              )}
+            </div>
+            {!billingCyclesQuery.isLoading && !billingCyclesQuery.isError && billingCyclesQuery.data?.hasTeams && (
+              <p className="mt-2 text-xs text-muted-foreground" data-testid="status-team-cycle-coverage">
+                {billingCyclesQuery.data.teamScope === 'partial' || billingCycles.some((cycle) => !cycle.teamComplete)
+                  ? 'Authorized team scope · known spend · gaps preserved'
+                  : 'Complete authorized team scope'}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Card className="rounded-md shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -386,7 +442,6 @@ export default function Home() {
             )}
             </CardContent>
           </Card>
-        </div>
       </section>
 
       <section>

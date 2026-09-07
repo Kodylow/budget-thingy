@@ -29,6 +29,7 @@ import type {
   AppAdminInput,
   AuthUserEnvelope,
   BeginBrowserLoginParams,
+  BillingCycleComparisonResponse,
   CheckResult,
   ClusterHeadline,
   DashboardResponse,
@@ -1478,6 +1479,84 @@ export function useGetDashboard<TData = Awaited<ReturnType<typeof getDashboard>>
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetDashboardQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetBillingCycleComparisonUrl = () => {
+
+
+
+
+  return `/api/spend/billing-cycles`
+}
+
+/**
+ * Returns cumulative personal Agent spend and canonical own-team all-service spend aligned by cycle day. The three periods are derived from verified billing metadata using clamped calendar-month arithmetic. Reads stored local snapshots only and never triggers upstream usage. A null point is unobserved, incomplete, or future; zero is returned only for an observed zero-spend day. Cycle completeness qualifies later known cumulative values after a coverage gap.
+ * @summary Compare current and prior monthly billing cycles
+ */
+export const getBillingCycleComparison = async ( options?: RequestInit): Promise<BillingCycleComparisonResponse> => {
+
+  return customFetch<BillingCycleComparisonResponse>(getGetBillingCycleComparisonUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBillingCycleComparisonQueryKey = () => {
+    return [
+    `/api/spend/billing-cycles`
+    ] as const;
+    }
+
+
+export const getGetBillingCycleComparisonQueryOptions = <TData = Awaited<ReturnType<typeof getBillingCycleComparison>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCycleComparison>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBillingCycleComparisonQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBillingCycleComparison>>> = ({ signal }) => getBillingCycleComparison({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBillingCycleComparison>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBillingCycleComparisonQueryResult = NonNullable<Awaited<ReturnType<typeof getBillingCycleComparison>>>
+export type GetBillingCycleComparisonQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Compare current and prior monthly billing cycles
+ */
+
+export function useGetBillingCycleComparison<TData = Awaited<ReturnType<typeof getBillingCycleComparison>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCycleComparison>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBillingCycleComparisonQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

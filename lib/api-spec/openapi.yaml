@@ -518,6 +518,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /spend/billing-cycles:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getBillingCycleComparison
+      tags: [groups]
+      summary: Compare current and prior monthly billing cycles
+      description: >
+        Returns cumulative personal Agent spend and canonical own-team
+        all-service spend aligned by cycle day. The three periods are derived
+        from verified billing metadata using clamped calendar-month arithmetic.
+        Reads stored local snapshots only and never triggers upstream usage.
+        A null point is unobserved, incomplete, or future; zero is returned only
+        for an observed zero-spend day. Cycle completeness qualifies later known
+        cumulative values after a coverage gap.
+      responses:
+        "200":
+          description: Billing-cycle comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCycleComparisonResponse"
+        "400":
+          description: Unexpected query parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Verified billing metadata or stored usage is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /spend/pools:
     get:
       operationId: listSpendPools
@@ -3337,6 +3375,68 @@ components:
           $ref: "#/components/schemas/StaleSpendAggregate"
         insights:
           $ref: "#/components/schemas/DashboardInsights"
+    BillingCycleComparisonPoint:
+      type: object
+      required: [day, date, personalSpendUsd, teamSpendUsd]
+      properties:
+        day:
+          type: integer
+          minimum: 1
+          maximum: 31
+        date:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        personalSpendUsd:
+          type: [number, "null"]
+          description: Known cumulative personal Agent spend, or null when this day is incomplete or future.
+        teamSpendUsd:
+          type: [number, "null"]
+          description: Known cumulative canonical own-team all-service spend, or null when this day is incomplete or future.
+    BillingCycleComparisonCycle:
+      type: object
+      required: [key, label, startDate, endDate, personalComplete, teamComplete, points]
+      properties:
+        key:
+          type: string
+          enum: [current, previous, twoAgo]
+        label:
+          type: string
+        startDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        endDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+          description: Inclusive final cycle day.
+        personalComplete:
+          type: boolean
+          description: Whether every elapsed personal Agent day in this cycle is complete.
+        teamComplete:
+          type: boolean
+          description: Whether every elapsed own-team all-service day in this cycle is complete.
+        points:
+          type: array
+          minItems: 28
+          maxItems: 31
+          items:
+            $ref: "#/components/schemas/BillingCycleComparisonPoint"
+    BillingCycleComparisonResponse:
+      type: object
+      required: [cycles, teamScope, hasTeams]
+      properties:
+        cycles:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/BillingCycleComparisonCycle"
+        teamScope:
+          type: string
+          enum: [complete, partial]
+          description: Complete only for account-wide authorization; partial otherwise.
+        hasTeams:
+          type: boolean
+          description: Whether membership-derived own teams contain authorized groups.
     DashboardInsightCategory:
       type: object
       required: [key, label, spendUsd, activeUsers]

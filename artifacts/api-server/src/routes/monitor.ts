@@ -13,6 +13,7 @@ import dashboardRouter from "./monitor.dashboard";
 import spendTablesRouter from "./monitor.spend-tables";
 import intelligenceRouter from "./monitor.intelligence";
 import setLimitsRouter from "./set-limits";
+import billingCyclesRouter from "./monitor.billing-cycles";
 
 const router: IRouter = Router();
 router.use(requireAuth);
@@ -29,6 +30,7 @@ router.use(dashboardRouter);
 router.use(spendTablesRouter);
 router.use(intelligenceRouter);
 router.use(setLimitsRouter);
+router.use(billingCyclesRouter);
 
 export { canSeeAlertEntity };
 export default router;
