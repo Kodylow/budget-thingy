@@ -1817,7 +1817,7 @@ describe("authenticated group detail qualification", () => {
   test("budget team report uses the authorized canonical pool across families and workspaces", async () => {
     const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
     const response = await get(
-      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}`,
+      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true`,
       DETAIL_ACCOUNT_ADMIN,
     );
     expect(response.status).toBe(200);
@@ -1836,6 +1836,19 @@ describe("authenticated group detail qualification", () => {
       groups: Array<{ groupId: string; workspaceId: string }>;
       sourceGroups: Array<{ groupId: string; workspaceId: string }>;
       members: Array<{ workspaceId: string; userId: string; groupIds: string[] }>;
+      budgetTracking: {
+        periodStart: string | null;
+        periodEnd: string | null;
+        allocationUsd: number | null;
+        spendUsd: number | null;
+        remainingUsd: number | null;
+        percentUsed: number | null;
+        scopeComplete: boolean;
+        usageComplete: boolean;
+        benchmarkEligible: boolean;
+        qualification: string | null;
+        points: Array<{ date: string; spendUsd: number | null }>;
+      };
     };
     expect(value).toMatchObject({
       kind: "team",
@@ -1859,6 +1872,22 @@ describe("authenticated group detail qualification", () => {
       `${W1}:${SHARED_ADMIN}`,
       `${W2}:${COWORKER}`,
     ].sort());
+    expect(value.budgetTracking).toMatchObject({
+      periodStart: null,
+      periodEnd: null,
+      allocationUsd: 1_000,
+      spendUsd: 505,
+      remainingUsd: null,
+      percentUsed: null,
+      scopeComplete: true,
+      usageComplete: false,
+      benchmarkEligible: false,
+    });
+    expect(value.budgetTracking.qualification).toMatch(/allocation period/i);
+    expect(value.budgetTracking.points.at(-1)).toEqual({
+      date: TODAY,
+      spendUsd: 505,
+    });
   });
 
   test("budget team report and pool source IDs never expand beyond authorized scope", async () => {
@@ -1876,7 +1905,7 @@ describe("authenticated group detail qualification", () => {
     expect(JSON.stringify(pools)).not.toContain(SHARED_2);
 
     const response = await get(
-      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}`,
+      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true`,
       SHARED_ADMIN,
     );
     expect(response.status).toBe(200);
@@ -1885,10 +1914,20 @@ describe("authenticated group detail qualification", () => {
       headline: { spendUsd: number; allocationUsd: number | null };
       sourceGroups: Array<{ groupId: string }>;
       members: Array<{ userId: string }>;
+      budgetTracking: {
+        allocationUsd: number | null;
+        scopeComplete: boolean;
+        benchmarkEligible: boolean;
+      };
     };
     expect(value.headline).toMatchObject({ spendUsd: 5, allocationUsd: null });
     expect(value.sourceGroups.map((group) => group.groupId)).toEqual([SHARED_1]);
     expect(value.members.map((member) => member.userId)).toEqual([SHARED_ADMIN]);
+    expect(value.budgetTracking).toMatchObject({
+      allocationUsd: null,
+      scopeComplete: false,
+      benchmarkEligible: false,
+    });
     expect(text).not.toContain(SHARED_2);
   });
 
@@ -1963,7 +2002,7 @@ describe("authenticated group detail qualification", () => {
     try {
       const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
       const response = await get(
-        `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}`,
+        `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true`,
         DETAIL_ACCOUNT_ADMIN,
       );
       expect(response.status).toBe(200);
@@ -1975,6 +2014,12 @@ describe("authenticated group detail qualification", () => {
           remainingUsd: null,
         },
         metadata: { status: "empty" },
+        budgetTracking: {
+          spendUsd: null,
+          usageComplete: false,
+          benchmarkEligible: false,
+          points: [{ date: TODAY, spendUsd: null }],
+        },
       });
     } finally {
       await db.insert(usageWorkspaceDayTable).values([

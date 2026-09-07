@@ -816,6 +816,7 @@ test("editors edit planning while true admins edit visibility with newest-first 
 });
 
 test("effective totals agree across configured pools, groups, and Spend", async () => {
+  const assignedPoolId = `pool:team:${encodeURIComponent(ASSIGNED)}`;
   const [pools, ownAccountPools, ownWorkspacePools, groups, spend, dashboard] = await Promise.all([
     request("/teams/budgets", "task158-account"),
     request("/teams/budgets?scope=own&period=full-term", "task158-account"),
@@ -837,11 +838,15 @@ test("effective totals agree across configured pools, groups, and Spend", async 
   expect(assignedPool.amountUsd).toBe(125);
   expect(budgetOnlyPool.amountUsd).toBe(60);
   expect(originalOnlyPool.amountUsd).toBe(75);
+  for (const budget of pools.json.budgets) {
+    expect(budget.poolId).toBe(`pool:team:${encodeURIComponent(budget.teamName)}`);
+  }
   expect(budgetOnlyPool.workspaceIds).toEqual([]);
   expect(originalOnlyPool.workspaceIds).toEqual([]);
   expect(!pools.json.budgets.some((budget) => budget.teamName === HIDDEN)).toBeTruthy();
   expect(ownAccountPools.json.budgets).toEqual([]);
   expect(ownWorkspacePools.json.budgets.map((budget) => budget.teamName)).toEqual([ASSIGNED]);
+  expect(ownWorkspacePools.json.budgets[0].poolId).toBe(assignedPoolId);
   expect(ownWorkspacePools.json.budgets[0]).toMatchObject({
     amountUsd: 125,
     spendScope: "partial",

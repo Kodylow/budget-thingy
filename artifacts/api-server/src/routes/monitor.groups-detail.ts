@@ -1,5 +1,6 @@
 import { Router, type Request } from "express";
 import {
+  GetBudgetTeamReportQueryParams,
   GetReportingDetailQueryParams,
   GetReportingDetailResponse,
 } from "@workspace/api-zod";
@@ -20,6 +21,40 @@ import { authorizeSpendView } from "./monitor.spend-tables";
 
 const router = Router();
 const MAX_REPORTING_GROUP_IDS = 32;
+const DAY_MS = 86_400_000;
+
+function reportingQuery(req: Request, teamMode: boolean) {
+  if (!teamMode) return GetReportingDetailQueryParams.safeParse(req.query);
+  const raw = req.query["includeBudgetTracking"];
+  return GetBudgetTeamReportQueryParams.safeParse({
+    ...req.query,
+    includeBudgetTracking: raw === "true",
+  });
+}
+
+export function buildBudgetTrackingPoints(
+  start: string,
+  endExclusive: string,
+  dailySpend: ReadonlyMap<string, number>,
+  unavailableDays: ReadonlySet<string>,
+): Array<{ date: string; spendUsd: number | null }> {
+  const points: Array<{ date: string; spendUsd: number | null }> = [];
+  let cumulative = 0;
+  for (
+    let time = Date.parse(start);
+    time < Date.parse(endExclusive);
+    time += DAY_MS
+  ) {
+    const date = new Date(time).toISOString().slice(0, 10);
+    cumulative += dailySpend.get(date) ?? 0;
+    if (unavailableDays.has(date)) {
+      points.push({ date, spendUsd: null });
+      continue;
+    }
+    points.push({ date, spendUsd: cumulative });
+  }
+  return points;
+}
 
 export function __reportingDetailBaseQualificationsForTests(
   qualifications: readonly string[],
@@ -68,7 +103,17 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     res.status(403).json({ error: "The pools view is outside your authorized scope" });
     return;
   }
-  const parsed = GetReportingDetailQueryParams.safeParse(req.query);
+  const rawBudgetTracking = req.query["includeBudgetTracking"];
+  if (
+    teamMode &&
+    rawBudgetTracking !== undefined &&
+    rawBudgetTracking !== "true" &&
+    rawBudgetTracking !== "false"
+  ) {
+    res.status(400).json({ error: "includeBudgetTracking must be true or false" });
+    return;
+  }
+  const parsed = reportingQuery(req, teamMode);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
@@ -390,9 +435,69 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
         "Current-cycle Agent metric classification is unavailable for one or more members; affected usage and remaining values are unknown.",
       );
     }
+    const includeBudgetTracking = teamMode &&
+      (parsed.data as { includeBudgetTracking?: boolean }).includeBudgetTracking === true;
+    const budgetTracking = includeBudgetTracking
+      ? (() => {
+        const selectedSourceIds = new Set(sourceGroups.map((group) => group.groupId));
+        const fullFundingGroups = accounting.dir.groups.filter((group) =>
+          accounting.fullTeamByGroup.get(groupTeamKey(group)) === teamRow!.name
+        );
+        const scopeComplete =
+          canExposeCanonicalAllocation(req.authz!, fullFundingGroups) &&
+          fullFundingGroups.every((group) => selectedSourceIds.has(group.id));
+        const unavailableDays = new Set([
+          ...relevantMissing.map((item) => item.usageDate),
+          ...relevantFailed.map((item) => item.usageDate),
+        ]);
+        const dailySpend = new Map<string, number>();
+        for (const [date, rollup] of accounting.daily) {
+          dailySpend.set(
+            date.slice(0, 10),
+            qualifiedGroupSpendComponents(
+              rollup,
+              req.authz!,
+              selections.flatMap((selection) => selection.sources),
+            ).spendUsd,
+          );
+        }
+        const points = buildBudgetTrackingPoints(
+          accounting.period.start,
+          accounting.period.endExclusive,
+          dailySpend,
+          unavailableDays,
+        );
+        // No persisted allocation start/end currently exists in the budget
+        // snapshot. Reporting through today must not be promoted to a budget
+        // term, so period-dependent comparisons remain explicitly withheld.
+        const periodStart = null;
+        const periodEnd = null;
+        const usageComplete = false;
+        const benchmarkEligible = false;
+        const qualification = !scopeComplete
+          ? "The full funding team is outside the authorized scope; allocation-period comparisons are withheld."
+          : "The persisted allocation period is unavailable; remaining, percent used, and benchmark are withheld.";
+        return {
+          periodStart,
+          periodEnd,
+          periodLabel: "Allocation period unavailable",
+          asOf: accounting.metadata.dataAsOf ?? null,
+          allocationUsd: scopeComplete ? allocationUsd : null,
+          spendUsd: teamRow!.usageObserved ? teamRow!.spendUsd : null,
+          remainingUsd: null,
+          percentUsed: null,
+          scopeComplete,
+          usageComplete,
+          benchmarkEligible,
+          qualification,
+          points,
+        };
+      })()
+      : undefined;
     const response = GetReportingDetailResponse.parse({
       kind: teamMode ? "team" : groupRows.length === 1 ? "group" : "family",
       ...(teamRow ? { id: teamRow.id, name: teamRow.name } : {}),
+      ...(budgetTracking ? { budgetTracking } : {}),
       headline: {
         familyKey: teamMode ? null : families[0]!.familyKey,
         familyName: teamRow?.name ?? families[0]!.familyName,

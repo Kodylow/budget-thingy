@@ -452,6 +452,44 @@ export const ReportingDetailKind = {
   team: 'team',
 } as const;
 
+export type ReportingDetailBudgetTrackingPointsItem = {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  date: string;
+  /** @nullable */
+  spendUsd: number | null;
+};
+
+export type ReportingDetailBudgetTracking = {
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  periodStart: string | null;
+  /**
+     * Inclusive allocation-period end date.
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  periodEnd: string | null;
+  periodLabel: string;
+  /** @nullable */
+  asOf: string | null;
+  /** @nullable */
+  allocationUsd: number | null;
+  /** @nullable */
+  spendUsd: number | null;
+  /** @nullable */
+  remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  scopeComplete: boolean;
+  usageComplete: boolean;
+  benchmarkEligible: boolean;
+  /** @nullable */
+  qualification: string | null;
+  points: ReportingDetailBudgetTrackingPointsItem[];
+};
+
 export type ReportingDetailSourceGroupsItem = {
   groupId: string;
   workspaceId: string;
@@ -466,6 +504,7 @@ export interface ReportingDetail {
   id?: string;
   /** Canonical pool name; present when kind is team. */
   name?: string;
+  budgetTracking?: ReportingDetailBudgetTracking;
   headline: ReportingDetailHeadline;
   groups: ReportingDetailGroup[];
   /** Deduplicated authorized physical role groups represented by the canonical group rows; contains no financial fields. */
@@ -2351,6 +2390,8 @@ export const TeamBudgetSpendScope = {
 } as const;
 
 export interface TeamBudget {
+  /** Canonical qualified pool ID used by team reporting routes. */
+  poolId: string;
   teamName: string;
   /** @nullable */
   amountUsd: number | null;
@@ -3400,6 +3441,10 @@ startDate?: StartDateParameter;
  * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
  */
 endDate?: EndDateParameter;
+/**
+ * Include allocation-period spend tracking and cumulative daily points.
+ */
+includeBudgetTracking?: boolean;
 };
 
 export type GetGroupDetailParams = {

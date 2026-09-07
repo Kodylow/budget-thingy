@@ -1,138 +1,46 @@
-import React from 'react';
+import { useState } from 'react';
 import { useAuthContext } from '@/components/auth-context';
 import { useRange } from '@/components/range-context';
 import {
   useGetDashboard,
   useGetBillingCycleComparison,
   useGetTeamsBudgets,
-  useListSpendProjects,
-  type TeamBudget,
+  useGetBudgetTeamReport,
+  getGetBudgetTeamReportQueryKey,
 } from '@workspace/api-client-react';
-import { formatUsd, formatInt } from './home-components/format';
+import { formatInt } from './home-components/format';
 import { SpendStoryChart, MonthMiniBars } from './home-components/spend-story-chart';
 import {
-  aggregatePersonalLimits,
   aggregatePersonalWorkspaceSpend,
   personalProjectCatalogMetrics,
-  personalLimitBudgetRows,
 } from './home-components/budget-logic';
-import { MyBudgetSummary } from './home-components/my-budget-summary';
+import {
+  PersonalBudgetPanel,
+  TeamBudgetPanel,
+  selectDefaultTeam,
+  selectDefaultWorkspace,
+  type CanonicalTeamBudget,
+  type TeamBudgetTracking,
+} from './home-components/budget-panels';
+import { BudgetTrajectory } from './home-components/budget-trajectory';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  BudgetMeter,
-  DataTable,
-  EmptyState,
-  MetricCard,
-  type JourneyTableColumn,
-} from '@/components/journey-primitives';
 import { Link, useSearch } from 'wouter';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
 import { dashboardTotalSpend } from '@/lib/spend-presentation';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
 import {
-  Activity,
-  ArrowDownRight,
-  ArrowRight,
-  ArrowUpRight,
   BarChart3,
-  Box,
-  DollarSign,
   Flame,
   RefreshCw,
-  Target,
   TrendingUp,
   Users,
 } from 'lucide-react';
 
-// Presentation ported from usage-dashboard home.tsx; API data is adapted only at this page boundary.
-function HeroTile({
-  label,
-  children,
-  sub,
-}: {
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-  sub?: React.ReactNode;
-  delay?: number;
-}) {
-  return (
-    <MetricCard label={label} value={children} detail={sub} />
-  );
-}
-
-function DeltaBadge({ pct }: { pct: number | null | undefined }) {
-  if (pct == null) return <span className="text-xs text-muted-foreground font-mono">—</span>;
-  const up = pct > 0;
-  return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-mono font-medium ${up ? 'text-destructive' : 'text-success'}`}>
-      {up ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-      {Math.abs(pct).toFixed(1)}%
-    </span>
-  );
-}
-
-function BreakdownPopover({
-  label,
-  children,
-  content,
-}: {
-  label: string;
-  children: React.ReactNode;
-  content: React.ReactNode;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label={label}
-          className="rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        >
-          {children}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(92vw,26rem)] p-0">
-        {content}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function TeamBudgetDetails({ teams }: { teams: TeamBudget[] }) {
-  return (
-    <>
-      <div className="border-b border-border p-4">
-        <p className="font-semibold">Funding teams</p>
-        <p className="mt-1 text-xs text-muted-foreground">{teams[0]?.spendPeriodLabel ?? 'Full term'} · Annual allocation</p>
-      </div>
-      <div className="max-h-72 overflow-y-auto p-2">
-        {teams.map((team) => (
-          <div key={team.teamName} className="border-t border-border px-2 py-3 first:border-t-0">
-            <p className="truncate text-xs font-medium">{team.teamName}</p>
-            <dl className="mt-2 grid grid-cols-2 gap-3 text-xs">
-              <div>
-                <dt className="text-muted-foreground">Spend</dt>
-                <dd className="mt-0.5 font-mono">{formatUsd(team.spendUsd)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Annual budget</dt>
-                <dd className="mt-0.5 font-mono">{formatUsd(team.amountUsd)}</dd>
-              </div>
-            </dl>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
 export default function Home() {
   const searchString = useSearch();
-  const { user } = useAuthContext();
+  const { user, authorizationKey } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const billingCyclesQuery = useGetBillingCycleComparison();
 
@@ -143,25 +51,9 @@ export default function Home() {
     endDate,
   });
   const { data: myDashboard, isLoading: myLoading } = myDashboardQuery;
-  const { data: myProjects } = useListSpendProjects({
-    viewScope: 'my',
-    rangeType,
-    startDate,
-    endDate,
-    pageSize: 5,
-    sort: 'spend_desc',
-  });
 
   const teamBudgetsQuery = useGetTeamsBudgets({ scope: 'own', period: 'full-term' });
-  const teamBudgets = teamBudgetsQuery.data?.budgets ?? [];
-  const knownTeamSpend = teamBudgets.filter((team) => team.spendUsd != null);
-  const knownTeamBudgets = teamBudgets.filter((team) => team.amountUsd != null);
-  const teamSpendUsd = knownTeamSpend.length
-    ? knownTeamSpend.reduce((sum, team) => sum + team.spendUsd!, 0)
-    : null;
-  const teamBudgetUsd = knownTeamBudgets.length
-    ? knownTeamBudgets.reduce((sum, team) => sum + team.amountUsd!, 0)
-    : null;
+  const teamBudgets = (teamBudgetsQuery.data?.budgets ?? []) as CanonicalTeamBudget[];
 
   const mySpendUsd = dashboardTotalSpend(myDashboard);
   const changePct = myDashboard?.insights?.changePercent;
@@ -172,17 +64,48 @@ export default function Home() {
   const personalProjectCatalog = personalProjectCatalogMetrics(myDashboard?.personalProjectCatalog);
   const projectCount = personalProjectCatalog.projectCount;
   const personalLimits = myDashboard?.personalLimits ?? [];
-  const personalLimitAggregate = aggregatePersonalLimits(personalLimits);
-  const budgetRows = personalLimitBudgetRows(personalLimits);
+  const [selection, setSelection] = useState(() => ({
+    authorizationKey,
+    workspaceId: null as string | null,
+    poolId: null as string | null,
+  }));
+  const selectionIsCurrent = selection.authorizationKey === authorizationKey;
+  const selectedWorkspaceId = selectionIsCurrent &&
+    personalLimits.some((limit) => limit.workspaceId === selection.workspaceId)
+    ? selection.workspaceId
+    : selectDefaultWorkspace(personalLimits);
+  const selectedPoolId = selectionIsCurrent &&
+    teamBudgets.some((team) => team.poolId === selection.poolId)
+    ? selection.poolId
+    : selectDefaultTeam(teamBudgets);
+  const selectWorkspace = (workspaceId: string) => setSelection((current) => ({
+    authorizationKey,
+    workspaceId,
+    poolId: current.authorizationKey === authorizationKey ? current.poolId : null,
+  }));
+  const selectPool = (poolId: string) => setSelection((current) => ({
+    authorizationKey,
+    workspaceId: current.authorizationKey === authorizationKey ? current.workspaceId : null,
+    poolId,
+  }));
+  const teamReportQuery = useGetBudgetTeamReport(selectedPoolId ?? '', {
+    rangeType: 'full-term',
+    includeBudgetTracking: true,
+  }, {
+    query: {
+      enabled: Boolean(selectedPoolId),
+      queryKey: getGetBudgetTeamReportQueryKey(selectedPoolId ?? '', {
+        rangeType: 'full-term',
+        includeBudgetTracking: true,
+      }),
+    },
+  });
+  const budgetTracking = ((teamReportQuery.data as (typeof teamReportQuery.data & { budgetTracking?: TeamBudgetTracking }) | undefined)?.budgetTracking ?? null);
   const greeting = new Date().getHours() < 12
     ? 'Good morning'
     : new Date().getHours() < 18
       ? 'Good afternoon'
       : 'Good evening';
-  const projectColumns: JourneyTableColumn[] = [
-    { label: 'Project', className: 'min-w-[220px]' },
-    { label: 'Spend', className: 'text-right' },
-  ];
   const billingCycles = billingCyclesQuery.data?.cycles ?? [];
   const currentCycle = billingCycles.find((cycle) => cycle.key === 'current');
   const billingPeriodLabel = currentCycle
@@ -243,55 +166,26 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="rounded-md border bg-card p-4 shadow-none">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-primary">Personal and team</p>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Reporting period <span className="ml-1 font-medium text-foreground">{myDashboard.period.label}</span>
-            </div>
-          </div>
-        </div>
-
-        <div aria-label="Primary spend and budget metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <HeroTile
-            label="My Spend"
-            icon={DollarSign}
-            sub={`Agent · This billing cycle${personalLimitAggregate.consumptionComplete ? '' : ' · Known subtotal'}`}
-          >
-            {personalLimitAggregate.observedConsumptionCount
-              ? formatUsd(personalLimitAggregate.knownConsumptionUsd)
-              : 'Unavailable'}
-          </HeroTile>
-          <MyBudgetSummary limits={personalLimits} />
-
-          <HeroTile
-            label="My Team Spend"
-            icon={Users}
-            sub={`${teamBudgets[0]?.spendPeriodLabel ?? 'Full term'}${teamBudgets.some((team) => team.spendScope === 'partial') ? ' · Partial authorized scope' : ''}${knownTeamSpend.length < teamBudgets.length ? ' · Known subtotal' : ''}`}
-          >
-            {teamBudgets.length > 0
-              ? <BreakdownPopover label="Show funding team spend" content={<TeamBudgetDetails teams={teamBudgets} />}>
-                  {formatUsd(teamSpendUsd)}
-                </BreakdownPopover>
-              : formatUsd(teamSpendUsd)}
-          </HeroTile>
-
-          <HeroTile
-            label="Team Budget"
-            icon={Target}
-            sub={<Link href={reportingNavigationHref('/my-team?viewScope=managed', searchString)} className="inline-flex items-center gap-1 text-primary hover:underline">
-              {knownTeamBudgets.length < teamBudgets.length && 'Known subtotal · '}
-              Annual allocation · My Team <ArrowRight className="h-3 w-3" />
-            </Link>}
-          >
-            {teamBudgets.length > 0
-              ? <BreakdownPopover label="Show funding team budgets" content={<TeamBudgetDetails teams={teamBudgets} />}>
-                  {formatUsd(teamBudgetUsd)}
-                </BreakdownPopover>
-              : formatUsd(teamBudgetUsd)}
-          </HeroTile>
+        <div aria-label="Personal and team budgets" className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <PersonalBudgetPanel
+            limits={personalLimits}
+            selectedId={selectedWorkspaceId}
+            onSelect={selectWorkspace}
+            billingPeriodLabel={billingPeriodLabel}
+          />
+          <TeamBudgetPanel
+            teams={teamBudgets}
+            selectedPoolId={selectedPoolId}
+            onSelect={selectPool}
+            tracking={budgetTracking}
+            loading={teamBudgetsQuery.isLoading || teamReportQuery.isLoading}
+            error={teamBudgetsQuery.isError || teamReportQuery.isError}
+            onRetry={() => {
+              void teamBudgetsQuery.refetch();
+              if (selectedPoolId) void teamReportQuery.refetch();
+            }}
+            search={searchString}
+          />
         </div>
         {personalSpendAggregate.complete && !personalSpendAggregate.reconcilesToCanonical && (
           <AdminDataQualityNote title="My Spend">
@@ -319,7 +213,18 @@ export default function Home() {
         </AdminDataQualityNote>
       )}
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Billing-cycle spend comparisons">
+      <BudgetTrajectory
+        teamName={teamBudgets.find((team) => team.poolId === selectedPoolId)?.teamName ?? null}
+        tracking={budgetTracking}
+        loading={teamBudgetsQuery.isLoading || teamReportQuery.isLoading}
+        error={teamBudgetsQuery.isError || teamReportQuery.isError}
+        onRetry={() => {
+          void teamBudgetsQuery.refetch();
+          if (selectedPoolId) void teamReportQuery.refetch();
+        }}
+      />
+
+      <section id="monthly-context" className="grid scroll-mt-6 grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Billing-cycle spend comparisons">
         <div className="lg:col-span-2">
           <h2 className="text-lg font-semibold">My Spend Story</h2>
           <p className="mt-1 text-sm text-muted-foreground">Three billing cycles aligned by day, independent of the reporting range</p>
@@ -382,29 +287,7 @@ export default function Home() {
         </Card>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <Card className="rounded-md shadow-none">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Target className="h-4 w-4 text-primary" /> Budget health
-              </CardTitle>
-              <CardDescription>Current-cycle workspace limit consumption</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {budgetRows.length > 0 ? budgetRows.slice(0, 4).map((row) => (
-                <BudgetMeter
-                  key={row.id}
-                  label={row.workspaceName || row.workspaceId}
-                  actualUsd={row.currentCycleAgentSpendUsd}
-                  budgetUsd={row.allocationUsd}
-                  incomplete={row.limitState === 'unavailable' || row.allocationUsd == null}
-                  compact
-                />
-              )) : (
-                <p className="text-sm text-muted-foreground">Current-cycle limits unavailable.</p>
-              )}
-            </CardContent>
-          </Card>
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card className="rounded-md shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -442,35 +325,6 @@ export default function Home() {
             )}
             </CardContent>
           </Card>
-      </section>
-
-      <section>
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Box className="w-4 h-4 text-primary" /> My Replit World
-            </CardTitle>
-            <CardDescription>Highest-spend projects in the selected period</CardDescription>
-          </CardHeader>
-          <CardContent>
-          {myProjects?.rows?.length ? (
-            <DataTable
-              columns={projectColumns}
-              caption="Highest-spend projects"
-              rows={myProjects.rows.slice(0, 4).map((project) => [
-                <span className="block truncate font-medium">{project.name || 'Untitled project'}</span>,
-                <span className="block whitespace-nowrap text-right font-mono">{formatUsd(project.spendUsd)}</span>,
-              ])}
-            />
-          ) : (
-            <EmptyState
-              title="No project spend"
-              description="No projects with spend were found in this period."
-            />
-          )}
-          </CardContent>
-        </Card>
-
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-1 text-xs text-muted-foreground">

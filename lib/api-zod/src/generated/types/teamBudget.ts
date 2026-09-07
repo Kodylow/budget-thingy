@@ -8,6 +8,8 @@
 import type { TeamBudgetSpendScope } from './teamBudgetSpendScope';
 
 export interface TeamBudget {
+  /** Canonical qualified pool ID used by team reporting routes. */
+  poolId: string;
   teamName: string;
   /** @nullable */
   amountUsd: number | null;

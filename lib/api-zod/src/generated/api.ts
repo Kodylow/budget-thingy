@@ -334,6 +334,9 @@ export const GetReportingDetailHeader = zod.object({
   "X-Preview-As": zod.string().regex(getReportingDetailHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
 })
 
+export const getReportingDetailResponseBudgetTrackingPeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getReportingDetailResponseBudgetTrackingPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getReportingDetailResponseBudgetTrackingPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getReportingDetailResponseHeadlineMemberCountMin = 0;
 
 export const getReportingDetailResponseGroupsItemMemberCountMin = 0;
@@ -349,6 +352,24 @@ export const GetReportingDetailResponse = zod.object({
   "kind": zod.enum(['group', 'family', 'team']),
   "id": zod.string().optional().describe('Canonical qualified pool ID; present when kind is team.'),
   "name": zod.string().optional().describe('Canonical pool name; present when kind is team.'),
+  "budgetTracking": zod.object({
+  "periodStart": zod.string().regex(getReportingDetailResponseBudgetTrackingPeriodStartRegExp).nullable(),
+  "periodEnd": zod.string().regex(getReportingDetailResponseBudgetTrackingPeriodEndRegExp).nullable().describe('Inclusive allocation-period end date.'),
+  "periodLabel": zod.string(),
+  "asOf": zod.string().nullable(),
+  "allocationUsd": zod.number().nullable(),
+  "spendUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "scopeComplete": zod.boolean(),
+  "usageComplete": zod.boolean(),
+  "benchmarkEligible": zod.boolean(),
+  "qualification": zod.string().nullable(),
+  "points": zod.array(zod.object({
+  "date": zod.string().regex(getReportingDetailResponseBudgetTrackingPointsItemDateRegExp),
+  "spendUsd": zod.number().nullable()
+}))
+}).optional(),
   "headline": zod.object({
   "familyKey": zod.string().nullable(),
   "familyName": zod.string(),
@@ -452,10 +473,13 @@ export const GetBudgetTeamReportParams = zod.object({
   "poolId": zod.coerce.string().min(1).describe('Canonical qualified pool ID from the authorized pools table (pool:team:...).')
 })
 
+export const getBudgetTeamReportQueryIncludeBudgetTrackingDefault = false;
+
 export const GetBudgetTeamReportQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
-  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
+  "includeBudgetTracking": zod.coerce.boolean().default(getBudgetTeamReportQueryIncludeBudgetTrackingDefault).describe('Include allocation-period spend tracking and cumulative daily points.')
 })
 
 export const getBudgetTeamReportHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
@@ -465,6 +489,9 @@ export const GetBudgetTeamReportHeader = zod.object({
   "X-Preview-As": zod.string().regex(getBudgetTeamReportHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
 })
 
+export const getBudgetTeamReportResponseBudgetTrackingPeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getBudgetTeamReportResponseBudgetTrackingPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getBudgetTeamReportResponseBudgetTrackingPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getBudgetTeamReportResponseHeadlineMemberCountMin = 0;
 
 export const getBudgetTeamReportResponseGroupsItemMemberCountMin = 0;
@@ -480,6 +507,24 @@ export const GetBudgetTeamReportResponse = zod.object({
   "kind": zod.enum(['group', 'family', 'team']),
   "id": zod.string().optional().describe('Canonical qualified pool ID; present when kind is team.'),
   "name": zod.string().optional().describe('Canonical pool name; present when kind is team.'),
+  "budgetTracking": zod.object({
+  "periodStart": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingPeriodStartRegExp).nullable(),
+  "periodEnd": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingPeriodEndRegExp).nullable().describe('Inclusive allocation-period end date.'),
+  "periodLabel": zod.string(),
+  "asOf": zod.string().nullable(),
+  "allocationUsd": zod.number().nullable(),
+  "spendUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "scopeComplete": zod.boolean(),
+  "usageComplete": zod.boolean(),
+  "benchmarkEligible": zod.boolean(),
+  "qualification": zod.string().nullable(),
+  "points": zod.array(zod.object({
+  "date": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingPointsItemDateRegExp),
+  "spendUsd": zod.number().nullable()
+}))
+}).optional(),
   "headline": zod.object({
   "familyKey": zod.string().nullable(),
   "familyName": zod.string(),
@@ -2526,6 +2571,7 @@ export const GetTeamsBudgetsHeader = zod.object({
 
 export const GetTeamsBudgetsResponse = zod.object({
   "budgets": zod.array(zod.object({
+  "poolId": zod.string().describe('Canonical qualified pool ID used by team reporting routes.'),
   "teamName": zod.string(),
   "amountUsd": zod.number().nullable(),
   "spendUsd": zod.number().nullable().describe('All-service spend in spendPeriodLabel over only the caller-authorized portion of this funding team.'),

@@ -191,6 +191,8 @@ export * from './projectStaleButSpendingParameter';
 export * from './projectUsageAvailability';
 export * from './rangeTypeParameter';
 export * from './reportingDetail';
+export * from './reportingDetailBudgetTracking';
+export * from './reportingDetailBudgetTrackingPointsItem';
 export * from './reportingDetailGroup';
 export * from './reportingDetailHeadline';
 export * from './reportingDetailKind';

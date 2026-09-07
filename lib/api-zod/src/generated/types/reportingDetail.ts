@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AccountingMetadata } from './accountingMetadata';
+import type { ReportingDetailBudgetTracking } from './reportingDetailBudgetTracking';
 import type { ReportingDetailGroup } from './reportingDetailGroup';
 import type { ReportingDetailHeadline } from './reportingDetailHeadline';
 import type { ReportingDetailKind } from './reportingDetailKind';
@@ -19,6 +20,7 @@ export interface ReportingDetail {
   id?: string;
   /** Canonical pool name; present when kind is team. */
   name?: string;
+  budgetTracking?: ReportingDetailBudgetTracking;
   headline: ReportingDetailHeadline;
   groups: ReportingDetailGroup[];
   /** Deduplicated authorized physical role groups represented by the canonical group rows; contains no financial fields. */

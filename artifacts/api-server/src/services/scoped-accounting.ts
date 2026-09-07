@@ -480,6 +480,11 @@ export function resolveCanonicalPoolAccess(
   };
 }
 
+/** Stable qualified identity shared by canonical team-pool producers and selectors. */
+export function canonicalTeamPoolId(teamName: string): string {
+  return `pool:team:${encodeURIComponent(teamName)}`;
+}
+
 export function qualifiedUserSpendByWorkspace(
   daily: ReadonlyMap<string, SnapshotUsageRollup>,
   authz: Authorization,
@@ -952,7 +957,7 @@ async function computeScopedAccounting(
         .map((source) => source.id);
     }))].sort();
     poolRows.push({
-      id: `pool:team:${encodeURIComponent(teamName)}`,
+      id: canonicalTeamPoolId(teamName),
       kind: "pool", name: teamName, workspaceId: workspaceIds.size === 1 ? [...workspaceIds][0]! : null,
       workspaceName: workspaceIds.size === 1
         ? dir.workspaces.get([...workspaceIds][0]!)?.name ?? null
@@ -1253,7 +1258,7 @@ async function computeScopedAccounting(
   };
   return {
     authz: effectiveAuth, dir, usage, daily, poolRows, groupRows, peopleRows, projectRows,
-    configuredAccount, fullMergePlan, visibleByCanonical,
+    configuredAccount, fullTeamByGroup, fullMergePlan, visibleByCanonical,
     personalLimits: [...usage.workspaceIds].map((workspaceId) => ({
       workspaceId,
       ...resolveStoredMemberLimit(dir, workspaceId, effectiveAuth.userId),

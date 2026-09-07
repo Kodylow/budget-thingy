@@ -296,6 +296,12 @@ paths:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
         - $ref: "#/components/parameters/EndDate"
+        - name: includeBudgetTracking
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include allocation-period spend tracking and cumulative daily points.
       responses:
         "200":
           description: Compact authorized budget team report
@@ -3086,6 +3092,33 @@ components:
         name:
           type: string
           description: Canonical pool name; present when kind is team.
+        budgetTracking:
+          type: object
+          required: [periodStart, periodEnd, periodLabel, asOf, allocationUsd, spendUsd, remainingUsd, percentUsed, scopeComplete, usageComplete, benchmarkEligible, qualification, points]
+          properties:
+            periodStart: { type: ["string", "null"], pattern: '^\d{4}-\d{2}-\d{2}$' }
+            periodEnd:
+              type: ["string", "null"]
+              pattern: '^\d{4}-\d{2}-\d{2}$'
+              description: Inclusive allocation-period end date.
+            periodLabel: { type: string }
+            asOf: { type: ["string", "null"] }
+            allocationUsd: { type: ["number", "null"] }
+            spendUsd: { type: ["number", "null"] }
+            remainingUsd: { type: ["number", "null"] }
+            percentUsed: { type: ["number", "null"] }
+            scopeComplete: { type: boolean }
+            usageComplete: { type: boolean }
+            benchmarkEligible: { type: boolean }
+            qualification: { type: ["string", "null"] }
+            points:
+              type: array
+              items:
+                type: object
+                required: [date, spendUsd]
+                properties:
+                  date: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+                  spendUsd: { type: ["number", "null"] }
         headline:
           $ref: "#/components/schemas/ReportingDetailHeadline"
         groups:
@@ -4907,8 +4940,11 @@ components:
           format: date-time
     TeamBudget:
       type: object
-      required: [teamName, amountUsd, spendUsd, spendPeriodLabel, spendScope, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentRemainingUsd, agentPercentUsed, agentBlocked, workspaceIds]
+      required: [poolId, teamName, amountUsd, spendUsd, spendPeriodLabel, spendScope, monthlyAgentLimitUsd, cycleAgentSpendUsd, agentRemainingUsd, agentPercentUsed, agentBlocked, workspaceIds]
       properties:
+        poolId:
+          type: string
+          description: Canonical qualified pool ID used by team reporting routes.
         teamName:
           type: string
         amountUsd:

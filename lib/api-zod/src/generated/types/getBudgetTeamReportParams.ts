@@ -22,4 +22,8 @@ startDate?: StartDateParameter;
  * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
  */
 endDate?: EndDateParameter;
+/**
+ * Include allocation-period spend tracking and cumulative daily points.
+ */
+includeBudgetTracking?: boolean;
 };
