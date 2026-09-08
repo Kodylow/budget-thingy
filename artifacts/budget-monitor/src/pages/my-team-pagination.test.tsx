@@ -141,6 +141,51 @@ describe.each([
 });
 
 describe('My Team table refresh errors', () => {
+  it('resets workspace expansion on page, period and authorization changes', () => {
+    mocks.people.mockImplementation((params: any) => result(peopleRows(params.page).map(row => ({
+      ...row,
+      workspaces: ['One', 'Two'].map(name => ({
+        workspaceId: name, workspaceName: name, spendUsd: 0,
+        currentCycleAgentSpendUsd: 0, allocationUsd: null,
+        currentCycleRemainingUsd: null, limitState: 'no_limit',
+      })),
+    }))));
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    const render = (rangeType = 'full-term', authorizationKey = 'auth-one', startDate?: string) => {
+      act(() => root.render(<PaginatedPeopleTable params={{ rangeType, viewScope: 'managed', startDate }} rangeType={rangeType} authorizationKey={authorizationKey} />));
+    };
+    const expand = () => act(() => button(container, '2 workspaces').click());
+    const expectCollapsed = () => expect(container.querySelector('[aria-expanded="true"]')).toBeNull();
+    try {
+      render();
+      expand();
+      act(() => button(container, 'View all').click());
+      expect(container.querySelector('[aria-expanded="true"]')).not.toBeNull();
+      act(() => button(container, 'Next people').click());
+      expectCollapsed();
+      expand();
+      act(() => button(container, 'Previous people').click());
+      expectCollapsed();
+      expand();
+      render('billing');
+      expectCollapsed();
+      expand();
+      render('billing', 'auth-two');
+      expectCollapsed();
+      expand();
+      render('billing', 'auth-two', '2026-08-01');
+      expectCollapsed();
+      act(() => button(container, 'Next people').click());
+      expand();
+      act(() => button(container, 'Show less').click());
+      expectCollapsed();
+      expect(container.textContent).toContain('Person 1-0');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
   it('keeps cached rows for transient failures and hides them for blocking failures', async () => {
     let rendered = renderPeople({ ...result(peopleRows(1)), error: { status: 503 }, isError: true });
     expect(rendered.container.textContent).toContain('Person 1-0');

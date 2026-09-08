@@ -1,11 +1,16 @@
 // @vitest-environment happy-dom
-import React from 'react';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SpendPersonWorkspace, SpendTableRow } from '@workspace/api-client-react';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PeopleTable, ProjectsTable, resolveLimitStatus } from './my-team';
+import { PersonWorkspaceDetails } from '@/components/person-workspace-details';
 
-beforeAll(() => vi.stubGlobal('React', React));
+beforeAll(() => {
+  vi.stubGlobal('React', React);
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+});
 afterAll(() => vi.unstubAllGlobals());
 
 const workspace: SpendPersonWorkspace = {
@@ -35,33 +40,28 @@ const person: SpendTableRow = {
 describe('unique people presentation', () => {
   it('shows one member with combined spend and separate workspace limits', () => {
     const markup = renderToStaticMarkup(<PeopleTable rows={[person]} rangeType="full-term" />);
-    expect(markup.match(/Sample Member/g)).toHaveLength(1);
+    expect(markup).toContain('Sample Member');
     expect(markup).toContain('$35.00');
     expect(markup).toContain('$27.00');
     expect(markup).toContain('$8.00');
     expect(markup).not.toContain('$40.00');
-    expect(markup).toContain('Billing-cycle Agent');
-    expect(markup).toContain('$20.00');
+    expect(markup).not.toContain('Billing-cycle Agent');
     expect(markup).toContain('2 workspaces');
-    expect(markup).toContain('Workspace One');
-    expect(markup).toContain('Workspace Two');
-    expect(markup).toContain('$100.00');
-    expect(markup).toContain('$200.00');
+    expect(markup).not.toContain('Workspace One');
+    expect(markup).not.toContain('$100.00');
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('Per workspace');
     expect(markup).not.toContain('$300.00');
     expect(resolveLimitStatus(person)).toBeNull();
   });
 
   it('retains individual workspace observation failures and unlimited limits', () => {
-    const markup = renderToStaticMarkup(<PeopleTable rangeType="billing" rows={[{
-      ...person, currentCycleAgentSpendUsd: null,
-      workspaces: [workspace, {
+    const markup = renderToStaticMarkup(<PersonWorkspaceDetails workspaces={[workspace, {
         ...workspace, workspaceId: 'two', workspaceName: 'Workspace Two',
         allocationUsd: null, limitState: 'no_limit',
         currentCycleAgentSpendUsd: null, currentCycleRemainingUsd: null,
         limitObservationStatus: 'failed',
-      }],
-    }]} />);
+       }]} />);
     expect(markup).toContain('No limit');
     expect(markup).toContain('Observation failed');
     expect(markup).not.toContain('Within budget');
@@ -69,13 +69,10 @@ describe('unique people presentation', () => {
   });
 
   it('keeps known workspace limits quiet during passive refresh failures', () => {
-    const markup = renderToStaticMarkup(<PeopleTable rangeType="billing" rows={[{
-      ...person,
-      workspaces: [
+    const markup = renderToStaticMarkup(<PersonWorkspaceDetails workspaces={[
         { ...workspace, limitObservationStatus: 'refreshing' },
         { ...workspace, workspaceId: 'two', allocationUsd: 200, limitObservationStatus: 'failed' },
-      ],
-    }]} />);
+      ]} />);
     expect(markup).toContain('$100.00');
     expect(markup).toContain('$200.00');
     expect(markup).not.toContain('Refreshing');
@@ -151,7 +148,9 @@ describe('unique people presentation', () => {
     );
     const cells = body.querySelectorAll('tbody > tr > td');
     expect([...cells].slice(1, 4).map(cell => cell.textContent)).toEqual(['$10.00', '$3.00', '$7.00']);
-    expect(cells[0].textContent).toContain('Unavailable');
+    expect(cells[0].textContent).not.toContain('Unavailable');
+    const detail = renderToStaticMarkup(<PersonWorkspaceDetails workspaces={row.workspaces} />);
+    expect(detail).toContain('Unavailable');
     expect(cells[4].textContent).toBe('Per workspace');
   });
 
@@ -174,5 +173,83 @@ describe('unique people presentation', () => {
       .toEqual(['App / project', 'Total', 'Agent', 'Cloud Services']);
     expect([...body.querySelectorAll('tbody > tr > td')].slice(1).map(cell => cell.textContent))
       .toEqual(['$35.00', '$27.00', '$8.00']);
+  });
+});
+
+describe('member workspace disclosure', () => {
+  it('inserts a full-width companion row, preserves summary values and focus, and collapses cleanly', () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      act(() => root.render(<PeopleTable rows={[person, { ...person, id: 'other', userId: 'other', name: 'Other Member' }]} rangeType="full-term" />));
+      const table = container.querySelector('table')!;
+      const summaryRows = () => table.querySelectorAll<HTMLTableRowElement>(':scope > tbody > tr');
+      const summary = summaryRows()[0];
+      const originalCells = [...summary.cells].map(cell => cell.textContent);
+      const link = summary.querySelector('a')!.getAttribute('href');
+      const toggle = summary.querySelector('button')!;
+      toggle.focus();
+      act(() => toggle.click());
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(document.activeElement).toBe(toggle);
+      expect([...summary.cells].map(cell => cell.textContent)).toEqual(originalCells);
+      expect(summary.querySelector('a')!.getAttribute('href')).toBe(link);
+      expect(summary.querySelector('table')).toBeNull();
+      expect(summaryRows()).toHaveLength(3);
+      const details = summaryRows()[1];
+      const detailCells = details.querySelectorAll<HTMLTableCellElement>(':scope > td');
+      expect(detailCells).toHaveLength(1);
+      expect(detailCells[0].colSpan).toBe(5);
+      expect(details.querySelector('div')!.id).toBe(toggle.getAttribute('aria-controls'));
+      expect([...details.querySelectorAll('thead th')].map(cell => cell.textContent)).toEqual([
+        'Workspace', 'Selected-period spend', 'Billing-cycle Agent', 'Monthly Agent limit', 'Billing-cycle remaining',
+      ]);
+      expect([...details.querySelectorAll('tbody tr')].map(row => [...row.querySelectorAll('th,td')].map(cell => cell.textContent))).toEqual([
+        ['Workspace One', '$10.00', '$20.00', '$100.00Source: explicit', '$80.00'],
+        ['Workspace Two', '$25.00', '$20.00', '$200.00Source: explicit', '$180.00'],
+      ]);
+      expect(summaryRows()[2].querySelector('button')!.getAttribute('aria-expanded')).toBe('false');
+      act(() => toggle.click());
+      expect(summaryRows()).toHaveLength(2);
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(document.activeElement).toBe(toggle);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
+  it('keys expansion by member identity rather than row position', () => {
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    const other = { ...person, id: 'other', userId: 'other', name: 'Other Member' };
+    try {
+      act(() => root.render(<PeopleTable rows={[person, other]} rangeType="billing" />));
+      act(() => container.querySelector('button')!.click());
+      act(() => root.render(<PeopleTable rows={[other, person]} rangeType="billing" />));
+      expect([...container.querySelectorAll('button')].map(button => button.getAttribute('aria-expanded'))).toEqual(['false', 'true']);
+      act(() => root.render(<PeopleTable rows={[other]} rangeType="billing" />));
+      expect(container.querySelector('button')!.getAttribute('aria-expanded')).toBe('false');
+      expect(container.querySelectorAll('table')).toHaveLength(1);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  it('keeps zero, unknown usage, unlimited limits and source context distinct in aligned rows', () => {
+    const markup = renderToStaticMarkup(<PersonWorkspaceDetails workspaces={[
+      { ...workspace, spendUsd: 0, allocationUsd: 0, currentCycleAgentSpendUsd: 0, currentCycleRemainingUsd: 0, limitState: 'inherited' },
+      { ...workspace, workspaceId: 'unknown', usageObserved: false, allocationUsd: null, currentCycleAgentSpendUsd: null, currentCycleRemainingUsd: null, limitState: 'unavailable', limitObservationStatus: 'unavailable' },
+      { ...workspace, workspaceId: 'unlimited', allocationUsd: null, limitState: 'no_limit', currentCycleRemainingUsd: null },
+    ]} />);
+    const body = new DOMParser().parseFromString(markup, 'text/html');
+    const rows = [...body.querySelectorAll('tbody tr')];
+    expect(rows[0].textContent).toContain('$0.00');
+    expect(rows[0].textContent).toContain('Source: inherited');
+    expect(rows[1].textContent).toContain('Observation unavailable');
+    expect(rows[1].textContent).not.toContain('$0.00');
+    expect(rows[2].textContent).toContain('No limit');
+    expect(markup).not.toMatch(/Refreshing|Updating/);
   });
 });

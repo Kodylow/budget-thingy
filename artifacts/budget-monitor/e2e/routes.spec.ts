@@ -1623,6 +1623,75 @@ test('Spend view dropdown and contextual filters preserve deep links and reset p
   expect(observedRequests.some((request) => request.includes('/api/spend/people?') && request.includes('page=1'))).toBe(true);
 });
 
+test('My Team workspace expansion keeps compact summaries on desktop and narrow screens', async ({ page }, testInfo) => {
+  const observedRequests: string[] = [];
+  await mockApi(page, 'account', false, [], observedRequests);
+  await page.route('**/api/spend/people?**', route => {
+    const fixture = spendFixture('people', new URL(route.request().url()));
+    const workspaces = [
+      { workspaceId: 'sample-one', workspaceName: 'Sample · Design Studio', spendUsd: 10, currentCycleAgentSpendUsd: 20, allocationUsd: 100, currentCycleRemainingUsd: 80, limitState: 'explicit', limitObservationStatus: 'complete' },
+      { workspaceId: 'sample-two', workspaceName: 'Sample · Research and Development', spendUsd: 0, currentCycleAgentSpendUsd: 0, allocationUsd: 0, currentCycleRemainingUsd: 0, limitState: 'inherited', limitObservationStatus: 'complete' },
+      { workspaceId: 'sample-three', workspaceName: 'Sample · Unlimited Workspace', spendUsd: 25, currentCycleAgentSpendUsd: 15, allocationUsd: null, currentCycleRemainingUsd: null, limitState: 'no_limit', limitObservationStatus: 'complete' },
+      { workspaceId: 'sample-four', workspaceName: 'Sample · Unavailable Workspace', spendUsd: null, usageObserved: false, currentCycleAgentSpendUsd: null, allocationUsd: null, currentCycleRemainingUsd: null, limitState: 'unavailable', limitObservationStatus: 'failed' },
+    ];
+    return json(route, { ...fixture, rows: fixture.rows.map((row, index) => ({
+      ...row, userId: row.id, name: index === 0 ? 'Sample Member' : `Sample Member ${index + 1}`,
+      spendUsd: 35, agentSpendUsd: 27, otherServicesUsd: 8,
+      workspaces: index === 0 ? workspaces : [workspaces[0]],
+      limitState: index === 0 ? 'not_applicable' : 'explicit',
+      limitObservationStatus: 'complete',
+    })) });
+  });
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto('/my-team');
+    const panel = page.locator('[aria-label="Top People table"]');
+    const table = panel.locator('table').first();
+    const rows = table.locator(':scope > tbody > tr');
+    const summary = rows.first();
+    const disclosure = page.getByRole('button', { name: '4 workspaces for Sample Member', exact: true });
+    await expect(disclosure).toBeVisible();
+    const height = (await summary.boundingBox())!.height;
+    const otherHeight = (await rows.nth(1).boundingBox())!.height;
+    const values = await summary.locator(':scope > td').allTextContents();
+    await disclosure.focus();
+    await page.keyboard.press('Enter');
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    await expect(disclosure).toBeFocused();
+    expect((await summary.boundingBox())!.height).toBe(height);
+    expect((await rows.nth(2).boundingBox())!.height).toBe(otherHeight);
+    expect(await summary.locator(':scope > td').allTextContents()).toEqual(values);
+    const details = rows.nth(1);
+    await expect(details.locator(':scope > td')).toHaveAttribute('colspan', '5');
+    await expect(details.getByRole('columnheader')).toHaveText([
+      'Workspace', 'Selected-period spend', 'Billing-cycle Agent', 'Monthly Agent limit', 'Billing-cycle remaining',
+    ]);
+    await expect(details).toContainText('Source: inherited');
+    await expect(details).toContainText('No limit');
+    await expect(details).toContainText('Observation failed');
+    await expect(details).toContainText('$0.00');
+    await expectNoDocumentOverflow(page);
+    await expect(panel).not.toContainText(/Refreshing|Updating/);
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`member-workspaces-${width}.png`), fullPage: true });
+    // All numeric cells remain unwrapped and reachable inside the scrollable table.
+    expect(await details.locator('tbody td').evaluateAll(cells => cells.every(cell => cell.scrollWidth <= cell.clientWidth))).toBe(true);
+    if (width < 600) {
+      expect(await panel.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+      await panel.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+      await expect(details.getByRole('cell', { name: '$80.00', exact: true })).toBeInViewport();
+      await panel.evaluate(element => { element.scrollLeft = 0; });
+    }
+    await disclosure.focus();
+    await page.keyboard.press('Space');
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    await expect(disclosure).toBeFocused();
+    await expect(rows).toHaveCount(10);
+    expect((await summary.boundingBox())!.height).toBe(height);
+  }
+  expect(observedRequests.every(request => request.startsWith('GET '))).toBe(true);
+});
+
 test('Limits deduplicates overlapping groups, preserves hidden selections, and supports review and retry', async ({ page }) => {
   const limitRequests: LimitRequest[] = [];
   await mockApi(page, 'account', false, [], [], false, limitRequests);

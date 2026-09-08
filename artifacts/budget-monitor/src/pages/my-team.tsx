@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState, Fragment } from 'react';
+import { type ReactNode, useId, useMemo, useState } from 'react';
 import { Link } from 'wouter';
 import { useLocation } from 'wouter';
 import { useSearch } from 'wouter/use-browser-location';
@@ -12,7 +12,7 @@ import {
   type ReportingPeriod,
   type SpendTableRow,
 } from '@workspace/api-client-react';
-import { Activity, ArrowUpRight, DollarSign, RefreshCw, Users } from 'lucide-react';
+import { Activity, ChevronRight, DollarSign, RefreshCw, Users } from 'lucide-react';
 import { useAuthContext } from '@/components/auth-context';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
 import { TrendAreaChart } from '@/components/Charts';
@@ -111,6 +111,8 @@ export function PeopleTable({ rows, rangeType }: {
   const [location] = useLocation();
   const search = useSearch();
   const returnTo = location + search;
+  const detailsId = useId();
+  const [expandedMembers, setExpandedMembers] = useState<Set<string>>(() => new Set());
 
   if (rows.length === 0) {
     return <EmptyState title="No recorded people spend" description="No people with recorded spend were found in this scope and period." />;
@@ -118,6 +120,14 @@ export function PeopleTable({ rows, rangeType }: {
   return (
     <DataTable
       caption="Top people by selected-period spend"
+      rowKeys={rows.map(row => row.userId ?? row.id)}
+      rowDetails={index => {
+        const row = rows[index];
+        const memberKey = row.userId ?? row.id;
+        return expandedMembers.has(memberKey) && (row.workspaces?.length ?? 0) > 1
+          ? <PersonWorkspaceDetails id={`${detailsId}-${encodeURIComponent(memberKey)}`} memberName={row.name} workspaces={row.workspaces!} />
+          : null;
+      }}
       columns={[
         { label: 'Member' },
         { label: 'Total', className: 'text-right' },
@@ -127,6 +137,8 @@ export function PeopleTable({ rows, rangeType }: {
       ]}
       rows={rows.map((row) => {
         const status = rangeType === 'billing' ? resolveLimitStatus(row) : null;
+        const memberKey = row.userId ?? row.id;
+        const isOpen = expandedMembers.has(memberKey);
         return [
           <div key="member" className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{initials(row.name)}</span>
@@ -137,7 +149,24 @@ export function PeopleTable({ rows, rangeType }: {
                   <span className="block whitespace-nowrap font-medium">{row.name}</span>
               )}
               {(row.workspaces?.length ?? 0) > 1
-                ? <PersonWorkspaceDetails workspaces={row.workspaces!} />
+                ? (
+                  <button
+                    type="button"
+                    aria-expanded={isOpen}
+                    aria-controls={isOpen ? `${detailsId}-${encodeURIComponent(memberKey)}` : undefined}
+                    aria-label={`${row.workspaces!.length} workspaces for ${row.name}`}
+                    className="flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => setExpandedMembers(current => {
+                      const next = new Set(current);
+                      if (next.has(memberKey)) next.delete(memberKey);
+                      else next.add(memberKey);
+                      return next;
+                    })}
+                  >
+                    <ChevronRight aria-hidden="true" className={`h-3 w-3 shrink-0 ${isOpen ? 'rotate-90' : ''}`} />
+                    {row.workspaces!.length} workspaces
+                  </button>
+                )
                 : <span className="block whitespace-nowrap text-xs text-muted-foreground">{row.workspaceName || 'Workspace unavailable'}</span>}
             </div>
           </div>,
@@ -205,7 +234,7 @@ export function PaginatedPeopleTable({ params, rangeType, authorizationKey }: { 
         <div className="p-4 text-sm text-muted-foreground text-center">Loading...</div>
       ) : people.data && !isBlockingQueryError(people.error ?? people.failureReason) ? (
         <>
-          <PeopleTable rows={people.data.rows} rangeType={rangeType} />
+          <PeopleTable key={JSON.stringify([params, rangeType, peopleParams.page, authorizationKey])} rows={people.data.rows} rangeType={rangeType} />
           {isExpanded && (
             <div className="flex items-center justify-center gap-3 border-t p-3">
               <Button variant="outline" size="sm" disabled={page === 1 || people.isFetching} onClick={() => setPage(p => p - 1)}>Previous people</Button>

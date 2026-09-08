@@ -42,9 +42,11 @@ export interface DataTableProps {
   rows: ReactNode[][];
   caption?: string;
   rowProps?: (row: ReactNode[], rowIndex: number) => HTMLAttributes<HTMLTableRowElement>;
+  rowKeys?: React.Key[];
+  rowDetails?: (rowIndex: number) => ReactNode;
 }
 
-export function DataTable({ columns, rows, caption, rowProps }: DataTableProps) {
+export function DataTable({ columns, rows, caption, rowProps, rowKeys, rowDetails }: DataTableProps) {
   return (
     <div className="overflow-x-auto rounded-md border">
       <table className="w-full min-w-[600px] text-sm">
@@ -64,14 +66,22 @@ export function DataTable({ columns, rows, caption, rowProps }: DataTableProps) 
         <tbody className="divide-y">
           {rows.map((row, rowIndex) => {
             const props = rowProps?.(row, rowIndex);
+            const details = rowDetails?.(rowIndex);
             return (
-            <tr {...props} key={rowIndex} className={cn('bg-card', props?.className)}>
+            <React.Fragment key={rowKeys?.[rowIndex] ?? rowIndex}>
+            <tr {...props} className={cn('bg-card', props?.className)}>
               {row.map((cell, cellIndex) => (
                 <td key={cellIndex} className={cn('px-4 py-3', columns[cellIndex]?.className)}>
                   {cell}
                 </td>
               ))}
             </tr>
+            {details != null && (
+              <tr className="bg-muted/20">
+                <td colSpan={columns.length} className="p-0">{details}</td>
+              </tr>
+            )}
+            </React.Fragment>
             );
           })}
         </tbody>
