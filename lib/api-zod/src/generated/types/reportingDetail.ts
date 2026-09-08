@@ -13,6 +13,7 @@ import type { ReportingDetailKind } from './reportingDetailKind';
 import type { ReportingDetailMember } from './reportingDetailMember';
 import type { ReportingDetailSourceGroupsItem } from './reportingDetailSourceGroupsItem';
 import type { ReportingPeriod } from './reportingPeriod';
+import type { ReportingTeamHierarchyWorkspace } from './reportingTeamHierarchyWorkspace';
 
 export interface ReportingDetail {
   kind: ReportingDetailKind;
@@ -26,6 +27,10 @@ export interface ReportingDetail {
   /** Deduplicated authorized physical role groups represented by the canonical group rows; contains no financial fields. */
   sourceGroups: ReportingDetailSourceGroupsItem[];
   members: ReportingDetailMember[];
+  /** Canonical workspace and physical-group hierarchy for an authorized team report. */
+  hierarchy?: ReportingTeamHierarchyWorkspace[];
+  /** Team headline spend not located in a workspace hierarchy source. This is separate from headline.unattributedSpendUsd, which is the residual between team spend and exposed member children. */
+  hierarchyUnattributedSpendUsd?: number;
   period: ReportingPeriod;
   metadata: AccountingMetadata;
 }

@@ -3,6 +3,7 @@ import { test, expect } from "vitest";
 import {
   apiRangeType,
   defaultCustomDates,
+  isValidCustomRange,
   toLocalDateInputValue,
 } from './range-selection.ts';
 
@@ -23,4 +24,11 @@ test('full term uses its stable rolling API identity', () => {
   expect(apiRangeType('full-term')).toBe('full-term');
   expect(apiRangeType('billing')).toBe('billing');
   expect(apiRangeType('custom')).toBe('custom');
+});
+
+test('custom ranges commit only as a complete ordered pair during ordinary date editing', () => {
+  expect(isValidCustomRange('', '2026-09-10')).toBe(false);
+  expect(isValidCustomRange('2026-09-12', '2026-09-10')).toBe(false);
+  expect(isValidCustomRange('2026-09-02', '2026-09-10')).toBe(true);
+  expect(isValidCustomRange('2026-02-30', '2026-03-10')).toBe(false);
 });

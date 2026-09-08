@@ -11,6 +11,7 @@ import {
 } from "./lib/auth";
 import { logger } from "./lib/logger";
 import { DEV_VIEW_AS_HEADER, isDevViewEnabled } from "./lib/dev-view";
+import { dataUnavailableLogging } from "./lib/data-unavailable-logging";
 
 const app: Express = express();
 const SAFE_DEV_VIEW_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -43,6 +44,7 @@ function diagnosticEndpoint(url: string | undefined): string {
           previous === "groups" ||
           previous === "clusters" ||
           previous === "workspaces" ||
+          (previous === "projects" && segments[index - 3] === "workspaces") ||
           previous === "admins" ||
           previous === "app-admins" ||
           previous === "alerts" ||
@@ -88,6 +90,7 @@ app.use(
     },
   }),
 );
+app.use(dataUnavailableLogging(diagnosticEndpoint));
 app.use((req, res, next) => {
   const startedAt = process.hrtime.bigint();
   res.once("finish", () => {
@@ -120,7 +123,7 @@ app.use((req, res, next) => {
 
   cors({
     credentials: true,
-    exposedHeaders: ["x-request-id"],
+    exposedHeaders: ["x-request-id", "x-data-unavailable"],
     origin(requestOrigin, callback) {
       callback(null, requestOrigin == null || requestOrigin === origin);
     },

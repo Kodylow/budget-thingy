@@ -1,9 +1,34 @@
 const DAY_MS = 86_400_000;
+export const MAX_CUSTOM_USAGE_DAYS = 400;
 
 export const USAGE_DATA_CUTOFF_ISO = "2026-05-20T00:00:00.000Z";
 export const USAGE_DATA_CUTOFF_MS = Date.parse(USAGE_DATA_CUTOFF_ISO);
 // The confirmed contract is fixed and does not automatically roll forward.
 export const CONTRACT_TERM_END_EXCLUSIVE_ISO = "2027-05-21T00:00:00.000Z";
+export const FIXED_TEAM_BUDGET_PERIOD = Object.freeze({
+  start: USAGE_DATA_CUTOFF_ISO,
+  endExclusive: CONTRACT_TERM_END_EXCLUSIVE_ISO,
+});
+
+export function fixedTeamBudgetPeriodAsOf(now = new Date()) {
+  const today = utcDayStart(now);
+  const start = new Date(FIXED_TEAM_BUDGET_PERIOD.start);
+  const endExclusive = new Date(FIXED_TEAM_BUDGET_PERIOD.endExclusive);
+  const reportingEndExclusive = new Date(Math.min(
+    addUtcDays(today, 1).getTime(),
+    endExclusive.getTime(),
+  ));
+  return {
+    start: start.toISOString(),
+    endExclusive: endExclusive.toISOString(),
+    periodStart: start.toISOString().slice(0, 10),
+    periodEnd: addUtcDays(endExclusive, -1).toISOString().slice(0, 10),
+    asOf: reportingEndExclusive > start
+      ? addUtcDays(reportingEndExclusive, -1).toISOString().slice(0, 10)
+      : null,
+    reportingEndExclusive: reportingEndExclusive.toISOString(),
+  };
+}
 
 export type UsageWindowRangeType =
   | "billing"
@@ -143,6 +168,13 @@ export function resolveUsageWindow(
       if (!requestedStart || !requestedEnd) {
         throw new UsageWindowError(
           "startDate and endDate are required as UTC dates for a custom range",
+        );
+      }
+      const requestedInclusiveDays =
+        (requestedEnd.getTime() - requestedStart.getTime()) / DAY_MS + 1;
+      if (requestedInclusiveDays > MAX_CUSTOM_USAGE_DAYS) {
+        throw new UsageWindowError(
+          `Custom reporting ranges are limited to ${MAX_CUSTOM_USAGE_DAYS} inclusive days`,
         );
       }
       start = new Date(Math.max(requestedStart.getTime(), USAGE_DATA_CUTOFF_MS));

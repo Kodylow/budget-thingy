@@ -6,9 +6,9 @@ import { ChartTooltip } from '@/components/financial-chart';
 import type { BillingCycleComparisonCycle } from '@workspace/api-client-react';
 
 const cycleSeries = [
-  { key: 'current', label: 'This month', color: '#0D62FF', dash: undefined },
-  { key: 'previous', label: 'Last month', color: '#64748B', dash: '7 4' },
-  { key: 'twoAgo', label: '2 months ago', color: '#A1A1AA', dash: '2 4' },
+  { key: 'current', color: '#0D62FF', dash: undefined },
+  { key: 'previous', color: '#64748B', dash: '7 4' },
+  { key: 'twoAgo', color: '#A1A1AA', dash: '2 4' },
 ] as const;
 
 export function billingCycleSeriesData(cycles: BillingCycleComparisonCycle[], scope: 'personal' | 'team') {
@@ -44,9 +44,10 @@ export function SpendStoryChart({
 }) {
   const chartData = billingCycleSeriesData(cycles, scope);
   const hasSpend = chartData.some((row) => cycleSeries.some(({ key }) => row[key] != null));
+  const labels = new Map(cycles.map((cycle) => [cycle.key, cycle.label]));
 
   if (!chartData.length || !hasSpend) {
-    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No billing-cycle spend available</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No comparable period spend available</div>;
   }
 
   return (
@@ -57,7 +58,7 @@ export function SpendStoryChart({
             <svg width="18" height="10" viewBox="0 0 18 10" aria-hidden="true">
               <path d="M0 5h18" stroke={series.color} strokeWidth="2" strokeDasharray={series.dash} />
             </svg>
-            {series.label}
+            {labels.get(series.key) ?? series.key}
           </span>
         ))}
       </div>
@@ -67,7 +68,7 @@ export function SpendStoryChart({
             data={chartData}
             margin={{ top: 8, right: 12, left: -12, bottom: 0 }}
             accessibilityLayer
-            aria-label={`${scope === 'personal' ? 'My' : 'Team'} cumulative spend by billing-cycle day`}
+            aria-label={`${scope === 'personal' ? 'My' : 'Team'} cumulative spend by comparable period day`}
           >
             <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" opacity={0.5} />
             <XAxis
@@ -77,7 +78,7 @@ export function SpendStoryChart({
               tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
               dy={8}
               minTickGap={28}
-              label={{ value: 'Cycle day', position: 'insideBottomRight', offset: -2, fontSize: 10, fill: 'var(--muted-foreground)' }}
+              label={{ value: 'Period day', position: 'insideBottomRight', offset: -2, fontSize: 10, fill: 'var(--muted-foreground)' }}
             />
             <YAxis
               axisLine={false}
@@ -101,7 +102,7 @@ export function SpendStoryChart({
                       return (
                         <div key={series.key} className="flex items-start justify-between gap-5">
                           <span className="text-muted-foreground">
-                            {series.label}
+                             {labels.get(series.key) ?? series.key}
                             <span className="block text-[10px]">{formatCycleDate(date)}</span>
                           </span>
                           <span className="font-mono font-semibold">
@@ -119,7 +120,7 @@ export function SpendStoryChart({
                 key={series.key}
                 type="monotone"
                 dataKey={series.key}
-                name={series.label}
+                 name={labels.get(series.key) ?? series.key}
                 stroke={series.color}
                 strokeWidth={series.key === 'current' ? 2.5 : 2}
                 strokeDasharray={series.dash}

@@ -23,8 +23,8 @@ export interface BillingCycleComparisonCycle {
   /** Whether every elapsed own-team all-service day in this cycle is complete. */
   teamComplete: boolean;
   /**
-     * @minItems 28
-     * @maxItems 31
+     * @minItems 1
+     * @maxItems 400
      */
   points: BillingCycleComparisonPoint[];
 }

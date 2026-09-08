@@ -5,6 +5,7 @@ import { useSearch, useLocation } from 'wouter';
 import {
   apiRangeType,
   defaultCustomDates,
+  isValidCustomRange,
   type RangeSelection,
 } from '@/lib/range-selection';
 
@@ -13,9 +14,8 @@ interface RangeContextType {
   setRangeSelection: (selection: RangeSelection) => void;
   rangeType: RangeTypeParameter;
   startDate?: string;
-  setStartDate: (date?: string) => void;
   endDate?: string;
-  setEndDate: (date?: string) => void;
+  setCustomRange: (startDate: string, endDate: string) => void;
 }
 
 const RangeContext = createContext<RangeContextType | undefined>(undefined);
@@ -35,8 +35,12 @@ export function RangeProvider({ children }: { children: ReactNode }) {
                                       (rangeType as any) === 'mtd' ? 'mtd' :
                                       (rangeType as any) === 'full-term' ? 'full-term' : 'billing';
 
-  const startDate = urlStartDate;
-  const endDate = urlEndDate;
+  const validUrlCustomRange = isValidCustomRange(urlStartDate, urlEndDate);
+  const safeCustomRange = validUrlCustomRange
+    ? { startDate: urlStartDate!, endDate: urlEndDate! }
+    : defaultCustomDates();
+  const startDate = rangeSelection === 'custom' ? safeCustomRange.startDate : undefined;
+  const endDate = rangeSelection === 'custom' ? safeCustomRange.endDate : undefined;
 
   const updateParams = useCallback((updates: Record<string, string | null | undefined>) => {
     const params = new URLSearchParams(window.location.search);
@@ -71,24 +75,26 @@ export function RangeProvider({ children }: { children: ReactNode }) {
       });
     } else if (selection === 'custom') {
       const defaults = defaultCustomDates();
+      const customRange = isValidCustomRange(urlStartDate, urlEndDate)
+        ? { startDate: urlStartDate!, endDate: urlEndDate! }
+        : defaults;
       updateParams({
         rangeType: 'custom',
-        startDate: urlStartDate || defaults.startDate,
-        endDate: urlEndDate || defaults.endDate,
+        startDate: customRange.startDate,
+        endDate: customRange.endDate,
       });
     } else {
       updateParams({
         rangeType: apiRangeType(selection),
+        startDate: null,
+        endDate: null,
       });
     }
   }, [updateParams, urlEndDate, urlStartDate]);
 
-  const setStartDate = useCallback((date?: string) => {
-    updateParams({ startDate: date || null });
-  }, [updateParams]);
-
-  const setEndDate = useCallback((date?: string) => {
-    updateParams({ endDate: date || null });
+  const setCustomRange = useCallback((nextStartDate: string, nextEndDate: string) => {
+    if (!isValidCustomRange(nextStartDate, nextEndDate)) return;
+    updateParams({ startDate: nextStartDate, endDate: nextEndDate });
   }, [updateParams]);
 
   return (
@@ -97,9 +103,8 @@ export function RangeProvider({ children }: { children: ReactNode }) {
       setRangeSelection,
       rangeType,
       startDate,
-      setStartDate,
       endDate,
-      setEndDate,
+      setCustomRange,
     }}>
       {children}
     </RangeContext.Provider>

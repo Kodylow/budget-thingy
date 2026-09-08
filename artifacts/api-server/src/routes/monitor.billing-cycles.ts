@@ -1,16 +1,25 @@
 import { Router, type IRouter } from "express";
-import { GetBillingCycleComparisonResponse } from "@workspace/api-zod";
+import {
+  GetBillingCycleComparisonQueryParams,
+  GetBillingCycleComparisonResponse,
+} from "@workspace/api-zod";
 import { db, teamLimitTargetsTable } from "@workspace/db";
 import { getRosterHistory } from "../lib/history";
 import {
   billingCycleWindows,
   buildBillingCyclePoints,
+  isFutureOnlyComparisonSelection,
+  selectedComparisonWindows,
   type DailyComparisonValue,
 } from "../lib/billing-cycle-comparison";
 import {
   computeHistoricalSnapshotUsageRollups,
 } from "../lib/usage-rollup";
 import { readUsageSnapshot } from "../lib/usage-store";
+import {
+  USAGE_DATA_CUTOFF_ISO,
+  UsageWindowError,
+} from "../lib/usage-window";
 import { qualifiedGroupSpendComponents } from "../services/scoped-accounting";
 import {
   getBillingPeriodMetadata,
@@ -18,6 +27,7 @@ import {
   isAccountWide,
   readProjectMetadata,
   targetTeamForGroup,
+  windowFromQuery,
   visibleGroupMembers,
   visibleGroups,
   visibleRosterMembers,
@@ -110,14 +120,53 @@ export function hasImmutableTeamRoster(
 }
 
 router.get("/spend/billing-cycles", async (req, res): Promise<void> => {
-  if (Object.keys(req.query).length > 0) {
-    res.status(400).json({ error: "Billing cycle comparison does not accept query parameters" });
+  const query = GetBillingCycleComparisonQueryParams.safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: query.error.message });
     return;
   }
+  const legacyRequest = Object.keys(req.query).length === 0;
   const billing = getBillingPeriodMetadata();
-  const cycles = billing.isFallback
-    ? null
-    : billingCycleWindows(billing.start, billing.end);
+  let cycles;
+  try {
+    const selection = legacyRequest ? null : windowFromQuery(query.data);
+    if (
+      selection &&
+      isFutureOnlyComparisonSelection(selection.window.start)
+    ) {
+      res.status(400).json({
+        error: "Selected comparison range starts after the current date",
+      });
+      return;
+    }
+    const selectedDays = selection
+      ? (Date.parse(selection.window.end) - Date.parse(selection.window.start)) /
+        DAY_MS
+      : 0;
+    if (selectedDays > 400) {
+      res.status(400).json({ error: "Comparison ranges are limited to 400 days" });
+      return;
+    }
+    cycles = legacyRequest
+      ? billing.isFallback
+        ? null
+        : billingCycleWindows(billing.start, billing.end)
+      : query.data.rangeType === "billing" && billing.isFallback
+        ? null
+        : selectedComparisonWindows({
+          rangeType: query.data.rangeType ?? "full-term",
+          selectedStart: selection!.window.start,
+          selectedEndExclusive: selection!.window.end,
+          billingStart: billing.start,
+          billingEnd: billing.end,
+        });
+  } catch (error) {
+    if (error instanceof UsageWindowError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
   if (!cycles) {
     res.status(503).json({
       error: "Verified billing-cycle metadata is unavailable",
@@ -131,14 +180,21 @@ router.get("/spend/billing-cycles", async (req, res): Promise<void> => {
       db.select().from(teamLimitTargetsTable),
     ]);
     const authz = req.authz!;
-    const scopedGroups = visibleGroups(authz, dir.groups);
+    const selectedWorkspaceId = query.data.workspaceId ?? null;
+    const scopedGroups = visibleGroups(authz, dir.groups)
+      .filter((group) =>
+        selectedWorkspaceId === null ||
+        group.workspaceId === selectedWorkspaceId);
     const groupsWithTeams = dir.groups.map((group) => ({
       ...group,
       teamName: targetTeamForGroup(group, dir.account, assignments) ?? null,
     }));
     const ownGroupIds = new Set(
       dir.groups
-        .filter((group) => dir.groupMembers.get(group.id)?.includes(authz.userId))
+        .filter((group) =>
+          (selectedWorkspaceId === null ||
+            group.workspaceId === selectedWorkspaceId) &&
+          dir.groupMembers.get(group.id)?.includes(authz.userId))
         .map((group) => group.id),
     );
     // This is deliberately the same intersection as /teams/budgets?scope=own:
@@ -147,20 +203,37 @@ router.get("/spend/billing-cycles", async (req, res): Promise<void> => {
       groupsWithTeams,
       new Set(scopedGroups.map((group) => group.id)),
       ownGroupIds,
-    );
-    const personalWorkspaceIds = activePersonalWorkspaceIds(dir, authz.userId);
+    ).filter((group) =>
+      selectedWorkspaceId === null ||
+      group.workspaceId === selectedWorkspaceId);
+    const allPersonalWorkspaceIds = activePersonalWorkspaceIds(dir, authz.userId);
+    const personalWorkspaceIds = selectedWorkspaceId === null
+      ? allPersonalWorkspaceIds
+      : allPersonalWorkspaceIds.has(selectedWorkspaceId)
+        ? new Set([selectedWorkspaceId])
+        : new Set<string>();
     const teamWorkspaceIds = new Set(teamGroups.map((group) => group.workspaceId));
     const workspaceIds = new Set([
       ...personalWorkspaceIds,
       ...teamWorkspaceIds,
     ]);
-    const earliest = cycles[2]!.start;
+    const earliest = new Date(Math.max(
+      Date.parse(cycles[2]!.start),
+      Date.parse(USAGE_DATA_CUTOFF_ISO),
+    )).toISOString();
     const tomorrow = new Date(Date.UTC(
       new Date().getUTCFullYear(),
       new Date().getUTCMonth(),
       new Date().getUTCDate() + 1,
     )).toISOString();
-    const readEnd = billing.end < tomorrow ? billing.end : tomorrow;
+    const requestedEnd = legacyRequest
+      ? billing.end
+      : cycles.reduce(
+        (latest, cycle) =>
+          cycle.endExclusive > latest ? cycle.endExclusive : latest,
+        cycles[0]!.endExclusive,
+      );
+    const readEnd = requestedEnd < tomorrow ? requestedEnd : tomorrow;
     const [snapshot, projectMetadata] = await Promise.all([
       readUsageSnapshot({
         window: { start: earliest, end: readEnd },
@@ -221,7 +294,9 @@ router.get("/spend/billing-cycles", async (req, res): Promise<void> => {
         ...buildBillingCyclePoints(
           cycle, personalByDate, teamByDate, today),
       })),
-      teamScope: isAccountWide(authz) ? "complete" : "partial",
+      teamScope: selectedWorkspaceId === null && isAccountWide(authz)
+        ? "complete"
+        : "partial",
       hasTeams: teamGroups.length > 0,
     }));
   } catch (error) {

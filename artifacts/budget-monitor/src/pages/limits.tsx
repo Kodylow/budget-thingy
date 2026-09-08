@@ -142,7 +142,7 @@ function WorkspaceSelectionList({
   availableWorkspaces: string[];
   onSelect: (id: string) => void;
 }) {
-  const { data: visibleWorkspaces, isLoading, isError, refetch } = useListVisibleWorkspaces({
+  const { data: visibleWorkspaces, isLoading, isError, refetch } = useListVisibleWorkspaces(undefined, {
     query: { queryKey: getListVisibleWorkspacesQueryKey() }
   });
 
@@ -213,7 +213,7 @@ function WorkspaceLimitsView({
   isReadOnly: boolean; clearWorkspace: () => void; contextGroupIds: string[];
   canManagePolicies: boolean;
 }) {
-  const { data: visibleWorkspaces } = useListVisibleWorkspaces({
+  const { data: visibleWorkspaces } = useListVisibleWorkspaces(undefined, {
     query: { queryKey: getListVisibleWorkspacesQueryKey() }
   });
   const { data: ws, isLoading, error } = useGetSetLimitsWorkspace(workspaceId, {

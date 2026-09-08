@@ -190,6 +190,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /me/membership-context:
+    get:
+      operationId: getMyMembershipContext
+      tags: [directory]
+      summary: Get the effective identity's personal membership context
+      description: >
+        Returns active own workspaces and explicit custom-group budget team
+        affiliations from the committed canonical configuration. Administrative
+        access does not imply membership.
+      parameters:
+        - $ref: '#/components/parameters/PreviewAsHeader'
+      responses:
+        "200":
+          description: Personal membership context.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyMembershipContext"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Cached directory or committed configuration unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /groups:
     parameters:
       - $ref: '#/components/parameters/PreviewAsHeader'
@@ -296,12 +324,39 @@ paths:
         - $ref: "#/components/parameters/RangeType"
         - $ref: "#/components/parameters/StartDate"
         - $ref: "#/components/parameters/EndDate"
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/ViewScope"
+        - name: includeHierarchy
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: >
+            Include the canonical Workspace, physical Group, and apportioned
+            Member hierarchy. Forbidden when scope=own.
         - name: includeBudgetTracking
           in: query
           schema:
             type: boolean
             default: false
           description: Include allocation-period spend tracking and cumulative daily points.
+        - name: trackingRange
+          in: query
+          schema:
+            type: string
+            enum: [budget, billing, selected]
+            default: budget
+          description: Use the fixed allocation period (default), the verified current billing cycle's monthly Agent limit and Agent-only usage, or the selected report period.
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [authorized, own]
+            default: authorized
+          description: >
+            own enables a regular member's read-only Home tracking view. It
+            requires workspaceId and an active actual membership in a group
+            committed to the requested canonical funding team.
       responses:
         "200":
           description: Compact authorized budget team report
@@ -524,6 +579,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /org-insights:
+    parameters:
+      - $ref: '#/components/parameters/PreviewAsHeader'
+    get:
+      operationId: getOrgBudgetOverview
+      tags: [teams]
+      summary: Account-wide organization budget overview
+      description: >
+        Returns one committed local accounting generation for the confirmed
+        May 20, 2026 through May 20, 2027 team-allocation term. The scope and
+        period are fixed; query filters are rejected. Requires account-wide
+        canViewAccountUsage access. Read-only previews are allowed only when
+        they retain that capability and a genuinely account-wide scope.
+      responses:
+        "200":
+          description: Organization budget overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrgBudgetOverviewResponse"
+        "400":
+          description: Query filters are not accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Committed stored accounting data unavailable or changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /spend/billing-cycles:
     parameters:
       - $ref: '#/components/parameters/PreviewAsHeader'
@@ -539,6 +630,11 @@ paths:
         A null point is unobserved, incomplete, or future; zero is returned only
         for an observed zero-spend day. Cycle completeness qualifies later known
         cumulative values after a coverage gap.
+      parameters:
+        - $ref: "#/components/parameters/SpendWorkspace"
+        - $ref: "#/components/parameters/RangeType"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
       responses:
         "200":
           description: Billing-cycle comparison
@@ -547,7 +643,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/BillingCycleComparisonResponse"
         "400":
-          description: Unexpected query parameters
+          description: Invalid, future-only, or overlong comparison range
           content:
             application/json:
               schema:
@@ -1124,6 +1220,7 @@ paths:
             enum: [billing, full-term]
             default: billing
           description: Reporting period for all-service team spend. Allocation remains annual.
+        - $ref: "#/components/parameters/SpendWorkspace"
       responses:
         "200":
           description: Team budget list
@@ -1725,6 +1822,14 @@ paths:
       tags: [directory]
       summary: List workspaces visible to the current operator
       description: Account-wide operators see every workspace; workspace administrators see only workspaces they administer.
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [operator, own]
+            default: operator
+          description: own returns only active actual workspace memberships for the current user and is available to regular members.
       responses:
         "200":
           description: Visible workspace list
@@ -2782,6 +2887,118 @@ components:
         type: string
         pattern: '^(workspace_admin|team_admin|member):.+$'
   schemas:
+    MyMembershipGroup:
+      type: object
+      additionalProperties: false
+      required: [groupId, groupName]
+      properties:
+        groupId: { type: string }
+        groupName: { type: string }
+    MyMembershipBudgetTeam:
+      type: object
+      additionalProperties: false
+      required: [poolId, teamName, groups]
+      properties:
+        poolId: { type: string }
+        teamName: { type: string }
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/MyMembershipGroup"
+    MyMembershipWorkspace:
+      type: object
+      additionalProperties: false
+      required:
+        [workspaceId, workspaceName, isPreferred, budgetTeams, unmappedGroups]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: string }
+        isPreferred: { type: boolean }
+        budgetTeams:
+          type: array
+          items:
+            $ref: "#/components/schemas/MyMembershipBudgetTeam"
+        unmappedGroups:
+          type: array
+          items:
+            $ref: "#/components/schemas/MyMembershipGroup"
+    MyMembershipContext:
+      type: object
+      additionalProperties: false
+      required: [defaultWorkspaceId, workspaces, qualification]
+      properties:
+        defaultWorkspaceId:
+          type: [string, "null"]
+        workspaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/MyMembershipWorkspace"
+        qualification:
+          type: [string, "null"]
+    OrgBudgetOverviewResponse:
+      type: object
+      required: [periodStart, periodEnd, asOf, complete, qualification, summary, teams]
+      properties:
+        periodStart:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        periodEnd:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        asOf:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        complete:
+          type: boolean
+        qualification:
+          type: ["string", "null"]
+        summary:
+          type: object
+          required: [accountSpendUsd, teamAllocationUsd, remainingUsd, teamsOverBudget, unassignedSpendUsd]
+          properties:
+            accountSpendUsd:
+              type: ["number", "null"]
+            teamAllocationUsd:
+              type: ["number", "null"]
+            remainingUsd:
+              type: ["number", "null"]
+            teamsOverBudget:
+              type: ["integer", "null"]
+            unassignedSpendUsd:
+              type: ["number", "null"]
+        teams:
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+            required: [id, name, allocationUsd, spendUsd, remainingUsd, percentUsed, complete, points]
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              allocationUsd:
+                type: ["number", "null"]
+              spendUsd:
+                type: ["number", "null"]
+              remainingUsd:
+                type: ["number", "null"]
+              percentUsed:
+                type: ["number", "null"]
+              complete:
+                type: boolean
+              points:
+                type: array
+                maxItems: 367
+                items:
+                  type: object
+                  required: [date, spendUsd]
+                  properties:
+                    date:
+                      type: string
+                      pattern: '^\d{4}-\d{2}-\d{2}$'
+                    spendUsd:
+                      type: ["number", "null"]
     SetLimitsGroup:
       type: object
       required: [groupId, name, familyName, role, eligibleUserIds]
@@ -3079,6 +3296,41 @@ components:
         limitObservationStatus:
           type: string
           enum: [complete, failed, unavailable, refreshing]
+    ReportingTeamHierarchyGroup:
+      type: object
+      required: [groupId, name, familyKey, spendUsd, agentSpendUsd, otherServicesUsd, usageObserved, isComplete, memberCount, unattributedSpendUsd, members]
+      properties:
+        groupId: { type: string }
+        name: { type: string }
+        familyKey: { type: string }
+        spendUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        usageObserved: { type: boolean }
+        isComplete: { type: boolean }
+        memberCount: { type: integer, minimum: 0 }
+        unattributedSpendUsd: { type: number }
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDetailMember"
+    ReportingTeamHierarchyWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, usageObserved, isComplete, memberCount, unattributedSpendUsd, groups]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: ["string", "null"] }
+        spendUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        usageObserved: { type: boolean }
+        isComplete: { type: boolean }
+        memberCount: { type: integer, minimum: 0 }
+        unattributedSpendUsd: { type: number }
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingTeamHierarchyGroup"
     ReportingDetail:
       type: object
       required: [kind, headline, groups, sourceGroups, members, period, metadata]
@@ -3094,22 +3346,40 @@ components:
           description: Canonical pool name; present when kind is team.
         budgetTracking:
           type: object
-          required: [periodStart, periodEnd, periodLabel, asOf, allocationUsd, spendUsd, remainingUsd, percentUsed, scopeComplete, usageComplete, benchmarkEligible, qualification, points]
+          required: [budgetKind, workspaceCount, periodStart, periodEnd, periodLabel, asOf, allocationUsd, spendUsd, remainingUsd, percentUsed, scopeComplete, usageComplete, benchmarkEligible, qualification, points]
           properties:
+            budgetKind:
+              type: string
+              enum: [annual, monthly_agent]
+            workspaceCount:
+              type: integer
+              minimum: 0
+              description: Number of workspaces in the visible contributing tracking scope.
             periodStart: { type: ["string", "null"], pattern: '^\d{4}-\d{2}-\d{2}$' }
             periodEnd:
               type: ["string", "null"]
               pattern: '^\d{4}-\d{2}-\d{2}$'
               description: Inclusive allocation-period end date.
             periodLabel: { type: string }
+            reportingStart: { type: ["string", "null"], pattern: '^\d{4}-\d{2}-\d{2}$' }
+            reportingEnd:
+              type: ["string", "null"]
+              pattern: '^\d{4}-\d{2}-\d{2}$'
+              description: Inclusive chart/reporting-domain end date.
+            reportingLabel: { type: ["string", "null"] }
             asOf: { type: ["string", "null"] }
-            allocationUsd: { type: ["number", "null"] }
+            allocationUsd:
+              type: ["number", "null"]
+              description: Applicable annual allocation or configured monthly Agent limit; null when unavailable or unsafe to disclose.
             spendUsd: { type: ["number", "null"] }
             remainingUsd: { type: ["number", "null"] }
             percentUsed: { type: ["number", "null"] }
             scopeComplete: { type: boolean }
             usageComplete: { type: boolean }
             benchmarkEligible: { type: boolean }
+            comparisonsMatchBudgetWindow:
+              type: boolean
+              description: True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff.
             qualification: { type: ["string", "null"] }
             points:
               type: array
@@ -3141,6 +3411,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ReportingDetailMember"
+        hierarchy:
+          type: array
+          description: Canonical workspace and physical-group hierarchy for an authorized team report.
+          items:
+            $ref: "#/components/schemas/ReportingTeamHierarchyWorkspace"
+        hierarchyUnattributedSpendUsd:
+          type: number
+          description: >
+            Team headline spend not located in a workspace hierarchy source.
+            This is separate from headline.unattributedSpendUsd, which is the
+            residual between team spend and exposed member children.
         period:
           $ref: "#/components/schemas/ReportingPeriod"
         metadata:
@@ -3415,7 +3696,7 @@ components:
         day:
           type: integer
           minimum: 1
-          maximum: 31
+          maximum: 400
         date:
           type: string
           pattern: '^\d{4}-\d{2}-\d{2}$'
@@ -3449,8 +3730,8 @@ components:
           description: Whether every elapsed own-team all-service day in this cycle is complete.
         points:
           type: array
-          minItems: 28
-          maxItems: 31
+          minItems: 1
+          maxItems: 400
           items:
             $ref: "#/components/schemas/BillingCycleComparisonPoint"
     BillingCycleComparisonResponse:

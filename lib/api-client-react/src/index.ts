@@ -21,7 +21,12 @@ export {
   clearApiDiagnostics,
   currentDiagnosticRoute,
   getApiDiagnostics,
+  getRecentDiagnosticRequestIds,
+  getUiDiagnostics,
+  parseDataUnavailableHeader,
   recordApiDiagnostic,
+  recordUiDiagnostic,
+  recordUiDiagnostics,
   sanitizeDiagnosticRequestId,
   sanitizeDiagnosticUrl,
   subscribeApiDiagnostics,
@@ -31,6 +36,11 @@ export type {
   ApiDiagnosticCategory,
   ApiDiagnosticDataState,
   ApiDiagnosticEntry,
+  DataUnavailableReason,
+  DataUnavailableSite,
+  DataUnavailableSummary,
+  UiDiagnosticEntry,
+  UiDiagnosticSource,
 } from "./diagnostics";
 export * from './generated/api';
 export * from './generated/api.schemas';

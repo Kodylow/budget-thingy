@@ -1,5 +1,35 @@
 export type ApiDiagnosticCategory = "success" | "http" | "network" | "parse" | "aborted";
 
+export const DATA_UNAVAILABLE_REASONS = [
+  "no_usage_observed",
+  "incomplete_usage",
+  "incomplete_scope",
+  "limit_observation_failed",
+  "limit_observation_unavailable",
+  "limit_observation_refreshing",
+  "missing_allocation",
+  "period_mismatch",
+  "explicit_unavailable",
+  "missing_value",
+  "authorization_unavailable",
+  "scan_truncated",
+  "instrumentation_failed",
+] as const;
+
+export type DataUnavailableReason = typeof DATA_UNAVAILABLE_REASONS[number];
+
+export interface DataUnavailableSite {
+  path: string;
+  reason: DataUnavailableReason;
+  count: number;
+}
+
+export interface DataUnavailableSummary {
+  count: number;
+  sites: DataUnavailableSite[];
+  truncated: boolean;
+}
+
 export interface ApiDiagnosticDataState {
   metadataStatus?: "complete" | "stale" | "partial" | "empty" | "unavailable";
   stale?: boolean;
@@ -21,6 +51,7 @@ export interface ApiDiagnosticDataState {
   limitObservationStateCounts?: Partial<
     Record<"not_applicable" | "complete" | "failed" | "unavailable" | "refreshing", number>
   >;
+  unavailable?: DataUnavailableSummary;
 }
 
 export interface ApiDiagnosticEntry {
@@ -35,7 +66,26 @@ export interface ApiDiagnosticEntry {
   dataState?: ApiDiagnosticDataState;
 }
 
+export interface UiDiagnosticSource {
+  page: string;
+  selector: string;
+  columnIndex?: number;
+  attribute?: "title" | "aria-label" | "placeholder" | "alt";
+  truncated?: boolean;
+}
+
+export interface UiDiagnosticEntry {
+  timestamp: string;
+  event: "ui_data_unavailable" | "ui_data_available" | "ui_unavailable_removed";
+  reason: "rendered_unavailable";
+  source: UiDiagnosticSource;
+  count: number;
+  requestIdCandidates: string[];
+  truncated?: boolean;
+}
+
 const HISTORY_LIMIT = 25;
+const UI_HISTORY_LIMIT = 100;
 const ALLOWED_QUERY_KEYS = new Set([
   "role",
   "viewScope",
@@ -47,6 +97,7 @@ const ALLOWED_QUERY_KEYS = new Set([
 ]);
 const listeners = new Set<() => void>();
 let history: ApiDiagnosticEntry[] = [];
+let uiHistory: UiDiagnosticEntry[] = [];
 const METADATA_STATUSES = new Set([
   "complete",
   "stale",
@@ -126,7 +177,65 @@ export function summarizeApiResponse(value: unknown): ApiDiagnosticDataState | u
     if (Object.keys(counts).length > 0) summary.limitObservationStateCounts = counts;
   }
 
+  const unavailableSites: DataUnavailableSite[] = [];
+  if (summary.metadataStatus === "unavailable" || summary.dataAvailable === false) {
+    unavailableSites.push({
+      path: summary.dataAvailable === false ? "metadata.dataAvailable" : "metadata.status",
+      reason: "explicit_unavailable",
+      count: 1,
+    });
+  }
+  const unavailableCount = summary.limitObservationStateCounts?.unavailable ?? 0;
+  const failedCount = summary.limitObservationStateCounts?.failed ?? 0;
+  const refreshingCount = summary.limitObservationStateCounts?.refreshing ?? 0;
+  if (unavailableCount > 0) unavailableSites.push({ path: "rows[].limitObservationStatus", reason: "limit_observation_unavailable", count: unavailableCount });
+  if (failedCount > 0) unavailableSites.push({ path: "rows[].limitObservationStatus", reason: "limit_observation_failed", count: failedCount });
+  if (refreshingCount > 0) unavailableSites.push({ path: "rows[].limitObservationStatus", reason: "limit_observation_refreshing", count: refreshingCount });
+  if (unavailableSites.length > 0) {
+    summary.unavailable = {
+      count: unavailableSites.reduce((total, site) => total + site.count, 0),
+      sites: unavailableSites,
+      truncated: false,
+    };
+  }
+
   return Object.keys(summary).length > 0 ? summary : undefined;
+}
+
+const DATA_UNAVAILABLE_REASON_SET = new Set<string>(DATA_UNAVAILABLE_REASONS);
+const SAFE_FIELD_PATH = /^(?:[A-Za-z][A-Za-z0-9_]{0,63})(?:(?:\.(?:[A-Za-z][A-Za-z0-9_]{0,63}|\[field\]))|(?:\[\])){0,15}$/;
+
+/** Parses the server's compact, safe availability envelope without retaining its raw value. */
+export function parseDataUnavailableHeader(value: string | null): DataUnavailableSummary | undefined {
+  if (!value || value.length > 3500 || /[^\x20-\x7e]/.test(value)) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    const root = objectValue(parsed);
+    if (!root || !Number.isSafeInteger(root.count) || (root.count as number) < 1 ||
+        typeof root.truncated !== "boolean" || !Array.isArray(root.sites) || root.sites.length > 128) {
+      return undefined;
+    }
+    const sites: DataUnavailableSite[] = [];
+    for (const candidate of root.sites) {
+      const site = objectValue(candidate);
+      if (!site || typeof site.path !== "string" || !SAFE_FIELD_PATH.test(site.path) ||
+          typeof site.reason !== "string" || !DATA_UNAVAILABLE_REASON_SET.has(site.reason) ||
+          !Number.isSafeInteger(site.count) || (site.count as number) < 1) {
+        return undefined;
+      }
+      sites.push({
+        path: site.path,
+        reason: site.reason as DataUnavailableReason,
+        count: site.count as number,
+      });
+    }
+    if (sites.length === 0 || sites.reduce((total, site) => total + site.count, 0) > (root.count as number)) {
+      return undefined;
+    }
+    return { count: root.count as number, sites, truncated: root.truncated };
+  } catch {
+    return undefined;
+  }
 }
 
 function safeScopeValue(key: string, value: string): string | null {
@@ -151,6 +260,7 @@ function isDynamicPathSegment(segments: string[], index: number): boolean {
   const beforePrevious = segments[index - 2];
   if (
     previous === "groups" ||
+    previous === "projects" ||
     previous === "clusters" ||
     previous === "workspaces" ||
     previous === "admins" ||
@@ -214,6 +324,22 @@ export function getApiDiagnostics(): readonly ApiDiagnosticEntry[] {
   return history;
 }
 
+export function getUiDiagnostics(): readonly UiDiagnosticEntry[] {
+  return uiHistory;
+}
+
+export function getRecentDiagnosticRequestIds(limit = 5): string[] {
+  const result: string[] = [];
+  const route = currentDiagnosticRoute();
+  for (let index = history.length - 1; index >= 0 && result.length < Math.max(0, Math.min(limit, 10)); index -= 1) {
+    const entry = history[index];
+    if (entry?.route !== route) continue;
+    const requestId = entry.requestId;
+    if (requestId && !result.includes(requestId)) result.push(requestId);
+  }
+  return result;
+}
+
 export function subscribeApiDiagnostics(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -239,9 +365,26 @@ export function recordApiDiagnostic(entry: ApiDiagnosticEntry): void {
   notifyListeners();
 }
 
+export function recordUiDiagnostic(entry: UiDiagnosticEntry): void {
+  recordUiDiagnostics([entry]);
+}
+
+/** Appends a frame of UI transitions and notifies subscribers only once. */
+export function recordUiDiagnostics(entries: readonly UiDiagnosticEntry[]): void {
+  if (entries.length === 0) return;
+  const frozen = entries.map(entry => Object.freeze({
+    ...entry,
+    source: Object.freeze({ ...entry.source }),
+    requestIdCandidates: Object.freeze([...entry.requestIdCandidates]) as unknown as string[],
+  }));
+  uiHistory = [...uiHistory, ...frozen].slice(-UI_HISTORY_LIMIT);
+  notifyListeners();
+}
+
 /** Clears volatile history. Primarily useful when signing out and in tests. */
 export function clearApiDiagnostics(): void {
   history = [];
+  uiHistory = [];
   notifyListeners();
 }
 

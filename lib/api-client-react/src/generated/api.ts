@@ -50,6 +50,7 @@ import type {
   ExportUsersCsvParams,
   ForbiddenResponse,
   GetAccountUsageObservationExportParams,
+  GetBillingCycleComparisonParams,
   GetBudgetTeamReportParams,
   GetCanonicalClusterHeadlineParams,
   GetClusterProjectsParams,
@@ -83,6 +84,7 @@ import type {
   ListSpendPoolsParams,
   ListSpendProjectsParams,
   ListUserOwnedProjectsParams,
+  ListVisibleWorkspacesParams,
   ListWorkspaceGroupMembersParams,
   ListWorkspaceGroupsParams,
   ListWorkspaceUsageLimitAuditsParams,
@@ -92,7 +94,9 @@ import type {
   MemberLimitPolicyMutationResult,
   MobileTokenExchangeRequest,
   MobileTokenExchangeSuccess,
+  MyMembershipContext,
   OkResponse,
+  OrgBudgetOverviewResponse,
   ProjectDetailResponse,
   ReportingDetail,
   SetLimitsWorkspace,
@@ -769,6 +773,84 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getHealthCheckQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMyMembershipContextUrl = () => {
+
+
+
+
+  return `/api/me/membership-context`
+}
+
+/**
+ * Returns active own workspaces and explicit custom-group budget team affiliations from the committed canonical configuration. Administrative access does not imply membership.
+ * @summary Get the effective identity's personal membership context
+ */
+export const getMyMembershipContext = async ( options?: RequestInit): Promise<MyMembershipContext> => {
+
+  return customFetch<MyMembershipContext>(getGetMyMembershipContextUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMyMembershipContextQueryKey = () => {
+    return [
+    `/api/me/membership-context`
+    ] as const;
+    }
+
+
+export const getGetMyMembershipContextQueryOptions = <TData = Awaited<ReturnType<typeof getMyMembershipContext>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMembershipContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMyMembershipContextQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyMembershipContext>>> = ({ signal }) => getMyMembershipContext({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMyMembershipContext>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMyMembershipContextQueryResult = NonNullable<Awaited<ReturnType<typeof getMyMembershipContext>>>
+export type GetMyMembershipContextQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Get the effective identity's personal membership context
+ */
+
+export function useGetMyMembershipContext<TData = Awaited<ReturnType<typeof getMyMembershipContext>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMembershipContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMyMembershipContextQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1491,21 +1573,21 @@ export function useGetDashboard<TData = Awaited<ReturnType<typeof getDashboard>>
 
 
 
-export const getGetBillingCycleComparisonUrl = () => {
+export const getGetOrgBudgetOverviewUrl = () => {
 
 
 
 
-  return `/api/spend/billing-cycles`
+  return `/api/org-insights`
 }
 
 /**
- * Returns cumulative personal Agent spend and canonical own-team all-service spend aligned by cycle day. The three periods are derived from verified billing metadata using clamped calendar-month arithmetic. Reads stored local snapshots only and never triggers upstream usage. A null point is unobserved, incomplete, or future; zero is returned only for an observed zero-spend day. Cycle completeness qualifies later known cumulative values after a coverage gap.
- * @summary Compare current and prior monthly billing cycles
+ * Returns one committed local accounting generation for the confirmed May 20, 2026 through May 20, 2027 team-allocation term. The scope and period are fixed; query filters are rejected. Requires account-wide canViewAccountUsage access. Read-only previews are allowed only when they retain that capability and a genuinely account-wide scope.
+ * @summary Account-wide organization budget overview
  */
-export const getBillingCycleComparison = async ( options?: RequestInit): Promise<BillingCycleComparisonResponse> => {
+export const getOrgBudgetOverview = async ( options?: RequestInit): Promise<OrgBudgetOverviewResponse> => {
 
-  return customFetch<BillingCycleComparisonResponse>(getGetBillingCycleComparisonUrl(),
+  return customFetch<OrgBudgetOverviewResponse>(getGetOrgBudgetOverviewUrl(),
   {
     ...options,
     method: 'GET'
@@ -1518,23 +1600,108 @@ export const getBillingCycleComparison = async ( options?: RequestInit): Promise
 
 
 
-export const getGetBillingCycleComparisonQueryKey = () => {
+export const getGetOrgBudgetOverviewQueryKey = () => {
     return [
-    `/api/spend/billing-cycles`
+    `/api/org-insights`
     ] as const;
     }
 
 
-export const getGetBillingCycleComparisonQueryOptions = <TData = Awaited<ReturnType<typeof getBillingCycleComparison>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCycleComparison>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetOrgBudgetOverviewQueryOptions = <TData = Awaited<ReturnType<typeof getOrgBudgetOverview>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOrgBudgetOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetBillingCycleComparisonQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetOrgBudgetOverviewQueryKey();
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBillingCycleComparison>>> = ({ signal }) => getBillingCycleComparison({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOrgBudgetOverview>>> = ({ signal }) => getOrgBudgetOverview({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOrgBudgetOverview>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetOrgBudgetOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof getOrgBudgetOverview>>>
+export type GetOrgBudgetOverviewQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary Account-wide organization budget overview
+ */
+
+export function useGetOrgBudgetOverview<TData = Awaited<ReturnType<typeof getOrgBudgetOverview>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOrgBudgetOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetOrgBudgetOverviewQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetBillingCycleComparisonUrl = (params?: GetBillingCycleComparisonParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/spend/billing-cycles?${stringifiedParams}` : `/api/spend/billing-cycles`
+}
+
+/**
+ * Returns cumulative personal Agent spend and canonical own-team all-service spend aligned by cycle day. The three periods are derived from verified billing metadata using clamped calendar-month arithmetic. Reads stored local snapshots only and never triggers upstream usage. A null point is unobserved, incomplete, or future; zero is returned only for an observed zero-spend day. Cycle completeness qualifies later known cumulative values after a coverage gap.
+ * @summary Compare current and prior monthly billing cycles
+ */
+export const getBillingCycleComparison = async (params?: GetBillingCycleComparisonParams, options?: RequestInit): Promise<BillingCycleComparisonResponse> => {
+
+  return customFetch<BillingCycleComparisonResponse>(getGetBillingCycleComparisonUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBillingCycleComparisonQueryKey = (params?: GetBillingCycleComparisonParams,) => {
+    return [
+    `/api/spend/billing-cycles`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetBillingCycleComparisonQueryOptions = <TData = Awaited<ReturnType<typeof getBillingCycleComparison>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params?: GetBillingCycleComparisonParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCycleComparison>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBillingCycleComparisonQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBillingCycleComparison>>> = ({ signal }) => getBillingCycleComparison(params, { signal, ...requestOptions });
 
 
 
@@ -1552,11 +1719,11 @@ export type GetBillingCycleComparisonQueryError = ErrorType<ApiError | Unauthori
  */
 
 export function useGetBillingCycleComparison<TData = Awaited<ReturnType<typeof getBillingCycleComparison>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCycleComparison>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetBillingCycleComparisonParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCycleComparison>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetBillingCycleComparisonQueryOptions(options)
+  const queryOptions = getGetBillingCycleComparisonQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -4639,21 +4806,28 @@ export function useListDirectoryMembers<TData = Awaited<ReturnType<typeof listDi
 
 
 
-export const getListVisibleWorkspacesUrl = () => {
+export const getListVisibleWorkspacesUrl = (params?: ListVisibleWorkspacesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/directory/workspaces`
+  return stringifiedParams.length > 0 ? `/api/directory/workspaces?${stringifiedParams}` : `/api/directory/workspaces`
 }
 
 /**
  * Account-wide operators see every workspace; workspace administrators see only workspaces they administer.
  * @summary List workspaces visible to the current operator
  */
-export const listVisibleWorkspaces = async ( options?: RequestInit): Promise<VisibleWorkspace[]> => {
+export const listVisibleWorkspaces = async (params?: ListVisibleWorkspacesParams, options?: RequestInit): Promise<VisibleWorkspace[]> => {
 
-  return customFetch<VisibleWorkspace[]>(getListVisibleWorkspacesUrl(),
+  return customFetch<VisibleWorkspace[]>(getListVisibleWorkspacesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -4666,23 +4840,23 @@ export const listVisibleWorkspaces = async ( options?: RequestInit): Promise<Vis
 
 
 
-export const getListVisibleWorkspacesQueryKey = () => {
+export const getListVisibleWorkspacesQueryKey = (params?: ListVisibleWorkspacesParams,) => {
     return [
-    `/api/directory/workspaces`
+    `/api/directory/workspaces`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListVisibleWorkspacesQueryOptions = <TData = Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListVisibleWorkspacesQueryOptions = <TData = Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(params?: ListVisibleWorkspacesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListVisibleWorkspacesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListVisibleWorkspacesQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVisibleWorkspaces>>> = ({ signal }) => listVisibleWorkspaces({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVisibleWorkspaces>>> = ({ signal }) => listVisibleWorkspaces(params, { signal, ...requestOptions });
 
 
 
@@ -4700,11 +4874,11 @@ export type ListVisibleWorkspacesQueryError = ErrorType<UnauthorizedResponse | F
  */
 
 export function useListVisibleWorkspaces<TData = Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: ListVisibleWorkspacesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVisibleWorkspaces>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListVisibleWorkspacesQueryOptions(options)
+  const queryOptions = getListVisibleWorkspacesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

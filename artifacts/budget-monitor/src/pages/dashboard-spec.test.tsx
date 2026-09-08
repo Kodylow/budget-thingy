@@ -116,8 +116,8 @@ describe('Dashboard and Spend Spec Behaviors', () => {
   it('initializes valid dates before requesting a custom range', () => {
     const source = readFileSync(new URL('../components/range-context.tsx', import.meta.url), 'utf8');
     expect(source).toContain("selection === 'custom'");
-    expect(source).toContain("startDate: urlStartDate || defaults.startDate");
-    expect(source).toContain("endDate: urlEndDate || defaults.endDate");
+    expect(source).toContain("rangeSelection === 'custom' ? safeCustomRange.startDate : urlStartDate");
+    expect(source).toContain("rangeSelection === 'custom' ? safeCustomRange.endDate : urlEndDate");
   });
 
   it('gates settings visibility using canManageSystem/canManageNotifications, not canManageAccess', () => {
@@ -150,11 +150,10 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     }), 'account');
     expect(sections[0].items.map(item => [item.path, item.label])).toEqual([
       ['/', 'Home'],
+      ['/org-insights', 'Org Insights'],
       ['/my-team', 'My Team'],
       ['/spend?tab=projects&viewScope=my', 'My Projects'],
-      ['/org-insights', 'Org Insights'],
       ['/spend', 'Spend'],
-      ['/reports', 'Custom Reports'],
     ]);
     expect(sections.find(s => s.label === 'Management')?.items)
       .toEqual(expect.arrayContaining([
@@ -192,14 +191,11 @@ describe('Dashboard and Spend Spec Behaviors', () => {
 
   it('keeps Home personal and team scoped, including for account admins', () => {
     const source = readFileSync(new URL('./home.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('label="My Spend"');
-    expect(source).toContain('label="My Team Spend"');
-    expect(source).toContain('label="Team Budget"');
-    expect(source).toContain('<MyBudgetSummary limits={personalLimits} />');
-    expect(source).toContain("useGetTeamsBudgets({ scope: 'own', period: 'full-term' })");
-    expect(source).toContain('useGetTeamsBudgets');
-    expect(source).toContain('team.spendUsd');
-    expect(source).not.toContain('team.cycleAgentSpendUsd');
+    expect(source).toContain('PersonalBudgetPanel');
+    expect(source).toContain('TeamBudgetPanel');
+    expect(source).toContain('BudgetTrajectory');
+    expect(source).toContain("useGetTeamsBudgets");
+    expect(source).toContain('useGetBudgetTeamReport');
     expect(source).not.toContain('auth?.teamNames');
     expect(source).not.toContain('My Organization');
     expect(source).not.toContain('all_authorized');

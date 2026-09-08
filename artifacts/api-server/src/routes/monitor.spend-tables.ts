@@ -23,6 +23,7 @@ import {
   type TableView,
 } from "../services/scoped-accounting";
 import type { Authorization } from "../lib/authz";
+import { UsageWindowError } from "../lib/usage-window";
 import { escapeCsvCell, windowFromQuery } from "./monitor.shared";
 
 const router: IRouter = Router();
@@ -209,8 +210,12 @@ function mount(
     }
     try {
       windowFromQuery(parsed.data as Record<string, unknown>);
-    } catch {
-      res.status(400).json({ error: "Invalid reporting date range" });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof UsageWindowError
+          ? error.message
+          : "Invalid reporting date range",
+      });
       return;
     }
     try {
@@ -305,8 +310,12 @@ function createCsvHandler(
     }
     try {
       windowFromQuery(parsed.data as Record<string, unknown>);
-    } catch {
-      res.status(400).json({ error: "Invalid reporting date range" });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof UsageWindowError
+          ? error.message
+          : "Invalid reporting date range",
+      });
       return;
     }
     try {

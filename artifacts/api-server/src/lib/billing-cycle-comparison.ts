@@ -23,6 +23,18 @@ export interface BillingCyclePoint {
   teamSpendUsd: number | null;
 }
 
+export function isFutureOnlyComparisonSelection(
+  startIso: string,
+  now = new Date(),
+): boolean {
+  const tomorrow = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + 1,
+  );
+  return Date.parse(startIso) >= tomorrow;
+}
+
 function utcDate(iso: string): Date | null {
   const value = new Date(iso);
   return Number.isFinite(value.getTime()) &&
@@ -72,6 +84,91 @@ function window(
     start: start.toISOString(),
     endExclusive: endExclusive.toISOString(),
   };
+}
+
+function cappedWindow(
+  key: BillingCycleKey,
+  start: Date,
+  endExclusive: Date,
+  capExclusive: Date,
+): BillingCycleWindow | null {
+  const cappedEnd = new Date(Math.min(endExclusive.getTime(), capExclusive.getTime()));
+  return cappedEnd > start ? window(key, start, cappedEnd) : null;
+}
+
+/**
+ * Builds three comparison windows for a selected Home range. All windows end
+ * on day boundaries and the current period never extends beyond today.
+ */
+export function selectedComparisonWindows(input: {
+  rangeType: "billing" | "full-term" | "mtd" | "ytd" | "custom";
+  selectedStart: string;
+  selectedEndExclusive: string;
+  now?: Date;
+  billingStart?: string;
+  billingEnd?: string;
+}): BillingCycleWindow[] | null {
+  const selectedStart = utcDate(input.selectedStart);
+  const selectedEnd = utcDate(input.selectedEndExclusive);
+  const now = input.now ?? new Date();
+  const tomorrow = new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1,
+  ));
+  if (!selectedStart || !selectedEnd || selectedEnd <= selectedStart) return null;
+  const currentEnd = new Date(Math.min(selectedEnd.getTime(), tomorrow.getTime()));
+  if (currentEnd <= selectedStart) return null;
+  const elapsed = currentEnd.getTime() - selectedStart.getTime();
+
+  if (input.rangeType === "billing") {
+    const billing = input.billingStart && input.billingEnd
+      ? billingCycleWindows(input.billingStart, input.billingEnd)
+      : null;
+    if (!billing) return null;
+    const result = billing.map((cycle) => {
+      const start = utcDate(cycle.start)!;
+      const naturalEnd = utcDate(cycle.endExclusive)!;
+      return cappedWindow(
+        cycle.key,
+        start,
+        new Date(Math.min(naturalEnd.getTime(), start.getTime() + elapsed)),
+        tomorrow,
+      );
+    });
+    return result.every(Boolean) ? result as BillingCycleWindow[] : null;
+  }
+
+  const keys: BillingCycleKey[] = ["current", "previous", "twoAgo"];
+  if (input.rangeType === "mtd") {
+    const result = keys.map((key, index) => {
+      const start = shiftUtcMonthClamped(selectedStart, -index);
+      const monthEnd = new Date(Date.UTC(
+        start.getUTCFullYear(), start.getUTCMonth() + 1, 1,
+      ));
+      return cappedWindow(
+        key,
+        start,
+        new Date(Math.min(monthEnd.getTime(), start.getTime() + elapsed)),
+        tomorrow,
+      );
+    });
+    return result.every(Boolean) ? result as BillingCycleWindow[] : null;
+  }
+
+  if (input.rangeType === "ytd") {
+    return keys.map((key, index) => {
+      const start = new Date(Date.UTC(
+        selectedStart.getUTCFullYear() - index,
+        selectedStart.getUTCMonth(),
+        selectedStart.getUTCDate(),
+      ));
+      return window(key, start, new Date(start.getTime() + elapsed));
+    });
+  }
+
+  return keys.map((key, index) => {
+    const end = new Date(currentEnd.getTime() - index * elapsed);
+    return window(key, new Date(end.getTime() - elapsed), end);
+  });
 }
 
 /**

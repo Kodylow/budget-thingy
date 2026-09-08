@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Check, ChevronsUpDown, Eye, Shuffle, X } from 'lucide-react';
 import { useAuthContext } from '@/components/auth-context';
+import { createDevViewSearchIndex, rankDevViewUsers } from '@/lib/dev-view-search';
 import { Button } from '@/components/ui/button';
 import {
   Command,
@@ -36,6 +37,14 @@ function DevelopmentViewControl({ signedOut = false }: { signedOut?: boolean }) 
         (user) => user.userId === developmentView.selectedId,
       ),
     [developmentView.selectedId, developmentView.users],
+  );
+  const searchIndex = useMemo(
+    () => createDevViewSearchIndex(developmentView.users),
+    [developmentView.users],
+  );
+  const rankedUsers = useMemo(
+    () => rankDevViewUsers(searchIndex, search),
+    [search, searchIndex],
   );
 
   if (
@@ -148,7 +157,7 @@ function DevelopmentViewControl({ signedOut = false }: { signedOut?: boolean }) 
               Loading users…
             </p>
           ) : (
-            <Command>
+            <Command shouldFilter={false}>
               <div className="relative">
                 <CommandInput
                   value={search}
@@ -174,7 +183,7 @@ function DevelopmentViewControl({ signedOut = false }: { signedOut?: boolean }) 
               <CommandList className="max-h-64">
                 <CommandEmpty>No matches</CommandEmpty>
                 <CommandGroup>
-                  {developmentView.users.map((user) => {
+                  {rankedUsers.map((user) => {
                     const isSelected =
                       user.userId === developmentView.selectedId;
                     const secondary = [
@@ -187,14 +196,7 @@ function DevelopmentViewControl({ signedOut = false }: { signedOut?: boolean }) 
                     return (
                       <CommandItem
                         key={user.userId}
-                        value={[
-                          user.name,
-                          user.username,
-                          user.email,
-                          user.userId,
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
+                        value={user.userId}
                         onSelect={() => selectUser(user.userId)}
                         className="items-start py-2.5"
                         data-testid={`option-dev-view-${user.userId}`}

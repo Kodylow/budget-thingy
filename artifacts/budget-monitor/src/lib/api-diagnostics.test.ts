@@ -3,6 +3,7 @@ import {
   clearApiDiagnostics,
   customFetch,
   getApiDiagnostics,
+  parseDataUnavailableHeader,
   sanitizeDiagnosticUrl,
   subscribeApiDiagnostics,
 } from '@workspace/api-client-react';
@@ -14,6 +15,62 @@ afterEach(() => {
 });
 
 describe('API diagnostics', () => {
+  it('validates and bounds unavailable response headers', () => {
+    expect(parseDataUnavailableHeader(JSON.stringify({
+      count: 2,
+      sites: [{ path: 'body.rows[].spendUsd', reason: 'missing_value', count: 2 }],
+      truncated: false,
+    }))).toEqual({
+      count: 2,
+      sites: [{ path: 'body.rows[].spendUsd', reason: 'missing_value', count: 2 }],
+      truncated: false,
+    });
+    expect(parseDataUnavailableHeader('{bad json')).toBeUndefined();
+    expect(parseDataUnavailableHeader(JSON.stringify({
+      count: 1,
+      sites: [{ path: 'body.private-name', reason: 'made_up', count: 1 }],
+      truncated: false,
+    }))).toBeUndefined();
+    expect(parseDataUnavailableHeader(' '.repeat(3_501))).toBeUndefined();
+  });
+
+  it('records unavailable 200 responses as safe issues and tolerates console failures', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => { throw new Error('console unavailable'); });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
+      headers: {
+        'content-type': 'application/json',
+        'x-request-id': 'req-unavailable',
+        'x-data-unavailable': JSON.stringify({
+          count: 1,
+          sites: [{ path: 'body.rows[].allocationUsd', reason: 'missing_allocation', count: 1 }],
+          truncated: false,
+        }),
+      },
+    })));
+
+    await expect(customFetch('/api/spend', { responseType: 'json' })).resolves.toEqual({ ok: true });
+    expect(getApiDiagnostics()[0]).toMatchObject({
+      category: 'success',
+      requestId: 'req-unavailable',
+      dataState: {
+        unavailable: {
+          count: 1,
+          sites: [{ path: 'body.rows[].allocationUsd', reason: 'missing_allocation', count: 1 }],
+        },
+      },
+    });
+  });
+
+  it('does not mistake a legitimate no-limit state for unavailable data', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      metadata: { status: 'complete', dataAvailable: true },
+      rows: [{ noLimit: true, limitObservationStatus: 'not_applicable' }],
+    }), { headers: { 'content-type': 'application/json' } })));
+
+    await customFetch('/api/limits', { responseType: 'json' });
+    expect(getApiDiagnostics()[0]?.dataState?.unavailable).toBeUndefined();
+  });
+
   it('keeps only approved scoping parameters and redacts identity paths', () => {
     expect(sanitizeDiagnosticUrl(
       'https://example.test/api/users/person%40example.com?token=secret&role=admin&start=2026-01-01',
@@ -31,6 +88,9 @@ describe('API diagnostics', () => {
       .toBe('/api/groups/[redacted]/projects');
     expect(sanitizeDiagnosticUrl('/groups/Customer%20Success'))
       .toBe('/groups/[redacted]');
+    expect(sanitizeDiagnosticUrl(
+      '/api/workspaces/private-workspace/projects/private-project-slug',
+    )).toBe('/api/workspaces/[redacted]/projects/[redacted]');
   });
 
   it('records an HTTP failure and propagates the same error', async () => {
@@ -121,6 +181,14 @@ describe('API diagnostics', () => {
       rowCount: 2,
       dashboardCardKeys: ['eligible_spend'],
       limitObservationStateCounts: { unavailable: 1, complete: 1 },
+      unavailable: {
+        count: 2,
+        sites: [
+          { path: 'metadata.dataAvailable', reason: 'explicit_unavailable', count: 1 },
+          { path: 'rows[].limitObservationStatus', reason: 'limit_observation_unavailable', count: 1 },
+        ],
+        truncated: false,
+      },
     });
     const serialized = JSON.stringify(getApiDiagnostics());
     expect(serialized).not.toContain('987654.321');
@@ -128,5 +196,6 @@ describe('API diagnostics', () => {
     expect(serialized).not.toContain('Sensitive free text');
     expect(serialized).not.toContain('Finance Leadership');
     expect(serialized).not.toContain('private@example.com');
+    expect(serialized).not.toContain('private-project-slug');
   });
 });

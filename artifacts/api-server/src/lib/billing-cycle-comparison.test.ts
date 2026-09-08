@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   billingCycleWindows,
   buildBillingCyclePoints,
+  isFutureOnlyComparisonSelection,
+  selectedComparisonWindows,
 } from "./billing-cycle-comparison";
 import {
   hasImmutableTeamRoster,
@@ -31,6 +33,46 @@ describe("billingCycleWindows", () => {
       "2028-01-01T01:00:00.000Z",
       "2028-02-01T01:00:00.000Z",
     )).toBeNull();
+  });
+});
+
+describe("selectedComparisonWindows", () => {
+  it("identifies a future-only selection for an explicit client error", () => {
+    const now = new Date("2028-03-05T18:00:00.000Z");
+    expect(isFutureOnlyComparisonSelection(
+      "2028-03-05T00:00:00.000Z", now,
+    )).toBe(false);
+    expect(isFutureOnlyComparisonSelection(
+      "2028-03-06T00:00:00.000Z", now,
+    )).toBe(true);
+  });
+
+  it("uses equal contiguous windows for custom ranges and caps today", () => {
+    const windows = selectedComparisonWindows({
+      rangeType: "custom",
+      selectedStart: "2028-03-01T00:00:00.000Z",
+      selectedEndExclusive: "2028-03-11T00:00:00.000Z",
+      now: new Date("2028-03-05T18:00:00.000Z"),
+    })!;
+    expect(windows.map(({ startDate, endDate }) => [startDate, endDate])).toEqual([
+      ["2028-03-01", "2028-03-05"],
+      ["2028-02-25", "2028-02-29"],
+      ["2028-02-20", "2028-02-24"],
+    ]);
+  });
+
+  it("compares MTD against the same elapsed days in prior months", () => {
+    const windows = selectedComparisonWindows({
+      rangeType: "mtd",
+      selectedStart: "2028-03-01T00:00:00.000Z",
+      selectedEndExclusive: "2028-03-31T00:00:00.000Z",
+      now: new Date("2028-03-30T12:00:00.000Z"),
+    })!;
+    expect(windows.map(({ startDate, endDate }) => [startDate, endDate])).toEqual([
+      ["2028-03-01", "2028-03-30"],
+      ["2028-02-01", "2028-02-29"],
+      ["2028-01-01", "2028-01-30"],
+    ]);
   });
 });
 

@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { Route, Switch, Router as WouterRouter, useLocation, useSearch } from 'wouter';
+import { useSearch as useRawSearch } from 'wouter/use-browser-location';
 import { AppShell } from '@/components/app-shell';
 import { RangeProvider } from '@/components/range-context';
 import { AuthProvider, useAuthContext } from '@/components/auth-context';
@@ -19,6 +20,7 @@ import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
 import { previewScopedQueryHash } from '@/lib/preview-query-cache';
 import { createForbiddenRevalidator } from '@/lib/auth-transition';
 import { safeLoginReturnTarget } from '@/lib/login-navigation';
+import { UnavailableObserver } from '@/components/unavailable-observer';
 
 const Dashboard = lazy(() => import('@/pages/dashboard'));
 const Home = lazy(() => import('@/pages/home'));
@@ -35,7 +37,6 @@ const ClusterDetail = lazy(() => import('@/pages/cluster-detail'));
 
 const ProjectDetail = lazy(() => import('@/pages/project-detail'));
 const Limits = lazy(() => import('@/pages/limits'));
-const Reports = lazy(() => import('@/pages/reports'));
 
 const DevelopmentViewChip = import.meta.env.DEV
   ? lazy(() => import('@/components/dev-view-chip').then(module => ({ default: module.DevViewChip })))
@@ -217,12 +218,16 @@ function LimitsRoute() {
   );
 }
 
-function PreserveQueryRedirect({ to }: { to: string }) {
+function PreserveQueryRedirect({ to, tab }: { to: string; tab?: string }) {
   const [, setLocation] = useLocation();
+  const rawSearch = useRawSearch();
+
   useEffect(() => {
-    const search = window.location.search;
-    setLocation(to + search, { replace: true });
-  }, [to, setLocation]);
+    const searchParams = new URLSearchParams(rawSearch);
+    if (tab) searchParams.set('tab', tab);
+    const searchString = searchParams.size ? '?' + searchParams.toString() : '';
+    setLocation(to + searchString, { replace: true });
+  }, [to, tab, setLocation, rawSearch]);
   return null;
 }
 
@@ -242,12 +247,13 @@ function Router() {
       '/': 'Overview',
       '/spend': 'Spend',
       '/my-team': 'My Team',
+      '/org-insights': 'Org Insights',
       '/limits': 'Limits',
       '/allocations': 'Budget allocations',
       '/alerts': 'Email activity',
       '/access': 'Access',
       '/settings': 'Settings',
-      '/reports': 'Custom Reports',
+      '/reports': 'Spend',
       '/help': 'Help',
       '/clusters': 'Planning pool detail',
     };
@@ -263,7 +269,6 @@ function Router() {
           <Route path="/org-insights" component={OrgInsights} />
           <Route path="/spend" component={Spend} />
           <Route path="/my-team" component={MyTeam} />
-          <Route path="/reports" component={Reports} />
           <Route path="/limits" component={LimitsRoute} />
           <Route path="/allocations" component={AllocationsRoute} />
           <Route path="/alerts" component={AlertsRoute} />
@@ -277,6 +282,7 @@ function Router() {
           <Route path="/workspace-admins" component={() => <PreserveQueryRedirect to="/access" />} />
           <Route path="/workspace-directory" component={() => <PreserveQueryRedirect to="/spend" />} />
           <Route path="/user-guide" component={() => <PreserveQueryRedirect to="/help" />} />
+          <Route path="/reports" component={() => <PreserveQueryRedirect to="/spend" tab="pools" />} />
 
           <Route path="/groups/:groupId" component={GroupDetail} />
           <Route path="/workspaces/:workspaceId/projects/:projectId" component={ProjectDetail} />
@@ -339,25 +345,28 @@ export class RootErrorBoundary extends Component<{ children: ReactNode }, RootEr
 
 function App() {
   return (
-    <RootErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <ApiErrorToasts />
-        <TooltipProvider>
-          <AuthProvider>
-            <AuthorizationFailureBridge />
-            <RangeProvider>
-              <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-                <AuthGate>
-                  <AuthorizedRouter />
-                </AuthGate>
-                {DevelopmentViewChip && <Suspense fallback={null}><DevelopmentViewChip /></Suspense>}
-              </WouterRouter>
-            </RangeProvider>
-          </AuthProvider>
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </RootErrorBoundary>
+    <>
+      <UnavailableObserver />
+      <RootErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <ApiErrorToasts />
+          <TooltipProvider>
+            <AuthProvider>
+              <AuthorizationFailureBridge />
+              <RangeProvider>
+                <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+                  <AuthGate>
+                    <AuthorizedRouter />
+                  </AuthGate>
+                  {DevelopmentViewChip && <Suspense fallback={null}><DevelopmentViewChip /></Suspense>}
+                </WouterRouter>
+              </RangeProvider>
+            </AuthProvider>
+            <Toaster />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </RootErrorBoundary>
+    </>
   );
 }
 

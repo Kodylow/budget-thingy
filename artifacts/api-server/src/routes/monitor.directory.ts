@@ -11,6 +11,7 @@ import {
   ListWorkspaceGroupMembersParams,
   ListWorkspaceGroupMembersQueryParams,
   ListWorkspaceGroupMembersResponse,
+  ListVisibleWorkspacesQueryParams,
 } from "@workspace/api-zod";
 import { and, lt } from "drizzle-orm";
 import {
@@ -192,11 +193,23 @@ router.get(
 );
 
 router.get("/directory/workspaces", async (req, res): Promise<void> => {
+  const query = ListVisibleWorkspacesQueryParams.safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: query.error.message });
+    return;
+  }
   try {
     const dir = await getDirectory();
-    const allowed = isAccountWide(req.authz)
-      ? null
-      : new Set(req.authz!.workspaceIds);
+    const ownWorkspaceIds = new Set(
+      [...(dir.members.get(req.authz!.userId)?.workspaces ?? [])]
+        .filter(([, membership]) => !membership.isDisabled)
+        .map(([workspaceId]) => workspaceId),
+    );
+    const allowed = query.data.scope === "own"
+      ? ownWorkspaceIds
+      : isAccountWide(req.authz)
+        ? null
+        : new Set(req.authz!.workspaceIds);
     const workspaces = [...dir.workspaces.values()]
       .filter((workspace) => !allowed || allowed.has(workspace.id))
       .map((workspace) => ({

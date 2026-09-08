@@ -1,11 +1,12 @@
 /** Carry view context, not ledger pagination or filters, between reporting pages. */
 export function reportingNavigationHref(path: string, search: string): string {
   const [pathname, destinationSearch] = path.split('?');
-  if (!['/', '/spend', '/reports', '/org-insights', '/overview', '/my-team'].includes(pathname)) return path;
+  if (pathname === '/org-insights') return path;
+  if (!['/', '/spend', '/reports', '/overview', '/my-team'].includes(pathname)) return path;
   const source = new URLSearchParams(search);
   const params = new URLSearchParams();
   for (const key of [
-    'rangeType', 'startDate', 'endDate', 'viewScope', 'granularity', 'trendMode',
+    'rangeType', 'startDate', 'endDate', 'viewScope', 'workspaceId', 'granularity', 'trendMode',
     'projectionHorizon', 'planningEndDate',
   ]) {
     const value = source.get(key);

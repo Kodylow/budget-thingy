@@ -5,6 +5,87 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface MyMembershipGroup {
+  groupId: string;
+  groupName: string;
+}
+
+export interface MyMembershipBudgetTeam {
+  poolId: string;
+  teamName: string;
+  groups: MyMembershipGroup[];
+}
+
+export interface MyMembershipWorkspace {
+  workspaceId: string;
+  workspaceName: string;
+  isPreferred: boolean;
+  budgetTeams: MyMembershipBudgetTeam[];
+  unmappedGroups: MyMembershipGroup[];
+}
+
+export interface MyMembershipContext {
+  /** @nullable */
+  defaultWorkspaceId: string | null;
+  workspaces: MyMembershipWorkspace[];
+  /** @nullable */
+  qualification: string | null;
+}
+
+export type OrgBudgetOverviewResponseSummary = {
+  /** @nullable */
+  accountSpendUsd: number | null;
+  /** @nullable */
+  teamAllocationUsd: number | null;
+  /** @nullable */
+  remainingUsd: number | null;
+  /** @nullable */
+  teamsOverBudget: number | null;
+  /** @nullable */
+  unassignedSpendUsd: number | null;
+};
+
+export type OrgBudgetOverviewResponseTeamsItemPointsItem = {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  date: string;
+  /** @nullable */
+  spendUsd: number | null;
+};
+
+export type OrgBudgetOverviewResponseTeamsItem = {
+  id: string;
+  name: string;
+  /** @nullable */
+  allocationUsd: number | null;
+  /** @nullable */
+  spendUsd: number | null;
+  /** @nullable */
+  remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  complete: boolean;
+  /** @maxItems 367 */
+  points: OrgBudgetOverviewResponseTeamsItemPointsItem[];
+};
+
+export interface OrgBudgetOverviewResponse {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  periodStart: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  periodEnd: string;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  asOf: string | null;
+  complete: boolean;
+  /** @nullable */
+  qualification: string | null;
+  summary: OrgBudgetOverviewResponseSummary;
+  /** @maxItems 1000 */
+  teams: OrgBudgetOverviewResponseTeamsItem[];
+}
+
 export interface SetLimitsGroup {
   groupId: string;
   name: string;
@@ -443,6 +524,36 @@ export interface ReportingDetailMember {
   limitObservationStatus: ReportingDetailMemberLimitObservationStatus;
 }
 
+export interface ReportingTeamHierarchyGroup {
+  groupId: string;
+  name: string;
+  familyKey: string;
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  usageObserved: boolean;
+  isComplete: boolean;
+  /** @minimum 0 */
+  memberCount: number;
+  unattributedSpendUsd: number;
+  members: ReportingDetailMember[];
+}
+
+export interface ReportingTeamHierarchyWorkspace {
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  usageObserved: boolean;
+  isComplete: boolean;
+  /** @minimum 0 */
+  memberCount: number;
+  unattributedSpendUsd: number;
+  groups: ReportingTeamHierarchyGroup[];
+}
+
 export type ReportingDetailKind = typeof ReportingDetailKind[keyof typeof ReportingDetailKind];
 
 
@@ -450,6 +561,14 @@ export const ReportingDetailKind = {
   group: 'group',
   family: 'family',
   team: 'team',
+} as const;
+
+export type ReportingDetailBudgetTrackingBudgetKind = typeof ReportingDetailBudgetTrackingBudgetKind[keyof typeof ReportingDetailBudgetTrackingBudgetKind];
+
+
+export const ReportingDetailBudgetTrackingBudgetKind = {
+  annual: 'annual',
+  monthly_agent: 'monthly_agent',
 } as const;
 
 export type ReportingDetailBudgetTrackingPointsItem = {
@@ -460,6 +579,12 @@ export type ReportingDetailBudgetTrackingPointsItem = {
 };
 
 export type ReportingDetailBudgetTracking = {
+  budgetKind: ReportingDetailBudgetTrackingBudgetKind;
+  /**
+     * Number of workspaces in the visible contributing tracking scope.
+     * @minimum 0
+     */
+  workspaceCount: number;
   /**
      * @nullable
      * @pattern ^\d{4}-\d{2}-\d{2}$
@@ -472,9 +597,25 @@ export type ReportingDetailBudgetTracking = {
      */
   periodEnd: string | null;
   periodLabel: string;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  reportingStart?: string | null;
+  /**
+     * Inclusive chart/reporting-domain end date.
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  reportingEnd?: string | null;
+  /** @nullable */
+  reportingLabel?: string | null;
   /** @nullable */
   asOf: string | null;
-  /** @nullable */
+  /**
+     * Applicable annual allocation or configured monthly Agent limit; null when unavailable or unsafe to disclose.
+     * @nullable
+     */
   allocationUsd: number | null;
   /** @nullable */
   spendUsd: number | null;
@@ -485,6 +626,8 @@ export type ReportingDetailBudgetTracking = {
   scopeComplete: boolean;
   usageComplete: boolean;
   benchmarkEligible: boolean;
+  /** True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff. */
+  comparisonsMatchBudgetWindow?: boolean;
   /** @nullable */
   qualification: string | null;
   points: ReportingDetailBudgetTrackingPointsItem[];
@@ -510,6 +653,10 @@ export interface ReportingDetail {
   /** Deduplicated authorized physical role groups represented by the canonical group rows; contains no financial fields. */
   sourceGroups: ReportingDetailSourceGroupsItem[];
   members: ReportingDetailMember[];
+  /** Canonical workspace and physical-group hierarchy for an authorized team report. */
+  hierarchy?: ReportingTeamHierarchyWorkspace[];
+  /** Team headline spend not located in a workspace hierarchy source. This is separate from headline.unattributedSpendUsd, which is the residual between team spend and exposed member children. */
+  hierarchyUnattributedSpendUsd?: number;
   period: ReportingPeriod;
   metadata: AccountingMetadata;
 }
@@ -1034,7 +1181,7 @@ export interface DashboardResponse {
 export interface BillingCycleComparisonPoint {
   /**
      * @minimum 1
-     * @maximum 31
+     * @maximum 400
      */
   day: number;
   /** @pattern ^\d{4}-\d{2}-\d{2}$ */
@@ -1075,8 +1222,8 @@ export interface BillingCycleComparisonCycle {
   /** Whether every elapsed own-team all-service day in this cycle is complete. */
   teamComplete: boolean;
   /**
-     * @minItems 28
-     * @maxItems 31
+     * @minItems 1
+     * @maxItems 400
      */
   points: BillingCycleComparisonPoint[];
 }
@@ -3442,10 +3589,48 @@ startDate?: StartDateParameter;
  */
 endDate?: EndDateParameter;
 /**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * Include the canonical Workspace, physical Group, and apportioned Member hierarchy. Forbidden when scope=own.
+ */
+includeHierarchy?: boolean;
+/**
  * Include allocation-period spend tracking and cumulative daily points.
  */
 includeBudgetTracking?: boolean;
+/**
+ * Use the fixed allocation period (default), the verified current billing cycle's monthly Agent limit and Agent-only usage, or the selected report period.
+ */
+trackingRange?: GetBudgetTeamReportTrackingRange;
+/**
+ * own enables a regular member's read-only Home tracking view. It requires workspaceId and an active actual membership in a group committed to the requested canonical funding team.
+ */
+scope?: GetBudgetTeamReportScope;
 };
+
+export type GetBudgetTeamReportTrackingRange = typeof GetBudgetTeamReportTrackingRange[keyof typeof GetBudgetTeamReportTrackingRange];
+
+
+export const GetBudgetTeamReportTrackingRange = {
+  budget: 'budget',
+  billing: 'billing',
+  selected: 'selected',
+} as const;
+
+export type GetBudgetTeamReportScope = typeof GetBudgetTeamReportScope[keyof typeof GetBudgetTeamReportScope];
+
+
+export const GetBudgetTeamReportScope = {
+  authorized: 'authorized',
+  own: 'own',
+} as const;
 
 export type GetGroupDetailParams = {
 /**
@@ -3543,6 +3728,26 @@ projectionHorizon?: ProjectionHorizonParameter;
  * Inclusive user-selected UTC projection end (YYYY-MM-DD), required with projectionHorizon=planning_end; must be today or within the next five years.
  */
 planningEndDate?: PlanningEndDateParameter;
+};
+
+export type GetBillingCycleComparisonParams = {
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
+/**
+ * Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.
+ */
+rangeType?: RangeTypeParameter;
+/**
+ * Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom
+ */
+startDate?: StartDateParameter;
+/**
+ * Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom
+ */
+endDate?: EndDateParameter;
 };
 
 export type ListSpendPoolsParams = {
@@ -3976,6 +4181,11 @@ scope?: GetTeamsBudgetsScope;
  * Reporting period for all-service team spend. Allocation remains annual.
  */
 period?: GetTeamsBudgetsPeriod;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 };
 
 export type GetTeamsBudgetsScope = typeof GetTeamsBudgetsScope[keyof typeof GetTeamsBudgetsScope];
@@ -4017,6 +4227,21 @@ startDate?: StartDateParameter;
  */
 endDate?: EndDateParameter;
 };
+
+export type ListVisibleWorkspacesParams = {
+/**
+ * own returns only active actual workspace memberships for the current user and is available to regular members.
+ */
+scope?: ListVisibleWorkspacesScope;
+};
+
+export type ListVisibleWorkspacesScope = typeof ListVisibleWorkspacesScope[keyof typeof ListVisibleWorkspacesScope];
+
+
+export const ListVisibleWorkspacesScope = {
+  operator: 'operator',
+  own: 'own',
+} as const;
 
 export type ListWorkspaceUsageLimitAuditsParams = {
 /**

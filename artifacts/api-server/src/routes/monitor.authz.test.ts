@@ -36,6 +36,10 @@ import {
   type AuthzRole,
 } from "../lib/authz";
 import monitorRouter, { canSeeAlertEntity } from "./monitor";
+import {
+  __setOrgInsightsNowForTests,
+  projectCoverageGaps,
+} from "./monitor.org-insights";
 import { __getScopedAccountingCacheSizeForTests } from "../services/scoped-accounting";
 
 const PREFIX = "rbac217";
@@ -373,6 +377,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  __setOrgInsightsNowForTests(null);
   await new Promise((resolve) => server?.close(resolve));
   setAuthorizationResolver(null);
   setReplitBudgetTransportForTests(null);
@@ -1297,3 +1302,138 @@ function dirMemberIdsForWorkspace(workspaceId: string): string[] {
     ? ["platform"]
     : ["workspace", "team", "both", "member", "other", WRITE_USER, INTERNAL_USER];
 }
+
+describe("organization budget overview", () => {
+  const projectMetadata = (projects) => ({
+    byWorkspace: new Map([["shared", new Map(projects)]]),
+    observedWorkspaceIds: new Set(["shared"]),
+    completeWorkspaceIds: new Set(),
+    deploymentObservedWorkspaceIds: new Set(),
+    deploymentCompleteWorkspaceIds: new Set(),
+    freshnessByWorkspace: new Map(),
+    revision: "test",
+  });
+  const projectUsage = (projectId) => new Map([[
+    "2026-06-17",
+    new Map([["shared", new Map([[
+      projectId, { totalCostUsd: 10, aiCostUsd: 0 },
+    ]])]]),
+  ]]);
+
+  it("limits a known-owner project coverage gap to its canonical team", () => {
+    const key = "shared\u0000known";
+    const gaps = projectCoverageGaps({
+      dailyProjects: projectUsage("known"),
+      dailyRollups: new Map([["2026-06-17", {
+        projectAttribution: {
+          projectToGroup: new Map([[key, "group-a"]]),
+          creatorByProject: new Map([[key, "owner-a"]]),
+        },
+      }]]),
+      metadata: projectMetadata([["known", { creatorId: "owner-a" }]]),
+      teamByGroupId: new Map([
+        ["group-a", "team-a"],
+        ["group-b", "team-b"],
+      ]),
+    });
+    expect(gaps.byTeamDay).toEqual(new Set(["team-a\u00002026-06-17"]));
+    expect(gaps.unknownWorkspaceDay).toEqual(new Set());
+  });
+
+  it("keeps genuinely unknown project ownership uncertain for both teams", () => {
+    const key = "shared\u0000unknown";
+    const gaps = projectCoverageGaps({
+      dailyProjects: projectUsage("unknown"),
+      dailyRollups: new Map([["2026-06-17", {
+        projectAttribution: {
+          projectToGroup: new Map(),
+          creatorByProject: new Map([[key, null]]),
+        },
+      }]]),
+      metadata: projectMetadata([]),
+      teamByGroupId: new Map([
+        ["group-a", "team-a"],
+        ["group-b", "team-b"],
+      ]),
+    });
+    expect(gaps.byTeamDay).toEqual(new Set());
+    expect(gaps.unknownWorkspaceDay)
+      .toEqual(new Set(["shared\u00002026-06-17"]));
+  });
+
+  it("requires real account-wide usage scope and rejects every query filter", async () => {
+    expect((await request("/org-insights", fixtures[1])).status).toBe(403);
+    expect((await request("/org-insights", fixtures[4])).status).toBe(403);
+    const narrowPreview = {
+      ...fixtures[1].authz,
+      capabilities: {
+        ...fixtures[1].authz.capabilities,
+        canViewAccountUsage: true,
+      },
+      isPreview: true,
+      previewReadOnly: true,
+    };
+    setAuthorizationResolver(async (id) =>
+      id === "narrow-preview" ? narrowPreview : fixtureResolver(id));
+    try {
+      expect((await request(
+        "/org-insights", { id: "narrow-preview" })).status).toBe(403);
+    } finally {
+      setAuthorizationResolver(fixtureResolver);
+    }
+    expect((await request("/org-insights?workspaceId=x", fixtures[0])).status)
+      .toBe(400);
+    expect((await request("/org-insights?rangeType=full-term", fixtures[0])).status)
+      .toBe(400);
+  });
+
+  it("allows a read-only preview that retains account-wide capability and scope", async () => {
+    const preview = {
+      ...fixtures[0].authz,
+      isPreview: true,
+      previewReadOnly: true,
+    };
+    setAuthorizationResolver(async (id) =>
+      id === "account-readonly-preview" ? preview : fixtureResolver(id));
+    try {
+      expect((await request(
+        "/org-insights", { id: "account-readonly-preview" })).status).toBe(200);
+    } finally {
+      setAuthorizationResolver(fixtureResolver);
+    }
+  });
+
+  it("reconciles one account-wide committed report without fabricating gaps", async () => {
+    __setOrgInsightsNowForTests(
+      () => new Date("2026-06-17T12:00:00.000Z"));
+    try {
+      const response = await request("/org-insights", fixtures[0]);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        periodStart: "2026-05-20",
+        periodEnd: "2027-05-20",
+        qualification: expect.stringContaining("allocation-eligible"),
+        summary: {
+          accountSpendUsd: expect.any(Number),
+          teamAllocationUsd: expect.any(Number),
+        },
+      });
+      expect(body.teams).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: TEAM, allocationUsd: 1200 }),
+      ]));
+      expect(body.summary.accountSpendUsd).toBeCloseTo(
+        body.teams.reduce((sum, team) => sum + (team.spendUsd ?? 0), 0) +
+          body.summary.unassignedSpendUsd,
+        8,
+      );
+      expect(body.complete).toBe(false);
+      expect(body.summary.remainingUsd).toBeNull();
+      expect(body.summary.teamsOverBudget).toBeNull();
+      expect(body.teams[0].points.some((point) => point.spendUsd === null))
+        .toBe(true);
+    } finally {
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+});

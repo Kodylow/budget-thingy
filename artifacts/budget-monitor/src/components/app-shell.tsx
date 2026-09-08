@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Bell,
   Settings,
-  LogOut,
   ShieldCheck,
   Building2,
   Menu,
@@ -22,6 +21,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuthContext } from '@/components/auth-context';
+import { AccountSessionActions } from '@/components/account-session-actions';
 import { ApiDiagnostics } from '@/components/api-diagnostics';
 import {
   AdminDataQualityProvider,
@@ -100,7 +100,7 @@ function useMobileNavigation(): MobileNavigation {
 }
 
 function usePreviewOptions(canPreviewRbac: boolean, isPreviewing: boolean, isOpen: boolean): PreviewOptionsState {
-  const workspacesQuery = useListVisibleWorkspaces({
+  const workspacesQuery = useListVisibleWorkspaces(undefined, {
     query: { enabled: canPreviewRbac && !isPreviewing && isOpen, queryKey: getListVisibleWorkspacesQueryKey() },
   });
   const membersQuery = useListDirectoryMembers({}, {
@@ -152,11 +152,10 @@ function getNavSections(
       id: 'spend-monitoring',
       items: [
         { path: '/', label: 'Home', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
+        { path: '/org-insights', label: 'Org Insights', icon: Building2, show: capabilities.canViewAccountUsage === true, testId: 'nav-org-insights' },
         { path: '/my-team', label: 'My Team', icon: Users, show: role !== 'denied' && role !== null, testId: 'nav-my-team' },
         { path: '/spend?tab=projects&viewScope=my', label: 'My Projects', icon: FolderCode, show: true, testId: 'nav-my-projects' },
-        { path: '/org-insights', label: 'Org Insights', icon: Building2, show: capabilities.canViewAccountUsage === true, testId: 'nav-org-insights' },
         { path: '/spend', label: 'Spend', icon: WalletCards, show: true, testId: 'nav-spend' },
-        { path: '/reports', label: 'Custom Reports', icon: BarChart3, show: isAccountAdminOrManager(role) || capabilities.canEditAllocations, testId: 'nav-custom-reports' },
       ],
     },
     {
@@ -532,7 +531,7 @@ function PreviewPicker() {
 
 function IdentityPanel() {
   const {
-    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds, logout, developmentView,
+    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds,
   } = useAuthContext();
   if (!user) return null;
 
@@ -582,23 +581,14 @@ function IdentityPanel() {
       </div>
       <AdminDataQualityTrigger />
       <ApiDiagnostics />
-       {!developmentView.selectedId && <Button
-        variant="outline"
-        size="sm"
-        className="w-full justify-start"
-        onClick={logout}
-        data-testid="button-logout"
-      >
-        <LogOut className="mr-2 h-4 w-4 shrink-0" />
-        Log out
-      </Button>}
+      <AccountSessionActions />
     </div>
   );
 }
 
 function DesktopIdentityMenu() {
   const {
-    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds, logout, isPreviewing, developmentView,
+    user, isAccountAdmin, isTeamAdmin, isWorkspaceAdmin, auth, workspaceIds,
   } = useAuthContext();
   if (!user) return null;
 
@@ -634,10 +624,7 @@ function DesktopIdentityMenu() {
         <PreviewPicker />
          <AdminDataQualityTrigger />
         <ApiDiagnostics />
-         {!developmentView.selectedId && <Button variant="outline" size="sm" className="w-full justify-start mt-1" onClick={logout}>
-          <LogOut className="mr-2 h-4 w-4" />
-          Log out
-        </Button>}
+         <AccountSessionActions />
       </PopoverContent>
     </Popover>
   );
@@ -815,7 +802,7 @@ export function AppShell({ children }: AppShellProps) {
       <MobileTopBar isOpen={mobileNavigation.isOpen} open={mobileNavigation.open} />
       <MobileSidebar location={location} {...mobileNavigation} />
 
-      <main id="main-content" tabIndex={-1} className={`min-h-0 min-w-0 flex-1 relative overflow-x-hidden overflow-y-auto focus:outline-none${developmentView.enabled ? ' pb-20' : ''}`}>
+      <main id="main-content" tabIndex={-1} className={`min-h-0 min-w-0 flex-1 relative overflow-x-hidden overflow-y-auto focus:outline-none${developmentView.enabled ? ' [--preview-clearance:5rem]' : ''}`}>
         {children}
       </main>
       </div>

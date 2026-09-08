@@ -5,9 +5,16 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ReportingDetailBudgetTrackingBudgetKind } from './reportingDetailBudgetTrackingBudgetKind';
 import type { ReportingDetailBudgetTrackingPointsItem } from './reportingDetailBudgetTrackingPointsItem';
 
 export type ReportingDetailBudgetTracking = {
+  budgetKind: ReportingDetailBudgetTrackingBudgetKind;
+  /**
+     * Number of workspaces in the visible contributing tracking scope.
+     * @minimum 0
+     */
+  workspaceCount: number;
   /**
      * @nullable
      * @pattern ^\d{4}-\d{2}-\d{2}$
@@ -20,9 +27,25 @@ export type ReportingDetailBudgetTracking = {
      */
   periodEnd: string | null;
   periodLabel: string;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  reportingStart?: string | null;
+  /**
+     * Inclusive chart/reporting-domain end date.
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  reportingEnd?: string | null;
+  /** @nullable */
+  reportingLabel?: string | null;
   /** @nullable */
   asOf: string | null;
-  /** @nullable */
+  /**
+     * Applicable annual allocation or configured monthly Agent limit; null when unavailable or unsafe to disclose.
+     * @nullable
+     */
   allocationUsd: number | null;
   /** @nullable */
   spendUsd: number | null;
@@ -33,6 +56,8 @@ export type ReportingDetailBudgetTracking = {
   scopeComplete: boolean;
   usageComplete: boolean;
   benchmarkEligible: boolean;
+  /** True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff. */
+  comparisonsMatchBudgetWindow?: boolean;
   /** @nullable */
   qualification: string | null;
   points: ReportingDetailBudgetTrackingPointsItem[];

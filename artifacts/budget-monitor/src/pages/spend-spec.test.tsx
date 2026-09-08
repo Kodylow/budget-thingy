@@ -50,6 +50,10 @@ vi.mock('wouter', async (importOriginal) => {
   };
 });
 
+vi.mock('wouter/use-browser-location', () => ({
+  useSearch: () => currentSearch,
+}));
+
 vi.mock('@workspace/api-client-react', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -141,7 +145,7 @@ describe('Spend Behaviors', () => {
       isWorkspaceAdmin: false,
       isTeamAdmin: true,
       canEditAllocations: false,
-    })).toEqual(['groups', 'people', 'projects', 'pools']);
+    })).toEqual(['pools', 'groups', 'people', 'projects']);
 
     expect(getAvailableSpendViews({
       isAccountAdmin: false,
@@ -157,12 +161,12 @@ describe('Spend Behaviors', () => {
     
     renderComponent();
     
-    // Actual spend is primary; planning pools remain available as a separate tab.
-    expect(groupsSpy).toHaveBeenCalledWith(
+    // pools are now primary
+    expect(poolsSpy).toHaveBeenCalledWith(
       expect.objectContaining({ sort: 'spend_desc' }),
       expect.objectContaining({ query: expect.objectContaining({ enabled: true }) }),
     );
-    expect(poolsSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ query: expect.objectContaining({ enabled: false }) }));
+    expect(groupsSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ query: expect.objectContaining({ enabled: false }) }));
   });
 
   it('uses one compact toolbar and keeps current-cycle member detail out of the default ledger', () => {
@@ -240,7 +244,7 @@ describe('Spend Behaviors', () => {
       agentSpendUsd: 0,
       otherServicesUsd: 0,
     }));
-    const result = mockQueryReturn([], 0, 0);
+    const result = mockQueryReturn(projects, 903, 903);
     result.data.personalProjectCatalog = {
       projectCount: 903,
       publishedProjectCount: 238,
@@ -268,43 +272,17 @@ describe('Spend Behaviors', () => {
   it('describes an empty current project catalog without claiming zero spend', () => {
     currentSearch = '?tab=projects&viewScope=my';
     window.location.search = currentSearch;
-    vi.mocked(api.useListSpendProjects).mockReturnValue(mockQueryReturn([], 0, 0));
-
-    const html = renderComponent();
-    expect(html).toContain('This spend view is unavailable');
-    expect(html).toContain('Search: ops');
-    expect(html).toContain('Clear filters');
-    expect(html).not.toContain('Do not expose cached row');
-    expect(html).not.toContain('Explain this total');
-  });
-
-  it('shows partial no-observation totals as unavailable, not zero', () => {
     const result = mockQueryReturn([], 0, 0);
-    result.data.metadata = { status: 'partial', dataAsOf: null };
-    result.data.totals = { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 };
-    vi.mocked(api.useListSpendGroups).mockReturnValue(result);
+    result.data.personalProjectCatalog = { coverage: 'missing' } as any;
+    vi.mocked(api.useListSpendProjects).mockReturnValue(result);
+
     const html = renderComponent();
-    expect(html).toContain('This spend view is unavailable');
-    expect(html).toContain('Search: ops');
-    expect(html).toContain('Clear filters');
-    expect(html).not.toContain('Do not expose cached row');
-    expect(html).not.toContain('Explain this total');
+    expect(html).toContain('The current project catalog could not be observed');
+    expect(html).not.toContain('$0.00');
   });
 
   it('shows partial no-observation totals as unavailable, not zero', () => {
-    const result = mockQueryReturn([], 0, 0);
-    result.data.metadata = { status: 'partial', dataAsOf: null };
-    result.data.totals = { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 };
-    vi.mocked(api.useListSpendGroups).mockReturnValue(result);
-    const html = renderComponent();
-    expect(html).toContain('This spend view is unavailable');
-    expect(html).toContain('Search: ops');
-    expect(html).toContain('Clear filters');
-    expect(html).not.toContain('Do not expose cached row');
-    expect(html).not.toContain('Explain this total');
-  });
-
-  it('shows partial no-observation totals as unavailable, not zero', () => {
+    currentSearch = '?tab=groups';
     const result = mockQueryReturn([], 0, 0);
     result.data.metadata = { status: 'partial', dataAsOf: null };
     result.data.totals = { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 };

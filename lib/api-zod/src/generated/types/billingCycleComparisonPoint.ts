@@ -9,7 +9,7 @@
 export interface BillingCycleComparisonPoint {
   /**
      * @minimum 1
-     * @maximum 31
+     * @maximum 400
      */
   day: number;
   /** @pattern ^\d{4}-\d{2}-\d{2}$ */

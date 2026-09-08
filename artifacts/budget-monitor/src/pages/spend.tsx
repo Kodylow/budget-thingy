@@ -1,6 +1,7 @@
 import React from "react";
 import { useMemo, useState, useEffect } from 'react';
-import { useLocation, Link, useSearch } from 'wouter';
+import { useLocation, Link } from 'wouter';
+import { useSearch } from 'wouter/use-browser-location';
 import {
   useListSpendPools,
   useListSpendGroups,
@@ -59,6 +60,7 @@ import {
   isUnknownSpendTotal,
 } from '@/lib/spend-presentation';
 import { DeploymentChip, DeploymentLink, StaleSpendingChip } from '@/components/project-observation';
+import { BudgetTeamDetail } from '@/pages/budget-team-detail';
 
 export function getAvailableSpendViews({
   isAccountAdmin,
@@ -71,10 +73,10 @@ export function getAvailableSpendViews({
   isTeamAdmin: boolean;
   canEditAllocations: boolean;
 }) {
-  const views: Array<'groups' | 'people' | 'projects' | 'pools'> = [];
+  const views: Array<'pools' | 'groups' | 'people' | 'projects'> = [];
+  if (isAccountAdmin || isWorkspaceAdmin || isTeamAdmin || canEditAllocations) views.push('pools');
   if (isAccountAdmin || isWorkspaceAdmin || isTeamAdmin) views.push('groups');
   views.push('people', 'projects');
-  if (isAccountAdmin || isWorkspaceAdmin || isTeamAdmin || canEditAllocations) views.push('pools');
   return views;
 }
 
@@ -122,11 +124,13 @@ export default function Spend() {
 
   const tabFromUrl = searchParams.get('tab');
   const viewScopeFromUrl = searchParams.get('viewScope');
+  const poolIdFromUrl = searchParams.get('poolId');
   const isMyProjects = tabFromUrl === 'projects' && viewScopeFromUrl === 'my';
   const isMyTeam = tabFromUrl === 'people' && viewScopeFromUrl === 'managed';
   let pageTitle = role === 'member' ? 'My spend' : 'Spend';
   if (isMyProjects) pageTitle = 'My Projects';
   else if (isMyTeam) pageTitle = 'My Team';
+  else if (tabFromUrl === 'pools' || (poolIdFromUrl && defaultTab === 'pools')) pageTitle = 'Budgeted teams';
 
   const activeTab = availableTabs.includes(requestedTab) ? requestedTab : defaultTab;
 
@@ -209,10 +213,21 @@ export default function Spend() {
       </header>
 
       <section aria-label="Spend ledger">
-          {activeTab === 'pools' && <SpendTable type="pools" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
-          {activeTab === 'groups' && <SpendTable type="groups" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
-          {activeTab === 'people' && <SpendTable type="people" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
-          {activeTab === 'projects' && <SpendTable type="projects" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
+          {activeTab === 'pools' && searchParams.get('poolId') ? (
+            <BudgetTeamDetail
+              poolId={searchParams.get('poolId')!}
+              rangeParams={{ rangeType, startDate, endDate }}
+              viewScope={viewScope}
+              onBack={() => updateUrlParams({ poolId: null })}
+            />
+          ) : (
+            <>
+              {activeTab === 'pools' && <SpendTable type="pools" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
+              {activeTab === 'groups' && <SpendTable type="groups" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
+              {activeTab === 'people' && <SpendTable type="people" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
+              {activeTab === 'projects' && <SpendTable type="projects" search={debouncedSearch} searchValue={search} setSearch={setSearch} density={densityFromUrl} viewScope={viewScope} scopeOptions={scopeOptions} availableTabs={availableTabs} onExport={handleExport} isExporting={isExporting} updateUrlParams={updateUrlParams} />}
+            </>
+          )}
       </section>
     </div>
   );
@@ -247,16 +262,16 @@ const columnSets: Record<'pools' | 'groups' | 'people' | 'projects', { defaults:
   },
 };
 
-const viewLabels: Record<string, string> = {
-  groups: 'Groups',
-  people: 'Members',
-  projects: 'Projects',
-  pools: 'Planning pools',
-};
+  const viewLabels: Record<string, string> = {
+    groups: 'Groups',
+    people: 'Members',
+    projects: 'Projects',
+    pools: 'Budgeted teams',
+  };
 
-function columnLabel(column: string, tableType: 'pools' | 'groups' | 'people' | 'projects') {
-  const labels: Record<string, string> = {
-    name: tableType === 'groups' ? 'Group' : tableType === 'people' ? 'Member' : tableType === 'projects' ? 'Project' : 'Planning pool',
+  function columnLabel(column: string, tableType: 'pools' | 'groups' | 'people' | 'projects') {
+    const labels: Record<string, string> = {
+      name: tableType === 'groups' ? 'Group' : tableType === 'people' ? 'Member' : tableType === 'projects' ? 'Project' : 'Budgeted team',
     spendUsd: 'Total spend',
     allocationUsd: tableType === 'people' ? 'Monthly Agent limit' : 'Allocation',
     remainingUsd: 'Remaining allocation',
@@ -292,34 +307,34 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
   );
 }
 
-function SpendTable({
-  type,
-  search,
-  searchValue,
-  setSearch,
-  density,
-  viewScope,
-  scopeOptions,
-  availableTabs,
-  onExport,
-  isExporting,
-  updateUrlParams
-}: {
-  type: 'pools' | 'groups' | 'people' | 'projects',
-  search: string,
-  searchValue: string,
-  setSearch: (value: string) => void,
-  density: string,
-  viewScope: SpendViewScope,
-  scopeOptions: Array<{ value: SpendViewScope; label: string }>,
-  availableTabs: string[],
-  onExport: () => void,
-  isExporting: boolean,
-  updateUrlParams: (updates: Record<string, string | null | undefined>) => void
-}) {
-  const { rangeType, startDate, endDate } = useRange();
-  const searchString = useSearch();
-  const searchParams = new URLSearchParams(searchString);
+  function SpendTable({
+    type,
+    search,
+    searchValue,
+    setSearch,
+    density,
+    viewScope,
+    scopeOptions,
+    availableTabs,
+    onExport,
+    isExporting,
+    updateUrlParams
+  }: {
+    type: 'pools' | 'groups' | 'people' | 'projects',
+    search: string,
+    searchValue: string,
+    setSearch: (value: string) => void,
+    density: string,
+    viewScope: SpendViewScope,
+    scopeOptions: Array<{ value: SpendViewScope; label: string }>,
+    availableTabs: string[],
+    onExport: () => void,
+    isExporting: boolean,
+    updateUrlParams: (updates: Record<string, string | null | undefined>) => void
+  }) {
+    const { rangeType, startDate, endDate } = useRange();
+    const searchString = useSearch();
+    const searchParams = new URLSearchParams(searchString);
 
   const requestedPage = Number(searchParams.get('page'));
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -653,7 +668,7 @@ function SpendTable({
           tableType={type}
           density={density}
           sort={sort}
-
+          updateUrlParams={updateUrlParams}
            rangeType={rangeType}
            dataThrough={data.metadata.dataAsOf}
            stale={Boolean(data.metadata.stale || query.isError)}
@@ -753,6 +768,7 @@ function GenericSpendTable({
   stale,
   incomplete,
   rangeType,
+  updateUrlParams,
 }: {
   rows: SpendTableRow[] | SpendProjectRow[];
   logicalRowCount: number;
@@ -766,6 +782,7 @@ function GenericSpendTable({
   stale: boolean;
   incomplete: boolean;
   rangeType: string;
+  updateUrlParams: (updates: Record<string, string | null | undefined>) => void;
 }) {
   const getLimitStateLabel = (val: string | number | boolean | null | undefined) => {
     if (val === 'unavailable') return 'Unavailable';
@@ -866,6 +883,17 @@ function GenericSpendTable({
                            <Link href={spendDetailHref(`/users/${row.id.split(':').pop()}`, window.location.pathname + window.location.search)}>
                              {val}
                            </Link>
+                         ) : row.kind === 'pool' ? (
+                           row.id.startsWith('pool:team:') ? (
+                             <button type="button" onClick={() => updateUrlParams({ poolId: row.id, tab: 'pools' })} className="hover:underline text-left">
+                               {val}
+                             </button>
+                           ) : (
+                             <div className="flex items-center gap-2">
+                               <span className="text-muted-foreground">{val}</span>
+                               <span className="text-[10px] text-muted-foreground uppercase tracking-widest bg-muted px-1.5 py-0.5 rounded-sm">Not assigned to funding team</span>
+                             </div>
+                           )
                          ) : val}
                        </span>
                        {row.workspaceName && !columns.includes('workspaceName') && (
@@ -938,10 +966,18 @@ function GenericSpendTable({
                 );
               })}
               <TableCell className="text-right pr-4">
-                {['group'].includes(row.kind) && (
-                   <Link href={spendDetailHref(groupDetailHref(row.id), window.location.pathname + window.location.search)} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-primary transition-colors">
-                     Explore <ChevronRight className="w-3.5 h-3.5" />
-                   </Link>
+                {['group', 'pool'].includes(row.kind) && (
+                   row.kind === 'pool' ? (
+                     row.id.startsWith('pool:team:') ? (
+                       <button type="button" onClick={() => updateUrlParams({ poolId: row.id, tab: 'pools' })} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-primary transition-colors">
+                         Explore <ChevronRight className="w-3.5 h-3.5" />
+                       </button>
+                     ) : null
+                   ) : (
+                     <Link href={spendDetailHref(groupDetailHref(row.id), window.location.pathname + window.location.search)} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-primary transition-colors">
+                       Explore <ChevronRight className="w-3.5 h-3.5" />
+                     </Link>
+                   )
                 )}
               </TableCell>
             </TableRow>

@@ -110,6 +110,9 @@ beforeAll(async () => {
     ],
     members: new Map([
       ["task158-account", member("task158-account", true)],
+      ["task158-own-account", member("task158-own-account", true, {
+        "task158-ws": { role: "admin", isDisabled: false },
+      })],
       ["task158-workspace", member("task158-workspace", false, {
         "task158-ws": { role: "admin", isDisabled: false },
       })],
@@ -121,7 +124,11 @@ beforeAll(async () => {
       })],
     ]),
     groupMembers: new Map([
-      [GROUP_ID, ["task158-workspace", "task158-plain"]],
+      [GROUP_ID, [
+        "task158-workspace",
+        "task158-plain",
+        "task158-own-account",
+      ]],
       [SECOND_GROUP_ID, ["task158-creator-2"]],
     ]),
   });
@@ -917,6 +924,246 @@ test("team budget query rejects unsupported scope and period values", async () =
     .toBe(400);
   expect((await request("/teams/budgets?period=annual", "task158-account")).status)
     .toBe(400);
+});
+
+test("workspace-filtered team rows expose only that workspace contribution", async () => {
+  const response = await request(
+    "/teams/budgets?scope=own&period=full-term&workspaceId=task158-ws",
+    "task158-workspace",
+  );
+  expect(response.status).toBe(200);
+  expect(response.json.budgets).toEqual([
+    expect.objectContaining({
+      teamName: ASSIGNED,
+      amountUsd: null,
+      workspaceIds: ["task158-ws"],
+      spendScope: "partial",
+    }),
+  ]);
+});
+
+test("regular members can read only their own workspace team Home summary", async () => {
+  const poolId = encodeURIComponent(`pool:team:${encodeURIComponent(ASSIGNED)}`);
+  const own = await request(
+    `/reporting/teams/${poolId}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&trackingRange=selected&${COMPLETE_RANGE}`,
+    "task158-plain",
+  );
+  expect(own.status).toBe(200);
+  expect(own.json).toMatchObject({
+    id: `pool:team:${encodeURIComponent(ASSIGNED)}`,
+    groups: [],
+    sourceGroups: [],
+    members: [],
+    budgetTracking: {
+      comparisonsMatchBudgetWindow: false,
+      reportingStart: USAGE_DATE,
+      reportingEnd: USAGE_DATE,
+    },
+  });
+  const accountAdminOwn = await request(
+    `/reporting/teams/${poolId}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&trackingRange=selected&${COMPLETE_RANGE}`,
+    "task158-own-account",
+  );
+  expect(accountAdminOwn.status).toBe(200);
+  expect(accountAdminOwn.json).toEqual(own.json);
+  const ownHierarchy = await request(
+    `/reporting/teams/${poolId}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&includeHierarchy=true&${COMPLETE_RANGE}`,
+    "task158-plain",
+  );
+  expect(ownHierarchy.status).toBe(403);
+  expect(ownHierarchy.json.error).toMatch(/hierarchy/i);
+  expect((await request(
+    `/reporting/teams/${poolId}?includeHierarchy=maybe&${COMPLETE_RANGE}`,
+    "task158-account",
+  )).status).toBe(400);
+  expect((await request(
+    `/reporting/teams/${poolId}?includeHierarchy=true&${COMPLETE_RANGE}`,
+    "task158-plain",
+  )).status).toBe(403);
+
+  const arbitraryPool = encodeURIComponent(
+    `pool:team:${encodeURIComponent(BUDGET_ONLY)}`,
+  );
+  expect((await request(
+    `/reporting/teams/${arbitraryPool}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&trackingRange=selected&${COMPLETE_RANGE}`,
+    "task158-plain",
+  )).status).toBe(403);
+  expect((await request(
+    `/reporting/teams/${arbitraryPool}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&trackingRange=selected&${COMPLETE_RANGE}`,
+    "task158-own-account",
+  )).status).toBe(403);
+  expect((await request(
+    `/reporting/teams/${poolId}?scope=own&workspaceId=task158-ws-2&includeBudgetTracking=true&trackingRange=selected&${COMPLETE_RANGE}`,
+    "task158-plain",
+  )).status).toBe(403);
+});
+
+test("team report hierarchy reconciles physical groups without changing defaults", async () => {
+  const poolId = encodeURIComponent(`pool:team:${encodeURIComponent(ASSIGNED)}`);
+  const plain = await request(
+    `/reporting/teams/${poolId}?${COMPLETE_RANGE}`,
+    "task158-account",
+  );
+  expect(plain.status).toBe(200);
+  expect(plain.json.hierarchy).toBeUndefined();
+
+  const response = await request(
+    `/reporting/teams/${poolId}?includeHierarchy=true&viewScope=all_authorized&${COMPLETE_RANGE}`,
+    "task158-account",
+  );
+  expect(response.status).toBe(200);
+  expect(response.json.hierarchy).toHaveLength(1);
+  const workspace = response.json.hierarchy[0];
+  expect(workspace.workspaceId).toBe("task158-ws");
+  expect(workspace.usageObserved).toBe(true);
+  expect(workspace.isComplete).toBe(true);
+  expect(workspace.groups.map((group) => group.groupId)).toEqual(
+    expect.arrayContaining([GROUP_ID, VISIBLE_ZERO_GROUP_ID]),
+  );
+  expect(workspace.groups.reduce((sum, group) => sum + group.spendUsd, 0) +
+    workspace.unattributedSpendUsd).toBeCloseTo(workspace.spendUsd, 8);
+  for (const group of workspace.groups) {
+    expect(group.members.reduce((sum, member) => sum + member.spendUsd, 0) +
+      group.unattributedSpendUsd).toBeCloseTo(group.spendUsd, 8);
+  }
+  expect(response.json.hierarchy.reduce(
+    (sum, item) => sum + item.spendUsd,
+    0,
+  )).toBeCloseTo(response.json.headline.spendUsd, 8);
+});
+
+test("hierarchical team reports reconcile to Spend for each requested view scope", async () => {
+  const poolId = encodeURIComponent(`pool:team:${encodeURIComponent(ASSIGNED)}`);
+  for (const [caller, viewScope] of [
+    ["task158-workspace", "my"],
+    ["task158-workspace", "managed"],
+    ["task158-account", "all_authorized"],
+  ]) {
+    const [spend, detail] = await Promise.all([
+      request(
+        `/spend/pools?viewScope=${viewScope}&pageSize=100&${COMPLETE_RANGE}`,
+        caller,
+      ),
+      request(
+        `/reporting/teams/${poolId}?includeHierarchy=true&viewScope=${viewScope}&${COMPLETE_RANGE}`,
+        caller,
+      ),
+    ]);
+    expect(spend.status).toBe(200);
+    expect(detail.status).toBe(200);
+    const pool = spend.json.rows.find((row) => row.id ===
+      `pool:team:${encodeURIComponent(ASSIGNED)}`);
+    expect(detail.json.headline.spendUsd).toBe(pool.spendUsd);
+    expect(detail.json.hierarchy.reduce(
+      (sum, workspace) => sum + workspace.spendUsd,
+      detail.json.hierarchyUnattributedSpendUsd,
+    )).toBeCloseTo(detail.json.headline.spendUsd, 8);
+    if (viewScope === "my") {
+      const memberIds = detail.json.hierarchy.flatMap((workspace) =>
+        workspace.groups.flatMap((group) =>
+          group.members.map((member) => member.userId)));
+      expect(new Set(memberIds)).toEqual(new Set(["task158-workspace"]));
+    }
+  }
+});
+
+test("partial hierarchy marks mapped zero rows incomplete rather than confirmed complete", async () => {
+  const poolId = encodeURIComponent(`pool:team:${encodeURIComponent(ASSIGNED)}`);
+  const response = await request(
+    `/reporting/teams/${poolId}?includeHierarchy=true&viewScope=all_authorized&${PARTIAL_RANGE}`,
+    "task158-account",
+  );
+  expect(response.status).toBe(200);
+  const workspace = response.json.hierarchy.find(
+    (item) => item.workspaceId === "task158-ws",
+  );
+  expect(workspace.isComplete).toBe(false);
+  const zero = workspace.groups.find(
+    (group) => group.groupId === VISIBLE_ZERO_GROUP_ID,
+  );
+  expect(zero.spendUsd).toBe(0);
+  expect(zero.isComplete).toBe(false);
+});
+
+test("hierarchy keeps physical team sources separate and workspace filtering bounded", async () => {
+  await db.insert(teamLimitTargetsTable).values({
+    workspaceId: "task158-ws-2",
+    groupId: SECOND_GROUP_ID,
+    groupName: `${GROUP_NAME} Two`,
+    teamName: ASSIGNED,
+  });
+  try {
+    invalidateUsageSnapshotMemo();
+    const poolId = encodeURIComponent(`pool:team:${encodeURIComponent(ASSIGNED)}`);
+    const [all, filtered] = await Promise.all([
+      request(
+        `/reporting/teams/${poolId}?includeHierarchy=true&viewScope=all_authorized&${COMPLETE_RANGE}`,
+        "task158-account",
+      ),
+      request(
+        `/reporting/teams/${poolId}?includeHierarchy=true&viewScope=all_authorized&workspaceId=task158-ws-2&${COMPLETE_RANGE}`,
+        "task158-account",
+      ),
+    ]);
+    expect(all.status).toBe(200);
+    expect(filtered.status).toBe(200);
+    expect(all.json.hierarchy.map((workspace) => workspace.workspaceId))
+      .toEqual(["task158-ws", "task158-ws-2"]);
+    expect(filtered.json.hierarchy.map((workspace) => workspace.workspaceId))
+      .toEqual(["task158-ws-2"]);
+    expect(filtered.json.hierarchy[0].groups.map((group) => group.groupId))
+      .toEqual([SECOND_GROUP_ID]);
+    expect(filtered.json.headline.spendUsd).toBe(
+      filtered.json.hierarchy[0].spendUsd +
+        filtered.json.hierarchyUnattributedSpendUsd,
+    );
+    expect(all.json.headline.spendUsd).toBe(
+      all.json.hierarchy.reduce(
+        (sum, workspace) => sum + workspace.spendUsd,
+        all.json.hierarchyUnattributedSpendUsd,
+      ),
+    );
+  } finally {
+    await db.delete(teamLimitTargetsTable)
+      .where(eq(teamLimitTargetsTable.groupId, SECOND_GROUP_ID));
+    invalidateUsageSnapshotMemo();
+  }
+});
+
+test("future-only comparison ranges fail as a date error, not metadata outage", async () => {
+  const future = new Date(
+    Date.parse(`${USAGE_DATE}T00:00:00.000Z`) + 86_400_000,
+  ).toISOString().slice(0, 10);
+  const response = await request(
+    `/spend/billing-cycles?rangeType=custom&startDate=${future}&endDate=${future}`,
+    "task158-plain",
+  );
+  expect(response.status).toBe(400);
+  expect(response.json.error).toMatch(/current date/i);
+});
+
+test("shared reporting entry rejects extreme custom ranges before accounting", async () => {
+  const poolId = encodeURIComponent(`pool:team:${encodeURIComponent(ASSIGNED)}`);
+  for (const extreme of [
+    "rangeType=custom&startDate=0006-02-02&endDate=2026-09-05",
+    "rangeType=custom&startDate=2026-09-05&endDate=6090-02-02",
+  ]) {
+    for (const path of [
+      `/dashboard?${extreme}`,
+      `/spend/pools?${extreme}`,
+      `/reporting/teams/${poolId}?${extreme}`,
+    ]) {
+      const response = await request(path, "task158-account");
+      expect(response.status).toBe(400);
+      expect(response.json.error).toMatch(/limited to 400 inclusive days/i);
+    }
+  }
+
+  const boundary = await request(
+    "/dashboard?rangeType=custom&startDate=2026-05-20&endDate=2027-06-23",
+    "task158-account",
+  );
+  expect(boundary.status).toBe(200);
 });
 
 test("complete zero-spend hidden teams stay out of rows without changing accounting", async () => {

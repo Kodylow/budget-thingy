@@ -155,6 +155,40 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * Returns active own workspaces and explicit custom-group budget team affiliations from the committed canonical configuration. Administrative access does not imply membership.
+ * @summary Get the effective identity's personal membership context
+ */
+export const getMyMembershipContextHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetMyMembershipContextHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getMyMembershipContextHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
+})
+
+export const GetMyMembershipContextResponse = zod.object({
+  "defaultWorkspaceId": zod.string().nullable(),
+  "workspaces": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string(),
+  "isPreferred": zod.boolean(),
+  "budgetTeams": zod.array(zod.object({
+  "poolId": zod.string(),
+  "teamName": zod.string(),
+  "groups": zod.array(zod.object({
+  "groupId": zod.string(),
+  "groupName": zod.string()
+}))
+})),
+  "unmappedGroups": zod.array(zod.object({
+  "groupId": zod.string(),
+  "groupName": zod.string()
+}))
+})),
+  "qualification": zod.string().nullable()
+})
+
+
+/**
  * Returns custom/SCIM groups across all workspaces of the Enterprise account, excluding built-in admin/member/guest role groups, joined with stored spend for the selected date range, the configured budget, and threshold state.
  * @summary List all groups with usage and budget state
  */
@@ -334,12 +368,20 @@ export const GetReportingDetailHeader = zod.object({
   "X-Preview-As": zod.string().regex(getReportingDetailHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
 })
 
+export const getReportingDetailResponseBudgetTrackingWorkspaceCountMin = 0;
+
 export const getReportingDetailResponseBudgetTrackingPeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getReportingDetailResponseBudgetTrackingPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getReportingDetailResponseBudgetTrackingReportingStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getReportingDetailResponseBudgetTrackingReportingEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getReportingDetailResponseBudgetTrackingPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getReportingDetailResponseHeadlineMemberCountMin = 0;
 
 export const getReportingDetailResponseGroupsItemMemberCountMin = 0;
+
+export const getReportingDetailResponseHierarchyItemMemberCountMin = 0;
+
+export const getReportingDetailResponseHierarchyItemGroupsItemMemberCountMin = 0;
 
 export const getReportingDetailResponseMetadataCoverageRatioMin = 0;
 export const getReportingDetailResponseMetadataCoverageRatioMax = 1;
@@ -353,17 +395,23 @@ export const GetReportingDetailResponse = zod.object({
   "id": zod.string().optional().describe('Canonical qualified pool ID; present when kind is team.'),
   "name": zod.string().optional().describe('Canonical pool name; present when kind is team.'),
   "budgetTracking": zod.object({
+  "budgetKind": zod.enum(['annual', 'monthly_agent']),
+  "workspaceCount": zod.number().min(getReportingDetailResponseBudgetTrackingWorkspaceCountMin).describe('Number of workspaces in the visible contributing tracking scope.'),
   "periodStart": zod.string().regex(getReportingDetailResponseBudgetTrackingPeriodStartRegExp).nullable(),
   "periodEnd": zod.string().regex(getReportingDetailResponseBudgetTrackingPeriodEndRegExp).nullable().describe('Inclusive allocation-period end date.'),
   "periodLabel": zod.string(),
+  "reportingStart": zod.string().regex(getReportingDetailResponseBudgetTrackingReportingStartRegExp).nullish(),
+  "reportingEnd": zod.string().regex(getReportingDetailResponseBudgetTrackingReportingEndRegExp).nullish().describe('Inclusive chart\/reporting-domain end date.'),
+  "reportingLabel": zod.string().nullish(),
   "asOf": zod.string().nullable(),
-  "allocationUsd": zod.number().nullable(),
+  "allocationUsd": zod.number().nullable().describe('Applicable annual allocation or configured monthly Agent limit; null when unavailable or unsafe to disclose.'),
   "spendUsd": zod.number().nullable(),
   "remainingUsd": zod.number().nullable(),
   "percentUsed": zod.number().nullable(),
   "scopeComplete": zod.boolean(),
   "usageComplete": zod.boolean(),
   "benchmarkEligible": zod.boolean(),
+  "comparisonsMatchBudgetWindow": zod.boolean().optional().describe('True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff.'),
   "qualification": zod.string().nullable(),
   "points": zod.array(zod.object({
   "date": zod.string().regex(getReportingDetailResponseBudgetTrackingPointsItemDateRegExp),
@@ -429,6 +477,50 @@ export const GetReportingDetailResponse = zod.object({
   "limitState": zod.enum(['explicit', 'inherited', 'no_limit', 'unavailable']),
   "limitObservationStatus": zod.enum(['complete', 'failed', 'unavailable', 'refreshing'])
 })),
+  "hierarchy": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "usageObserved": zod.boolean(),
+  "isComplete": zod.boolean(),
+  "memberCount": zod.number().min(getReportingDetailResponseHierarchyItemMemberCountMin),
+  "unattributedSpendUsd": zod.number(),
+  "groups": zod.array(zod.object({
+  "groupId": zod.string(),
+  "name": zod.string(),
+  "familyKey": zod.string(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "usageObserved": zod.boolean(),
+  "isComplete": zod.boolean(),
+  "memberCount": zod.number().min(getReportingDetailResponseHierarchyItemGroupsItemMemberCountMin),
+  "unattributedSpendUsd": zod.number(),
+  "members": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "username": zod.string().nullable(),
+  "email": zod.string().nullable(),
+  "name": zod.string().nullable(),
+  "role": zod.string().nullable(),
+  "isDisabled": zod.boolean().nullable(),
+  "isInternal": zod.boolean(),
+  "groupIds": zod.array(zod.string()),
+  "spendUsd": zod.number().describe('Selected-range spend attributed to the requested groups.'),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "currentCycleAgentSpendUsd": zod.number().nullable().describe('Complete current-cycle workspace\/user Agent usage; null for incomplete coverage or unknown metric classification.'),
+  "limitUsd": zod.number().nullable().describe('Effective persisted workspace\/user Agent limit.'),
+  "remainingUsd": zod.number().nullable().describe('Workspace\/user limit minus current-cycle Agent usage; never selected-range or group-attributed spend.'),
+  "percentUsed": zod.number().nullable(),
+  "limitState": zod.enum(['explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['complete', 'failed', 'unavailable', 'refreshing'])
+}))
+}))
+})).optional().describe('Canonical workspace and physical-group hierarchy for an authorized team report.'),
+  "hierarchyUnattributedSpendUsd": zod.number().optional().describe('Team headline spend not located in a workspace hierarchy source. This is separate from headline.unattributedSpendUsd, which is the residual between team spend and exposed member children.\n'),
   "period": zod.object({
   "start": zod.coerce.date(),
   "endExclusive": zod.coerce.date(),
@@ -473,13 +565,23 @@ export const GetBudgetTeamReportParams = zod.object({
   "poolId": zod.coerce.string().min(1).describe('Canonical qualified pool ID from the authorized pools table (pool:team:...).')
 })
 
+export const getBudgetTeamReportQueryWorkspaceIdMax = 200;
+
+export const getBudgetTeamReportQueryIncludeHierarchyDefault = false;
 export const getBudgetTeamReportQueryIncludeBudgetTrackingDefault = false;
+export const getBudgetTeamReportQueryTrackingRangeDefault = `budget`;
+export const getBudgetTeamReportQueryScopeDefault = `authorized`;
 
 export const GetBudgetTeamReportQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
   "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom'),
-  "includeBudgetTracking": zod.coerce.boolean().default(getBudgetTeamReportQueryIncludeBudgetTrackingDefault).describe('Include allocation-period spend tracking and cumulative daily points.')
+  "workspaceId": zod.coerce.string().max(getBudgetTeamReportQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
+  "viewScope": zod.enum(['managed', 'my', 'all_authorized']).optional().describe('Server-resolved presentation scope; managed excludes unrelated self-only grants.'),
+  "includeHierarchy": zod.coerce.boolean().default(getBudgetTeamReportQueryIncludeHierarchyDefault).describe('Include the canonical Workspace, physical Group, and apportioned Member hierarchy. Forbidden when scope=own.\n'),
+  "includeBudgetTracking": zod.coerce.boolean().default(getBudgetTeamReportQueryIncludeBudgetTrackingDefault).describe('Include allocation-period spend tracking and cumulative daily points.'),
+  "trackingRange": zod.enum(['budget', 'billing', 'selected']).default(getBudgetTeamReportQueryTrackingRangeDefault).describe('Use the fixed allocation period (default), the verified current billing cycle\'s monthly Agent limit and Agent-only usage, or the selected report period.'),
+  "scope": zod.enum(['authorized', 'own']).default(getBudgetTeamReportQueryScopeDefault).describe('own enables a regular member\'s read-only Home tracking view. It requires workspaceId and an active actual membership in a group committed to the requested canonical funding team.\n')
 })
 
 export const getBudgetTeamReportHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
@@ -489,12 +591,20 @@ export const GetBudgetTeamReportHeader = zod.object({
   "X-Preview-As": zod.string().regex(getBudgetTeamReportHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
 })
 
+export const getBudgetTeamReportResponseBudgetTrackingWorkspaceCountMin = 0;
+
 export const getBudgetTeamReportResponseBudgetTrackingPeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getBudgetTeamReportResponseBudgetTrackingPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getBudgetTeamReportResponseBudgetTrackingReportingStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getBudgetTeamReportResponseBudgetTrackingReportingEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getBudgetTeamReportResponseBudgetTrackingPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getBudgetTeamReportResponseHeadlineMemberCountMin = 0;
 
 export const getBudgetTeamReportResponseGroupsItemMemberCountMin = 0;
+
+export const getBudgetTeamReportResponseHierarchyItemMemberCountMin = 0;
+
+export const getBudgetTeamReportResponseHierarchyItemGroupsItemMemberCountMin = 0;
 
 export const getBudgetTeamReportResponseMetadataCoverageRatioMin = 0;
 export const getBudgetTeamReportResponseMetadataCoverageRatioMax = 1;
@@ -508,17 +618,23 @@ export const GetBudgetTeamReportResponse = zod.object({
   "id": zod.string().optional().describe('Canonical qualified pool ID; present when kind is team.'),
   "name": zod.string().optional().describe('Canonical pool name; present when kind is team.'),
   "budgetTracking": zod.object({
+  "budgetKind": zod.enum(['annual', 'monthly_agent']),
+  "workspaceCount": zod.number().min(getBudgetTeamReportResponseBudgetTrackingWorkspaceCountMin).describe('Number of workspaces in the visible contributing tracking scope.'),
   "periodStart": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingPeriodStartRegExp).nullable(),
   "periodEnd": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingPeriodEndRegExp).nullable().describe('Inclusive allocation-period end date.'),
   "periodLabel": zod.string(),
+  "reportingStart": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingReportingStartRegExp).nullish(),
+  "reportingEnd": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingReportingEndRegExp).nullish().describe('Inclusive chart\/reporting-domain end date.'),
+  "reportingLabel": zod.string().nullish(),
   "asOf": zod.string().nullable(),
-  "allocationUsd": zod.number().nullable(),
+  "allocationUsd": zod.number().nullable().describe('Applicable annual allocation or configured monthly Agent limit; null when unavailable or unsafe to disclose.'),
   "spendUsd": zod.number().nullable(),
   "remainingUsd": zod.number().nullable(),
   "percentUsed": zod.number().nullable(),
   "scopeComplete": zod.boolean(),
   "usageComplete": zod.boolean(),
   "benchmarkEligible": zod.boolean(),
+  "comparisonsMatchBudgetWindow": zod.boolean().optional().describe('True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff.'),
   "qualification": zod.string().nullable(),
   "points": zod.array(zod.object({
   "date": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingPointsItemDateRegExp),
@@ -584,6 +700,50 @@ export const GetBudgetTeamReportResponse = zod.object({
   "limitState": zod.enum(['explicit', 'inherited', 'no_limit', 'unavailable']),
   "limitObservationStatus": zod.enum(['complete', 'failed', 'unavailable', 'refreshing'])
 })),
+  "hierarchy": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "usageObserved": zod.boolean(),
+  "isComplete": zod.boolean(),
+  "memberCount": zod.number().min(getBudgetTeamReportResponseHierarchyItemMemberCountMin),
+  "unattributedSpendUsd": zod.number(),
+  "groups": zod.array(zod.object({
+  "groupId": zod.string(),
+  "name": zod.string(),
+  "familyKey": zod.string(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "usageObserved": zod.boolean(),
+  "isComplete": zod.boolean(),
+  "memberCount": zod.number().min(getBudgetTeamReportResponseHierarchyItemGroupsItemMemberCountMin),
+  "unattributedSpendUsd": zod.number(),
+  "members": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "userId": zod.string(),
+  "username": zod.string().nullable(),
+  "email": zod.string().nullable(),
+  "name": zod.string().nullable(),
+  "role": zod.string().nullable(),
+  "isDisabled": zod.boolean().nullable(),
+  "isInternal": zod.boolean(),
+  "groupIds": zod.array(zod.string()),
+  "spendUsd": zod.number().describe('Selected-range spend attributed to the requested groups.'),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "currentCycleAgentSpendUsd": zod.number().nullable().describe('Complete current-cycle workspace\/user Agent usage; null for incomplete coverage or unknown metric classification.'),
+  "limitUsd": zod.number().nullable().describe('Effective persisted workspace\/user Agent limit.'),
+  "remainingUsd": zod.number().nullable().describe('Workspace\/user limit minus current-cycle Agent usage; never selected-range or group-attributed spend.'),
+  "percentUsed": zod.number().nullable(),
+  "limitState": zod.enum(['explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['complete', 'failed', 'unavailable', 'refreshing'])
+}))
+}))
+})).optional().describe('Canonical workspace and physical-group hierarchy for an authorized team report.'),
+  "hierarchyUnattributedSpendUsd": zod.number().optional().describe('Team headline spend not located in a workspace hierarchy source. This is separate from headline.unattributedSpendUsd, which is the residual between team spend and exposed member children.\n'),
   "period": zod.object({
   "start": zod.coerce.date(),
   "endExclusive": zod.coerce.date(),
@@ -1213,9 +1373,70 @@ export const GetDashboardResponse = zod.object({
 
 
 /**
+ * Returns one committed local accounting generation for the confirmed May 20, 2026 through May 20, 2027 team-allocation term. The scope and period are fixed; query filters are rejected. Requires account-wide canViewAccountUsage access. Read-only previews are allowed only when they retain that capability and a genuinely account-wide scope.
+ * @summary Account-wide organization budget overview
+ */
+export const getOrgBudgetOverviewHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
+
+
+export const GetOrgBudgetOverviewHeader = zod.object({
+  "X-Preview-As": zod.string().regex(getOrgBudgetOverviewHeaderXPreviewAsRegExp).optional().describe('Designated-operator-only synthetic authorization view.')
+})
+
+export const getOrgBudgetOverviewResponsePeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getOrgBudgetOverviewResponsePeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getOrgBudgetOverviewResponseAsOfRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getOrgBudgetOverviewResponseTeamsItemPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getOrgBudgetOverviewResponseTeamsItemPointsMax = 367;
+
+export const getOrgBudgetOverviewResponseTeamsMax = 1000;
+
+
+
+export const GetOrgBudgetOverviewResponse = zod.object({
+  "periodStart": zod.string().regex(getOrgBudgetOverviewResponsePeriodStartRegExp),
+  "periodEnd": zod.string().regex(getOrgBudgetOverviewResponsePeriodEndRegExp),
+  "asOf": zod.string().regex(getOrgBudgetOverviewResponseAsOfRegExp).nullable(),
+  "complete": zod.boolean(),
+  "qualification": zod.string().nullable(),
+  "summary": zod.object({
+  "accountSpendUsd": zod.number().nullable(),
+  "teamAllocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "teamsOverBudget": zod.number().nullable(),
+  "unassignedSpendUsd": zod.number().nullable()
+}),
+  "teams": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "allocationUsd": zod.number().nullable(),
+  "spendUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "complete": zod.boolean(),
+  "points": zod.array(zod.object({
+  "date": zod.string().regex(getOrgBudgetOverviewResponseTeamsItemPointsItemDateRegExp),
+  "spendUsd": zod.number().nullable()
+})).max(getOrgBudgetOverviewResponseTeamsItemPointsMax)
+})).max(getOrgBudgetOverviewResponseTeamsMax)
+})
+
+
+/**
  * Returns cumulative personal Agent spend and canonical own-team all-service spend aligned by cycle day. The three periods are derived from verified billing metadata using clamped calendar-month arithmetic. Reads stored local snapshots only and never triggers upstream usage. A null point is unobserved, incomplete, or future; zero is returned only for an observed zero-spend day. Cycle completeness qualifies later known cumulative values after a coverage gap.
  * @summary Compare current and prior monthly billing cycles
  */
+export const getBillingCycleComparisonQueryWorkspaceIdMax = 200;
+
+
+
+export const GetBillingCycleComparisonQueryParams = zod.object({
+  "workspaceId": zod.coerce.string().max(getBillingCycleComparisonQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
+  "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
+  "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
+  "endDate": zod.coerce.string().optional().describe('Inclusive UTC end date (YYYY-MM-DD), required when rangeType=custom')
+})
+
 export const getBillingCycleComparisonHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
 
 
@@ -1225,11 +1446,10 @@ export const GetBillingCycleComparisonHeader = zod.object({
 
 export const getBillingCycleComparisonResponseCyclesItemStartDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getBillingCycleComparisonResponseCyclesItemEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
-export const getBillingCycleComparisonResponseCyclesItemPointsItemDayMax = 31;
+export const getBillingCycleComparisonResponseCyclesItemPointsItemDayMax = 400;
 
 export const getBillingCycleComparisonResponseCyclesItemPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
-export const getBillingCycleComparisonResponseCyclesItemPointsMin = 28;
-export const getBillingCycleComparisonResponseCyclesItemPointsMax = 31;
+export const getBillingCycleComparisonResponseCyclesItemPointsMax = 400;
 
 export const getBillingCycleComparisonResponseCyclesMin = 3;
 export const getBillingCycleComparisonResponseCyclesMax = 3;
@@ -1249,7 +1469,7 @@ export const GetBillingCycleComparisonResponse = zod.object({
   "date": zod.string().regex(getBillingCycleComparisonResponseCyclesItemPointsItemDateRegExp),
   "personalSpendUsd": zod.number().nullable().describe('Known cumulative personal Agent spend, or null when this day is incomplete or future.'),
   "teamSpendUsd": zod.number().nullable().describe('Known cumulative canonical own-team all-service spend, or null when this day is incomplete or future.')
-})).min(getBillingCycleComparisonResponseCyclesItemPointsMin).max(getBillingCycleComparisonResponseCyclesItemPointsMax)
+})).min(1).max(getBillingCycleComparisonResponseCyclesItemPointsMax)
 })).min(getBillingCycleComparisonResponseCyclesMin).max(getBillingCycleComparisonResponseCyclesMax),
   "teamScope": zod.enum(['complete', 'partial']).describe('Complete only for account-wide authorization; partial otherwise.'),
   "hasTeams": zod.boolean().describe('Whether membership-derived own teams contain authorized groups.')
@@ -2556,10 +2776,14 @@ export const DeleteGroupBudgetResponse = zod.object({
  */
 export const getTeamsBudgetsQueryScopeDefault = `authorized`;
 export const getTeamsBudgetsQueryPeriodDefault = `billing`;
+export const getTeamsBudgetsQueryWorkspaceIdMax = 200;
+
+
 
 export const GetTeamsBudgetsQueryParams = zod.object({
   "scope": zod.enum(['authorized', 'own']).default(getTeamsBudgetsQueryScopeDefault).describe('own restricts results to funding teams containing the caller.'),
-  "period": zod.enum(['billing', 'full-term']).default(getTeamsBudgetsQueryPeriodDefault).describe('Reporting period for all-service team spend. Allocation remains annual.')
+  "period": zod.enum(['billing', 'full-term']).default(getTeamsBudgetsQueryPeriodDefault).describe('Reporting period for all-service team spend. Allocation remains annual.'),
+  "workspaceId": zod.coerce.string().max(getTeamsBudgetsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.')
 })
 
 export const getTeamsBudgetsHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
@@ -3200,6 +3424,12 @@ export const ListDirectoryMembersResponse = zod.array(ListDirectoryMembersRespon
  * Account-wide operators see every workspace; workspace administrators see only workspaces they administer.
  * @summary List workspaces visible to the current operator
  */
+export const listVisibleWorkspacesQueryScopeDefault = `operator`;
+
+export const ListVisibleWorkspacesQueryParams = zod.object({
+  "scope": zod.enum(['operator', 'own']).default(listVisibleWorkspacesQueryScopeDefault).describe('own returns only active actual workspace memberships for the current user and is available to regular members.')
+})
+
 export const listVisibleWorkspacesResponseMemberCountMin = 0;
 
 

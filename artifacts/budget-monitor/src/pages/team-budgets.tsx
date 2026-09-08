@@ -585,7 +585,7 @@ export default function TeamBudgets() {
           </Collapsible>
         )}
 
-        <div className="relative w-full max-w-full overflow-x-auto overscroll-contain" tabIndex={0} aria-label="Budget allocation ledger">
+        <div className="relative w-full max-w-full overflow-x-auto overscroll-x-contain" tabIndex={0} aria-label="Budget allocation ledger">
           <table className="w-full min-w-[820px] border-separate border-spacing-0 whitespace-nowrap text-sm [&_td]:border-b [&_td]:border-border [&_th]:border-b [&_th]:border-border" data-testid="table-team-budget-history">
             <thead className="sticky top-0 z-30 bg-muted/90 backdrop-blur text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
               <tr>
@@ -697,7 +697,7 @@ export default function TeamBudgets() {
                 {(!historyQuery.data?.issues || historyQuery.data.issues.length === 0) ? (
                   <p className="p-8 text-center text-sm text-muted-foreground">No active source issues.</p>
                 ) : (
-                  <div className="max-w-full overflow-x-auto overscroll-contain" tabIndex={0} aria-label="Allocation source issues">
+                  <div className="max-w-full overflow-x-auto overscroll-x-contain" tabIndex={0} aria-label="Allocation source issues">
                     <table className="w-full min-w-[900px] text-sm">
                       <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">
                         <tr><th className="px-5 py-3">Source record</th><th className="px-5 py-3">Team</th><th className="px-5 py-3">Amount / period</th><th className="px-5 py-3">State</th><th className="px-5 py-3">Reason</th></tr>
@@ -760,7 +760,7 @@ export default function TeamBudgets() {
                           <Button variant="outline" size="sm" onClick={() => void auditQuery.refetch()}>Retry</Button>
                         </div>
                       )}
-                      <div className="max-w-full overflow-x-auto overscroll-contain" tabIndex={0} aria-label="Allocation audit history">
+                      <div className="max-w-full overflow-x-auto overscroll-x-contain" tabIndex={0} aria-label="Allocation audit history">
                       <table className="w-full min-w-[760px] text-sm">
                         <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">
                           <tr><th className="px-5 py-3">When</th><th className="px-5 py-3">Team</th><th className="px-5 py-3">Field</th><th className="px-5 py-3">Change</th><th className="px-5 py-3">Actor</th></tr>

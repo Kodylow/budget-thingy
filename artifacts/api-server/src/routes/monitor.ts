@@ -14,6 +14,8 @@ import spendTablesRouter from "./monitor.spend-tables";
 import intelligenceRouter from "./monitor.intelligence";
 import setLimitsRouter from "./set-limits";
 import billingCyclesRouter from "./monitor.billing-cycles";
+import orgInsightsRouter from "./monitor.org-insights";
+import membershipContextRouter from "./monitor.membership-context";
 
 const router: IRouter = Router();
 router.use(requireAuth);
@@ -31,6 +33,8 @@ router.use(spendTablesRouter);
 router.use(intelligenceRouter);
 router.use(setLimitsRouter);
 router.use(billingCyclesRouter);
+router.use(orgInsightsRouter);
+router.use(membershipContextRouter);
 
 export { canSeeAlertEntity };
 export default router;

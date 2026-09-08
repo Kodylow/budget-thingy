@@ -485,6 +485,31 @@ export function canonicalTeamPoolId(teamName: string): string {
   return `pool:team:${encodeURIComponent(teamName)}`;
 }
 
+const DAY_MS = 86_400_000;
+
+export function buildBudgetTrackingPoints(
+  start: string,
+  endExclusive: string,
+  dailySpend: ReadonlyMap<string, number>,
+  unavailableDays: ReadonlySet<string>,
+): Array<{ date: string; spendUsd: number | null }> {
+  const points: Array<{ date: string; spendUsd: number | null }> = [];
+  let cumulative = 0;
+  for (
+    let time = Date.parse(start);
+    time < Date.parse(endExclusive);
+    time += DAY_MS
+  ) {
+    const date = new Date(time).toISOString().slice(0, 10);
+    cumulative += dailySpend.get(date) ?? 0;
+    points.push({
+      date,
+      spendUsd: unavailableDays.has(date) ? null : cumulative,
+    });
+  }
+  return points;
+}
+
 export function qualifiedUserSpendByWorkspace(
   daily: ReadonlyMap<string, SnapshotUsageRollup>,
   authz: Authorization,

@@ -7,6 +7,7 @@
  */
 import type { GetTeamsBudgetsPeriod } from './getTeamsBudgetsPeriod';
 import type { GetTeamsBudgetsScope } from './getTeamsBudgetsScope';
+import type { SpendWorkspaceParameter } from './spendWorkspaceParameter';
 
 export type GetTeamsBudgetsParams = {
 /**
@@ -17,4 +18,9 @@ scope?: GetTeamsBudgetsScope;
  * Reporting period for all-service team spend. Allocation remains annual.
  */
 period?: GetTeamsBudgetsPeriod;
+/**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
 };

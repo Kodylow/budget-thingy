@@ -17,6 +17,9 @@ let isLoading = false;
 let isAuthenticated = false;
 let isDenied = false;
 let developmentEnabled = false;
+let selectedDevelopmentId: string | null = null;
+let developmentLoading = false;
+let developmentError: string | null = null;
 
 vi.mock('@/components/auth-context', () => ({
   useAuthContext: () => ({
@@ -35,9 +38,9 @@ vi.mock('@/components/auth-context', () => ({
       users: [
         { userId: 'one', name: 'One Person', username: 'one', email: null },
       ],
-      selectedId: null,
-      loading: false,
-      error: null,
+      selectedId: selectedDevelopmentId,
+      loading: developmentLoading,
+      error: developmentError,
       select: selectDevelopmentUser,
       exit: exitDevelopmentView,
       retry: retryDevelopmentView,
@@ -64,6 +67,9 @@ beforeEach(() => {
   isAuthenticated = false;
   isDenied = false;
   developmentEnabled = false;
+  selectedDevelopmentId = null;
+  developmentLoading = false;
+  developmentError = null;
   vi.clearAllMocks();
   window.history.replaceState({}, '', '/');
   container = document.createElement('div');
@@ -146,6 +152,25 @@ describe('AuthGate sign-in shell', () => {
     expect(container.querySelector('[data-testid="dev-view-chip"]')?.textContent)
       .toContain('Preview as someone');
     expect(selectDevelopmentUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { loading: true, error: null },
+    { loading: false, error: 'Directory failed.' },
+  ])('offers development preview escape during recovery with loading=$loading', async ({ loading, error }) => {
+    developmentEnabled = true;
+    selectedDevelopmentId = 'one';
+    developmentLoading = loading;
+    developmentError = error;
+    availability = 'unavailable';
+    await act(async () => root.render(createElement(AuthGate, null, 'protected')));
+
+    expect(container.querySelector('[data-testid="auth-development-recovery"]')).not.toBeNull();
+    const exit = container.querySelector<HTMLButtonElement>('[data-testid="button-exit-development-preview"]');
+    expect(exit).not.toBeNull();
+    expect(container.querySelector('[data-testid="button-login-yourself"]')).not.toBeNull();
+    await act(async () => exit?.click());
+    expect(exitDevelopmentView).toHaveBeenCalledOnce();
   });
 
   it.each([

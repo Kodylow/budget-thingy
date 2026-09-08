@@ -1,5 +1,6 @@
 import {
   currentDiagnosticRoute,
+  parseDataUnavailableHeader,
   recordApiDiagnostic,
   sanitizeDiagnosticRequestId,
   sanitizeDiagnosticUrl,
@@ -416,32 +417,60 @@ export async function customFetch<T = unknown>(
   const requestInfo = { method, url: resolveUrl(input) };
   const startedAt = typeof performance === "undefined" ? Date.now() : performance.now();
   let response: Response | undefined;
+  let responseDataState: ApiDiagnosticDataState | undefined;
 
   const record = (category: ApiDiagnosticCategory, dataState?: ApiDiagnosticDataState) => {
-    const endedAt = typeof performance === "undefined" ? Date.now() : performance.now();
-    const diagnostic = {
-      timestamp: new Date().toISOString(),
-      method,
-      endpoint: sanitizeDiagnosticUrl(requestInfo.url),
-      route: currentDiagnosticRoute(),
-      status: response?.status ?? null,
-      elapsedMs: Math.max(0, Math.round(endedAt - startedAt)),
-      requestId: sanitizeDiagnosticRequestId(response?.headers.get("x-request-id") ?? null),
-      category,
-      ...(dataState ? { dataState } : {}),
-    };
-    recordApiDiagnostic(diagnostic);
-    if (category !== "success") {
-      // Deliberately exclude errors, headers, bodies, and URLs before sanitization.
-      console.error("api_request_failed", diagnostic);
+    try {
+      const endedAt = typeof performance === "undefined" ? Date.now() : performance.now();
+      const diagnostic = {
+        timestamp: new Date().toISOString(),
+        method,
+        endpoint: sanitizeDiagnosticUrl(requestInfo.url),
+        route: currentDiagnosticRoute(),
+        status: response?.status ?? null,
+        elapsedMs: Math.max(0, Math.round(endedAt - startedAt)),
+        requestId: sanitizeDiagnosticRequestId(response?.headers.get("x-request-id") ?? null),
+        category,
+        ...(dataState ? { dataState } : {}),
+      };
+      recordApiDiagnostic(diagnostic);
+      if (dataState?.unavailable) {
+        try {
+          console.warn("api_data_unavailable", {
+            endpoint: diagnostic.endpoint,
+            route: diagnostic.route,
+            requestId: diagnostic.requestId,
+            unavailable: dataState.unavailable,
+          });
+        } catch {
+          // Console instrumentation must never alter request behavior.
+        }
+      }
+      if (category !== "success" && category !== "aborted") {
+        // Deliberately exclude errors, headers, bodies, and URLs before sanitization.
+        try {
+          console.error("api_request_failed", diagnostic);
+        } catch {
+          // Console instrumentation must never alter request behavior.
+        }
+      }
+    } catch {
+      // Diagnostics are best effort and must not replace a result or original error.
     }
   };
 
   try {
     response = await fetch(input, { ...init, method, headers });
+    const headerUnavailable = parseDataUnavailableHeader(
+      response.headers.get("x-data-unavailable"),
+    );
 
     if (!response.ok) {
       const errorData = await parseErrorBody(response, method);
+      const bodySummary = summarizeApiResponse(errorData);
+      responseDataState = headerUnavailable
+        ? { ...(bodySummary ?? {}), unavailable: headerUnavailable }
+        : bodySummary;
       if (response.status === 401) {
         _unauthorizedHandler?.();
       } else if (response.status === 403) {
@@ -451,7 +480,11 @@ export async function customFetch<T = unknown>(
     }
 
     const result = (await parseSuccessBody(response, responseType, requestInfo)) as T;
-    record("success", summarizeApiResponse(result));
+    const bodySummary = summarizeApiResponse(result);
+    responseDataState = headerUnavailable
+      ? { ...(bodySummary ?? {}), unavailable: headerUnavailable }
+      : bodySummary;
+    record("success", responseDataState);
     return result;
   } catch (error) {
     const category: ApiDiagnosticCategory =
@@ -461,7 +494,14 @@ export async function customFetch<T = unknown>(
               error instanceof DOMException &&
               error.name === "AbortError" ? "aborted"
             : response ? "parse" : "network";
-    record(category);
+    record(category, responseDataState ?? (
+      response
+        ? (() => {
+            const unavailable = parseDataUnavailableHeader(response.headers.get("x-data-unavailable"));
+            return unavailable ? { unavailable } : undefined;
+          })()
+        : undefined
+    ));
     throw error;
   }
 }

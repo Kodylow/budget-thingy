@@ -16,3 +16,13 @@ export function defaultCustomDates(date = new Date()) {
 export function apiRangeType(selection: RangeSelection): ApiRangeType {
   return selection;
 }
+
+export function isValidCustomRange(startDate?: string, endDate?: string): boolean {
+  const validDate = (value?: string) => {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  return validDate(startDate) && validDate(endDate) && startDate! <= endDate! &&
+    (Date.parse(endDate!) - Date.parse(startDate!)) / 86_400_000 < 400;
+}

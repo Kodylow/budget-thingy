@@ -1814,7 +1814,7 @@ describe("authenticated group detail qualification", () => {
     expect(scoped.headline.spendUsd).toBe(5);
   });
 
-  test("budget team report uses the authorized canonical pool across families and workspaces", async () => {
+  test("budget team report uses budget-to-date accounting despite a one-day selected range", async () => {
     const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
     const response = await get(
       `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true`,
@@ -1873,17 +1873,17 @@ describe("authenticated group detail qualification", () => {
       `${W2}:${COWORKER}`,
     ].sort());
     expect(value.budgetTracking).toMatchObject({
-      periodStart: null,
-      periodEnd: null,
+      periodStart: "2026-05-20",
+      periodEnd: "2027-05-20",
       allocationUsd: 1_000,
       spendUsd: 505,
       remainingUsd: null,
       percentUsed: null,
       scopeComplete: true,
       usageComplete: false,
-      benchmarkEligible: false,
+      benchmarkEligible: true,
     });
-    expect(value.budgetTracking.qualification).toMatch(/allocation period/i);
+    expect(value.budgetTracking.qualification).toMatch(/budget-to-date window/i);
     expect(value.budgetTracking.points.at(-1)).toEqual({
       date: TODAY,
       spendUsd: 505,
@@ -2002,7 +2002,7 @@ describe("authenticated group detail qualification", () => {
     try {
       const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
       const response = await get(
-        `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true`,
+        `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true&trackingRange=selected`,
         DETAIL_ACCOUNT_ADMIN,
       );
       expect(response.status).toBe(200);

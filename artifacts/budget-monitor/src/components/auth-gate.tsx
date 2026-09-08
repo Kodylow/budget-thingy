@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthContext } from '@/components/auth-context';
 import { DevViewSignedOutPicker } from '@/components/dev-view-chip';
+import { AccountSessionActions } from '@/components/account-session-actions';
 import { beginExplicitSignIn, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@workspace/replit-auth-web';
 
 export function AuthGate({ children }: { children: ReactNode }) {
@@ -46,11 +47,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
                       : 'Access could not be resolved. Retry or choose another person.')}
             </CardDescription>
           </CardHeader>
-          {!developmentView.loading && (
-            <CardContent>
+          <CardContent className="space-y-3">
+            {!developmentView.loading && (
               <Button onClick={() => { developmentView.retry(); retryAuthorization(); }}>Retry development view</Button>
-            </CardContent>
-          )}
+            )}
+            <AccountSessionActions />
+          </CardContent>
         </Card>
       </CenteredShell>
     );

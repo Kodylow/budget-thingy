@@ -104,26 +104,42 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
     getDirectory(),
     db.select().from(teamLimitTargetsTable),
   ]);
+  const selectedWorkspaceId = query.data.workspaceId ?? null;
   const cycleUsage = await usageForRequest(
     req.authz!,
     dir,
-    { rangeType: "billing" },
+    { rangeType: "billing", workspaceId: selectedWorkspaceId ?? undefined },
     true,
   );
   const spendUsage = query.data.period === "full-term"
-    ? await usageForRequest(req.authz!, dir, { rangeType: "full-term" }, true)
+    ? await usageForRequest(
+      req.authz!,
+      dir,
+      { rangeType: "full-term", workspaceId: selectedWorkspaceId ?? undefined },
+      true,
+    )
     : cycleUsage;
   const billing = getBillingPeriodMetadata();
-  const scopedGroups = visibleGroups(req.authz!, dir.groups);
+  const authorizedGroups = visibleGroups(req.authz!, dir.groups);
+  const scopedGroups = selectedWorkspaceId === null
+    ? authorizedGroups
+    : authorizedGroups.filter((group) =>
+      group.workspaceId === selectedWorkspaceId &&
+      spendUsage.workspaceIds.has(selectedWorkspaceId));
   const visibleTeams = new Set(
     scopedGroups
       .map((group) => targetTeamForGroup(group, dir.account, assignments))
       .filter((teamName): teamName is string => teamName != null),
   );
-  for (const teamName of req.authz!.teamNames) visibleTeams.add(teamName);
+  if (selectedWorkspaceId === null) {
+    for (const teamName of req.authz!.teamNames) visibleTeams.add(teamName);
+  }
   const ownTeamNames = new Set(
     dir.groups
-      .filter((group) => dir.groupMembers.get(group.id)?.includes(req.authz!.userId))
+      .filter((group) =>
+        (selectedWorkspaceId === null ||
+          group.workspaceId === selectedWorkspaceId) &&
+        dir.groupMembers.get(group.id)?.includes(req.authz!.userId))
       .map((group) => targetTeamForGroup(group, dir.account, assignments))
       .filter((teamName): teamName is string => teamName != null),
   );
@@ -192,14 +208,18 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
         return {
           poolId: canonicalTeamPoolId(b.teamName),
           teamName: b.teamName,
-          amountUsd: b.effectiveAmountUsd,
+          // A workspace contribution is not a suballocation of the annual
+          // funding-team amount.
+          amountUsd: selectedWorkspaceId === null ? b.effectiveAmountUsd : null,
           spendUsd: spendComplete ? observedSpendUsd : null,
           spendPeriodLabel: spendUsage.selection.label,
-          spendScope: isAccountWide(req.authz) ? "complete" : "partial",
+          spendScope: selectedWorkspaceId === null && isAccountWide(req.authz)
+            ? "complete"
+            : "partial",
           monthlyAgentLimitUsd,
           ...agentMetrics,
           workspaceIds: [
-            ...(isAccountWide(req.authz)
+            ...(selectedWorkspaceId === null && isAccountWide(req.authz)
               ? allWorkspaceIdsByTeam.get(b.teamName) ?? []
               : workspaceIdsByTeam.get(b.teamName) ?? []),
           ].sort(),

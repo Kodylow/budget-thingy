@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { reportingNavigationHref, reportingNavigationKey } from './reporting-navigation';
 
 describe('reporting navigation', () => {
-  it('keeps selected dates when opening organization insights and forecast details', () => {
-    for (const path of ['/org-insights', '/overview']) {
+  it('keeps selected dates when opening forecast details', () => {
+    for (const path of ['/overview']) {
       const href = reportingNavigationHref(`${path}?viewScope=all_authorized`, 'rangeType=custom&startDate=2026-09-01&endDate=2026-09-04&viewScope=my&page=2');
       const url = new URL(href, 'https://example.test');
       expect(url.pathname).toBe(path);
@@ -13,6 +13,12 @@ describe('reporting navigation', () => {
       expect(url.searchParams.get('viewScope')).toBe('all_authorized');
       expect(url.searchParams.has('page')).toBe(false);
     }
+  });
+  it('opens account-wide organization insights without inherited Home filters', () => {
+    expect(reportingNavigationHref(
+      '/org-insights',
+      'workspaceId=workspace-1&rangeType=custom&startDate=2026-09-01&endDate=2026-09-04&viewScope=my',
+    )).toBe('/org-insights');
   });
   it('keeps the period while the destination deliberately selects personal projects', () => {
     const href = reportingNavigationHref('/spend?tab=projects&viewScope=my', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&viewScope=all_authorized&projectionHorizon=term_end&page=4');
@@ -49,11 +55,12 @@ describe('reporting navigation', () => {
   });
 
   it('preserves selected dates when opening Custom Reports', () => {
-    const href = reportingNavigationHref('/reports', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&page=3');
+    const href = reportingNavigationHref('/reports', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&workspaceId=workspace-1&page=3');
     const query = new URL(href, 'https://example.test').searchParams;
     expect(query.get('rangeType')).toBe('custom');
     expect(query.get('startDate')).toBe('2026-05-20');
     expect(query.get('endDate')).toBe('2026-09-06');
+    expect(query.get('workspaceId')).toBe('workspace-1');
     expect(query.has('page')).toBe(false);
   });
 

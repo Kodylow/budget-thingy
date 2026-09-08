@@ -6,8 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { EndDateParameter } from './endDateParameter';
+import type { GetBudgetTeamReportScope } from './getBudgetTeamReportScope';
+import type { GetBudgetTeamReportTrackingRange } from './getBudgetTeamReportTrackingRange';
 import type { RangeTypeParameter } from './rangeTypeParameter';
+import type { SpendWorkspaceParameter } from './spendWorkspaceParameter';
 import type { StartDateParameter } from './startDateParameter';
+import type { ViewScopeParameter } from './viewScopeParameter';
 
 export type GetBudgetTeamReportParams = {
 /**
@@ -23,7 +27,28 @@ startDate?: StartDateParameter;
  */
 endDate?: EndDateParameter;
 /**
+ * Exact authorized workspace facet. Omit to include every workspace in the resolved scope.
+ * @maxLength 200
+ */
+workspaceId?: SpendWorkspaceParameter;
+/**
+ * Server-resolved presentation scope; managed excludes unrelated self-only grants.
+ */
+viewScope?: ViewScopeParameter;
+/**
+ * Include the canonical Workspace, physical Group, and apportioned Member hierarchy. Forbidden when scope=own.
+ */
+includeHierarchy?: boolean;
+/**
  * Include allocation-period spend tracking and cumulative daily points.
  */
 includeBudgetTracking?: boolean;
+/**
+ * Use the fixed allocation period (default), the verified current billing cycle's monthly Agent limit and Agent-only usage, or the selected report period.
+ */
+trackingRange?: GetBudgetTeamReportTrackingRange;
+/**
+ * own enables a regular member's read-only Home tracking view. It requires workspaceId and an active actual membership in a group committed to the requested canonical funding team.
+ */
+scope?: GetBudgetTeamReportScope;
 };

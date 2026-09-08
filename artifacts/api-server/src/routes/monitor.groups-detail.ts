@@ -8,6 +8,8 @@ import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsT
 
 import {
   buildScopedAccounting,
+  buildBudgetTrackingPoints,
+  canonicalTeamPoolId,
   canExposeCanonicalAllocation,
   currentCycleLimitMetrics,
   getCurrentCycleMemberSnapshot,
@@ -15,9 +17,21 @@ import {
   qualifiedGroupSpendComponents,
   resolveStoredMemberLimit,
 } from "../services/scoped-accounting";
-import { hasSuccessfulLimitObservation } from "../lib/enterprise";
-import { UsageWindowError } from "../lib/usage-window";
+import {
+  buildCanonicalAccountDirectory,
+  hasSuccessfulLimitObservation,
+} from "../lib/enterprise";
+import {
+  fixedTeamBudgetPeriodAsOf,
+  UsageWindowError,
+} from "../lib/usage-window";
+import {
+  getUsageSnapshotGeneration,
+  isUsageGenerationUpdateActive,
+} from "../lib/usage-store";
 import { authorizeSpendView } from "./monitor.spend-tables";
+import { buildAuthorization } from "../lib/authz";
+import { buildMembershipContext } from "../lib/membership-context";
 
 const router = Router();
 const MAX_REPORTING_GROUP_IDS = 32;
@@ -26,34 +40,105 @@ const DAY_MS = 86_400_000;
 function reportingQuery(req: Request, teamMode: boolean) {
   if (!teamMode) return GetReportingDetailQueryParams.safeParse(req.query);
   const raw = req.query["includeBudgetTracking"];
+  const rawHierarchy = req.query["includeHierarchy"];
   return GetBudgetTeamReportQueryParams.safeParse({
     ...req.query,
     includeBudgetTracking: raw === "true",
+    includeHierarchy: rawHierarchy === "true",
   });
 }
 
-export function buildBudgetTrackingPoints(
-  start: string,
-  endExclusive: string,
-  dailySpend: ReadonlyMap<string, number>,
-  unavailableDays: ReadonlySet<string>,
-): Array<{ date: string; spendUsd: number | null }> {
-  const points: Array<{ date: string; spendUsd: number | null }> = [];
-  let cumulative = 0;
-  for (
-    let time = Date.parse(start);
-    time < Date.parse(endExclusive);
-    time += DAY_MS
-  ) {
-    const date = new Date(time).toISOString().slice(0, 10);
-    cumulative += dailySpend.get(date) ?? 0;
-    if (unavailableDays.has(date)) {
-      points.push({ date, spendUsd: null });
-      continue;
-    }
-    points.push({ date, spendUsd: cumulative });
-  }
-  return points;
+export function buildFixedTeamBudgetTracking(input: {
+  dailySpend: ReadonlyMap<string, number>;
+  unavailableDays: ReadonlySet<string>;
+  scopeComplete: boolean;
+  usageObserved: boolean;
+  allocationUsd: number | null;
+  canonicalSpendUsd: number;
+  now?: Date;
+  reportingStart?: string;
+  reportingEndExclusive?: string;
+  reportingLabel?: string;
+  comparisonsMatchBudgetWindow?: boolean;
+  budgetKind?: "annual" | "monthly_agent";
+  workspaceCount?: number;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  periodLabel?: string;
+  asOf?: string | null;
+}) {
+  const period = fixedTeamBudgetPeriodAsOf(input.now);
+  const reportingStart = input.reportingStart ?? period.start;
+  const reportingEndExclusive =
+    input.reportingEndExclusive ?? period.reportingEndExclusive;
+  const reportingEnd = Date.parse(reportingEndExclusive) > Date.parse(reportingStart)
+    ? new Date(Date.parse(reportingEndExclusive) - DAY_MS)
+      .toISOString().slice(0, 10)
+    : null;
+  const points = reportingEnd === null
+    ? []
+    : buildBudgetTrackingPoints(
+      reportingStart,
+      reportingEndExclusive,
+      input.dailySpend,
+      input.unavailableDays,
+    );
+  const usageComplete = input.scopeComplete &&
+    input.usageObserved &&
+    input.unavailableDays.size === 0;
+  const comparisonsMatchBudgetWindow =
+    input.comparisonsMatchBudgetWindow ?? true;
+  const comparisonsEligible = comparisonsMatchBudgetWindow &&
+    usageComplete && input.allocationUsd !== null;
+  const benchmarkEligible = comparisonsMatchBudgetWindow &&
+    input.scopeComplete &&
+    input.allocationUsd !== null &&
+    input.allocationUsd > 0 &&
+    (input.budgetKind !== "monthly_agent" || usageComplete);
+  const spendUsd = input.usageObserved ? input.canonicalSpendUsd : null;
+  const qualification = !comparisonsMatchBudgetWindow
+    ? !input.scopeComplete
+      ? "The selected reporting range does not exactly match the budget-to-date window and the full funding team is outside the selected authorized scope; remaining, percent used, and benchmark are withheld."
+      : "The selected reporting range does not exactly match the budget-to-date window; remaining, percent used, and benchmark are withheld."
+    : !input.scopeComplete
+    ? "The full funding team is outside the authorized scope; allocation-period comparisons are withheld."
+    : !usageComplete
+      ? input.budgetKind === "monthly_agent"
+        ? "Agent usage does not completely cover the verified billing cycle-to-date window; cycle spend, remaining, percent used, and benchmark are withheld."
+        : "Usage does not completely cover the budget-to-date window; remaining and percent used are withheld."
+      : input.allocationUsd === null
+        ? "The team allocation is unavailable; remaining, percent used, and benchmark are withheld."
+        : input.allocationUsd <= 0
+          ? "The allocation is not positive; percent used and benchmark are withheld."
+          : null;
+  return {
+    budgetKind: input.budgetKind ?? "annual",
+    workspaceCount: input.workspaceCount ?? 0,
+    periodStart: input.periodStart === undefined
+      ? period.periodStart
+      : input.periodStart,
+    periodEnd: input.periodEnd === undefined ? period.periodEnd : input.periodEnd,
+    periodLabel: input.periodLabel ?? "May 20, 2026 to May 20, 2027",
+    reportingStart: reportingStart.slice(0, 10),
+    reportingEnd,
+    reportingLabel: input.reportingLabel ??
+      `${reportingStart.slice(0, 10)} to ${reportingEnd ?? reportingStart.slice(0, 10)}`,
+    asOf: input.asOf === undefined ? period.asOf : input.asOf,
+    allocationUsd: input.scopeComplete ? input.allocationUsd : null,
+    spendUsd,
+    remainingUsd: comparisonsEligible
+      ? input.allocationUsd! - input.canonicalSpendUsd
+      : null,
+    percentUsed: comparisonsEligible && input.allocationUsd! > 0
+      ? input.canonicalSpendUsd / input.allocationUsd! * 100
+      : null,
+    scopeComplete: input.scopeComplete,
+    usageComplete,
+    benchmarkEligible,
+    comparisonsMatchBudgetWindow,
+    qualification,
+    points,
+  };
 }
 
 export function __reportingDetailBaseQualificationsForTests(
@@ -99,11 +184,8 @@ function qualifiedGroupUsageHealth(
 async function reportingDetailHandler(req: Request, res: Response): Promise<void> {
   const startedAt = performance.now();
   const teamMode = req.params["poolId"] !== undefined;
-  if (teamMode && !authorizeSpendView(req.authz!, "pools")) {
-    res.status(403).json({ error: "The pools view is outside your authorized scope" });
-    return;
-  }
   const rawBudgetTracking = req.query["includeBudgetTracking"];
+  const rawHierarchy = req.query["includeHierarchy"];
   if (
     teamMode &&
     rawBudgetTracking !== undefined &&
@@ -113,10 +195,108 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     res.status(400).json({ error: "includeBudgetTracking must be true or false" });
     return;
   }
+  if (
+    teamMode &&
+    rawHierarchy !== undefined &&
+    rawHierarchy !== "true" &&
+    rawHierarchy !== "false"
+  ) {
+    res.status(400).json({ error: "includeHierarchy must be true or false" });
+    return;
+  }
   const parsed = reportingQuery(req, teamMode);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
+  }
+  let restrictedOwnView = false;
+  let reportingAuthz = req.authz!;
+  if (teamMode) {
+    const ownQuery = parsed.data as {
+      scope?: "authorized" | "own";
+      workspaceId?: string;
+      includeBudgetTracking?: boolean;
+      includeHierarchy?: boolean;
+    };
+    const isOwnRequest = ownQuery.scope === "own";
+    if (isOwnRequest && ownQuery.includeHierarchy === true) {
+      res.status(403).json({
+        error: "Hierarchy is unavailable for an own team report",
+      });
+      return;
+    }
+    if (!isOwnRequest && !authorizeSpendView(req.authz!, "pools")) {
+      res.status(403).json({ error: "The pools view is outside your authorized scope" });
+      return;
+    }
+    if (isOwnRequest && !ownQuery.workspaceId) {
+      res.status(400).json({ error: "workspaceId is required for an own team report" });
+      return;
+    }
+    if (
+      !authorizeSpendView(req.authz!, "pools") &&
+      ownQuery.includeBudgetTracking !== true
+    ) {
+      res.status(403).json({ error: "The pools view is outside your authorized scope" });
+      return;
+    }
+    if (!isOwnRequest) {
+      // Authorized manager/account views retain their normal authorization.
+    } else try {
+      const directory = await getDirectory();
+      const membershipContext = buildMembershipContext(
+        req.authz!.userId,
+        directory,
+        req.configurationSnapshot!,
+      );
+      const selectedMembership = membershipContext.workspaces
+        .find((workspace) => workspace.workspaceId === ownQuery.workspaceId)
+        ?.budgetTeams.find((team) =>
+          team.poolId === String(req.params["poolId"]));
+      if (!selectedMembership) {
+        res.status(403).json({
+          error: "The requested funding team is outside your own workspace scope",
+        });
+        return;
+      }
+      const configuredAccount = buildCanonicalAccountDirectory({
+        workspaces: directory.workspaces,
+        groups: directory.allGroups,
+        groupMembers: directory.groupMembers,
+        members: directory.members,
+        mappings: req.configurationSnapshot!.familyTeamMappings,
+      });
+      const personalGroups = directory.groups.filter((group) =>
+        targetTeamForGroup(
+          group,
+          configuredAccount,
+          req.configurationSnapshot!.teamLimitTargets,
+        ) === selectedMembership.teamName);
+      const groupUserIds = new Map(personalGroups.map((group) => [
+        group.id,
+        directory.groupMembers.get(group.id) ?? [],
+      ]));
+      reportingAuthz = buildAuthorization({
+        userId: req.authz!.userId,
+        roles: ["team_admin"],
+        teamNames: [selectedMembership.teamName],
+        groupIds: personalGroups.map((group) => group.id),
+        managedGroupIds: personalGroups.map((group) => group.id),
+        userIds: new Set([
+          req.authz!.userId,
+          ...personalGroups.flatMap((group) =>
+            directory.groupMembers.get(group.id) ?? []),
+        ]),
+        groupUserIds,
+      });
+      // Own reports expose team totals, but retain the member-safe response
+      // shape regardless of the caller's administrative roles.
+      restrictedOwnView = true;
+    } catch (error) {
+      req.log.error({ err: error }, "own budget team authorization failed");
+      res.status(503).json({ error: "Budget team authorization unavailable" });
+      return;
+    }
   }
   let groupIds: string[] = [];
   if (!teamMode) {
@@ -145,16 +325,23 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     }
     const authorizedAt = performance.now();
 
-    const query = { ...parsed.data, viewScope: "all_authorized" as const };
+    const includeHierarchy = teamMode &&
+      (parsed.data as { includeHierarchy?: boolean }).includeHierarchy === true;
+    // Keep the long-standing report projection unchanged unless the canonical
+    // hierarchy was explicitly requested. Hierarchy callers must reconcile to
+    // the same scope as the Spend surface that linked them here.
+    const query = includeHierarchy
+      ? { ...parsed.data }
+      : { ...parsed.data, viewScope: "all_authorized" as const };
     const prepared = await prepareScopedAccounting(
-      req.authz!,
+      reportingAuthz,
       query,
       undefined,
       req.configurationSnapshot,
     );
     const accountingStartedAt = performance.now();
     const accounting = await buildScopedAccounting(
-      req.authz!,
+      reportingAuthz,
       query,
       undefined,
       prepared,
@@ -212,7 +399,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     const projectionStartedAt = performance.now();
     const detailDirectory = accounting.dir;
     const scopedMembers = visibleGroupMembers(
-      req.authz!,
+      prepared.effectiveAuth,
       detailDirectory.groupMembers,
     );
     const relevantMissing = accounting.usage.snapshot.coverage.missingWorkspaceDays
@@ -236,13 +423,21 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
           ),
       ]),
     );
+    const selectedWorkspaceComplete = new Map(
+      [...requestedWorkspaceIds].map((workspaceId) => [
+        workspaceId,
+        accounting.usage.snapshot.workspaceStatus !== "empty" &&
+          !relevantFailed.some((item) => item.workspaceId === workspaceId) &&
+          !relevantMissing.some((item) => item.workspaceId === workspaceId),
+      ]),
+    );
 
     const groupRows = selections.map(({ display: group, sources }, index) => {
       const components = [...accounting.daily.values()].reduce(
         (total, rollup) => {
           const day = qualifiedGroupSpendComponents(
             rollup,
-            req.authz!,
+             prepared.effectiveAuth,
             sources,
           );
           total.spendUsd += day.spendUsd;
@@ -366,10 +561,225 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     }).sort((a, b) =>
       a.workspaceId.localeCompare(b.workspaceId) || a.userId.localeCompare(b.userId));
 
+    const canonicalHeadlineSpendUsd = teamRow?.spendUsd ??
+      groupRows.reduce((sum, group) => sum + group.spendUsd, 0);
+    const hierarchy = includeHierarchy
+      ? (() => {
+        const observedWorkspaceIds = new Set<string>();
+        for (const workspaces of
+          accounting.usage.snapshot.dailyWorkspaces?.values() ?? []) {
+          for (const workspaceId of workspaces.keys()) {
+            observedWorkspaceIds.add(workspaceId);
+          }
+        }
+        const round = (value: number) =>
+          Math.round((value + Number.EPSILON) * 1e8) / 1e8;
+        const selfOnly = prepared.effectiveAuth.roles.length === 1 &&
+          prepared.effectiveAuth.roles[0] === "member" &&
+          prepared.effectiveAuth.userIds.length === 1 &&
+          prepared.effectiveAuth.userIds[0] === prepared.effectiveAuth.userId;
+        const sourceByWorkspace = new Map<string, EnterpriseGroup[]>();
+        for (const source of selections.flatMap((selection) => selection.sources)) {
+          const workspaceGroups = sourceByWorkspace.get(source.workspaceId) ?? [];
+          if (!workspaceGroups.some((group) => group.id === source.id)) {
+            workspaceGroups.push(source);
+          }
+          sourceByWorkspace.set(source.workspaceId, workspaceGroups);
+        }
+        const workspaceRows = [...sourceByWorkspace].map(
+          ([workspaceId, workspaceGroups]) => {
+            const workspaceComplete = selectedWorkspaceComplete.get(workspaceId) ??
+              false;
+            const groupHierarchy = workspaceGroups
+              .sort((a, b) =>
+                a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+              .map((group) => {
+                const role = accounting.configuredAccount.roleGroupsById.get(group.id);
+                const components = [...accounting.daily.values()].reduce(
+                  (total, rollup) => {
+                    const day = qualifiedGroupSpendComponents(
+                      rollup,
+                      prepared.effectiveAuth,
+                      [group],
+                    );
+                    const ownAgent = selfOnly
+                      ? rollup.excludedInternalAgentSpendByGroupUser
+                        ?.get(group.id)?.get(prepared.effectiveAuth.userId) ?? 0
+                      : 0;
+                    const ownOther = selfOnly
+                      ? rollup.excludedInternalOtherSpendByGroupUser
+                        ?.get(group.id)?.get(prepared.effectiveAuth.userId) ?? 0
+                      : 0;
+                    total.spendUsd += day.spendUsd + ownAgent + ownOther;
+                    total.agentSpendUsd += day.agentSpendUsd + ownAgent;
+                    total.otherServicesUsd += day.otherServicesUsd + ownOther;
+                    return total;
+                  },
+                  { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 },
+                );
+                const allowedUserIds = new Set<string>(
+                  prepared.effectiveAuth.roles.includes("account") ||
+                    prepared.effectiveAuth.workspaceIds.includes(workspaceId)
+                    ? [
+                      ...(scopedMembers.get(group.id) ?? []),
+                      ...[...accounting.daily.values()].flatMap((rollup) => [
+                        ...(
+                          rollup.aiSpendByGroup.get(group.id)?.keys() ?? []
+                        ),
+                        ...(
+                          rollup.nonAiSpendByGroup.get(group.id)?.keys() ?? []
+                        ),
+                      ]),
+                    ]
+                    : prepared.effectiveAuth.groupUserIds?.[group.id] ?? [],
+                );
+                const hierarchyMembers = [...allowedUserIds].map((userId) => {
+                  let memberAgent = 0;
+                  let memberOther = 0;
+                  for (const rollup of accounting.daily.values()) {
+                    memberAgent +=
+                      rollup.aiSpendByGroup.get(group.id)?.get(userId) ?? 0;
+                    memberOther +=
+                      rollup.nonAiSpendByGroup.get(group.id)?.get(userId) ?? 0;
+                    if (selfOnly && userId === prepared.effectiveAuth.userId) {
+                      memberAgent += rollup.excludedInternalAgentSpendByGroupUser
+                        ?.get(group.id)?.get(userId) ?? 0;
+                      memberOther += rollup.excludedInternalOtherSpendByGroupUser
+                        ?.get(group.id)?.get(userId) ?? 0;
+                    }
+                  }
+                  const member = detailDirectory.members.get(userId);
+                  const workspaceMember = member?.workspaces.get(workspaceId);
+                  const limit = resolveStoredMemberLimit(
+                    detailDirectory,
+                    workspaceId,
+                    userId,
+                  );
+                  const cycleEntry =
+                    currentCycle.members.get(workspaceId)?.get(userId);
+                  const currentCycleAgentSpendUsd =
+                    !currentWorkspaceComplete.get(workspaceId)
+                    ? null
+                    : member?.isInternalReplitUser
+                      ? 0
+                      : cycleEntry === undefined
+                        ? 0
+                        : cycleEntry.agentMetricsComplete === true
+                          ? cycleEntry.aiCostUsd
+                          : null;
+                  const metrics = currentCycleLimitMetrics(
+                    limit.amount,
+                    currentCycleAgentSpendUsd,
+                  );
+                  return {
+                    workspaceId,
+                    userId,
+                    username: member?.username ?? null,
+                    email: member?.email ?? null,
+                    name: member?.name ?? null,
+                    role: workspaceMember?.role ?? null,
+                    isDisabled: workspaceMember?.isDisabled ?? null,
+                    isInternal: member?.isInternalReplitUser ?? false,
+                    groupIds: [group.id],
+                    spendUsd: round(memberAgent + memberOther),
+                    agentSpendUsd: round(memberAgent),
+                    otherServicesUsd: round(memberOther),
+                    currentCycleAgentSpendUsd,
+                    limitUsd: limit.amount,
+                    remainingUsd: metrics.remainingUsd,
+                    percentUsed: metrics.percentUsed,
+                    limitState: limit.state,
+                    limitObservationStatus:
+                      detailDirectory.budgets.observation.status,
+                  };
+                }).sort((a, b) => a.userId.localeCompare(b.userId));
+                const memberSpend = hierarchyMembers.reduce(
+                  (sum, member) => sum + member.spendUsd,
+                  0,
+                );
+                return {
+                  groupId: group.id,
+                  name: group.name,
+                  familyKey: role?.familyKey ?? group.id,
+                  spendUsd: round(components.spendUsd),
+                  agentSpendUsd: round(components.agentSpendUsd),
+                  otherServicesUsd: round(components.otherServicesUsd),
+                  usageObserved: observedWorkspaceIds.has(workspaceId),
+                  isComplete: workspaceComplete,
+                  memberCount: new Set(
+                    hierarchyMembers.map((member) => member.userId),
+                  ).size,
+                  unattributedSpendUsd: round(components.spendUsd - memberSpend),
+                  members: hierarchyMembers,
+                };
+              });
+            const spend = groupHierarchy.reduce(
+              (sum, group) => sum + group.spendUsd,
+              0,
+            );
+            const agent = groupHierarchy.reduce(
+              (sum, group) => sum + group.agentSpendUsd,
+              0,
+            );
+            return {
+              workspaceId,
+              workspaceName:
+                detailDirectory.workspaces.get(workspaceId)?.name ?? null,
+              spendUsd: round(spend),
+              agentSpendUsd: round(agent),
+              otherServicesUsd: round(spend - agent),
+              usageObserved: observedWorkspaceIds.has(workspaceId),
+              isComplete: workspaceComplete,
+              memberCount: new Set(groupHierarchy.flatMap((group) =>
+                group.members.map((member) => member.userId))).size,
+              unattributedSpendUsd: round(
+                spend - groupHierarchy.reduce(
+                  (sum, group) => sum + group.spendUsd,
+                  0,
+                ),
+              ),
+              groups: groupHierarchy,
+            };
+          },
+        ).sort((a, b) => a.workspaceId.localeCompare(b.workspaceId));
+        // Never hide a pool/source mismatch in an arbitrary workspace. The
+        // source maps and pool row share one accounting generation, so more
+        // than final-rounding drift is an invariant failure.
+        if (teamRow) {
+          const represented = workspaceRows.reduce(
+            (sum, workspace) => sum + workspace.spendUsd,
+            0,
+          );
+          const residual = round(teamRow.spendUsd - represented);
+          if (Math.abs(residual) > 1e-7) {
+            throw new Error(
+              `Hierarchy source spend does not reconcile to team headline (${residual})`,
+            );
+          }
+        }
+        return workspaceRows;
+      })()
+      : undefined;
+    const hierarchyMemberSpendUsd = hierarchy?.flatMap((workspace) =>
+      workspace.groups.flatMap((group) => group.members))
+      .reduce((sum, member) => sum + member.spendUsd, 0);
+    const hierarchyMemberIds = hierarchy
+      ? new Set(hierarchy.flatMap((workspace) =>
+        workspace.groups.flatMap((group) =>
+          group.members.map((member) => member.userId))))
+      : null;
+    const hierarchyUnattributedSpendUsd = hierarchy
+      ? Math.round((
+        canonicalHeadlineSpendUsd - hierarchy.reduce(
+          (sum, workspace) => sum + workspace.spendUsd,
+          0,
+        ) + Number.EPSILON
+      ) * 1e8) / 1e8
+      : undefined;
+
     // A team headline is the canonical pool row, not a sum of current people
     // or display rows; this preserves committed accounting residuals.
-    const spendUsd = teamRow?.spendUsd ??
-      groupRows.reduce((sum, group) => sum + group.spendUsd, 0);
+    const spendUsd = canonicalHeadlineSpendUsd;
     const agentSpendUsd = teamRow?.agentSpendUsd ?? groupRows.reduce(
       (sum, group) => sum + group.agentSpendUsd, 0);
     const membersSpendUsd = members.reduce(
@@ -437,61 +847,194 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     }
     const includeBudgetTracking = teamMode &&
       (parsed.data as { includeBudgetTracking?: boolean }).includeBudgetTracking === true;
+    const trackingRange = teamMode
+      ? (parsed.data as { trackingRange?: "budget" | "billing" | "selected" }).trackingRange ?? "budget"
+      : "budget";
     const budgetTracking = includeBudgetTracking
-      ? (() => {
-        const selectedSourceIds = new Set(sourceGroups.map((group) => group.groupId));
-        const fullFundingGroups = accounting.dir.groups.filter((group) =>
-          accounting.fullTeamByGroup.get(groupTeamKey(group)) === teamRow!.name
+      ? await (async () => {
+        const budgetPeriod = fixedTeamBudgetPeriodAsOf();
+        if (budgetPeriod.asOf === null) {
+          return buildFixedTeamBudgetTracking({
+            dailySpend: new Map(),
+            unavailableDays: new Set(),
+            scopeComplete: false,
+            usageObserved: false,
+            allocationUsd: null,
+            canonicalSpendUsd: 0,
+          });
+        }
+        if (isUsageGenerationUpdateActive()) {
+          throw new Error("Usage generation is changing during budget tracking");
+        }
+        const selectedTracking = trackingRange === "selected";
+        const billingTracking = trackingRange === "billing";
+        const billingMetadata = billingTracking ? getBillingPeriodMetadata() : null;
+        const verifiedBilling = billingMetadata !== null &&
+          !billingMetadata.isFallback;
+        const budgetQuery = selectedTracking
+          ? query
+          : billingTracking
+            ? {
+              rangeType: "billing",
+              viewScope: "all_authorized" as const,
+            }
+          : {
+            rangeType: "custom",
+            startDate: budgetPeriod.periodStart,
+            endDate: budgetPeriod.asOf,
+            viewScope: "all_authorized" as const,
+          };
+        const budgetPrepared = selectedTracking
+          ? prepared
+          : await prepareScopedAccounting(
+            reportingAuthz,
+            budgetQuery,
+            undefined,
+            prepared.configuration,
+          );
+        if (budgetPrepared.usageGeneration !== prepared.usageGeneration) {
+          throw new Error("Usage generation changed during budget tracking");
+        }
+        // The selected report may have the same dates while still carrying a
+        // workspace filter. Only selected tracking may reuse that projection.
+        const budgetAccounting = selectedTracking &&
+            accounting.period.start === windowFromQuery(budgetQuery).window.start &&
+            accounting.period.endExclusive ===
+              windowFromQuery(budgetQuery).window.end
+          ? accounting
+          : await buildScopedAccounting(
+            reportingAuthz,
+            budgetQuery,
+            undefined,
+            budgetPrepared,
+          );
+        if (isUsageGenerationUpdateActive() ||
+            getUsageSnapshotGeneration() !== prepared.usageGeneration) {
+          throw new Error("Usage generation changed during budget tracking");
+        }
+        const budgetTeamRow = budgetAccounting.poolRows.find((row) =>
+          row.id === requestedPoolId);
+        const fullFundingGroups = budgetAccounting.dir.groups.filter((group) =>
+          budgetAccounting.fullTeamByGroup.get(groupTeamKey(group)) === teamRow!.name
         );
-        const scopeComplete =
-          canExposeCanonicalAllocation(req.authz!, fullFundingGroups) &&
-          fullFundingGroups.every((group) => selectedSourceIds.has(group.id));
+        const visibleFundingGroupIds = new Set(
+          budgetTeamRow?.sourceGroupIds ?? [],
+        );
+        const visibleFundingGroups = fullFundingGroups.filter((group) =>
+          visibleFundingGroupIds.has(group.id));
+        const trackingGroups = selectedTracking
+          ? selections.flatMap((selection) => selection.sources)
+          : visibleFundingGroups;
+        const selectedSourceIds = new Set(sourceGroups.map((group) => group.groupId));
+        const scopeComplete = selectedTracking
+          ? (parsed.data as { workspaceId?: string }).workspaceId === undefined &&
+            canExposeCanonicalAllocation(prepared.effectiveAuth, fullFundingGroups) &&
+            fullFundingGroups.every((group) => selectedSourceIds.has(group.id))
+          : canExposeCanonicalAllocation(
+            budgetPrepared.effectiveAuth,
+            fullFundingGroups,
+          );
+        const fundingWorkspaceIds = new Set(
+          trackingGroups.map((group) => group.workspaceId),
+        );
+        const relevantBudgetMissing =
+          budgetAccounting.usage.snapshot.coverage.missingWorkspaceDays
+            .filter((item) => fundingWorkspaceIds.has(item.workspaceId));
+        const relevantBudgetFailed =
+          budgetAccounting.usage.snapshot.coverage.failedWorkspaceDays
+            .filter((item) => fundingWorkspaceIds.has(item.workspaceId));
         const unavailableDays = new Set([
-          ...relevantMissing.map((item) => item.usageDate),
-          ...relevantFailed.map((item) => item.usageDate),
+          ...relevantBudgetMissing.map((item) => item.usageDate),
+          ...relevantBudgetFailed.map((item) => item.usageDate),
         ]);
         const dailySpend = new Map<string, number>();
-        for (const [date, rollup] of accounting.daily) {
+        for (const [date, rollup] of budgetAccounting.daily) {
+          const components = qualifiedGroupSpendComponents(
+            rollup,
+            budgetPrepared.effectiveAuth,
+            trackingGroups,
+          );
           dailySpend.set(
             date.slice(0, 10),
-            qualifiedGroupSpendComponents(
-              rollup,
-              req.authz!,
-              selections.flatMap((selection) => selection.sources),
-            ).spendUsd,
+            billingTracking ? components.agentSpendUsd : components.spendUsd,
           );
         }
-        const points = buildBudgetTrackingPoints(
-          accounting.period.start,
-          accounting.period.endExclusive,
+        const effectiveBudgets = billingTracking
+          ? await getEffectiveTeamBudgets()
+          : null;
+        const monthlyLimitUsd = effectiveBudgets?.teams.find((budget) =>
+          budget.teamName === teamRow!.name && !budget.isHidden
+        )?.monthlyLimitUsd ?? null;
+        const agentBreakdownComplete = !billingTracking ||
+          [...fundingWorkspaceIds].every((workspaceId) => {
+            const workspaceMembers =
+              budgetAccounting.usage.snapshot.members.get(workspaceId);
+            return workspaceMembers !== undefined &&
+              [...workspaceMembers.values()].every((entry) =>
+                entry.agentMetricsComplete === true);
+          });
+        const billingUsageValid = verifiedBilling &&
+          agentBreakdownComplete &&
+          unavailableDays.size === 0;
+        if (billingTracking && !billingUsageValid) {
+          for (
+            let time = Date.parse(budgetAccounting.period.start);
+            time < Date.parse(budgetAccounting.period.endExclusive);
+            time += DAY_MS
+          ) {
+            unavailableDays.add(new Date(time).toISOString().slice(0, 10));
+          }
+        }
+        const billingPeriodEnd = billingMetadata
+          ? new Date(Date.parse(billingMetadata.end) - DAY_MS)
+            .toISOString().slice(0, 10)
+          : null;
+        if (isUsageGenerationUpdateActive() ||
+            getUsageSnapshotGeneration() !== budgetPrepared.usageGeneration) {
+          throw new Error("Usage generation changed during budget tracking");
+        }
+        return buildFixedTeamBudgetTracking({
           dailySpend,
           unavailableDays,
-        );
-        // No persisted allocation start/end currently exists in the budget
-        // snapshot. Reporting through today must not be promoted to a budget
-        // term, so period-dependent comparisons remain explicitly withheld.
-        const periodStart = null;
-        const periodEnd = null;
-        const usageComplete = false;
-        const benchmarkEligible = false;
-        const qualification = !scopeComplete
-          ? "The full funding team is outside the authorized scope; allocation-period comparisons are withheld."
-          : "The persisted allocation period is unavailable; remaining, percent used, and benchmark are withheld.";
-        return {
-          periodStart,
-          periodEnd,
-          periodLabel: "Allocation period unavailable",
-          asOf: accounting.metadata.dataAsOf ?? null,
-          allocationUsd: scopeComplete ? allocationUsd : null,
-          spendUsd: teamRow!.usageObserved ? teamRow!.spendUsd : null,
-          remainingUsd: null,
-          percentUsed: null,
           scopeComplete,
-          usageComplete,
-          benchmarkEligible,
-          qualification,
-          points,
-        };
+          usageObserved: billingTracking
+            ? Boolean(billingUsageValid && budgetTeamRow?.usageObserved)
+            : budgetTeamRow?.usageObserved ?? false,
+          allocationUsd: billingTracking
+            ? monthlyLimitUsd
+            : budgetTeamRow?.allocationUsd ?? allocationUsd,
+          canonicalSpendUsd: billingTracking
+            ? budgetTeamRow?.agentSpendUsd ?? 0
+            : budgetTeamRow?.spendUsd ?? 0,
+          budgetKind: billingTracking ? "monthly_agent" : "annual",
+          workspaceCount: new Set(
+            trackingGroups.map((group) => group.workspaceId),
+          ).size,
+          ...(billingTracking ? {
+            periodStart: verifiedBilling
+              ? billingMetadata!.start.slice(0, 10)
+              : null,
+            periodEnd: verifiedBilling ? billingPeriodEnd! : null,
+            periodLabel: verifiedBilling ? billingMetadata!.label : "Billing cycle unavailable",
+            asOf: verifiedBilling && budgetAccounting.period.endExclusive >
+                budgetAccounting.period.start
+              ? new Date(Date.parse(budgetAccounting.period.endExclusive) - DAY_MS)
+                .toISOString().slice(0, 10)
+              : null,
+            reportingStart: budgetAccounting.period.start,
+            reportingEndExclusive: budgetAccounting.period.endExclusive,
+            reportingLabel: budgetAccounting.period.label,
+          } : {}),
+          ...(selectedTracking ? {
+            reportingStart: budgetAccounting.period.start,
+            reportingEndExclusive: budgetAccounting.period.endExclusive,
+            reportingLabel: budgetAccounting.period.label,
+            comparisonsMatchBudgetWindow:
+              budgetAccounting.period.start === budgetPeriod.start &&
+              budgetAccounting.period.endExclusive ===
+                budgetPeriod.reportingEndExclusive,
+          } : {}),
+        });
       })()
       : undefined;
     const response = GetReportingDetailResponse.parse({
@@ -512,14 +1055,24 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
         percentUsed: selectedComplete && allocationUsd !== null && allocationUsd > 0
           ? spendUsd / allocationUsd * 100
           : null,
-        memberCount: members.length,
-        membersSpendUsd,
-        unattributedSpendUsd: Math.max(0, spendUsd - membersSpendUsd),
+        memberCount: includeHierarchy
+          ? hierarchyMemberIds!.size
+          : members.length,
+        membersSpendUsd: includeHierarchy
+          ? hierarchyMemberSpendUsd!
+          : membersSpendUsd,
+        unattributedSpendUsd: includeHierarchy
+          ? spendUsd - hierarchyMemberSpendUsd!
+          : Math.max(0, spendUsd - membersSpendUsd),
         isComplete: selectedComplete,
       },
-      groups: groupRows,
-      sourceGroups,
-      members,
+      ...(hierarchy ? { hierarchy } : {}),
+      ...(hierarchyUnattributedSpendUsd !== undefined
+        ? { hierarchyUnattributedSpendUsd }
+        : {}),
+      groups: restrictedOwnView ? [] : groupRows,
+      sourceGroups: restrictedOwnView ? [] : sourceGroups,
+      members: restrictedOwnView ? [] : members,
       period: accounting.period,
       metadata: {
         ...accounting.metadata,
@@ -552,6 +1105,14 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
   } catch (error) {
     if (error instanceof UsageWindowError) {
       res.status(400).json({ error: error.message });
+      return;
+    }
+    if (error instanceof Error &&
+        error.message.startsWith("Hierarchy source spend does not reconcile")) {
+      req.log.error({ err: error }, "reporting hierarchy invariant failed");
+      res.status(503).json({
+        error: "Reporting hierarchy does not reconcile to the team headline",
+      });
       return;
     }
     req.log.error({ err: error }, "getReportingDetail failed");

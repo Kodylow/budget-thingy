@@ -2,8 +2,10 @@ import { useState, useSyncExternalStore } from 'react';
 import { Copy, Stethoscope } from 'lucide-react';
 import {
   getApiDiagnostics,
+  getUiDiagnostics,
   subscribeApiDiagnostics,
   type ApiDiagnosticEntry,
+  type UiDiagnosticEntry,
 } from '@workspace/api-client-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,7 +17,10 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 
-function diagnosticReport(entries: readonly ApiDiagnosticEntry[]): string {
+function diagnosticReport(
+  entries: readonly ApiDiagnosticEntry[],
+  uiEntries: readonly UiDiagnosticEntry[],
+): string {
   return JSON.stringify({
     generatedAt: new Date().toISOString(),
     page: entries.at(-1)?.route ?? window.location.pathname,
@@ -30,6 +35,7 @@ function diagnosticReport(entries: readonly ApiDiagnosticEntry[]): string {
       category,
       ...(dataState ? { dataState } : {}),
     })),
+    uiEvents: uiEntries,
   }, null, 2);
 }
 
@@ -40,12 +46,24 @@ export function ApiDiagnostics() {
     getApiDiagnostics,
     getApiDiagnostics,
   );
+  const uiEntries = useSyncExternalStore(
+    subscribeApiDiagnostics,
+    getUiDiagnostics,
+    getUiDiagnostics,
+  );
   const [copyStatus, setCopyStatus] = useState<string>('');
-  const failures = entries.filter((entry) => entry.category !== 'success' && entry.category !== 'aborted');
+  const issues = entries.filter((entry) =>
+    (entry.category !== 'success' && entry.category !== 'aborted') ||
+    Boolean(entry.dataState?.unavailable),
+  );
+  const activeUiIssues = uiEntries.reduce(
+    (count, entry) => count + (entry.event === 'ui_data_unavailable' ? entry.count : -entry.count),
+    0,
+  );
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(diagnosticReport(entries));
+      await navigator.clipboard.writeText(diagnosticReport(entries, uiEntries));
       setCopyStatus('Copied. Include this with your support report.');
     } catch {
       setCopyStatus('Copy failed. Your browser may block clipboard access.');
@@ -58,10 +76,12 @@ export function ApiDiagnostics() {
       <DialogTrigger asChild>
         <Button type="button" variant="outline" size="sm" aria-label="Open API diagnostics">
           <Stethoscope className="mr-2 h-4 w-4" />
-          Diagnostics{failures.length > 0 ? ` (${failures.length})` : ''}
+          Diagnostics{issues.length + Math.max(0, activeUiIssues) > 0
+            ? ` (${issues.length + Math.max(0, activeUiIssues)})`
+            : ''}
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent data-diagnostic-ignore>
         <DialogHeader>
           <DialogTitle>Request diagnostics</DialogTitle>
           <DialogDescription>
@@ -99,11 +119,38 @@ export function ApiDiagnostics() {
                         .map(([state, count]) => `${state} ${count}`)
                         .join(', ')}`
                       : null,
+                    entry.dataState.unavailable
+                      ? `${entry.dataState.unavailable.count} unavailable fields${entry.dataState.unavailable.truncated ? ' (truncated)' : ''}`
+                      : null,
                   ].filter(Boolean).join(' · ')}
+                  {entry.dataState.unavailable?.sites.map((site, siteIndex) => (
+                    <div key={`${site.path}-${site.reason}-${siteIndex}`}>
+                      Field {site.path} · reason {site.reason} · count {site.count}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           ))}
+          {uiEntries.length > 0 && (
+            <div className="border-t pt-2">
+              <div className="mb-1 font-medium">Rendered availability transitions</div>
+              {[...uiEntries].reverse().map((entry, index) => (
+                <div className="rounded-md border p-2" key={`${entry.timestamp}-${index}`}>
+                  {entry.event} · reason {entry.reason} · count {entry.count}
+                  <div className="text-muted-foreground">
+                    {entry.source.page} · {entry.source.selector}
+                    {typeof entry.source.columnIndex === 'number' ? ` · column ${entry.source.columnIndex}` : ''}
+                    {entry.source.attribute ? ` · attribute ${entry.source.attribute}` : ''}
+                    {entry.source.truncated ? ' · source truncated' : ''}
+                    {entry.requestIdCandidates.length > 0
+                      ? ` · candidate request IDs: ${entry.requestIdCandidates.join(', ')}`
+                      : ' · no request context'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <Button type="button" variant="outline" onClick={() => void copy()}>
           <Copy className="mr-2 h-4 w-4" />
