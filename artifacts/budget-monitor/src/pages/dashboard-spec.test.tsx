@@ -39,7 +39,8 @@ describe('Dashboard reporting behaviors', () => {
       viewScope: 'all_authorized',
     });
     const source = readFileSync(new URL('./dashboard.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('useGetDashboard(queryParams)');
+    expect(source).toContain('useGetDashboard(queryParams,');
+    expect(source).toContain('getGetDashboardQueryKey(queryParams), authorizationKey');
     expect(source).not.toMatch(/useGetSummary|useGetTrends|useListGroups/);
   });
 

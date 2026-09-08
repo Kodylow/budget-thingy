@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertCircle, ChevronLeft, Info, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertCircle, ChevronLeft, Info, ShieldCheck } from 'lucide-react';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -23,6 +23,7 @@ import { InternalSpendExplanation, InternalUserBadge } from '@/components/intern
 import { BudgetMeter, StatusBadge, type JourneyStatus } from '@/components/journey-primitives';
 import { isUnknownSpendTotal } from '@/lib/spend-presentation';
 import { sanitizeSpendReturnTo } from '@/lib/spend-exploration';
+import { isBlockingQueryError, isReportingUsageRefreshing } from '@/lib/errors';
 
 function errorStatus(error: unknown) {
   return typeof error === 'object' && error !== null && 'status' in error
@@ -98,10 +99,10 @@ export default function GroupDetail() {
   const search = useSearch();
   const groupId = params?.groupId ?? '';
   const { rangeType, startDate, endDate } = useRange();
-  const { capabilities } = useAuthContext();
+  const { capabilities, authorizationKey } = useAuthContext();
   const activeTab = new URLSearchParams(search).get('tab') === 'projects' ? 'projects' : 'members';
   const queryParams = { rangeType, ...(rangeType === 'custom' ? { startDate, endDate } : {}) };
-  const detailQueryKey = getGetReportingDetailQueryKey(groupId, queryParams);
+  const detailQueryKey = [...getGetReportingDetailQueryKey(groupId, queryParams), authorizationKey];
   const detailQuery = useGetReportingDetail(groupId, queryParams, {
     query: {
       enabled: Boolean(groupId),
@@ -113,19 +114,27 @@ export default function GroupDetail() {
           : undefined,
     },
   });
+  const projectsQueryKey = [...getGetGroupProjectsQueryKey(groupId, queryParams), authorizationKey];
   const projectsQuery = useGetGroupProjects(groupId, queryParams, {
     query: {
       enabled: Boolean(groupId) && activeTab === 'projects',
-      queryKey: getGetGroupProjectsQueryKey(groupId, queryParams),
+      queryKey: projectsQueryKey,
+      placeholderData: (previous, previousQuery) =>
+        JSON.stringify(previousQuery?.queryKey) === JSON.stringify(projectsQueryKey)
+          ? previous
+          : undefined,
     },
   });
   const status = errorStatus(detailQuery.error);
+  const detailRefreshPending = isReportingUsageRefreshing(detailQuery.failureReason ?? detailQuery.error);
+  const detailBlocked = isBlockingQueryError(detailQuery.error);
+  const displayData = detailBlocked ? undefined : detailQuery.data;
 
-  if (!groupId || ((status === 400 || status === 403 || status === 404) && detailQuery.isError)) return <DetailUnavailable />;
-  if (!detailQuery.data && detailQuery.isLoading) return <DetailLoading />;
-  if (!detailQuery.data) return <LoadError retry={() => void detailQuery.refetch()} />;
+  if (!groupId || ([401, 403, 404].includes(status ?? 0) && detailQuery.isError)) return <DetailUnavailable />;
+  if (!displayData && (detailQuery.isLoading || detailRefreshPending)) return <DetailLoading />;
+  if (!displayData) return <LoadError retry={() => void detailQuery.refetch()} />;
 
-  const data = detailQuery.data;
+  const data = displayData;
   const group = data.groups[0];
   if (!group) return <DetailUnavailable />;
   const sortedMembers = [...data.members].sort((a, b) => b.spendUsd - a.spendUsd);
@@ -139,7 +148,10 @@ export default function GroupDetail() {
     }];
   });
   const hasSelectedObservations = data.metadata.status !== 'empty' && !isUnknownSpendTotal(data.metadata);
-  const projectsDenied = projectsQuery.isError && [403, 404].includes(errorStatus(projectsQuery.error) ?? 0);
+  const projectsDenied = projectsQuery.isError && [401, 403, 404].includes(errorStatus(projectsQuery.error) ?? 0);
+  const projectsBlocked = isBlockingQueryError(projectsQuery.error);
+  const projectsData = projectsBlocked ? undefined : projectsQuery.data;
+  const projectsRefreshing = isReportingUsageRefreshing(projectsQuery.failureReason ?? projectsQuery.error);
   const budgetStatus: JourneyStatus | null = data.headline.percentUsed == null
     ? null
     : data.headline.percentUsed >= 100
@@ -162,11 +174,6 @@ export default function GroupDetail() {
         <div className="min-w-0 space-y-2">
           <h1 className="flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight md:text-4xl">
             {group.name}
-            {detailQuery.isFetching && (
-              <Badge variant="outline" className="text-muted-foreground" data-testid="status-group-detail-updating">
-                <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
-              </Badge>
-            )}
             {(data.metadata.stale || data.metadata.status !== 'complete') && (
               <Badge
                 variant="outline"
@@ -440,13 +447,15 @@ export default function GroupDetail() {
             <div className="p-0">
               {projectsDenied ? (
                 <p className="text-sm text-muted-foreground" data-testid="status-group-projects-unavailable">Projects are unavailable for this group.</p>
-              ) : projectsQuery.isError && !projectsQuery.data ? (
+              ) : projectsRefreshing && !projectsData ? (
+                <ProjectsTable data={undefined} />
+              ) : projectsQuery.isError && !projectsData ? (
                 <div className="flex items-center justify-between border border-destructive/30 bg-destructive/5 p-4 text-sm" data-testid="status-group-projects-error">
                   <span>Projects couldn&apos;t be loaded. Member totals remain available.</span>
                   <Button variant="outline" size="sm" onClick={() => void projectsQuery.refetch()} data-testid="button-retry-group-projects">Retry</Button>
                 </div>
               ) : (
-                <ProjectsTable data={projectsQuery.data} />
+                <ProjectsTable data={projectsData} />
               )}
             </div>
           </TabsContent>

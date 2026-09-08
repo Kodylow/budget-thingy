@@ -17,7 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 import { Button } from '@/components/ui/button';
-import { AlertCircle, ChevronLeft, RefreshCw } from 'lucide-react';
+import { AlertCircle, ChevronLeft } from 'lucide-react';
 import { LoadingCell } from '@/components/loading-cell';
 import { RangeFilter } from '@/components/range-filter';
 import { roleBadgeClass, roleLabel } from '@/lib/hierarchy-presentation';
@@ -26,6 +26,7 @@ import { useAuthContext } from '@/components/auth-context';
 import { InternalUserBadge } from '@/components/internal-user-badge';
 import { MetricCard } from '@/components/journey-primitives';
 import { sanitizeSpendReturnTo } from '@/lib/spend-exploration';
+import { isBlockingQueryError, isReportingUsageRefreshing } from '@/lib/errors';
 
 function errorStatus(error: unknown) {
   return typeof error === 'object' && error !== null && 'status' in error
@@ -104,12 +105,12 @@ export default function ClusterDetail() {
   const groupIds = parseGroupIds(search);
   const clusterKey = groupIds.join(',');
   const { rangeType, startDate, endDate } = useRange();
-  const { capabilities } = useAuthContext();
+  const { capabilities, authorizationKey } = useAuthContext();
   const [historyClusterKey, setHistoryClusterKey] = useState<string | null>(null);
   const [auditCursors, setAuditCursors] = useState<Array<number | undefined>>([undefined]);
   const showHistory = historyClusterKey === clusterKey;
   const detailParams = { rangeType, ...(rangeType === 'custom' ? { startDate, endDate } : {}) };
-  const detailQueryKey = getGetReportingDetailQueryKey(clusterKey, detailParams);
+  const detailQueryKey = [...getGetReportingDetailQueryKey(clusterKey, detailParams), authorizationKey];
   const projectParams = { ...detailParams, scopeGroupIds: clusterKey };
   const detailQuery = useGetReportingDetail(clusterKey, detailParams, {
     query: {
@@ -121,14 +122,19 @@ export default function ClusterDetail() {
           : undefined,
     },
   });
+  const projectsQueryKey = [...getGetClusterProjectsQueryKey(clusterKey, projectParams), authorizationKey];
   const projectsQuery = useGetClusterProjects(clusterKey, projectParams, {
     query: {
       enabled: groupIds.length > 0,
-      queryKey: getGetClusterProjectsQueryKey(clusterKey, projectParams),
+      queryKey: projectsQueryKey,
+      placeholderData: (previous, previousQuery) =>
+        JSON.stringify(previousQuery?.queryKey) === JSON.stringify(projectsQueryKey)
+          ? previous
+          : undefined,
     },
   });
-  const data = detailQuery.data;
-  const workspaceIds = [...new Set(data?.sourceGroups.map((group) => group.workspaceId) ?? [])];
+  const rawData = detailQuery.data;
+  const workspaceIds = [...new Set(rawData?.sourceGroups.map((group) => group.workspaceId) ?? [])];
   const auditWorkspaceId = workspaceIds.length === 1 ? workspaceIds[0] : undefined;
   const canReviewHistory = capabilities.canManageAccess && Boolean(auditWorkspaceId);
   const auditBeforeId = auditCursors[auditCursors.length - 1];
@@ -140,23 +146,32 @@ export default function ClusterDetail() {
     query: {
       enabled: Boolean(showHistory && canReviewHistory),
       queryKey: auditWorkspaceId
-        ? getListWorkspaceUsageLimitAuditsQueryKey(auditWorkspaceId, auditParams)
+          ? [...getListWorkspaceUsageLimitAuditsQueryKey(auditWorkspaceId, auditParams), authorizationKey]
         : ['workspaceUsageLimitAudits', ''],
     },
   });
   const status = errorStatus(detailQuery.error);
+  const detailRefreshPending = isReportingUsageRefreshing(detailQuery.failureReason ?? detailQuery.error);
+  const detailBlocked = isBlockingQueryError(detailQuery.error);
+  const displayData = detailBlocked ? undefined : rawData;
 
-  if (groupIds.length === 0 || ((status === 400 || status === 403 || status === 404) && detailQuery.isError)) return <DetailUnavailable />;
-  if (!data && detailQuery.isLoading) return <DetailLoading />;
-  if (!data) return <LoadError retry={() => void detailQuery.refetch()} />;
+  if (groupIds.length === 0 || ([401, 403, 404].includes(status ?? 0) && detailQuery.isError)) return <DetailUnavailable />;
+  if (!displayData && (detailQuery.isLoading || detailRefreshPending)) return <DetailLoading />;
+  if (!displayData) return <LoadError retry={() => void detailQuery.refetch()} />;
 
+  const data = displayData;
   const roleByGroupId = new Map(data.sourceGroups.map((group) => [group.groupId, group.role]));
   const roles = [...new Set(data.groups.map((group) => group.role))];
   const workspaceNameById = new Map(data.sourceGroups.map((group) => [group.workspaceId, group.workspaceName]));
   const members = [...data.members].sort((a, b) => b.spendUsd - a.spendUsd);
   const hasSelectedObservations = data.metadata.status !== 'empty';
-  const projectsDenied = projectsQuery.isError && [403, 404].includes(errorStatus(projectsQuery.error) ?? 0);
+  const projectsDenied = projectsQuery.isError && [401, 403, 404].includes(errorStatus(projectsQuery.error) ?? 0);
+  const projectsBlocked = isBlockingQueryError(projectsQuery.error);
+  const projectsData = projectsBlocked ? undefined : projectsQuery.data;
+  const projectsRefreshing = isReportingUsageRefreshing(projectsQuery.failureReason ?? projectsQuery.error);
   const auditsDenied = auditsQuery.isError && [403, 404].includes(errorStatus(auditsQuery.error) ?? 0);
+  const auditsData = isBlockingQueryError(auditsQuery.error) ? undefined : auditsQuery.data;
+  const auditsRefreshing = isReportingUsageRefreshing(auditsQuery.failureReason ?? auditsQuery.error);
   const manageContexts = workspaceIds.flatMap((workspaceId) => {
     if (!capabilities.canWriteUserLimitsIn.includes(workspaceId)) return [];
     return [{
@@ -172,11 +187,6 @@ export default function ClusterDetail() {
         <div className="min-w-0 space-y-2">
           <h1 className="flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight md:text-4xl">
             {data.headline.familyName}
-            {detailQuery.isFetching && (
-              <Badge variant="outline" className="text-muted-foreground" data-testid="status-cluster-detail-updating">
-                <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
-              </Badge>
-            )}
             {(data.metadata.stale || data.metadata.status !== 'complete') && (
               <Badge
                 variant="outline"
@@ -376,14 +386,16 @@ export default function ClusterDetail() {
             <CardContent className="p-4">
               {auditsDenied ? (
                 <p className="text-sm text-muted-foreground" data-testid="status-limit-history-unavailable">Limit history is no longer available.</p>
-              ) : auditsQuery.isError && !auditsQuery.data ? (
+              ) : auditsRefreshing && !auditsData ? (
+                <div className="h-16 animate-pulse-glow rounded bg-muted" />
+              ) : auditsQuery.isError && !auditsData ? (
                 <div className="flex items-center justify-between border border-destructive/30 bg-destructive/5 p-4 text-sm" data-testid="status-limit-history-error">
                   <span>Limit history couldn&apos;t be loaded.</span>
                   <Button variant="outline" size="sm" onClick={() => void auditsQuery.refetch()} data-testid="button-retry-limit-history">Retry</Button>
                 </div>
-              ) : auditsQuery.isLoading || !auditsQuery.data ? (
+              ) : auditsQuery.isLoading || !auditsData ? (
                 <div className="h-16 animate-pulse-glow rounded bg-muted" />
-              ) : auditsQuery.data.length ? (
+              ) : auditsData.length ? (
                 <div>
                   <p className="mb-3 text-xs text-muted-foreground" data-testid="text-limit-history-window">
                     Page {auditCursors.length} · up to 200 changes per page.
@@ -396,7 +408,7 @@ export default function ClusterDetail() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {auditsQuery.data.map((entry) => (
+                      {auditsData.map((entry) => (
                         <TableRow key={entry.id} >
                           <TableCell className="whitespace-nowrap text-sm">{new Date(entry.createdAt).toLocaleString()}</TableCell>
                           <TableCell className="text-sm">{entry.operatorName || entry.operatorEmail || entry.operatorUserId}</TableCell>
@@ -421,10 +433,10 @@ export default function ClusterDetail() {
                     <Button
                       variant="outline"
                       className="min-h-[44px] sm:min-h-[36px]"
-                      disabled={auditsQuery.isFetching || auditsQuery.data.length < 200}
+                      disabled={auditsQuery.isFetching || auditsData.length < 200}
                       onClick={() => setAuditCursors((current) => [
                         ...current,
-                        auditsQuery.data?.at(-1)?.id,
+                        auditsData.at(-1)?.id,
                       ])}
                       data-testid="button-next-limit-history"
                     >
@@ -463,13 +475,15 @@ export default function ClusterDetail() {
         <CardContent className="p-0">
           {projectsDenied ? (
             <p className="text-sm text-muted-foreground" data-testid="status-cluster-projects-unavailable">Projects are unavailable for this cluster.</p>
-          ) : projectsQuery.isError && !projectsQuery.data ? (
+          ) : projectsRefreshing && !projectsData ? (
+            <ProjectsTable data={undefined} />
+          ) : projectsQuery.isError && !projectsData ? (
             <div className="flex items-center justify-between border border-destructive/30 bg-destructive/5 p-4 text-sm" data-testid="status-cluster-projects-error">
               <span>Projects couldn&apos;t be loaded. Headline and member totals remain available.</span>
               <Button variant="outline" size="sm" onClick={() => void projectsQuery.refetch()} data-testid="button-retry-cluster-projects">Retry</Button>
             </div>
           ) : (
-            <ProjectsTable data={projectsQuery.data} />
+            <ProjectsTable data={projectsData} />
           )}
         </CardContent>
       </Card>

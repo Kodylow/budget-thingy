@@ -21,7 +21,7 @@ vi.mock('@/components/range-context', () => ({
   useRange: () => ({ rangeType: 'full-term', startDate: undefined, endDate: undefined }),
 }));
 vi.mock('@/components/auth-context', () => ({
-  useAuthContext: () => ({ role: mocks.role }),
+  useAuthContext: () => ({ role: mocks.role, authorizationKey: 'auth-scope-1' }),
 }));
 vi.mock('@/components/range-filter', () => ({ RangeFilter: () => null }));
 vi.mock('@/components/admin-data-quality', () => ({ AdminDataQualityNote: () => null }));
@@ -72,5 +72,49 @@ describe.each(['account', 'team_admin'])('My Projects fixed personal scope for %
     expect(html).toContain('viewScope=my');
     expect(html).toContain('returnTo=%2Fmy-projects%3Fsearch%3DAlpha');
     expect(html).not.toContain('returnTo=%2Fmy-projects%3Fsearch%3DAlpha%26viewScope%3Dmy');
+  });
+});
+
+describe('My Projects refresh states', () => {
+  it('keeps cached rows quiet for a server refresh failure', () => {
+    mocks.projects.mockReturnValue({
+      data: {
+        rows: [project], filteredRows: 1,
+        totals: { spendUsd: 10, agentSpendUsd: 8, otherServicesUsd: 2 },
+        facets: { workspaces: [] },
+        metadata: { status: 'complete', stale: false, qualifications: [], dataAsOf: null },
+      },
+      isError: true,
+      isFetching: false,
+      error: { status: 500 },
+    });
+    const html = renderToStaticMarkup(<MyProjects />);
+    expect(html).toContain('Alpha');
+    expect(html).not.toContain('Updating projects');
+    expect(html).not.toContain('My projects are unavailable');
+  });
+
+  it('hides cached rows for a blocking error', () => {
+    mocks.projects.mockReturnValue({
+      data: {
+        rows: [project], filteredRows: 1,
+        totals: { spendUsd: 10, agentSpendUsd: 8, otherServicesUsd: 2 },
+        facets: { workspaces: [] },
+        metadata: { status: 'complete', stale: false, qualifications: [], dataAsOf: null },
+      },
+      isError: true,
+      error: { status: 403 },
+    });
+    const html = renderToStaticMarkup(<MyProjects />);
+    expect(html).toContain('My projects are unavailable');
+    expect(html).not.toContain('>Alpha<');
+  });
+
+  it('renders loading for an initial typed reporting refresh', () => {
+    const refreshing = { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } };
+    mocks.projects.mockReturnValue({ data: undefined, isError: true, error: refreshing, failureReason: refreshing });
+    const html = renderToStaticMarkup(<MyProjects />);
+    expect(html).toContain('Loading my projects');
+    expect(html).not.toContain('My projects are unavailable');
   });
 });

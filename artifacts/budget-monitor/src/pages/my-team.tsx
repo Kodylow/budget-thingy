@@ -34,6 +34,7 @@ import { spendDetailHref } from '@/lib/spend-exploration';
 import { formatUsd } from '@/pages/home-components/format';
 import { PersonWorkspaceDetails } from '@/components/person-workspace-details';
 import { formatBudgetDate } from '@/lib/budget-meter';
+import { isBlockingQueryError, isReportingUsageRefreshing } from '@/lib/errors';
 
 function periodDates(period: ReportingPeriod) {
   const inclusiveEnd = new Date(Date.parse(period.endExclusive) - 1).toISOString();
@@ -146,8 +147,7 @@ export function PeopleTable({ rows, rangeType }: {
           <span key="limit" className="flex flex-col items-end gap-1">
             <span className="whitespace-nowrap font-mono text-xs">{(row.workspaces?.length ?? 0) > 1 ? 'Per workspace' : row.limitState === 'no_limit' ? 'No limit' : formatUsd(row.allocationUsd)}</span>
             {status && <StatusBadge status={status} />}
-            {row.limitObservationStatus === 'refreshing' && <span className="text-[10px] text-muted-foreground">Refreshing</span>}
-            {row.limitObservationStatus === 'failed' && <span className="text-[10px] text-muted-foreground">{row.allocationUsd != null ? 'Last known · refresh failed' : 'Observation failed'}</span>}
+            {row.limitObservationStatus === 'failed' && row.allocationUsd == null && <span className="text-[10px] text-muted-foreground">Observation failed</span>}
             {row.limitObservationStatus === 'unavailable' && <span className="text-[10px] text-muted-foreground">Observation unavailable</span>}
           </span>,
         ];
@@ -186,11 +186,11 @@ export function ProjectsTable({ rows }: { rows: SpendTableRow[] }) {
   );
 }
 
-export function PaginatedPeopleTable({ params, rangeType }: { params: any, rangeType: any }) {
+export function PaginatedPeopleTable({ params, rangeType, authorizationKey }: { params: any, rangeType: any, authorizationKey: string }) {
   const [page, setPage] = useState(1);
   const [isExpanded, setIsExpanded] = useState(false);
   const peopleParams = { ...params, page: isExpanded ? page : 1, pageSize: 10, sort: 'spend_desc' as const };
-  const people = useListSpendPeople(peopleParams, { query: { enabled: true, queryKey: getListSpendPeopleQueryKey(peopleParams) } });
+  const people = useListSpendPeople(peopleParams, { query: { enabled: true, queryKey: [...getListSpendPeopleQueryKey(peopleParams), authorizationKey] } });
 
   const handleToggleExpand = () => {
     setIsExpanded(!isExpanded);
@@ -201,9 +201,9 @@ export function PaginatedPeopleTable({ params, rangeType }: { params: any, range
 
   return (
     <TablePanel title="Top People" caption="Selected-period spend · Projects excludes Agent · Agent Limit is per billing cycle." isExpanded={isExpanded} onToggleExpand={handleToggleExpand}>
-      {people.isLoading && !people.data ? (
+      {(people.isLoading || isReportingUsageRefreshing(people.error ?? people.failureReason)) && !people.data ? (
         <div className="p-4 text-sm text-muted-foreground text-center">Loading...</div>
-      ) : people.data ? (
+      ) : people.data && !isBlockingQueryError(people.error ?? people.failureReason) ? (
         <>
           <PeopleTable rows={people.data.rows} rangeType={rangeType} />
           {isExpanded && (
@@ -221,11 +221,11 @@ export function PaginatedPeopleTable({ params, rangeType }: { params: any, range
   );
 }
 
-export function PaginatedProjectsTable({ params }: { params: any }) {
+export function PaginatedProjectsTable({ params, authorizationKey }: { params: any, authorizationKey: string }) {
   const [page, setPage] = useState(1);
   const [isExpanded, setIsExpanded] = useState(false);
   const projectsParams = { ...params, page: isExpanded ? page : 1, pageSize: 10, sort: 'spend_desc' as const };
-  const projects = useListSpendProjects(projectsParams, { query: { enabled: true, queryKey: getListSpendProjectsQueryKey(projectsParams) } });
+  const projects = useListSpendProjects(projectsParams, { query: { enabled: true, queryKey: [...getListSpendProjectsQueryKey(projectsParams), authorizationKey] } });
 
   const handleToggleExpand = () => {
     setIsExpanded(!isExpanded);
@@ -236,9 +236,9 @@ export function PaginatedProjectsTable({ params }: { params: any }) {
 
   return (
     <TablePanel title="Top Apps" caption="Projects ranked by selected-period scoped spend." isExpanded={isExpanded} onToggleExpand={handleToggleExpand}>
-      {projects.isLoading && !projects.data ? (
+      {(projects.isLoading || isReportingUsageRefreshing(projects.error ?? projects.failureReason)) && !projects.data ? (
         <div className="p-4 text-sm text-muted-foreground text-center">Loading...</div>
-      ) : projects.data ? (
+      ) : projects.data && !isBlockingQueryError(projects.error ?? projects.failureReason) ? (
         <>
           <ProjectsTable rows={projects.data.rows} />
           {isExpanded && (
@@ -260,12 +260,12 @@ import { useQueryClient } from '@tanstack/react-query';
 
 export default function MyTeam() {
   const search = useSearch();
-  const { role, capabilities } = useAuthContext();
+  const { role, capabilities, authorizationKey } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const { authorized, viewScope } = resolveMyTeamScope(role, capabilities.canViewAccountUsage);
   const queryClient = useQueryClient();
   const params = { viewScope, rangeType, startDate, endDate };
-  const dashboard = useGetDashboard(params, { query: { enabled: authorized, queryKey: getGetDashboardQueryKey(params) } });
+  const dashboard = useGetDashboard(params, { query: { enabled: authorized, queryKey: [...getGetDashboardQueryKey(params), authorizationKey] } });
 
   const monthly = useMemo(() => (dashboard.data?.insights?.monthly ?? []).slice(-6).map((month) => ({
     month: month.start,
@@ -315,7 +315,15 @@ export default function MyTeam() {
   if (!authorized) {
     return <div className="p-8" data-testid="my-team-forbidden"><h1 className="text-2xl font-semibold">403 · Access denied</h1><p className="mt-2 text-sm text-muted-foreground">Your role does not include personal or managed usage access.</p></div>;
   }
-  if (dashboard.isLoading) {
+  const dashboardError = dashboard.error ?? dashboard.failureReason;
+  if (isBlockingQueryError(dashboardError)) {
+    const status = (dashboardError as any)?.status;
+    if (status === 401 || status === 403 || status === 404) {
+      return <div className="p-8" data-testid="my-team-forbidden"><h1 className="text-2xl font-semibold">{status} · Access denied or not found</h1><p className="mt-2 text-sm text-muted-foreground">You do not have access to this usage scope.</p></div>;
+    }
+    return <div className="mx-auto max-w-[1280px] p-4 md:p-8"><EmptyState title="Unable to load activity" description="No values are shown because the scoped dashboard request failed." action={<Button variant="outline" onClick={refreshAll}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>} /></div>;
+  }
+  if (dashboard.isLoading || (!dashboard.data && isReportingUsageRefreshing(dashboardError))) {
     return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<div className="grid gap-4 sm:grid-cols-3">{[1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-md" />)}</div><Skeleton className="h-72 rounded-md" /></div>;
   }
   if (!dashboard.data) {
@@ -347,8 +355,8 @@ export default function MyTeam() {
         <p>Limit columns use the current billing cycle. Six-month activity is independent of the selected period; missing months remain gaps.{hasPartialMonth && ' Partial months show known values only.'}</p>
       </AdminDataQualityNote>
       <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-        <PaginatedPeopleTable key={`people:${JSON.stringify(params)}`} params={params} rangeType={rangeType} />
-        <PaginatedProjectsTable key={`projects:${JSON.stringify(params)}`} params={params} />
+        <PaginatedPeopleTable key={`people:${JSON.stringify(params)}:${authorizationKey}`} params={params} rangeType={rangeType} authorizationKey={authorizationKey} />
+        <PaginatedProjectsTable key={`projects:${JSON.stringify(params)}:${authorizationKey}`} params={params} authorizationKey={authorizationKey} />
       </div>
       <Card className="rounded-md shadow-none">
         <CardHeader>

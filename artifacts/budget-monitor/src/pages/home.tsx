@@ -22,7 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
-import { isReportingUsageRefreshing } from '@/lib/errors';
+import { isBlockingQueryError, isReportingUsageRefreshing } from '@/lib/errors';
 import { PersonalBudgetPanel, type CanonicalTeamBudget, type TeamBudgetTracking } from './home-components/budget-panels';
 import { BudgetTrajectory } from './home-components/budget-trajectory';
 import { SpendStoryChart } from './home-components/spend-story-chart';
@@ -67,8 +67,9 @@ function HomeTeamReport({
       queryKey: [...getGetBudgetTeamReportQueryKey(team.poolId, params), authorizationKey],
     },
   });
-  const tracking: TeamBudgetTracking | null = report.data?.budgetTracking ?? null;
   const refreshingUsage = isReportingUsageRefreshing(report.failureReason ?? report.error);
+  const reportData = isBlockingQueryError(report.error) ? undefined : report.data;
+  const tracking: TeamBudgetTracking | null = reportData?.budgetTracking ?? null;
   const comparisonsMatchBudgetWindow = tracking?.comparisonsMatchBudgetWindow === true;
   const hasTrajectory = Boolean(
     tracking?.points.some((point) => Number.isFinite(point.spendUsd)) ||
@@ -87,9 +88,9 @@ function HomeTeamReport({
       <BudgetTrajectory
           teamName={team.teamName}
           tracking={tracking}
-          loading={report.isLoading}
+          loading={report.isLoading || (refreshingUsage && !tracking)}
           refreshingUsage={refreshingUsage}
-          error={report.isError && !report.data}
+          error={report.isError && !reportData && !refreshingUsage}
           onRetry={() => void report.refetch()}
           comparisonsMatchBudgetWindow={comparisonsMatchBudgetWindow}
       />
@@ -170,7 +171,7 @@ export default function Home() {
       enabled: availability === 'authorized',
     },
   });
-  const membershipContext = membershipQuery.data;
+  const membershipContext = isBlockingQueryError(membershipQuery.error) ? undefined : membershipQuery.data;
   const workspaces = membershipContext?.workspaces ?? [];
   const workspaceResolution = resolvePersonalWorkspace(membershipContext, requestedWorkspaceId);
   const selectedWorkspace = identityWorkspaceResetRequired || availability !== 'authorized' ? null : workspaceResolution.workspace;
@@ -260,16 +261,20 @@ export default function Home() {
     },
   });
 
-  const myDashboard = myDashboardQuery.data;
+  const dashboardRefreshing = isReportingUsageRefreshing(myDashboardQuery.failureReason ?? myDashboardQuery.error);
+  const billingRefreshing = isReportingUsageRefreshing(billingCyclesQuery.failureReason ?? billingCyclesQuery.error);
+  const myDashboard = isBlockingQueryError(myDashboardQuery.error) ? undefined : myDashboardQuery.data;
+  const billingData = isBlockingQueryError(billingCyclesQuery.error) ? undefined : billingCyclesQuery.data;
+  const teamBudgetsData = isBlockingQueryError(teamBudgetsQuery.error) ? undefined : teamBudgetsQuery.data;
   const selectedPeriodLabel = rangeType === 'full-term'
     ? 'Full term'
     : myDashboard?.period.label ?? 'Current billing period';
   const personalSpend = myDashboard?.personalSpendByWorkspace?.find((row) => row.workspaceId === workspaceId) ?? null;
   const personalLimit = myDashboard?.personalLimits?.find((limit) => limit.workspaceId === workspaceId) ?? null;
   const selectedBudgetTeamIds = new Set(selectedWorkspace?.budgetTeams.map((team) => team.poolId) ?? []);
-  const teams = ((teamBudgetsQuery.data?.budgets ?? []) as CanonicalTeamBudget[])
+  const teams = ((teamBudgetsData?.budgets ?? []) as CanonicalTeamBudget[])
     .filter((team) => Boolean(team.poolId) && selectedBudgetTeamIds.has(team.poolId));
-  const cycles = (billingCyclesQuery.data?.cycles ?? [])
+  const cycles = (billingData?.cycles ?? [])
     .filter((cycle) => rangeType === 'billing' || cycle.key === 'current');
   const hasPersonalComparison = cycles.some((cycle) => cycle.points.some((point) => Number.isFinite(point.personalSpendUsd)));
   const showPersonalComparison = hasPersonalComparison || billingCyclesQuery.isLoading || billingCyclesQuery.isError;
@@ -290,7 +295,7 @@ export default function Home() {
     />
   );
 
-  if (identityWorkspaceResetRequired || membershipQuery.isLoading || (workspaceId && myDashboardQuery.isLoading)) {
+  if (identityWorkspaceResetRequired || membershipQuery.isLoading || (workspaceId && (myDashboardQuery.isLoading || (dashboardRefreshing && !myDashboard)))) {
     return (
       <div className="mx-auto max-w-[1280px] space-y-6 p-4 md:p-8">
         {overviewHeader}
@@ -355,7 +360,7 @@ export default function Home() {
               <CardTitle className="flex items-center gap-2 text-base"><TrendingUp className="h-4 w-4 text-primary" /> My spend</CardTitle>
             </CardHeader>
             <CardContent><div className="min-h-72 min-w-0 rounded-sm border bg-muted/25 p-3 sm:min-h-80">
-              {billingCyclesQuery.isLoading ? <Skeleton className="h-64 w-full" /> : billingCyclesQuery.isError && !billingCyclesQuery.data ? (
+              {billingCyclesQuery.isLoading || (billingRefreshing && !billingData) ? <Skeleton className="h-64 w-full" /> : billingCyclesQuery.isError && !billingData ? (
                 <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">Spend comparison unavailable<Button size="sm" variant="outline" onClick={() => void billingCyclesQuery.refetch()}>Retry</Button></div>
               ) : <SpendStoryChart cycles={cycles} scope="personal" />}
             </div></CardContent>

@@ -7,6 +7,7 @@ vi.mock('../hooks/use-toast', () => ({ toast: vi.fn() }));
 import { toast } from '../hooks/use-toast';
 import {
   describeError,
+  isBlockingQueryError,
   getUsageHealthWarning,
   isReportingUsageRefreshing,
   requestRetryDelay,
@@ -168,7 +169,7 @@ describe('getUsageHealthWarning', () => {
 });
 
 describe('subscribeApiErrorToasts', () => {
-  it('notifies once for full-coverage stale data and dismisses on recovery', () => {
+  it('keeps full-coverage stale data and recovery quiet', () => {
     const dismiss = vi.fn();
     vi.mocked(toast).mockReturnValue({
       id: 'usage-health',
@@ -185,19 +186,16 @@ describe('subscribeApiErrorToasts', () => {
       usageHealth: { status: 'stale', coverage: { ratio: 1 } },
     });
 
-    expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Usage data may be out of date',
-    }));
+    expect(toast).not.toHaveBeenCalled();
 
     queryClient.setQueryData(['dashboard'], {
       usageHealth: { status: 'complete', coverage: { ratio: 1 } },
     });
-    expect(dismiss).toHaveBeenCalledTimes(1);
+    expect(dismiss).not.toHaveBeenCalled();
     unsubscribe();
   });
 
-  it('shows one partial-data warning across simultaneous queries and waits for full recovery', () => {
+  it('keeps simultaneous partial-data reads quiet through recovery', () => {
     const dismiss = vi.fn();
     vi.mocked(toast).mockReturnValue({
       id: 'usage-health',
@@ -214,10 +212,7 @@ describe('subscribeApiErrorToasts', () => {
       usageHealth: { status: 'stale', coverage: { ratio: 1 } },
     });
 
-    expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Some usage data is still updating',
-    }));
+    expect(toast).not.toHaveBeenCalled();
 
     queryClient.setQueryData(['dashboard', 'groups'], {
       usageHealth: { status: 'complete', coverage: { ratio: 1 } },
@@ -227,7 +222,7 @@ describe('subscribeApiErrorToasts', () => {
     queryClient.setQueryData(['dashboard', 'summary'], {
       usageHealth: { status: 'complete', coverage: { ratio: 1 } },
     });
-    expect(dismiss).toHaveBeenCalledTimes(1);
+    expect(dismiss).not.toHaveBeenCalled();
     unsubscribe();
   });
 
@@ -255,7 +250,7 @@ describe('subscribeApiErrorToasts', () => {
     unsubscribe();
   });
 
-  it('shows one cached-refresh notice, keeps known zero, and retries the failed query', async () => {
+  it('silently keeps known zero through repeated refetch failures and recovers', async () => {
     const dismiss = vi.fn();
     vi.mocked(toast).mockReturnValue({ id: 'cached-error', dismiss, update: vi.fn() });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -276,30 +271,19 @@ describe('subscribeApiErrorToasts', () => {
 
     await observer.refetch();
     await observer.refetch();
-    expect(toast).toHaveBeenCalledTimes(1);
-    const notice = vi.mocked(toast).mock.calls[0][0];
-    expect(notice).toMatchObject({
-      title: 'Couldn’t refresh data.',
-      description: 'Showing saved values.',
-      variant: 'destructive',
-    });
+    expect(toast).not.toHaveBeenCalled();
     expect(client.getQueryData(queryKey)).toEqual(saved);
 
     fails = false;
-    const recovered = new Promise<void>((resolve) => {
-      const stop = observer.subscribe((result) => {
-        if (result.data?.spendUsd === 12) { stop(); resolve(); }
-      });
-    });
-    (notice.action!.props as { onClick: () => void }).onClick();
-    await recovered;
-    expect(dismiss).toHaveBeenCalledTimes(1);
+    await observer.refetch();
+    expect(client.getQueryData(queryKey)).toEqual({ spendUsd: 12 });
+    expect(toast).not.toHaveBeenCalled();
     stopToasts();
     stopObserver();
     client.clear();
   });
 
-  it('replaces the same query’s health notice when its refresh fails', async () => {
+  it('does not announce a network failure while cached data remains available', async () => {
     const dismiss = vi.fn();
     vi.mocked(toast).mockReturnValue({ id: 'notice', dismiss, update: vi.fn() });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -310,13 +294,70 @@ describe('subscribeApiErrorToasts', () => {
       queryKey,
       queryFn: async () => { throw new TypeError('Failed to fetch'); },
     })).rejects.toThrow();
-    expect(dismiss).toHaveBeenCalledTimes(1);
-    expect(toast).toHaveBeenLastCalledWith(expect.objectContaining({
-      title: 'Couldn’t refresh data.',
-      action: expect.anything(),
+    expect(toast).not.toHaveBeenCalled();
+    expect(dismiss).not.toHaveBeenCalled();
+    stop();
+    client.clear();
+  });
+
+  it('keeps an initial typed reporting transition quiet even after retries exhaust', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const stop = subscribeApiErrorToasts(client);
+    const error = { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } };
+    await expect(client.fetchQuery({
+      queryKey: ['/api/initial-refresh'],
+      queryFn: async () => { throw error; },
+    })).rejects.toEqual(error);
+    expect(toast).not.toHaveBeenCalled();
+    expect(client.getQueryData(['/api/initial-refresh'])).toBeUndefined();
+    stop();
+    client.clear();
+  });
+
+  it.each([403, 404, 400])('keeps HTTP %s actionable even with cached data', async status => {
+    vi.mocked(toast).mockReturnValue({ id: 'blocking', dismiss: vi.fn(), update: vi.fn() });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const key = [`/api/blocking-${status}`];
+    client.setQueryData(key, { spendUsd: 42 });
+    const stop = subscribeApiErrorToasts(client);
+    await expect(client.fetchQuery({
+      queryKey: key, queryFn: async () => { throw { status }; },
+    })).rejects.toEqual({ status });
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      variant: 'destructive', action: expect.anything(),
     }));
     stop();
     client.clear();
+  });
+
+  it('does not suppress a failed mutation carrying the reporting refresh code', async () => {
+    vi.mocked(toast).mockReturnValue({ id: 'write', dismiss: vi.fn(), update: vi.fn() });
+    const client = new QueryClient();
+    const stop = subscribeApiErrorToasts(client);
+    const error = { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } };
+    const mutation = client.getMutationCache().build(client, {
+      mutationKey: ['save-must-not-be-silent'],
+      mutationFn: async () => { throw error; },
+      retry: false,
+    });
+    await expect(mutation.execute(undefined)).rejects.toEqual(error);
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Service unavailable', variant: 'destructive',
+    }));
+    stop();
+    client.clear();
+  });
+});
+
+describe('isBlockingQueryError', () => {
+  it.each([401, 403, 404, 400])('rejects cached presentation for HTTP %s', status => {
+    expect(isBlockingQueryError({ status })).toBe(true);
+  });
+  it('allows same-query cached presentation for transient failures only', () => {
+    expect(isBlockingQueryError(undefined)).toBe(false);
+    expect(isBlockingQueryError({ status: 503 })).toBe(false);
+    expect(isBlockingQueryError(new TypeError('Failed to fetch'))).toBe(false);
+    expect(isBlockingQueryError(new Error('Invalid response'))).toBe(true);
   });
 });
 

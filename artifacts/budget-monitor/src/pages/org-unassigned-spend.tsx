@@ -12,7 +12,7 @@ const sourceLabels = {
 };
 
 export function UnassignedSpendCard({
-  data, isFetching, isError,
+  data,
 }: {
   data: OrgBudgetOverviewResponse;
   isFetching: boolean;
@@ -51,8 +51,6 @@ export function UnassignedSpendCard({
           <p className="text-sm text-muted-foreground">Funding Period: {data.periodStart} to {data.periodEnd}</p>
           <p className="text-sm text-muted-foreground">Recorded through: {data.asOf ?? "Unavailable"}</p>
         </div>
-        {isFetching && <p role="status" className="text-sm text-muted-foreground">Updating overview and details…</p>}
-        {isError && <p role="alert" className="text-sm text-destructive">Refresh failed. Showing the last recorded overview and details.</p>}
         {detail?.observation === "partial" && (
           <p className="text-sm text-muted-foreground">
             Recorded usage only; some workspace observations are missing. Missing usage is not zero.

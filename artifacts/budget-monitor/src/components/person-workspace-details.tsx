@@ -23,8 +23,7 @@ export function PersonWorkspaceDetails({ workspaces }: { workspaces: SpendPerson
               <dt className="text-muted-foreground">Remaining</dt>
               <dd className="text-right font-mono">{formatUsd(workspace.currentCycleRemainingUsd)}</dd>
             </dl>
-            {workspace.limitObservationStatus === 'refreshing' && <p className="mt-1 text-muted-foreground">Refreshing</p>}
-            {workspace.limitObservationStatus === 'failed' && <p className="mt-1 text-muted-foreground">{workspace.allocationUsd != null ? 'Last known · refresh failed' : 'Observation failed'}</p>}
+            {workspace.limitObservationStatus === 'failed' && workspace.allocationUsd == null && <p className="mt-1 text-muted-foreground">Observation failed</p>}
             {workspace.limitObservationStatus === 'unavailable' && <p className="mt-1 text-muted-foreground">Observation unavailable</p>}
           </div>
         ))}

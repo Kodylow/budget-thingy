@@ -174,13 +174,13 @@ describe('UnassignedSpendCard', () => {
     await renderCard(first, true);
     expect(container.textContent).toContain('$47.25');
     expect(document.querySelector('[data-testid="unassigned-detail-total"]')?.textContent).toContain('$47.25');
-    expect(document.body.textContent).toContain('Updating overview and details…');
+    expect(document.body.textContent).not.toContain('Updating');
 
     await renderCard(first, false, true);
     expect(container.textContent).toContain('$47.25');
     expect(document.querySelector('[data-testid="unassigned-detail-total"]')?.textContent).toContain('$47.25');
     expect(document.body.textContent).toContain('North Workspace');
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain('Refresh failed.');
+    expect(document.querySelector('[role="alert"]')).toBeNull();
 
     const updated = overview({
       observation: 'complete',

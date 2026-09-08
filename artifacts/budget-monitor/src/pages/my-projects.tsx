@@ -18,6 +18,8 @@ import { downloadAuthenticatedBlob } from '@/lib/download';
 import { spendDetailHref, updateSpendParams } from '@/lib/spend-exploration';
 import { formatObservedCurrency, isUnknownSpendTotal } from '@/lib/spend-presentation';
 import { useToast } from '@/hooks/use-toast';
+import { useAuthContext } from '@/components/auth-context';
+import { isBlockingQueryError, isReportingUsageRefreshing } from '@/lib/errors';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
@@ -26,6 +28,7 @@ export default function MyProjects() {
   const [location, setLocation] = useLocation();
   const { rangeType, startDate, endDate } = useRange();
   const { toast } = useToast();
+  const { authorizationKey } = useAuthContext();
   const params = new URLSearchParams(searchString);
   const requestedPage = Number(params.get('page'));
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -72,9 +75,10 @@ export default function MyProjects() {
   }
 
   const query = useListSpendProjects(queryParams, {
-    query: { queryKey: getListSpendProjectsQueryKey(queryParams) },
+    query: { queryKey: [...getListSpendProjectsQueryKey(queryParams), authorizationKey] },
   });
-  const data = query.data;
+  const refreshPending = isReportingUsageRefreshing(query.failureReason ?? query.error);
+  const data = isBlockingQueryError(query.error) ? undefined : query.data;
   const totalPages = Math.max(1, Math.ceil((data?.filteredRows ?? 0) / pageSize));
 
   useEffect(() => {
@@ -190,12 +194,7 @@ export default function MyProjects() {
           </Button>
         </div>
 
-        {query.isFetching && data && (
-          <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">
-            <RefreshCw className="mr-1.5 inline h-3 w-3 animate-spin" /> Updating projects
-          </div>
-        )}
-        {!data ? query.isError ? (
+        {!data ? query.isError && !refreshPending ? (
           <div className="space-y-3 p-10 text-center" role="alert">
             <p>My projects are unavailable. Your filters and reporting period are preserved.</p>
             <Button variant="outline" onClick={() => void query.refetch()}>Retry</Button>

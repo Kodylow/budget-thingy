@@ -74,7 +74,7 @@ describe('Home budget trajectory', () => {
     expect(markup).not.toContain('% of funding used');
   });
 
-  it('shows pending usage copy instead of unavailable during an initial refresh', () => {
+  it('shows a quiet loading surface instead of unavailable during an initial refresh', () => {
     const markup = renderToStaticMarkup(
       <BudgetTrajectory
         teamName="GPO Connected Living"
@@ -87,11 +87,12 @@ describe('Home budget trajectory', () => {
       />,
     );
 
-    expect(markup).toContain('Usage is updating. Your trajectory will load automatically.');
+    expect(markup).toContain('Loading budget trajectory');
+    expect(markup).not.toContain('Usage is updating');
     expect(markup).not.toContain('Budget trajectory unavailable');
   });
 
-  it('keeps the cached chart and adds a refresh notice without replacing it', () => {
+  it('keeps the cached chart without a passive refresh notice', () => {
     const markup = renderToStaticMarkup(
       <BudgetTrajectory
         teamName="GPO Connected Living"
@@ -104,13 +105,13 @@ describe('Home budget trajectory', () => {
       />,
     );
 
-    expect(markup).toContain('Usage is updating. Showing the last loaded trajectory.');
+    expect(markup).not.toContain('Usage is updating');
     expect(markup).toContain('GPO Connected Living cumulative spend and even-paced budget benchmark');
     expect(markup).toContain('$1,234.00');
     expect(markup).not.toContain('Budget trajectory unavailable');
   });
 
-  it('offers retry with specific copy after typed refresh retries are exhausted', () => {
+  it('keeps showing loading after typed refresh retries are exhausted', () => {
     const markup = renderToStaticMarkup(
       <BudgetTrajectory
         teamName="GPO Connected Living"
@@ -123,8 +124,8 @@ describe('Home budget trajectory', () => {
       />,
     );
 
-    expect(markup).toContain('Usage is still updating. Retry in a moment.');
-    expect(markup).toContain('Retry');
+    expect(markup).toContain('Loading budget trajectory');
+    expect(markup).not.toContain('Retry');
     expect(markup).not.toContain('Budget trajectory unavailable');
   });
 

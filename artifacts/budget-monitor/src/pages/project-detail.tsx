@@ -13,6 +13,8 @@ import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { formatObservedCurrency } from "@/lib/spend-presentation";
 import { spendDetailHref, sanitizeSpendReturnTo } from "@/lib/spend-exploration";
 import { DeploymentChip, DeploymentLink, ProjectDataFreshness, ProjectDate, StaleSpendingChip } from "@/components/project-observation";
+import { useAuthContext } from "@/components/auth-context";
+import { isBlockingQueryError, isReportingUsageRefreshing } from "@/lib/errors";
 
 export default function ProjectDetail() {
   const { workspaceId, projectId } = useParams();
@@ -20,6 +22,7 @@ export default function ProjectDetail() {
   const searchString = rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch;
   const [location, setLocation] = useLocation();
   const { rangeType, startDate, endDate } = useRange();
+  const { authorizationKey } = useAuthContext();
 
   const searchParams = new URLSearchParams(rawSearch);
   const poolId = searchParams.get("poolId") || undefined;
@@ -34,14 +37,15 @@ export default function ProjectDetail() {
   }
 
   const query = useGetWorkspaceProject(workspaceId!, projectId!, queryParams, { 
-    query: { enabled: !!workspaceId && !!projectId, queryKey: getGetWorkspaceProjectQueryKey(workspaceId!, projectId!, queryParams) } 
+    query: { enabled: !!workspaceId && !!projectId, queryKey: [...getGetWorkspaceProjectQueryKey(workspaceId!, projectId!, queryParams), authorizationKey] }
   });
 
-  const data = query.data;
+  const refreshPending = isReportingUsageRefreshing(query.failureReason ?? query.error);
+  const data = isBlockingQueryError(query.error) ? undefined : query.data;
   const returnTo = sanitizeSpendReturnTo(searchParams.get("returnTo"), '/my-projects');
   const currentPath = `${location}${searchString ? `?${searchString}` : ""}`;
 
-  if (query.isError && !query.data) {
+  if (query.isError && !data && !refreshPending) {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] space-y-4">
         <AlertTriangle className="h-10 w-10 text-destructive" />

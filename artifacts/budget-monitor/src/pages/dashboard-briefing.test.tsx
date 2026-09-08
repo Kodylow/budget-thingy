@@ -169,9 +169,10 @@ const baseData: DashboardResponse = {
   projection: null as unknown as DashboardResponse['projection'],
 };
 
-function render(data: DashboardResponse | undefined = baseData, state: Partial<Record<'isLoading' | 'isError' | 'isFetching', boolean>> = {}) {
+function render(data?: DashboardResponse, state: Record<string, unknown> = {}) {
+  const resolvedData = arguments.length === 0 ? baseData : data;
   mocks.query.mockReturnValue({
-    data,
+    data: resolvedData,
     isLoading: false,
     isError: false,
     isFetching: false,
@@ -238,7 +239,7 @@ describe('Overview financial briefing', () => {
     expect(html).toContain('At-current-rate outlook');
     expect(html.indexOf('>Spend<')).toBeLessThan(html.indexOf('At-current-rate outlook'));
     expect(html).toContain('data-testid="card-dashboard-eligible_spend"');
-    expect(html).toContain('aria-label="Explore spend in Spend"');
+    expect(html).toContain('aria-label="Open reporting overview"');
     expect(html).not.toContain('Chart options');
     expectRemovedOverviewSections(html);
   });
@@ -269,10 +270,29 @@ describe('Overview financial briefing', () => {
   });
 
   it('keeps cached values without a local refresh-failure badge', () => {
-    const html = render(baseData, { isError: true });
+    const html = render(baseData, { isError: true, error: { status: 500 } });
     expect(html).toContain('>Spend<');
     expect(html).not.toContain('Refresh failed');
+    expect(html).not.toContain('Updating');
     expect(html).not.toContain('>Retry<');
+  });
+
+  it('hides cached dashboard values for a blocking access error', () => {
+    const html = render(baseData, { isError: true, error: { status: 403 } });
+    expect(html).toContain('Failed to load dashboard data');
+    expect(html).not.toContain('$1,234.50');
+    expect(html).not.toContain('Sep 1–30, 2026');
+  });
+
+  it('renders the skeleton for an initial typed reporting refresh', () => {
+    const refreshing = { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } };
+    const html = render(undefined, {
+      isError: true,
+      error: refreshing,
+      failureReason: refreshing,
+    });
+    expect(html).toContain('aria-label="Loading Overview"');
+    expect(html).not.toContain('Failed to load dashboard data');
   });
 
   it('uses canonical accounting when a variant omits a spend card', () => {
@@ -335,7 +355,7 @@ describe('Overview financial briefing', () => {
       expect(html).toContain('>Overview<');
       expect(html).toContain('>Spend<');
       expect(html).toContain('Actual reporting-period trend');
-      expect(html).toContain('aria-label="Explore spend in Spend"');
+      expect(html).toContain('aria-label="Open reporting overview"');
       expectRemovedOverviewSections(html);
       expect(html.includes('data-testid="select-dashboard-scope"')).toBe(role !== 'member');
     },

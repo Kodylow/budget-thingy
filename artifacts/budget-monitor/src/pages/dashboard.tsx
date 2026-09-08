@@ -2,6 +2,7 @@ import { useMemo, useEffect, lazy, Suspense, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
 import {
   useGetDashboard,
+  getGetDashboardQueryKey,
   DashboardCard,
   GetDashboardParams,
 } from "@workspace/api-client-react";
@@ -12,7 +13,7 @@ import { RangeFilter } from "@/components/range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, RefreshCw, Target, CheckCircle2, Info, DollarSign, TrendingUp } from "lucide-react";
+import { AlertTriangle, Target, CheckCircle2, Info, DollarSign, TrendingUp } from "lucide-react";
 import { reportDashboardMilestonePainted, markDashboardMilestone, DashboardPerformanceContext } from "@/lib/client-performance";
 import {
   dashboardRequestParams,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/spend-scope";
 import { dashboardTotalSpend } from "@/lib/spend-presentation";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
+import { isBlockingQueryError, isReportingUsageRefreshing } from "@/lib/errors";
 
 const DashboardProjectionView = lazy(() => import("./dashboard-projection"));
 const TrendChart = lazy(() => import("./dashboard-chart"));
@@ -79,7 +81,10 @@ export default function Dashboard() {
     });
   }, [rangeType, startDate, endDate, viewScope, projectionHorizon]);
 
-  const { data, isLoading, isFetching, refetch } = useGetDashboard(queryParams);
+  const dashboardQueryKey = [...getGetDashboardQueryKey(queryParams), authorizationKey];
+  const { data, error, failureReason, isLoading, isFetching, refetch } = useGetDashboard(queryParams, {
+    query: { queryKey: dashboardQueryKey },
+  });
 
   const querySignature = JSON.stringify(queryParams);
   const generation = useRef(-1);
@@ -183,9 +188,10 @@ export default function Dashboard() {
     return undefined;
   }, [data, isFetching]);
 
-  const displayData = data;
+  const refreshPending = isReportingUsageRefreshing(failureReason ?? error);
+  const displayData = isBlockingQueryError(error) ? undefined : data;
 
-  if (isLoading && !displayData) {
+  if (!displayData && (isLoading || refreshPending)) {
     return <DashboardSkeleton />;
   }
 
@@ -253,11 +259,6 @@ export default function Dashboard() {
               Overview
             </h1>
             <div className="flex items-center gap-1.5 mt-1 ml-2">
-              {isFetching && (
-                <Badge variant="secondary" className="border-border/50 text-muted-foreground font-normal text-xs" data-testid="status-dashboard-updating">
-                  <RefreshCw className="h-3 w-3 mr-1.5 animate-spin opacity-70" /> Updating
-                </Badge>
-              )}
               {isPartial && (
                 <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700 font-medium text-xs" data-testid="status-dashboard-partial">
                   Partial

@@ -133,6 +133,20 @@ describe('OrgInsights', () => {
     expect(html).toContain('Failed to load organization budget overview');
     expect(html).toContain('Retry');
   });
+
+  it('keeps an initial reporting transition in the loading layout without an error', () => {
+    (useAuthContext as any).mockReturnValue({
+      capabilities: { canViewAccountUsage: true }, authorizationKey: 'account:a',
+    });
+    (useGetOrgBudgetOverview as any).mockReturnValue({
+      isLoading: false, isError: true, data: undefined,
+      error: { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } },
+    });
+    const html = renderToStaticMarkup(<OrgInsights />);
+    expect(html).toContain('org-summary-loading');
+    expect(html).not.toContain('org-insights-error');
+    expect(html).not.toContain('Updating');
+  });
   
   it('renders budget overview content when data is available', () => {
     (useAuthContext as any).mockReturnValue({
@@ -315,6 +329,7 @@ describe('OrgInsights', () => {
     const refetch = vi.fn(async () => ({ isError: true, error: new Error('503') }));
     let queryState = {
       data: committed, isLoading: false, isFetching: false, isError: false, refetch,
+      error: null as null | { status: number },
     };
     (useGetOrgBudgetOverview as any).mockImplementation(() => queryState);
     const container = document.createElement('div');
@@ -329,12 +344,22 @@ describe('OrgInsights', () => {
       queryState = { ...queryState, isFetching: true };
       await act(async () => root.render(<OrgInsights />));
       expect(container.querySelector('[data-testid="org-card-remaining"]')?.textContent).toContain('$325.00');
-      expect(container.textContent).toContain('Updating');
+      expect(container.textContent).not.toContain('Updating');
+      expect(container.querySelector('[data-testid="refresh-org-insights"]')?.textContent).toBe('Refresh');
       expect(container.querySelector('[data-testid="org-insights-error"]')).toBeNull();
-      queryState = { ...queryState, isFetching: false, isError: true };
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      queryState = { ...queryState, isFetching: false, isError: true, error: { status: 503 } };
       await act(async () => root.render(<OrgInsights />));
       expect(container.querySelector('[data-testid="org-card-remaining"]')?.textContent).toContain('$325.00');
       expect(container.querySelector('[data-testid="org-insights-error"]')).toBeNull();
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(container.textContent).not.toMatch(/Updating|Refresh failed|Showing saved/);
+      queryState = {
+        ...queryState, isError: false, error: null,
+        data: { ...committed, summary: { ...committed.summary, remainingUsd: 300 } },
+      };
+      await act(async () => root.render(<OrgInsights />));
+      expect(container.querySelector('[data-testid="org-card-remaining"]')?.textContent).toContain('$300.00');
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -446,7 +471,7 @@ describe('OrgInsights', () => {
     }
   });
 
-  it.each([401, 403])('hides retained overview and unassigned details after a %s response', status => {
+  it.each([401, 403, 404])('hides retained overview and unassigned details after a %s response', status => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
       authorizationKey: 'account:revoked',

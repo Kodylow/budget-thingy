@@ -14,6 +14,7 @@ afterAll(() => vi.unstubAllGlobals());
 const mocks = vi.hoisted(() => ({
   role: 'team_admin',
   account: false,
+  authorizationKey: 'auth-one',
   dashboard: vi.fn(),
   people: vi.fn(),
   projects: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('wouter/use-browser-location', () => ({
 vi.mock('@/components/auth-context', () => ({
   useAuthContext: () => ({
     role: mocks.role, capabilities: { canViewAccountUsage: mocks.account },
+    authorizationKey: mocks.authorizationKey,
   }),
 }));
 vi.mock('@/components/range-filter', () => ({
@@ -91,6 +93,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.role = 'team_admin';
   mocks.account = false;
+  mocks.authorizationKey = 'auth-one';
   window.history.replaceState(null, '', '/my-team');
   mocks.dashboard.mockImplementation((params: any) => query({
     ...dashboardData,
@@ -114,6 +117,7 @@ describe('My Team effective reporting period', () => {
       expect(params).toMatchObject({ rangeType: expected, viewScope: 'managed', startDate: undefined, endDate: undefined });
       expect(options.query.enabled).toBe(true);
       expect(options.query.queryKey[1]).toEqual(params);
+      expect(options.query.queryKey.at(-1)).toBe('auth-one');
     }
     expect(body.querySelector('[aria-label="Selected period"]')?.getAttribute('data-props')).toBe('');
     expect(body.textContent).toContain('Recorded actuals to date · No forecasts');
@@ -190,6 +194,45 @@ describe('My Team effective reporting period', () => {
     expect(body.textContent).toContain('Unable to load activity');
     expect(body.textContent).not.toContain('$0.00');
     expect(body.querySelector('table')).toBeNull();
+  });
+
+  it('keeps cached values on a transient refresh failure', () => {
+    mocks.dashboard.mockReturnValue({
+      ...query(dashboardData, mocks.refreshDashboard),
+      isError: true,
+      error: { status: 503 },
+    });
+    const body = renderPage();
+    expect(body.textContent).toContain('$35.00');
+    expect(body.textContent).not.toContain('Unable to load activity');
+  });
+
+  it('renders exhausted reporting refresh as loading, but other no-data errors as actionable', () => {
+    mocks.dashboard.mockReturnValue({
+      ...query(undefined, mocks.refreshDashboard),
+      isError: true,
+      error: { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } },
+    });
+    expect(renderPage().textContent).not.toContain('Unable to load activity');
+
+    mocks.dashboard.mockReturnValue({
+      ...query(undefined, mocks.refreshDashboard),
+      isError: true,
+      error: { status: 503 },
+    });
+    expect(renderPage().textContent).toContain('Unable to load activity');
+  });
+
+  it('hides cached dates and values after a top-level authorization denial', () => {
+    mocks.dashboard.mockReturnValue({
+      ...query(dashboardData, mocks.refreshDashboard),
+      isError: true,
+      error: { status: 403 },
+    });
+    const body = renderPage();
+    expect(body.textContent).toContain('403 · Access denied or not found');
+    expect(body.textContent).not.toContain('May 20, 2026');
+    expect(body.textContent).not.toContain('$35.00');
   });
 
   it('keeps unavailable dashboard observations distinct from observed zero', () => {

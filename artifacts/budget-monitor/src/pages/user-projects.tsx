@@ -13,6 +13,8 @@ import { useRange } from "@/components/range-context";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { formatObservedCurrency, isUnknownSpendTotal } from "@/lib/spend-presentation";
 import { DeploymentChip, ProjectDataFreshness, ProjectDate, StaleSpendingChip } from "@/components/project-observation";
+import { useAuthContext } from "@/components/auth-context";
+import { isBlockingQueryError, isReportingUsageRefreshing } from "@/lib/errors";
 
 export default function UserProjects() {
   const { userId } = useParams();
@@ -20,6 +22,7 @@ export default function UserProjects() {
   const searchString = rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch;
   const [location, setLocation] = useLocation();
   const { rangeType, startDate, endDate } = useRange();
+  const { authorizationKey } = useAuthContext();
 
   const searchParams = new URLSearchParams(rawSearch);
   const page = parseInt(searchParams.get('page') || '1', 10);
@@ -41,10 +44,11 @@ export default function UserProjects() {
   }
 
   const query = useListUserOwnedProjects(userId!, queryParams, { 
-    query: { enabled: !!userId, queryKey: getListUserOwnedProjectsQueryKey(userId!, queryParams) } 
+    query: { enabled: !!userId, queryKey: [...getListUserOwnedProjectsQueryKey(userId!, queryParams), authorizationKey] }
   });
 
-  const data = query.data;
+  const refreshPending = isReportingUsageRefreshing(query.failureReason ?? query.error);
+  const data = isBlockingQueryError(query.error) ? undefined : query.data;
 
   const returnTo = sanitizeSpendReturnTo(searchParams.get("returnTo"), '/my-team');
   const currentPath = `${location}${searchString ? `?${searchString}` : ""}`;
@@ -54,7 +58,7 @@ export default function UserProjects() {
   };
   const totalPages = Math.max(1, Math.ceil((data?.projects.filteredRows ?? 0) / pageSize));
 
-  if (query.isError && !query.data) {
+  if (query.isError && !data && !refreshPending) {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] space-y-4">
         <AlertTriangle className="h-10 w-10 text-destructive" />

@@ -29,6 +29,7 @@ import { formatBudgetDate } from '@/lib/budget-meter';
 import { BudgetTrajectory } from '@/pages/home-components/budget-trajectory';
 import { useAuthContext } from '@/components/auth-context';
 import { spendDetailHref } from '@/lib/spend-exploration';
+import { isBlockingQueryError, isReportingUsageRefreshing } from '@/lib/errors';
 
 function periodDates(period: ReportingPeriod) {
   const inclusiveEnd = new Date(Date.parse(period.endExclusive) - 1).toISOString();
@@ -126,8 +127,7 @@ export function PeopleTable({ rows, rangeType, poolId }: {
           <span className="flex flex-col items-end gap-1">
             <span className="whitespace-nowrap font-mono text-xs">{isNoLimit ? 'No limit' : formatUsd(row.limitUsd)}</span>
             {status && <StatusBadge status={status} />}
-            {row.limitObservationStatus === 'refreshing' && <span className="text-[10px] text-muted-foreground">Refreshing</span>}
-            {row.limitObservationStatus === 'failed' && <span className="text-[10px] text-muted-foreground">{row.limitUsd != null ? 'Last known · refresh failed' : 'Observation failed'}</span>}
+            {row.limitObservationStatus === 'failed' && row.limitUsd == null && <span className="text-[10px] text-muted-foreground">Observation failed</span>}
             {row.limitObservationStatus === 'unavailable' && <span className="text-[10px] text-muted-foreground">Observation unavailable</span>}
           </span>,
         ];
@@ -203,9 +203,11 @@ export default function TeamOverview() {
 
   const refreshAll = () => void reportQuery.refetch();
 
-  const isError = reportQuery.isError;
   const isLoading = reportQuery.isLoading;
   const report = reportQuery.data;
+  const queryError = reportQuery.error ?? reportQuery.failureReason;
+  const refreshingUsage = isReportingUsageRefreshing(queryError);
+  const blockingError = isBlockingQueryError(queryError);
 
   const overview = report?.overview;
   const budget = report?.budgetTracking;
@@ -246,16 +248,20 @@ export default function TeamOverview() {
     </div>
   );
 
-  if (isError) {
-      const errorData = (reportQuery.error as any)?.response?.status;
-      if (errorData === 403 || errorData === 404) {
+  if (blockingError) {
+      const errorData = (queryError as any)?.status;
+      if (errorData === 401 || errorData === 403 || errorData === 404) {
           return <div className="p-8" data-testid="team-overview-forbidden"><h1 className="text-2xl font-semibold">{errorData} · Access denied or not found</h1><p className="mt-2 text-sm text-muted-foreground">You do not have access to this team, or it does not exist.</p></div>;
       }
-      return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<EmptyState title="Unable to load team" description="The team report could not be loaded." action={<Button variant="outline" onClick={refreshAll}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>} /></div>;
+      return <div className="mx-auto max-w-[1280px] p-4 md:p-8"><EmptyState title="Unable to load team" description="The team report could not be loaded." action={<Button variant="outline" onClick={refreshAll}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>} /></div>;
   }
 
-  if (isLoading || !report) {
+  if (isLoading || (!report && refreshingUsage)) {
     return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<div className="grid gap-4 sm:grid-cols-4">{[1,2,3,4].map(i => <Skeleton key={i} className="h-28 rounded-md" />)}</div><Skeleton className="h-72 rounded-md" /></div>;
+  }
+
+  if (!report) {
+    return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<EmptyState title="Unable to load team" description="The team report could not be loaded." action={<Button variant="outline" onClick={refreshAll}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>} /></div>;
   }
 
   const rankedMembers = [...report.members].sort((a, b) =>

@@ -114,6 +114,13 @@ export function isReportingUsageRefreshing(error: unknown): boolean {
     errorRecord(errorRecord(error)?.data)?.code === 'REPORTING_USAGE_REFRESHING';
 }
 
+/** Only transient read failures may leave same-query cached values visible. */
+export function isBlockingQueryError(error: unknown): boolean {
+  if (error == null || isReportingUsageRefreshing(error)) return false;
+  const kind = describeError(error).kind;
+  return kind !== 'server' && kind !== 'network';
+}
+
 /** Only a known reporting refresh gets extended recovery; access failures never do. */
 export function shouldRetryRequest(failureCount: number, error: unknown): boolean {
   if (isReportingUsageRefreshing(error)) return failureCount < 30;
@@ -149,6 +156,9 @@ function showErrorToast(
   const url = getErrorUrl(error, fallbackUrl);
   // A 401 immediately transitions to login, so a toast would only flash.
   if (detail.kind === 'auth') return null;
+  // Mutations remain actionable; read refreshes never announce saved values.
+  if (query && (isReportingUsageRefreshing(error) ||
+    (query.state.data !== undefined && !isBlockingQueryError(error)))) return null;
 
   const dedupeKey = `${detail.kind}:${url}`;
   const now = Date.now();
@@ -156,12 +166,8 @@ function showErrorToast(
   recentToasts.set(dedupeKey, now);
 
   return toast({
-    title: query?.state.data !== undefined && (detail.kind === 'server' || detail.kind === 'network')
-      ? 'Couldn’t refresh data.'
-      : detail.title,
-    description: query?.state.data !== undefined && (detail.kind === 'server' || detail.kind === 'network')
-      ? 'Showing saved values.'
-      : detail.detail,
+    title: detail.title,
+    description: detail.detail,
     variant: 'destructive',
     action: query
       ? createElement(
@@ -197,36 +203,24 @@ export function getUsageHealthWarning(data: unknown): 'partial' | 'stale' | null
 export function subscribeApiErrorToasts(queryClient: QueryClient): () => void {
   const activeQueryErrors = new Map<string, ToastControl>();
   const activeQueryErrorKeys = new Set<string>();
-  const degradedQueries = new Map<string, 'partial' | 'stale'>();
-  let usageHealthToast: ToastControl | null = null;
-
-  const updateUsageHealthToast = () => {
-    if (degradedQueries.size > 0 && !usageHealthToast) {
-      const hasPartial = [...degradedQueries.values()].includes('partial');
-      usageHealthToast = toast({
-        title: hasPartial ? 'Some usage data is still updating' : 'Usage data may be out of date',
-      });
-    } else if (degradedQueries.size === 0 && usageHealthToast) {
-      usageHealthToast.dismiss();
-      usageHealthToast = null;
-    }
-  };
 
   const unsubscribeQueries = queryClient.getQueryCache().subscribe((event) => {
     if (event.type === 'removed') {
       activeQueryErrors.get(event.query.queryHash)?.dismiss();
       activeQueryErrors.delete(event.query.queryHash);
       updateNoticeState(activeQueryErrorKeys, event.query.queryHash, false);
-      degradedQueries.delete(event.query.queryHash);
-      updateUsageHealthToast();
       return;
     }
     if (event.type !== 'updated') return;
 
     if (event.action.type === 'error') {
-      // The request notice replaces the same query's background-health notice.
-      degradedQueries.delete(event.query.queryHash);
-      updateUsageHealthToast();
+      if (isReportingUsageRefreshing(event.query.state.error) ||
+        (event.query.state.data !== undefined && !isBlockingQueryError(event.query.state.error))) {
+        activeQueryErrors.get(event.query.queryHash)?.dismiss();
+        activeQueryErrors.delete(event.query.queryHash);
+        updateNoticeState(activeQueryErrorKeys, event.query.queryHash, false);
+        return;
+      }
       if (
         updateNoticeState(activeQueryErrorKeys, event.query.queryHash, true) === 'unchanged'
       ) return;
@@ -246,10 +240,6 @@ export function subscribeApiErrorToasts(queryClient: QueryClient): () => void {
     activeQueryErrors.delete(event.query.queryHash);
     updateNoticeState(activeQueryErrorKeys, event.query.queryHash, false);
 
-    const warning = getUsageHealthWarning(event.query.state.data);
-    if (warning) degradedQueries.set(event.query.queryHash, warning);
-    else degradedQueries.delete(event.query.queryHash);
-    updateUsageHealthToast();
   });
   const unsubscribeMutations = queryClient.getMutationCache().subscribe((event) => {
     if (event.type !== 'updated' || event.action.type !== 'error') return;
@@ -263,7 +253,6 @@ export function subscribeApiErrorToasts(queryClient: QueryClient): () => void {
 
   return () => {
     activeQueryErrors.forEach((control) => control.dismiss());
-    usageHealthToast?.dismiss();
     unsubscribeQueries();
     unsubscribeMutations();
   };

@@ -93,10 +93,63 @@ describe('TeamOverview', () => {
     window.history.replaceState(null, '', '/teams/pool:team:Test');
     vi.mocked(useGetBudgetTeamReport).mockReturnValue({
       isError: true,
-      error: { response: { status: 403 } },
+      error: { status: 403 },
     } as any);
     const body = renderPage();
     expect(body.textContent).toContain('403 · Access denied or not found');
+  });
+
+  it('does not leak cached team headers or dates after denial', () => {
+    window.history.replaceState(null, '', '/teams/pool:team:Test');
+    vi.mocked(useGetBudgetTeamReport).mockReturnValue({
+      isError: true,
+      error: { status: 403 },
+      data: {
+        name: 'Denied Team',
+        period: { start: '2026-09-01', endExclusive: '2026-10-01', label: 'September' },
+        headline: { spendUsd: 85, isComplete: true },
+        members: [],
+        metadata: { qualifications: [], status: 'complete' },
+      },
+    } as any);
+    const body = renderPage();
+    expect(body.textContent).not.toContain('Denied Team');
+    expect(body.textContent).not.toContain('Sep 1, 2026');
+  });
+
+  it('keeps cached report data on transient refresh errors', () => {
+    window.history.replaceState(null, '', '/teams/pool:team:Test');
+    vi.mocked(useGetBudgetTeamReport).mockReturnValue({
+      isError: true,
+      error: { status: 503 },
+      data: {
+        name: 'Cached Team',
+        period: { start: '2026-09-01', endExclusive: '2026-10-01', label: 'September' },
+        headline: { spendUsd: 85, isComplete: true },
+        members: [],
+        metadata: { qualifications: [], status: 'complete' },
+      },
+    } as any);
+    const body = renderPage();
+    expect(body.textContent).toContain('Cached Team');
+    expect(body.textContent).not.toContain('Unable to load team');
+  });
+
+  it('renders exhausted typed refresh as loading and real no-data errors as actionable', () => {
+    window.history.replaceState(null, '', '/teams/pool:team:Test');
+    vi.mocked(useGetBudgetTeamReport).mockReturnValue({
+      isError: true,
+      error: { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } },
+      data: undefined,
+    } as any);
+    expect(renderPage().textContent).not.toContain('Unable to load team');
+
+    vi.mocked(useGetBudgetTeamReport).mockReturnValue({
+      isError: true,
+      error: { status: 503 },
+      data: undefined,
+    } as any);
+    expect(renderPage().textContent).toContain('Unable to load team');
   });
 
   it('renders report data with budget and overview and decodes poolId properly', () => {

@@ -17,6 +17,9 @@ vi.mock('wouter/use-browser-location', () => ({
 vi.mock('@/components/range-context', () => ({
   useRange: () => ({ rangeType: 'mtd', startDate: '', endDate: '' }),
 }));
+vi.mock('@/components/auth-context', () => ({
+  useAuthContext: () => ({ authorizationKey: 'auth-scope-1' }),
+}));
 vi.mock('@workspace/api-client-react', () => ({
   useGetWorkspaceProject: (...args: unknown[]) => getProject(...args),
   getGetWorkspaceProjectQueryKey: (...args: unknown[]) => getProjectKey(args[0], args[1], args[2]),
@@ -73,9 +76,25 @@ describe('ProjectDetail correctness states', () => {
   });
 
   it('keeps cached project details visible when a refresh fails', () => {
-    getProject.mockReturnValue({ data: response, isError: true });
+    getProject.mockReturnValue({ data: response, isError: true, error: { status: 503 } });
     const html = renderToStaticMarkup(<ProjectDetail />);
     expect(html).toContain('Production project');
+    expect(html).not.toContain('Project details are unavailable');
+  });
+
+  it('hides cached project identity and dates after a blocking access failure', () => {
+    getProject.mockReturnValue({ data: response, isError: true, error: { status: 403 } });
+    const html = renderToStaticMarkup(<ProjectDetail />);
+    expect(html).toContain('Project details are unavailable');
+    expect(html).not.toContain('Production project');
+    expect(html).not.toContain('2026-08-01');
+  });
+
+  it('renders loading rather than an error for an initial reporting refresh', () => {
+    const refreshing = { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } };
+    getProject.mockReturnValue({ data: undefined, isError: true, error: refreshing, failureReason: refreshing });
+    const html = renderToStaticMarkup(<ProjectDetail />);
+    expect(html).toContain('Loading project details');
     expect(html).not.toContain('Project details are unavailable');
   });
 

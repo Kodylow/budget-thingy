@@ -1,7 +1,7 @@
 import React from "react";
 import { useAuthContext } from "@/components/auth-context";
 import { getGetOrgBudgetOverviewQueryKey, useGetOrgBudgetOverview } from "@workspace/api-client-react";
-import { Badge } from "@/components/ui/badge";
+import { isBlockingQueryError, isReportingUsageRefreshing } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, RefreshCw, Target, DollarSign, Download, Users, Briefcase } from "lucide-react";
 import { formatFinancialUsd } from "@/lib/financial-format";
@@ -35,10 +35,10 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
   const { data, isLoading, isFetching, isError, error, refetch } = useGetOrgBudgetOverview({
     query: { queryKey: [...getGetOrgBudgetOverviewQueryKey(), authorizationKey] },
   });
-  const denied = isError && [401, 403].includes(Number((error as { status?: number })?.status));
+   const denied = isBlockingQueryError(error);
   const displayData = denied ? undefined : data;
 
-  if (isLoading && !displayData) {
+   if ((isLoading || isReportingUsageRefreshing(error)) && !displayData) {
     return (
       <div className="mx-auto max-w-[1400px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8 animate-pulse">
          <div className="h-10 w-48 bg-muted rounded-md mb-2" />
@@ -89,13 +89,6 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <span>Funding Period: {periodStart} to {periodEnd}</span>
             <span>Recorded through: {displayData.asOf ?? "Unavailable"}</span>
-            <div className="flex items-center gap-1.5">
-              {isFetching && (
-                <Badge variant="secondary" className="border-border/50 text-[11px] font-normal text-muted-foreground">
-                  <RefreshCw className="h-3 w-3 mr-1.5 animate-spin opacity-70" /> Updating
-                </Badge>
-              )}
-            </div>
           </div>
           {displayData.teams.some((team) => !team.complete && team.remainingUsd != null) && (
             <p className="text-sm text-muted-foreground" data-testid="org-balance-basis">
@@ -108,17 +101,11 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
             <Download className="h-4 w-4" /> Print
           </Button>
           <Button data-testid="refresh-org-insights" variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching} className="gap-2">
-            <RefreshCw className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-            {isFetching ? "Updating" : "Refresh"}
+            <RefreshCw className="h-4 w-4" />
+            Refresh
           </Button>
         </div>
       </div>
-
-      {isError && (
-        <p role="alert" className="text-sm text-destructive">
-          Refresh failed. Showing the last recorded overview and details.
-        </p>
-      )}
 
       {(isPartial || qualification) && (
         <AdminDataQualityNote title="Budget overview data quality">

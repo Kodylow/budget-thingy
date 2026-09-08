@@ -75,6 +75,14 @@ function result(rows: unknown[]) {
   };
 }
 
+function renderPeople(resultValue: any) {
+  mocks.people.mockReturnValue(resultValue);
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  act(() => root.render(<PaginatedPeopleTable params={{ rangeType: 'full-term', viewScope: 'managed' }} rangeType="full-term" authorizationKey="auth-one" />));
+  return { container, root };
+}
+
 function button(container: HTMLElement, name: string) {
   const match = [...container.querySelectorAll('button')]
     .find(candidate => candidate.textContent === name);
@@ -91,14 +99,14 @@ beforeEach(() => {
 describe.each([
   {
     label: 'people',
-    render: () => <PaginatedPeopleTable params={{ rangeType: 'full-term', viewScope: 'managed' }} rangeType="full-term" />,
+    render: () => <PaginatedPeopleTable params={{ rangeType: 'full-term', viewScope: 'managed' }} rangeType="full-term" authorizationKey="auth-one" />,
     request: mocks.people,
     next: 'Next people',
     previous: 'Previous people',
   },
   {
     label: 'projects',
-    render: () => <PaginatedProjectsTable params={{ rangeType: 'full-term', viewScope: 'managed' }} />,
+    render: () => <PaginatedProjectsTable params={{ rangeType: 'full-term', viewScope: 'managed' }} authorizationKey="auth-one" />,
     request: mocks.projects,
     next: 'Next projects',
     previous: 'Previous projects',
@@ -129,5 +137,37 @@ describe.each([
     } finally {
       await act(async () => root.unmount());
     }
+  });
+});
+
+describe('My Team table refresh errors', () => {
+  it('keeps cached rows for transient failures and hides them for blocking failures', async () => {
+    let rendered = renderPeople({ ...result(peopleRows(1)), error: { status: 503 }, isError: true });
+    expect(rendered.container.textContent).toContain('Person 1-0');
+    await act(async () => rendered.root.unmount());
+
+    rendered = renderPeople({ ...result(peopleRows(1)), error: { status: 403 }, isError: true });
+    expect(rendered.container.textContent).not.toContain('Person 1-0');
+    expect(rendered.container.textContent).toContain('Failed to load people');
+    await act(async () => rendered.root.unmount());
+  });
+
+  it('keeps an exhausted typed refresh in loading state', async () => {
+    const rendered = renderPeople({
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+      isError: true,
+      error: { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } },
+    });
+    expect(rendered.container.textContent).toContain('Loading...');
+    expect(rendered.container.textContent).not.toContain('Failed to load people');
+    await act(async () => rendered.root.unmount());
+  });
+
+  it('isolates table query keys by authorization fingerprint', async () => {
+    const rendered = renderPeople(result(peopleRows(1)));
+    expect(mocks.people.mock.calls.at(-1)?.[1].query.queryKey.at(-1)).toBe('auth-one');
+    await act(async () => rendered.root.unmount());
   });
 });

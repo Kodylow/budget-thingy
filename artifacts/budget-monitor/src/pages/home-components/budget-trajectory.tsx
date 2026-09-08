@@ -89,8 +89,9 @@ export function BudgetTrajectory({
   const benchmarkAsOf = benchmarkEligible && asOfDate && tracking
     ? trajectoryChartData({ ...tracking, points: [{ date: asOfDate, spendUsd: null }] }).find((point) => point.date === asOfDate)?.benchmark
     : null;
+  const showLoading = loading || (refreshingUsage && !tracking);
 
-  if (!loading && !error && (!tracking || chartData.length === 0)) return null;
+  if (!showLoading && !error && (!tracking || chartData.length === 0)) return null;
 
   return (
     <section className="overflow-hidden rounded-md border bg-card shadow-none" aria-labelledby="trajectory-title">
@@ -107,11 +108,6 @@ export function BudgetTrajectory({
         </div>
       </div>
 
-      {refreshingUsage && tracking && (
-        <p className="px-5 pt-3 text-xs text-muted-foreground" role="status">
-          Usage is updating. Showing the last loaded trajectory.
-        </p>
-      )}
       {tracking && (
         <div className="grid gap-4 bg-muted/15 px-5 py-4 sm:grid-cols-4">
           {tracking.spendUsd != null && <div>
@@ -128,13 +124,13 @@ export function BudgetTrajectory({
       )}
 
       <div className="px-5 py-4">
-        {loading ? (
+        {showLoading ? (
           <div className="flex h-[280px] items-center justify-center rounded-sm bg-muted" role="status" aria-label="Loading budget trajectory">
-            {refreshingUsage && <p className="px-5 text-center text-sm text-muted-foreground">Usage is updating. Your trajectory will load automatically.</p>}
+            <span className="sr-only">Loading budget trajectory</span>
           </div>
         ) : error && !tracking ? (
           <div className="flex h-[280px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-            {refreshingUsage ? 'Usage is still updating. Retry in a moment.' : 'Budget trajectory unavailable'}
+            Budget trajectory unavailable
             <Button size="sm" variant="outline" onClick={onRetry}>Retry</Button>
           </div>
         ) : tracking && chartData.length > 0 ? (

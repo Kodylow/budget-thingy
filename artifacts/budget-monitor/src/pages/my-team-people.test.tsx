@@ -68,6 +68,20 @@ describe('unique people presentation', () => {
     expect(markup).not.toContain('Over budget');
   });
 
+  it('keeps known workspace limits quiet during passive refresh failures', () => {
+    const markup = renderToStaticMarkup(<PeopleTable rangeType="billing" rows={[{
+      ...person,
+      workspaces: [
+        { ...workspace, limitObservationStatus: 'refreshing' },
+        { ...workspace, workspaceId: 'two', allocationUsd: 200, limitObservationStatus: 'failed' },
+      ],
+    }]} />);
+    expect(markup).toContain('$100.00');
+    expect(markup).toContain('$200.00');
+    expect(markup).not.toContain('Refreshing');
+    expect(markup).not.toContain('refresh failed');
+  });
+
   it('keeps a single-workspace member’s limit visible without a breakdown', () => {
     const markup = renderToStaticMarkup(<PeopleTable rangeType="billing" rows={[{
       ...person, ...workspace, workspaces: [workspace],
@@ -106,9 +120,11 @@ describe('unique people presentation', () => {
     };
     const markup = renderToStaticMarkup(<PeopleTable rows={[single]} rangeType="full-term" />);
     expect(markup).toContain('$100.00');
-    expect(markup).toContain({
-      refreshing: 'Refreshing', failed: 'Last known · refresh failed', unavailable: 'Observation unavailable',
-    }[observation]);
+    if (observation === 'unavailable') expect(markup).toContain('Observation unavailable');
+    else {
+      expect(markup).not.toContain('Refreshing');
+      expect(markup).not.toContain('refresh failed');
+    }
   });
 
   it.each([
@@ -117,8 +133,8 @@ describe('unique people presentation', () => {
   ])('keeps observed-zero and unavailable selected spend distinct (%s)', (observed, expected) => {
     const row = { ...person, ...workspace, spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0, usageObserved: observed, workspaces: [workspace] };
     for (const table of [
-      <PeopleTable rows={[row]} rangeType="full-term" />,
-      <ProjectsTable rows={[row]} />,
+      <PeopleTable key="people" rows={[row]} rangeType="full-term" />,
+      <ProjectsTable key="projects" rows={[row]} />,
     ]) {
       const body = new DOMParser().parseFromString(renderToStaticMarkup(table), 'text/html');
       expect([...body.querySelectorAll('tbody > tr > td')].slice(1, 4).map(cell => cell.textContent))

@@ -16,6 +16,9 @@ vi.mock('wouter/use-browser-location', () => ({
 vi.mock('@/components/range-context', () => ({
   useRange: () => ({ rangeType: 'mtd', startDate: '', endDate: '' }),
 }));
+vi.mock('@/components/auth-context', () => ({
+  useAuthContext: () => ({ authorizationKey: 'auth-scope-1' }),
+}));
 vi.mock('@workspace/api-client-react', () => ({
   useListUserOwnedProjects: (...args: unknown[]) => listProjects(...args),
   getListUserOwnedProjectsQueryKey: (...args: unknown[]) => listProjectsKey(args[0], args[1]),
@@ -63,6 +66,7 @@ describe('UserProjects', () => {
   it('keeps cached projects visible when a refresh fails', () => {
     listProjects.mockReturnValue({
       isError: true,
+      error: { status: 500 },
       data: {
         user: { userId: 'user-1', name: 'Owner', username: null, email: null },
         projects: {
@@ -75,6 +79,33 @@ describe('UserProjects', () => {
     });
     const html = renderToStaticMarkup(<UserProjects />);
     expect(html).toContain('Owner');
+    expect(html).not.toContain('Owned projects are unavailable');
+  });
+
+  it('hides cached user and project identity after a blocking error', () => {
+    listProjects.mockReturnValue({
+      isError: true,
+      error: { status: 401 },
+      data: {
+        user: { userId: 'user-1', name: 'Sensitive Owner', username: null, email: 'owner@example.test' },
+        projects: {
+          rows: [], page: 1, pageSize: 25, totalRows: 0, filteredRows: 0,
+          totals: { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 },
+          metadata: { status: 'complete', stale: false, dataAsOf: null, qualifications: [] },
+        },
+      },
+    });
+    const html = renderToStaticMarkup(<UserProjects />);
+    expect(html).toContain('Owned projects are unavailable');
+    expect(html).not.toContain('Sensitive Owner');
+    expect(html).not.toContain('owner@example.test');
+  });
+
+  it('renders loading for an initial typed reporting refresh', () => {
+    const refreshing = { status: 503, data: { code: 'REPORTING_USAGE_REFRESHING' } };
+    listProjects.mockReturnValue({ isError: true, error: refreshing, failureReason: refreshing, data: undefined });
+    const html = renderToStaticMarkup(<UserProjects />);
+    expect(html).toContain('Loading owned projects');
     expect(html).not.toContain('Owned projects are unavailable');
   });
 
