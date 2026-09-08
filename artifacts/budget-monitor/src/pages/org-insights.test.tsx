@@ -19,11 +19,12 @@ vi.mock('@/components/auth-context', () => ({
 }));
 
 vi.mock('@workspace/api-client-react', () => ({
+  getGetOrgBudgetOverviewQueryKey: () => ['/api/org-insights'],
   useGetOrgBudgetOverview: vi.fn(),
 }));
 
 vi.mock('./org-insights-components', () => ({
-  InsightCard: ({ title, value, testId }: any) => <div data-testid="insight-card"><span data-testid={testId}>{title}: {value}</span></div>,
+  InsightCard: ({ title, value, subtitle, testId }: any) => <div data-testid="insight-card"><span data-testid={testId}>{title}: {value}{subtitle && ` — ${subtitle}`}</span></div>,
   OrgBudgetChart: () => {
     if (chartFailure.enabled) throw new TypeError('chart fixture render exception');
     return <div data-testid="org-budget-chart" />;
@@ -50,12 +51,12 @@ describe('OrgInsights', () => {
   it('contains a genuine chart exception, keeps navigation/cards/table, and recovers with local retry', async () => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    (useAuthContext as any).mockReturnValue({ capabilities: { canViewAccountUsage: true } });
+    (useAuthContext as any).mockReturnValue({ authorizationKey: 'account:a', capabilities: { canViewAccountUsage: true } });
     const refetch = vi.fn(async () => ({ isError: false }));
     (useGetOrgBudgetOverview as any).mockReturnValue({
       refetch, data: {
         periodStart: '2026-05-20', periodEnd: '2027-05-20', complete: true,
-        summary: { accountSpendUsd: 75, teamAllocationUsd: 400, remainingUsd: 325, teamsOverBudget: 0 },
+        summary: { accountSpendUsd: 75, teamAllocationUsd: 400, remainingUsd: 325, teamsOverBudget: 0, fundedTeamCount: 1, resolvedTeamCount: 1, unresolvedTeamCount: 0 },
         teams: [], accountPoints: [],
       },
     });
@@ -105,6 +106,7 @@ describe('OrgInsights', () => {
   it('renders loading state when data is fetching', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
+      authorizationKey: 'account:a',
       role: 'account',
     });
     (useGetOrgBudgetOverview as any).mockReturnValue({
@@ -119,6 +121,7 @@ describe('OrgInsights', () => {
   it('renders error state when data fetch fails', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
+      authorizationKey: 'account:a',
       role: 'account',
     });
     (useGetOrgBudgetOverview as any).mockReturnValue({
@@ -134,6 +137,7 @@ describe('OrgInsights', () => {
   it('renders budget overview content when data is available', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
+      authorizationKey: 'account:a',
       role: 'account',
     });
     (useGetOrgBudgetOverview as any).mockReturnValue({
@@ -150,6 +154,9 @@ describe('OrgInsights', () => {
           remainingUsd: 85000,
           teamsOverBudget: 1,
           unassignedSpendUsd: 0,
+          fundedTeamCount: 2,
+          resolvedTeamCount: 2,
+          unresolvedTeamCount: 0,
         },
         accountPoints: [],
         teams: [],
@@ -167,6 +174,7 @@ describe('OrgInsights', () => {
   it('keeps missing summaries unavailable and coverage explanations in Data quality', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
+      authorizationKey: 'account:a',
       role: 'account',
     });
     (useGetOrgBudgetOverview as any).mockReturnValue({
@@ -183,6 +191,9 @@ describe('OrgInsights', () => {
           remainingUsd: null,
           teamsOverBudget: null,
           unassignedSpendUsd: null,
+          fundedTeamCount: 2,
+          resolvedTeamCount: 0,
+          unresolvedTeamCount: 2,
         },
         accountPoints: [],
         teams: [],
@@ -192,15 +203,16 @@ describe('OrgInsights', () => {
     const html = renderToStaticMarkup(<OrgInsights />);
     expect(html).not.toContain('Partial data');
     expect(html).not.toContain('org-balance-basis');
-    expect(html).toContain('Remaining Team Budgets: Unavailable');
-    expect(html).toContain('Teams Over Budget: Unavailable');
+    expect(html).toContain('Remaining Team Budgets (Known): Unavailable');
+    expect(html).toContain('Teams Over Budget (Known): Unavailable');
+    expect(html.match(/0 of 2 funded teams; 2 unresolved\./g)).toHaveLength(2);
     expect(html).toContain('Budget overview data quality');
     expect(html).toContain('Data is delayed due to upstream sync.');
   });
 
   it('shows recorded numeric summaries with one shared basis label, without requiring verification', () => {
     (useAuthContext as any).mockReturnValue({
-      capabilities: { canViewAccountUsage: true }, role: 'account',
+      capabilities: { canViewAccountUsage: true }, authorizationKey: 'account:a', role: 'account',
     });
     (useGetOrgBudgetOverview as any).mockReturnValue({
       isLoading: false,
@@ -210,6 +222,7 @@ describe('OrgInsights', () => {
         summary: {
           accountSpendUsd: 1609.81, teamAllocationUsd: 13115.74,
           remainingUsd: 11505.93, teamsOverBudget: 0, unassignedSpendUsd: 0,
+          fundedTeamCount: 1, resolvedTeamCount: 1, unresolvedTeamCount: 0,
         },
         accountPoints: [],
         teams: [{ complete: false, remainingUsd: 11505.93 }],
@@ -225,6 +238,7 @@ describe('OrgInsights', () => {
   it('shows unassigned spend once when unassigned is positive', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
+      authorizationKey: 'account:a',
       role: 'account',
     });
     (useGetOrgBudgetOverview as any).mockReturnValue({
@@ -239,6 +253,9 @@ describe('OrgInsights', () => {
           remainingUsd: 0,
           teamsOverBudget: 0,
           unassignedSpendUsd: 5000,
+          fundedTeamCount: 1,
+          resolvedTeamCount: 1,
+          unresolvedTeamCount: 0,
         },
         accountPoints: [],
         teams: [],
@@ -248,5 +265,117 @@ describe('OrgInsights', () => {
     const html = renderToStaticMarkup(<OrgInsights />);
     expect(html.match(/data-testid="insight-card"/g)).toHaveLength(5);
     expect(html).not.toContain('Reconciliation Note');
+  });
+
+  it('labels calculable funded-team subtotals as known when some funded teams are unresolved', () => {
+    (useAuthContext as any).mockReturnValue({
+      capabilities: { canViewAccountUsage: true }, authorizationKey: 'account:a', role: 'account',
+    });
+    (useGetOrgBudgetOverview as any).mockReturnValue({
+      isLoading: false,
+      data: {
+        periodStart: '2026-05-20', periodEnd: '2027-05-20', complete: false,
+        qualification: 'Two funded teams are awaiting usage resolution.',
+        summary: {
+          accountSpendUsd: 1609.81, teamAllocationUsd: 13115.74,
+          remainingUsd: 4100.25, teamsOverBudget: 2, unassignedSpendUsd: 0,
+          fundedTeamCount: 5, resolvedTeamCount: 3, unresolvedTeamCount: 2,
+        },
+        accountPoints: [],
+        teams: [{ complete: false, remainingUsd: 4100.25 }],
+      },
+    });
+
+    const html = renderToStaticMarkup(<OrgInsights />);
+    expect(html).toContain('Remaining Team Budgets (Known): $4,100.25');
+    expect(html).toContain('Teams Over Budget (Known): 2');
+    expect(html.match(/3 of 5 funded teams; 2 unresolved\./g)).toHaveLength(2);
+    expect(html.match(/Balances based on recorded spend/g)).toHaveLength(1);
+  });
+
+  it('keeps the latest committed same-scope values through a transient 503 refresh', async () => {
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    (useAuthContext as any).mockReturnValue({
+      capabilities: { canViewAccountUsage: true }, authorizationKey: 'account:a',
+    });
+    const committed = {
+      periodStart: '2026-05-20', periodEnd: '2027-05-20', complete: true,
+      qualification: null,
+      summary: {
+        accountSpendUsd: 75, teamAllocationUsd: 400, remainingUsd: 325,
+        teamsOverBudget: 0, unassignedSpendUsd: 0,
+        fundedTeamCount: 1, resolvedTeamCount: 1, unresolvedTeamCount: 0,
+      },
+      accountPoints: [], teams: [],
+    };
+    const refetch = vi.fn(async () => ({ isError: true, error: new Error('503') }));
+    let queryState = {
+      data: committed, isLoading: false, isFetching: false, isError: false, refetch,
+    };
+    (useGetOrgBudgetOverview as any).mockImplementation(() => queryState);
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<OrgInsights />));
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="refresh-org-insights"]')?.click();
+      });
+      expect(refetch).toHaveBeenCalledOnce();
+      queryState = { ...queryState, isFetching: true };
+      await act(async () => root.render(<OrgInsights />));
+      expect(container.querySelector('[data-testid="org-card-remaining"]')?.textContent).toContain('$325.00');
+      expect(container.textContent).toContain('Updating');
+      expect(container.querySelector('[data-testid="org-insights-error"]')).toBeNull();
+      queryState = { ...queryState, isFetching: false, isError: true };
+      await act(async () => root.render(<OrgInsights />));
+      expect(container.querySelector('[data-testid="org-card-remaining"]')?.textContent).toContain('$325.00');
+      expect(container.querySelector('[data-testid="org-insights-error"]')).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it('changes query keys and does not display committed data across identity or scope changes', async () => {
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    let authorizationKey = 'user-a:account-scope';
+    (useAuthContext as any).mockImplementation(() => ({
+      capabilities: { canViewAccountUsage: true }, authorizationKey,
+    }));
+    (useGetOrgBudgetOverview as any).mockImplementation((options: any) => (
+      options.query.queryKey.at(-1) === 'user-a:account-scope'
+        ? {
+            isLoading: false,
+            data: {
+              periodStart: '2026-05-20', periodEnd: '2027-05-20', complete: true,
+              qualification: null,
+              summary: {
+                accountSpendUsd: 75, teamAllocationUsd: 400, remainingUsd: 325,
+                teamsOverBudget: 0, unassignedSpendUsd: 0,
+                fundedTeamCount: 1, resolvedTeamCount: 1, unresolvedTeamCount: 0,
+              },
+              accountPoints: [], teams: [],
+            },
+          }
+        : { isLoading: true, data: undefined }
+    ));
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<OrgInsights />));
+      expect(container.textContent).toContain('$325.00');
+      authorizationKey = 'user-b:team-scope';
+      await act(async () => root.render(<OrgInsights />));
+      expect(container.textContent).not.toContain('$325.00');
+      expect(container.innerHTML).toContain('animate-pulse');
+      expect(useGetOrgBudgetOverview).toHaveBeenLastCalledWith({
+        query: { queryKey: ['/api/org-insights', 'user-b:team-scope'] },
+      });
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
   });
 });

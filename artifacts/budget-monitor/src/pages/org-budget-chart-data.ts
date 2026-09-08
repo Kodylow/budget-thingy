@@ -19,7 +19,7 @@ export const orgChartDateLabel = (date: string | number) =>
 
 export function getFundedTeams(teams: OrgChartTeam[]): OrgChartTeam[] {
   return [...new Map(teams
-    .filter(team => Number.isFinite(team.allocationUsd) && team.allocationUsd! > 0)
+    .filter(team => team.allocationUsd != null && Number.isFinite(team.allocationUsd) && team.allocationUsd >= 0)
     .map(team => [team.id, team])).values()];
 }
 

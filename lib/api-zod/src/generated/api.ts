@@ -1411,6 +1411,12 @@ export const GetOrgBudgetOverviewHeader = zod.object({
 export const getOrgBudgetOverviewResponsePeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponsePeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponseAsOfRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getOrgBudgetOverviewResponseSummaryFundedTeamCountMin = 0;
+
+export const getOrgBudgetOverviewResponseSummaryResolvedTeamCountMin = 0;
+
+export const getOrgBudgetOverviewResponseSummaryUnresolvedTeamCountMin = 0;
+
 export const getOrgBudgetOverviewResponseAccountPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponseAccountPointsMax = 367;
 
@@ -1439,8 +1445,11 @@ export const GetOrgBudgetOverviewResponse = zod.object({
   "summary": zod.object({
   "accountSpendUsd": zod.number().nullable(),
   "teamAllocationUsd": zod.number().nullable(),
-  "remainingUsd": zod.number().nullable().describe('Sum of every funded team\'s available remaining amount. Null when there are no funded teams or any funded team\'s spend is unavailable; independent of complete\/reporting verification.\n'),
-  "teamsOverBudget": zod.number().nullable().describe('Count of funded teams with negative available remaining amounts. Null under the same availability rule as remainingUsd.\n'),
+  "remainingUsd": zod.number().nullable().describe('Sum of resolved funded teams\' allocation minus recorded assigned spend. Null when no funded teams are resolved. A known subtotal when unresolvedTeamCount is positive, independent of usage verification.\n'),
+  "teamsOverBudget": zod.number().nullable().describe('Count of resolved funded teams with negative remaining amounts. A known count, not an exact total, when unresolvedTeamCount is positive. Null under the same availability rule as remainingUsd.\n'),
+  "fundedTeamCount": zod.number().min(getOrgBudgetOverviewResponseSummaryFundedTeamCountMin).describe('Number of teams with a known allocation, including zero allocations.'),
+  "resolvedTeamCount": zod.number().min(getOrgBudgetOverviewResponseSummaryResolvedTeamCountMin).describe('Funded teams with calculable recorded-spend balances.'),
+  "unresolvedTeamCount": zod.number().min(getOrgBudgetOverviewResponseSummaryUnresolvedTeamCountMin).describe('Funded teams without calculable balances; excluded from the known subtotal\/count.'),
   "unassignedSpendUsd": zod.number().nullable()
 }),
   "accountPoints": zod.array(zod.object({
@@ -1451,7 +1460,7 @@ export const GetOrgBudgetOverviewResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "allocationUsd": zod.number().nullable(),
-  "spendUsd": zod.number().nullable().describe('Observed allocation-eligible spend for the fixed term; null before the term or when this team has no observed usage scope.\n'),
+  "spendUsd": zod.number().nullable().describe('Recorded allocation-eligible assigned spend for the fixed term. A committed funding pool with no assigned groups has recorded zero, not a share of unassigned account charges. Null before the term or when assigned usage inputs cannot be resolved.\n'),
   "remainingUsd": zod.number().nullable().describe('Allocation minus observed spend when both are available, independent of complete\/reporting verification.\n'),
   "percentUsed": zod.number().nullable().describe('Observed spend as a percentage of a positive allocation. Null for unavailable spend\/allocation or a zero allocation.\n'),
   "complete": zod.boolean(),

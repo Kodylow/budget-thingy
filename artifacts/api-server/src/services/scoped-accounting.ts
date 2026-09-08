@@ -6,6 +6,7 @@ import {
   getCachedDirectory,
   getDirectoryFreshness,
   hasSuccessfulLimitObservation,
+  LEGACY_WORKSPACE_ID,
   resolveCanonicalMergedGroupBudget,
 } from "../lib/enterprise";
 import { deriveEffectiveTeamBudgets } from "../lib/team-budgets";
@@ -973,6 +974,35 @@ async function computeScopedAccounting(
     members: dir.members,
     mappings: configuration.familyTeamMappings,
   });
+  // Resolve persisted references before the directory join can discard them.
+  // An empty join is not proof of an intentionally empty funding assignment.
+  const unresolvedAssignmentTeams = new Set<string>();
+  const concreteAssignments = new Map(assignments
+    .filter((target) => target.assignmentSource !== "automatic")
+    .map((target) => [`${target.workspaceId}\0${target.groupId}`, {
+      workspaceId: target.workspaceId,
+      groupId: target.groupId,
+      teamName: target.teamName as string | null,
+    }]));
+  for (const override of configuration.fundingGroupOverrides) {
+    concreteAssignments.set(`${override.workspaceId}\0${override.groupId}`, override);
+  }
+  for (const assignment of concreteAssignments.values()) {
+    if (assignment.teamName !== null &&
+        configuredAccount.roleGroupsById.get(assignment.groupId)?.workspaceId !==
+          assignment.workspaceId) {
+      unresolvedAssignmentTeams.add(assignment.teamName);
+    }
+  }
+  for (const mapping of configuration.familyTeamMappings) {
+    // Legacy family destinations are inherited from current siblings; their
+    // retained mapping rows are inventory, not active assignment inputs.
+    if (mapping.workspaceId !== LEGACY_WORKSPACE_ID &&
+        mapping.teamName !== null &&
+        !configuredAccount.workspaces.get(mapping.workspaceId)?.families.has(mapping.familyKey)) {
+      unresolvedAssignmentTeams.add(mapping.teamName);
+    }
+  }
   const effectiveTeamByGroup = buildGroupTeamMap(
     dir.groups,
     configuredAccount,
@@ -1092,16 +1122,17 @@ async function computeScopedAccounting(
     // Marker scope follows only the groups visible to this request. Full pool
     // membership remains relevant to allocation disclosure, but must not leak
     // hidden contributing workspace identities through observation state.
-    const usageObserved = usageObservedFor(
-      groups.map((group) => group.workspaceId));
-    const reporting = reportingSemanticsForGroups(daily, groups);
-    const comparisonsVerified = reporting.comparisonsVerified;
-    const sourceGroupIds = [...new Set(groups.flatMap((group) => {
+    const sourceGroups = groups.flatMap((group) => {
       const canonicalId =
         fullMergePlan.primaryByGroupId.get(group.id) ?? group.id;
-      return (visibleByCanonical.get(canonicalId) ?? [group])
-        .map((source) => source.id);
-    }))].sort();
+      return visibleByCanonical.get(canonicalId) ?? [group];
+    });
+    const sourceGroupIds = [...new Set(sourceGroups.map((source) => source.id))].sort();
+    const usageObserved =
+      !(effectiveAuth.roles.includes("account") && unresolvedAssignmentTeams.has(teamName)) &&
+      usageObservedFor(sourceGroups.map((group) => group.workspaceId));
+    const reporting = reportingSemanticsForGroups(daily, sourceGroups);
+    const comparisonsVerified = reporting.comparisonsVerified;
     poolRows.push({
       id: canonicalTeamPoolId(teamName),
       kind: "pool", name: teamName, workspaceId: workspaceIds.size === 1 ? [...workspaceIds][0]! : null,

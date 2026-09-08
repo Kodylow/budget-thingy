@@ -17,6 +17,8 @@ import {
   groupRosterSnapshotsTable,
   groupRosterSnapshotDaysTable,
   notificationSettingsTable,
+  fundingGroupOverridesTable,
+  familyTeamMappingsTable,
 } from "@workspace/db";
 
 import { __setDirectoryCacheForTests } from "../lib/enterprise";
@@ -26,6 +28,8 @@ import {
   invalidateUsageSnapshotMemo,
 } from "../lib/usage-store";
 import { resetConfigurationSnapshotForTests } from "../lib/configuration-snapshot";
+import * as configurationSnapshots from "../lib/configuration-snapshot";
+import * as scopedAccounting from "../services/scoped-accounting";
 import { setReplitBudgetTransportForTests } from "../lib/replit-budgets";
 import { setSendEmailOverrideForTests } from "../lib/email";
 import { setAuthorizationResolver } from "../middlewares/requireAuth";
@@ -1339,27 +1343,42 @@ describe("organization budget overview", () => {
       remainingUsd: null,
       percentUsed: null,
     });
-    // Partial-but-observed routes pass a number; wholly missing, unmapped,
-    // and preterm routes all honestly pass null.
+    // Partial-but-observed routes pass a number; wholly missing and preterm
+    // routes honestly pass null. Committed empty assignments pass zero.
     expect(budgetAvailability(10, null)).toEqual({
       remainingUsd: null,
       percentUsed: null,
     });
   });
 
-  it("summarizes availability only when every funded row has it", () => {
+  it("summarizes resolved funded rows with explicit unresolved coverage", () => {
     expect(fundedBudgetAvailability([
       { allocationUsd: 13115.74, remainingUsd: 11505.93 },
       { allocationUsd: 0, remainingUsd: -25 },
       { allocationUsd: null, remainingUsd: null },
-    ])).toEqual({ remainingUsd: 11480.93, teamsOverBudget: 1 });
+    ])).toEqual({
+      remainingUsd: 11480.93, teamsOverBudget: 1,
+      fundedTeamCount: 2, resolvedTeamCount: 2, unresolvedTeamCount: 0,
+    });
     expect(fundedBudgetAvailability([
       { allocationUsd: 10, remainingUsd: 5 },
       { allocationUsd: 20, remainingUsd: null },
-    ])).toEqual({ remainingUsd: null, teamsOverBudget: null });
+    ])).toEqual({
+      remainingUsd: 5, teamsOverBudget: 0,
+      fundedTeamCount: 2, resolvedTeamCount: 1, unresolvedTeamCount: 1,
+    });
     expect(fundedBudgetAvailability([
       { allocationUsd: null, remainingUsd: null },
-    ])).toEqual({ remainingUsd: null, teamsOverBudget: null });
+    ])).toEqual({
+      remainingUsd: null, teamsOverBudget: null,
+      fundedTeamCount: 0, resolvedTeamCount: 0, unresolvedTeamCount: 0,
+    });
+    expect(fundedBudgetAvailability([
+      { allocationUsd: 0, remainingUsd: null },
+    ])).toEqual({
+      remainingUsd: null, teamsOverBudget: null,
+      fundedTeamCount: 1, resolvedTeamCount: 0, unresolvedTeamCount: 1,
+    });
   });
 
   const projectMetadata = (projects) => ({
@@ -1519,6 +1538,509 @@ describe("organization budget overview", () => {
     }
   });
 
+  it("uses recorded zero for empty assignments and mapped teams with no charges", async () => {
+    const emptyTeam = `${PREFIX} Empty Funding`;
+    const emptyGroup = `${PREFIX}emptygroup`;
+    const directory = await enterprise.getCachedDirectory();
+    try {
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-17T12:00:00.000Z"));
+      await db.insert(teamBudgetsTable).values({
+        teamName: emptyTeam, originalAmountUsd: 50, amountUsd: 50,
+      });
+      resetConfigurationSnapshotForTests();
+      const unmapped = await (await request("/org-insights", fixtures[0])).json();
+      const unmappedRow = unmapped.teams.find((team) => team.name === emptyTeam);
+      expect(unmappedRow).toMatchObject({
+        allocationUsd: 50, spendUsd: 0, remainingUsd: 50, percentUsed: 0,
+      });
+      expect(unmappedRow.points.every((point) => point.spendUsd === 0)).toBe(true);
+
+      __setDirectoryCacheForTests({
+        ...directory,
+        groups: [...directory.groups, {
+          id: emptyGroup, workspaceId: GROWTH,
+          name: `${emptyTeam} - Member`, type: "custom",
+        }],
+        groupMembers: new Map([...directory.groupMembers, [emptyGroup, []]]),
+      });
+      await db.insert(teamLimitTargetsTable).values({
+        teamName: emptyTeam, workspaceId: GROWTH,
+        groupId: emptyGroup, groupName: `${emptyTeam} - Member`,
+      });
+      resetConfigurationSnapshotForTests();
+      const mapped = await (await request("/org-insights", fixtures[0])).json();
+      const mappedRow = mapped.teams.find((team) => team.name === emptyTeam);
+      expect(mappedRow).toMatchObject({
+        spendUsd: 0, remainingUsd: 50, percentUsed: 0, complete: false,
+      });
+      expect(mappedRow.points.at(-1).spendUsd).toBe(0);
+      expect(mapped.summary.remainingUsd).toBe(unmapped.summary.remainingUsd);
+      expect(mapped.summary.teamsOverBudget).toBe(unmapped.summary.teamsOverBudget);
+      expect(mapped.summary.unassignedSpendUsd).toBe(unmapped.summary.unassignedSpendUsd);
+
+      await db.update(teamBudgetsTable).set({ originalAmountUsd: 0, amountUsd: 0 })
+        .where(eq(teamBudgetsTable.teamName, emptyTeam));
+      resetConfigurationSnapshotForTests();
+      const zero = await (await request("/org-insights", fixtures[0])).json();
+      expect(zero.teams.find((team) => team.name === emptyTeam)).toMatchObject({
+        allocationUsd: 0, spendUsd: 0, remainingUsd: 0, percentUsed: null,
+      });
+      expect(zero.summary.fundedTeamCount).toBe(mapped.summary.fundedTeamCount);
+      expect(zero.summary.remainingUsd).toBeCloseTo(mapped.summary.remainingUsd - 50, 8);
+      expect(zero.summary.teamsOverBudget).toBe(mapped.summary.teamsOverBudget);
+    } finally {
+      await db.delete(teamLimitTargetsTable).where(eq(teamLimitTargetsTable.groupId, emptyGroup));
+      await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, emptyTeam));
+      installDefaultDirectory();
+      resetConfigurationSnapshotForTests();
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
+  it("observes canonical pool usage recorded only by a merged physical alias", async () => {
+    const teamName = `${PREFIX} Merged Alias Funding`;
+    const primaryWorkspace = `${PREFIX}-canonical-workspace`;
+    const aliasWorkspace = `${PREFIX}-alias-workspace`;
+    const primaryGroup = `${PREFIX}-canonical-member-group`;
+    const aliasGroup = `${PREFIX}-alias-member-group`;
+    const aliasUser = `${PREFIX}-alias-spender`;
+    const mergedGroupName = "AZ-Replit - Canonical Merged Alias - Member";
+    const aliasSpendUsd = 37;
+    const allocationUsd = 100;
+    const directory = await enterprise.getCachedDirectory();
+    const visibility = await db.select({
+      teamName: teamBudgetsTable.teamName,
+      isHidden: teamBudgetsTable.isHidden,
+    }).from(teamBudgetsTable);
+
+    try {
+      __setDirectoryCacheForTests({
+        workspaces: new Map([
+          [primaryWorkspace, {
+            id: primaryWorkspace,
+            name: "Canonical Workspace",
+            slug: "canonical-workspace",
+            memberCount: 0,
+          }],
+          [aliasWorkspace, {
+            id: aliasWorkspace,
+            name: "Alias Workspace",
+            slug: "alias-workspace",
+            memberCount: 1,
+          }],
+        ]),
+        groups: [
+          {
+            id: primaryGroup,
+            workspaceId: primaryWorkspace,
+            name: mergedGroupName,
+            type: "custom",
+          },
+          {
+            id: aliasGroup,
+            workspaceId: aliasWorkspace,
+            name: mergedGroupName,
+            type: "custom",
+          },
+        ],
+        members: new Map([
+          [aliasUser, member(aliasUser, {
+            [aliasWorkspace]: { role: "member", isDisabled: false },
+          })],
+        ]),
+        groupMembers: new Map([
+          [primaryGroup, []],
+          [aliasGroup, [aliasUser]],
+        ]),
+      });
+      await db.update(teamBudgetsTable).set({ isHidden: true });
+      await db.insert(teamBudgetsTable).values({
+        teamName,
+        originalAmountUsd: allocationUsd,
+        amountUsd: allocationUsd,
+        isHidden: false,
+      });
+      await db.insert(teamLimitTargetsTable).values([
+        {
+          teamName,
+          workspaceId: primaryWorkspace,
+          groupId: primaryGroup,
+          groupName: mergedGroupName,
+        },
+        {
+          teamName,
+          workspaceId: aliasWorkspace,
+          groupId: aliasGroup,
+          groupName: mergedGroupName,
+        },
+      ]);
+      await db.insert(usageMemberDayTable).values({
+        workspaceId: aliasWorkspace,
+        usageDate: TODAY,
+        userId: aliasUser,
+        totalCostUsd: aliasSpendUsd,
+        aiCostUsd: aliasSpendUsd,
+        metricsJson: [],
+        fetchedAt: new Date(),
+      });
+      await db.insert(usageWorkspaceDayTable).values({
+        workspaceId: aliasWorkspace,
+        usageDate: TODAY,
+        totalCostUsd: aliasSpendUsd,
+        memberAttributableUsd: aliasSpendUsd,
+        memberUnattributableUsd: 0,
+        metricsJson: [],
+        fetchedAt: new Date(),
+        status: "complete",
+      });
+      await db.update(usageAccountDayTable)
+        .set({ totalCostUsd: aliasSpendUsd })
+        .where(eq(usageAccountDayTable.usageDate, TODAY));
+      await db.insert(groupRosterSnapshotsTable).values([
+        {
+          groupId: primaryGroup,
+          workspaceId: primaryWorkspace,
+          snapshotDate: TODAY,
+          userIds: [],
+        },
+        {
+          groupId: aliasGroup,
+          workspaceId: aliasWorkspace,
+          snapshotDate: TODAY,
+          userIds: [aliasUser],
+        },
+      ]);
+      resetConfigurationSnapshotForTests();
+      invalidateUsageSnapshotMemo();
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-17T12:00:00.000Z"));
+
+      const poolsResponse = await request(
+        `/spend/pools?rangeType=custom&startDate=${TODAY}&endDate=${TODAY}` +
+          "&viewScope=all_authorized",
+        fixtures[0],
+      );
+      expect(poolsResponse.status).toBe(200);
+      const pools = await poolsResponse.json();
+      const canonicalPool = pools.rows.find((row) => row.name === teamName);
+      expect(canonicalPool.sourceGroupIds.sort())
+        .toEqual([aliasGroup, primaryGroup].sort());
+      expect(canonicalPool.spendUsd).toBe(aliasSpendUsd);
+
+      const response = await request("/org-insights", fixtures[0]);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const team = body.teams.find((row) => row.name === teamName);
+      expect(team).toMatchObject({
+        allocationUsd,
+        spendUsd: aliasSpendUsd,
+        remainingUsd: allocationUsd - aliasSpendUsd,
+      });
+      expect(team.points.at(-1).spendUsd).toBe(aliasSpendUsd);
+      expect(body.accountPoints.at(-1).spendUsd).toBe(aliasSpendUsd);
+      expect(body.summary).toMatchObject({
+        fundedTeamCount: 1,
+        resolvedTeamCount: 1,
+        unresolvedTeamCount: 0,
+        remainingUsd: allocationUsd - aliasSpendUsd,
+        teamsOverBudget: 0,
+        unassignedSpendUsd: 0,
+      });
+    } finally {
+      await db.delete(groupRosterSnapshotsTable)
+        .where(inArray(groupRosterSnapshotsTable.groupId, [primaryGroup, aliasGroup]));
+      await db.delete(usageMemberDayTable)
+        .where(inArray(usageMemberDayTable.workspaceId, [primaryWorkspace, aliasWorkspace]));
+      await db.delete(usageWorkspaceDayTable)
+        .where(inArray(usageWorkspaceDayTable.workspaceId, [primaryWorkspace, aliasWorkspace]));
+      await db.update(usageAccountDayTable)
+        .set({ totalCostUsd: 45 })
+        .where(eq(usageAccountDayTable.usageDate, TODAY));
+      await db.delete(teamLimitTargetsTable)
+        .where(inArray(teamLimitTargetsTable.groupId, [primaryGroup, aliasGroup]));
+      await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, teamName));
+      for (const team of visibility) {
+        await db.update(teamBudgetsTable)
+          .set({ isHidden: team.isHidden })
+          .where(eq(teamBudgetsTable.teamName, team.teamName));
+      }
+      __setDirectoryCacheForTests(directory);
+      resetConfigurationSnapshotForTests();
+      invalidateUsageSnapshotMemo();
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
+  it("keeps missing persisted funding assignments unresolved until explicitly unmapped", async () => {
+    const teamName = `${PREFIX} Missing Funding Assignment`;
+    const missingWorkspace = `${PREFIX}-missing-funding-workspace`;
+    const missingGroup = `${PREFIX}-missing-funding-group`;
+    const allocationUsd = 50;
+
+    try {
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-17T12:00:00.000Z"));
+      const baselineResponse = await request("/org-insights", fixtures[0]);
+      expect(baselineResponse.status).toBe(200);
+      const baseline = await baselineResponse.json();
+
+      await db.insert(teamBudgetsTable).values({
+        teamName,
+        originalAmountUsd: allocationUsd,
+        amountUsd: allocationUsd,
+      });
+      await db.insert(teamLimitTargetsTable).values({
+        teamName,
+        workspaceId: missingWorkspace,
+        groupId: missingGroup,
+        groupName: "Missing Funding Group - Member",
+        assignmentSource: "manual",
+      });
+      await db.insert(fundingGroupOverridesTable).values({
+        workspaceId: missingWorkspace,
+        groupId: missingGroup,
+        teamName,
+      });
+      resetConfigurationSnapshotForTests();
+
+      const unresolvedResponse = await request("/org-insights", fixtures[0]);
+      expect(unresolvedResponse.status).toBe(200);
+      const unresolved = await unresolvedResponse.json();
+      expect(unresolved.teams.find((team) => team.name === teamName)).toMatchObject({
+        allocationUsd,
+        spendUsd: null,
+        remainingUsd: null,
+        percentUsed: null,
+      });
+      expect(unresolved.teams.find((team) => team.name === teamName).points
+        .every((point) => point.spendUsd === null)).toBe(true);
+      expect(unresolved.summary).toMatchObject({
+        accountSpendUsd: baseline.summary.accountSpendUsd,
+        teamAllocationUsd: baseline.summary.teamAllocationUsd + allocationUsd,
+        unassignedSpendUsd: baseline.summary.unassignedSpendUsd,
+        remainingUsd: baseline.summary.remainingUsd,
+        teamsOverBudget: baseline.summary.teamsOverBudget,
+        fundedTeamCount: baseline.summary.fundedTeamCount + 1,
+        resolvedTeamCount: baseline.summary.resolvedTeamCount,
+        unresolvedTeamCount: baseline.summary.unresolvedTeamCount + 1,
+      });
+
+      await db.update(fundingGroupOverridesTable)
+        .set({ teamName: null })
+        .where(eq(fundingGroupOverridesTable.groupId, missingGroup));
+      resetConfigurationSnapshotForTests();
+
+      const unmappedResponse = await request("/org-insights", fixtures[0]);
+      expect(unmappedResponse.status).toBe(200);
+      const unmapped = await unmappedResponse.json();
+      const unmappedTeam = unmapped.teams.find((team) => team.name === teamName);
+      expect(unmappedTeam).toMatchObject({
+        allocationUsd,
+        spendUsd: 0,
+        remainingUsd: allocationUsd,
+        percentUsed: 0,
+      });
+      expect(unmappedTeam.points.every((point) => point.spendUsd === 0)).toBe(true);
+      expect(unmapped.summary).toMatchObject({
+        accountSpendUsd: baseline.summary.accountSpendUsd,
+        teamAllocationUsd: baseline.summary.teamAllocationUsd + allocationUsd,
+        unassignedSpendUsd: baseline.summary.unassignedSpendUsd,
+        remainingUsd: baseline.summary.remainingUsd + allocationUsd,
+        teamsOverBudget: baseline.summary.teamsOverBudget,
+        fundedTeamCount: baseline.summary.fundedTeamCount + 1,
+        resolvedTeamCount: baseline.summary.resolvedTeamCount + 1,
+        unresolvedTeamCount: baseline.summary.unresolvedTeamCount,
+      });
+    } finally {
+      await db.delete(fundingGroupOverridesTable)
+        .where(eq(fundingGroupOverridesTable.groupId, missingGroup));
+      await db.delete(teamLimitTargetsTable)
+        .where(eq(teamLimitTargetsTable.groupId, missingGroup));
+      await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, teamName));
+      resetConfigurationSnapshotForTests();
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
+  it.each([
+    {
+      label: "manual target",
+      kind: "target",
+      assignmentSource: "manual",
+      workspaceId: `${PREFIX}-absent-manual-workspace`,
+      unresolved: true,
+    },
+    {
+      label: "automatic target",
+      kind: "target",
+      assignmentSource: "automatic",
+      workspaceId: `${PREFIX}-absent-automatic-workspace`,
+      unresolved: false,
+    },
+    {
+      label: "nonlegacy family mapping",
+      kind: "family",
+      workspaceId: `${PREFIX}-absent-family-workspace`,
+      unresolved: true,
+    },
+    {
+      label: "legacy workspace family inventory",
+      kind: "family",
+      workspaceId: "1awqan",
+      unresolved: false,
+    },
+  ])("classifies an absent persisted $label by active assignment semantics", async (fixture) => {
+    const teamName = `${PREFIX} Absent ${fixture.label}`;
+    const groupId = `${PREFIX}-absent-${fixture.label.replaceAll(" ", "-")}`;
+    const familyKey = `${PREFIX}-absent-family-${fixture.label.replaceAll(" ", "-")}`;
+    const allocationUsd = 50;
+
+    try {
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-17T12:00:00.000Z"));
+      const baselineResponse = await request("/org-insights", fixtures[0]);
+      expect(baselineResponse.status).toBe(200);
+      const baseline = await baselineResponse.json();
+
+      await db.insert(teamBudgetsTable).values({
+        teamName,
+        originalAmountUsd: allocationUsd,
+        amountUsd: allocationUsd,
+      });
+      if (fixture.kind === "target") {
+        await db.insert(teamLimitTargetsTable).values({
+          teamName,
+          workspaceId: fixture.workspaceId,
+          groupId,
+          groupName: "Absent Persisted Group - Member",
+          assignmentSource: fixture.assignmentSource,
+        });
+      } else {
+        await db.insert(familyTeamMappingsTable).values({
+          workspaceId: fixture.workspaceId,
+          familyKey,
+          familyName: "Absent Persisted Family",
+          teamName,
+          // Workspace identity, not this advisory flag, defines legacy inventory.
+          isLegacy: false,
+        });
+      }
+      resetConfigurationSnapshotForTests();
+
+      const response = await request("/org-insights", fixtures[0]);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const team = body.teams.find((row) => row.name === teamName);
+      if (fixture.unresolved) {
+        expect(team).toMatchObject({
+          allocationUsd,
+          spendUsd: null,
+          remainingUsd: null,
+          percentUsed: null,
+        });
+        expect(team.points.every((point) => point.spendUsd === null)).toBe(true);
+        expect(body.summary).toMatchObject({
+          fundedTeamCount: baseline.summary.fundedTeamCount + 1,
+          resolvedTeamCount: baseline.summary.resolvedTeamCount,
+          unresolvedTeamCount: baseline.summary.unresolvedTeamCount + 1,
+          remainingUsd: baseline.summary.remainingUsd,
+          unassignedSpendUsd: baseline.summary.unassignedSpendUsd,
+        });
+      } else {
+        expect(team).toMatchObject({
+          allocationUsd,
+          spendUsd: 0,
+          remainingUsd: allocationUsd,
+          percentUsed: 0,
+        });
+        expect(team.points.every((point) => point.spendUsd === 0)).toBe(true);
+        expect(body.summary).toMatchObject({
+          fundedTeamCount: baseline.summary.fundedTeamCount + 1,
+          resolvedTeamCount: baseline.summary.resolvedTeamCount + 1,
+          unresolvedTeamCount: baseline.summary.unresolvedTeamCount,
+          remainingUsd: baseline.summary.remainingUsd + allocationUsd,
+          unassignedSpendUsd: baseline.summary.unassignedSpendUsd,
+        });
+      }
+    } finally {
+      await db.delete(teamLimitTargetsTable)
+        .where(eq(teamLimitTargetsTable.groupId, groupId));
+      await db.delete(familyTeamMappingsTable)
+        .where(eq(familyTeamMappingsTable.familyKey, familyKey));
+      await db.delete(teamBudgetsTable).where(eq(teamBudgetsTable.teamName, teamName));
+      resetConfigurationSnapshotForTests();
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
+  it.each([undefined, ["missing-source"]])(
+    "keeps unresolved sources %j unknown without erasing other funded balances",
+    async (sourceGroupIds) => {
+      let mock;
+      try {
+        __setOrgInsightsNowForTests(
+          () => new Date("2026-06-17T12:00:00.000Z"));
+        const baselineResponse = await request("/org-insights", fixtures[0]);
+        expect(baselineResponse.status).toBe(200);
+        const baseline = await baselineResponse.json();
+        const baselineTeam = baseline.teams.find((team) => team.name === TEAM);
+        expect(baselineTeam.remainingUsd).not.toBeNull();
+
+        const build = scopedAccounting.buildScopedAccounting;
+        mock = vi.spyOn(scopedAccounting, "buildScopedAccounting")
+          .mockImplementation(async (...args) => {
+            const result = await build(...args);
+            return {
+              ...result,
+              poolRows: result.poolRows.map((row) => row.name === TEAM
+                ? { ...row, sourceGroupIds } : row),
+            };
+          });
+        const response = await request("/org-insights", fixtures[0]);
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        const unresolved = body.teams.find((team) => team.name === TEAM);
+        expect(unresolved).toMatchObject({
+          spendUsd: null, remainingUsd: null, percentUsed: null,
+        });
+        expect(unresolved.points.every((point) => point.spendUsd === null)).toBe(true);
+        expect(body.summary.fundedTeamCount).toBe(baseline.summary.fundedTeamCount);
+        expect(body.summary.unresolvedTeamCount)
+          .toBe(baseline.summary.unresolvedTeamCount + 1);
+        expect(body.summary.resolvedTeamCount)
+          .toBe(baseline.summary.resolvedTeamCount - 1);
+        expect(body.summary.remainingUsd).toBeCloseTo(body.teams
+          .filter((team) => team.allocationUsd !== null && team.remainingUsd !== null)
+          .reduce((sum, team) => sum + team.remainingUsd, 0), 8);
+        expect(body.summary.remainingUsd)
+          .toBeCloseTo(baseline.summary.remainingUsd - baselineTeam.remainingUsd, 8);
+        expect(body.summary.teamsOverBudget).toBe(
+          baseline.summary.teamsOverBudget -
+            (baselineTeam.remainingUsd < 0 ? 1 : 0),
+        );
+        expect(body.summary.accountSpendUsd).toBe(baseline.summary.accountSpendUsd);
+        expect(body.summary.unassignedSpendUsd)
+          .toBe(baseline.summary.unassignedSpendUsd);
+      } finally {
+        mock?.mockRestore();
+        __setOrgInsightsNowForTests(null);
+      }
+    },
+  );
+
+  it("rejects failed committed mapping reads instead of inventing empty assignments", async () => {
+    const failing = vi.spyOn(configurationSnapshots, "getConfigurationSnapshot")
+      .mockRejectedValue(new Error("Committed mapping snapshot unavailable"));
+    try {
+      const response = await request("/org-insights", fixtures[0]);
+      expect(response.status).toBe(503);
+      expect(await response.json()).not.toHaveProperty("summary");
+    } finally {
+      failing.mockRestore();
+    }
+  });
+
   it("recovers Org Insights from a typed usage transition without weakening authorization", async () => {
     const finish = beginUsageGenerationUpdate();
     try {
@@ -1566,10 +2088,15 @@ describe("organization budget overview", () => {
       expect(body.accountPoints.at(-1).spendUsd)
         .toBeCloseTo(body.summary.accountSpendUsd, 8);
       expect(body.complete).toBe(false);
-      // Other funded teams have no mapped/observed spend, so the aggregate
-      // remains unknown even though this observed team's balance is useful.
-      expect(body.summary.remainingUsd).toBeNull();
-      expect(body.summary.teamsOverBudget).toBeNull();
+      const funded = body.teams.filter((team) => team.allocationUsd !== null);
+      const resolvedFunded = funded.filter((team) => team.remainingUsd !== null);
+      expect(body.summary.remainingUsd).toBeCloseTo(resolvedFunded.reduce(
+        (sum, team) => sum + team.remainingUsd, 0), 8);
+      expect(body.summary.teamsOverBudget)
+        .toBe(resolvedFunded.filter((team) => team.remainingUsd < 0).length);
+      expect(body.summary.unresolvedTeamCount)
+        .toBe(funded.filter((team) => team.remainingUsd === null).length);
+      expect(body.summary.resolvedTeamCount).toBe(resolvedFunded.length);
       const observedTeam = body.teams.find((team) => team.name === TEAM);
       expect(observedTeam).toMatchObject({
         spendUsd: expect.any(Number),
@@ -1591,7 +2118,10 @@ describe("organization budget overview", () => {
           remainingUsd: null,
           percentUsed: null,
         });
-      expect(body.teams[0].points.some((point) => point.spendUsd === null))
+      expect(body.teams.find((team) =>
+        team.name === "Comcast Advertising").points
+        .every((point) => point.spendUsd === null)).toBe(true);
+      expect(observedTeam.points.some((point) => point.spendUsd === null))
         .toBe(true);
     } finally {
       __setOrgInsightsNowForTests(null);

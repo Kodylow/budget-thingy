@@ -60,17 +60,17 @@ export function fundedBudgetAvailability(
     allocationUsd: number | null;
     remainingUsd: number | null;
   }>,
-): { remainingUsd: number | null; teamsOverBudget: number | null } {
+) {
   const fundedTeams = teams.filter((team) => team.allocationUsd !== null);
-  if (fundedTeams.length === 0 ||
-      fundedTeams.some((team) => team.remainingUsd === null)) {
-    return { remainingUsd: null, teamsOverBudget: null };
-  }
+  const resolvedTeams = fundedTeams.filter((team) => team.remainingUsd !== null);
   return {
-    remainingUsd: round(fundedTeams.reduce(
+    remainingUsd: resolvedTeams.length === 0 ? null : round(resolvedTeams.reduce(
       (sum, team) => sum + team.remainingUsd!, 0)),
-    teamsOverBudget: fundedTeams.filter(
+    teamsOverBudget: resolvedTeams.length === 0 ? null : resolvedTeams.filter(
       (team) => team.remainingUsd! < 0).length,
+    fundedTeamCount: fundedTeams.length,
+    resolvedTeamCount: resolvedTeams.length,
+    unresolvedTeamCount: fundedTeams.length - resolvedTeams.length,
   };
 }
 
@@ -198,10 +198,13 @@ router.get("/org-insights", async (req, res): Promise<void> => {
             ).spendUsd));
         }
       }
-      const hasUsageScope = sourceGroups.length > 0 &&
-        [...result.daily.keys()].some((date) =>
-          [...sourceWorkspaceIds].some((workspaceId) =>
-            !workspaceUnavailable.has(`${workspaceId}\0${date}`)));
+      // The canonical pool already distinguishes observed assigned usage from
+      // unavailable usage. Its committed empty assignment is recorded zero;
+      // requiring a workspace here incorrectly discards that valid balance.
+      // An absent source list or unresolved source ID is not an empty assignment.
+      const hasUsageScope = row.usageObserved &&
+        row.sourceGroupIds !== undefined &&
+        sourceGroups.length === row.sourceGroupIds.length;
       const complete = period.asOf !== null &&
         hasUsageScope &&
         reporting.comparisonsVerified &&
@@ -264,8 +267,10 @@ router.get("/org-insights", async (req, res): Promise<void> => {
           accountDailySpend,
           accountUnavailableDays,
         );
-    const knownTeamSpend = teams.reduce(
-      (sum, team) => sum + (team.spendUsd ?? 0), 0);
+    // Unresolved team inputs may withhold that team's balance, but must not
+    // reclassify its already-recorded assigned charges as unassigned.
+    const knownTeamSpend = teamRows.reduce(
+      (sum, team) => sum + team.spendUsd, 0);
     const fundedTeams = teams.filter((team) => team.allocationUsd !== null);
     const fundedAvailability = fundedBudgetAvailability(teams);
     const complete = teams.length > 0 &&

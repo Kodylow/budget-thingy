@@ -76,6 +76,9 @@ const makeData = (
     remainingUsd: 325,
     teamsOverBudget: 0,
     unassignedSpendUsd: 25,
+    fundedTeamCount: 2,
+    resolvedTeamCount: 2,
+    unresolvedTeamCount: 0,
   },
   accountPoints: [
     { date: '2026-05-20', spendUsd: 0 },
@@ -203,6 +206,9 @@ describe('organization budget chart controls', () => {
         remainingUsd: null,
         teamsOverBudget: null,
         unassignedSpendUsd: 25,
+        fundedTeamCount: 2,
+        resolvedTeamCount: 0,
+        unresolvedTeamCount: 2,
       },
     }));
     const nullableRow = observed.data.find(item => item.date === '2026-06-01');
@@ -216,16 +222,20 @@ describe('organization budget chart controls', () => {
     expect(tooltip).toContain('Allocated: Unavailable');
   });
 
-  it('keeps Total usable when there are no funded teams', async () => {
+  it('keeps zero allocations selectable while excluding missing allocations', async () => {
     await render(makeData([
-      makeTeam('zero', 'Zero', 0, 10),
+      makeTeam('zero', 'Zero', 0, 25),
       makeTeam('none', 'None', null, 20),
     ]));
 
     expect(buttonFor('Total').getAttribute('aria-pressed')).toBe('true');
     expect([...observed.lines.keys()]).toEqual(['Total Actual', 'Total Budget']);
-    expect(buttonFor('Zero')).toBeUndefined();
+    expect(buttonFor('Zero').getAttribute('aria-pressed')).toBe('false');
     expect(buttonFor('None')).toBeUndefined();
+    await act(async () => buttonFor('Zero').click());
+    const row = observed.data.find(item => item.date === '2026-06-01');
+    expect(observed.lines.get('Zero Actual').dataKey(row)).toBe(25);
+    expect(observed.lines.get('Zero Budget').dataKey(row)).toBe(0);
   });
 
   it('shows unavailable when selected series has no spend or budget values', async () => {
@@ -237,6 +247,9 @@ describe('organization budget chart controls', () => {
         remainingUsd: null,
         teamsOverBudget: null,
         unassignedSpendUsd: null,
+        fundedTeamCount: 0,
+        resolvedTeamCount: 0,
+        unresolvedTeamCount: 0,
       },
       accountPoints: [],
     }));

@@ -14,7 +14,7 @@ export type OrgBudgetOverviewResponseTeamsItem = {
   /** @nullable */
   allocationUsd: number | null;
   /**
-     * Observed allocation-eligible spend for the fixed term; null before the term or when this team has no observed usage scope.
+     * Recorded allocation-eligible assigned spend for the fixed term. A committed funding pool with no assigned groups has recorded zero, not a share of unassigned account charges. Null before the term or when assigned usage inputs cannot be resolved.
      * @nullable
      */
   spendUsd: number | null;

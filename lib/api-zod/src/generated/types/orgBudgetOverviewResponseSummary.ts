@@ -12,15 +12,30 @@ export type OrgBudgetOverviewResponseSummary = {
   /** @nullable */
   teamAllocationUsd: number | null;
   /**
-     * Sum of every funded team's available remaining amount. Null when there are no funded teams or any funded team's spend is unavailable; independent of complete/reporting verification.
+     * Sum of resolved funded teams' allocation minus recorded assigned spend. Null when no funded teams are resolved. A known subtotal when unresolvedTeamCount is positive, independent of usage verification.
      * @nullable
      */
   remainingUsd: number | null;
   /**
-     * Count of funded teams with negative available remaining amounts. Null under the same availability rule as remainingUsd.
+     * Count of resolved funded teams with negative remaining amounts. A known count, not an exact total, when unresolvedTeamCount is positive. Null under the same availability rule as remainingUsd.
      * @nullable
      */
   teamsOverBudget: number | null;
+  /**
+     * Number of teams with a known allocation, including zero allocations.
+     * @minimum 0
+     */
+  fundedTeamCount: number;
+  /**
+     * Funded teams with calculable recorded-spend balances.
+     * @minimum 0
+     */
+  resolvedTeamCount: number;
+  /**
+     * Funded teams without calculable balances; excluded from the known subtotal/count.
+     * @minimum 0
+     */
+  unresolvedTeamCount: number;
   /** @nullable */
   unassignedSpendUsd: number | null;
 };

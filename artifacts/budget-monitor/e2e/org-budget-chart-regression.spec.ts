@@ -43,6 +43,7 @@ function teamFixture(team: ChartTeam) {
 
 function overviewFixture(teams: ChartTeam[], accountSpendUsd = 300) {
   const teamAllocationUsd = teams.reduce((sum, team) => sum + (team.allocationUsd ?? 0), 0);
+  const fundedTeamCount = teams.filter(team => team.allocationUsd != null && team.allocationUsd > 0).length;
   return {
     periodStart: '2026-05-20',
     periodEnd: '2027-05-20',
@@ -56,6 +57,9 @@ function overviewFixture(teams: ChartTeam[], accountSpendUsd = 300) {
       remainingUsd: teamAllocationUsd - accountSpendUsd,
       teamsOverBudget: 0,
       unassignedSpendUsd: 0,
+      fundedTeamCount,
+      resolvedTeamCount: fundedTeamCount,
+      unresolvedTeamCount: 0,
     },
     accountPoints: points(accountSpendUsd),
     teams: teams.map(teamFixture),

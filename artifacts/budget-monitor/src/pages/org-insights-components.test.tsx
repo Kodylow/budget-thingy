@@ -30,6 +30,9 @@ const mockData: OrgBudgetOverviewResponse = {
     remainingUsd: 85000,
     teamsOverBudget: 1,
     unassignedSpendUsd: 0,
+    fundedTeamCount: 3,
+    resolvedTeamCount: 3,
+    unresolvedTeamCount: 0,
   },
   accountPoints: [
     { date: "2026-05-20", spendUsd: 0 },
@@ -77,7 +80,7 @@ const mockData: OrgBudgetOverviewResponse = {
     {
       id: "team-zero",
       name: "Zero Budget Team",
-      allocationUsd: 0, // Should be excluded from chart
+      allocationUsd: 0,
       spendUsd: 500,
       remainingUsd: -500,
       percentUsed: null,
@@ -102,11 +105,11 @@ describe("OrgBudgetChart", () => {
     expect(html).not.toContain("historical rosters were not observed");
   });
 
-  it("keeps the Total selector when no teams are eligible", () => {
-    const emptyData = { ...mockData, teams: [mockData.teams[2]] }; // Only zero budget team
-    const html = renderToStaticMarkup(<OrgBudgetChart data={emptyData} onRetry={async () => {}} />);
+  it("keeps zero-allocation teams consistent with funded summaries and the teams table", () => {
+    const zeroData = { ...mockData, teams: [mockData.teams[2]] };
+    const html = renderToStaticMarkup(<OrgBudgetChart data={zeroData} onRetry={async () => {}} />);
     expect(html).toContain(">Total</span>");
-    expect(html).not.toContain(">Zero Budget Team</span>");
+    expect(html).toContain(">Zero Budget Team</span>");
   });
 });
 

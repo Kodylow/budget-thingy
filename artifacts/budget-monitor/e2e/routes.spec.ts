@@ -299,6 +299,9 @@ function orgBudgetOverviewFixture() {
       remainingUsd: 90,
       teamsOverBudget: 0,
       unassignedSpendUsd: 0,
+      fundedTeamCount: 1,
+      resolvedTeamCount: 1,
+      unresolvedTeamCount: 0,
     },
     accountPoints: [
       { date: '2026-06-01', spendUsd: 2 },
@@ -2349,7 +2352,7 @@ test.describe('funding assignment mocked browser coverage', () => {
 });
 
 test.describe('org recorded balances focused mocked browser pass', () => {
-  test('shows qualified balances, zero and overspend, while missing funded inputs keep summaries unavailable', async ({ page }) => {
+  test('shows qualified balances, zero and overspend, while missing funded inputs retain known summaries', async ({ page }) => {
     await mockApi(page, 'account');
     const reporting = {
       acquisitionCoverage: 'partial',
@@ -2376,9 +2379,12 @@ test.describe('org recorded balances focused mocked browser pass', () => {
         summary: {
           accountSpendUsd: 1804.81,
           teamAllocationUsd: missing ? 13415.74 : 13315.74,
-          remainingUsd: missing ? null : 11530.93,
-          teamsOverBudget: missing ? null : 2,
+          remainingUsd: 11530.93,
+          teamsOverBudget: 2,
           unassignedSpendUsd: 0,
+          fundedTeamCount: missing ? 5 : 4,
+          resolvedTeamCount: 4,
+          unresolvedTeamCount: missing ? 1 : 0,
         },
         accountPoints: [{ date: '2026-06-01', spendUsd: null }, { date: '2026-09-08', spendUsd: 1804.81 }],
         teams: [
@@ -2406,6 +2412,9 @@ test.describe('org recorded balances focused mocked browser pass', () => {
     await expect(row('Unfunded')).toContainText('Not set');
     await expect(page.getByTestId('org-card-remaining')).toContainText('$11,530.93');
     await expect(page.getByTestId('org-card-over-budget')).toContainText('2');
+    await expect(page.getByTestId('org-card-remaining')).not.toContainText('(Known)');
+    await expect(page.getByTestId('org-card-over-budget')).not.toContainText('(Known)');
+    await expect(page.getByText(/funded teams; \d+ unresolved\./)).toHaveCount(0);
     await expect(page.getByTestId('org-balance-basis')).toHaveText('Balances based on recorded spend');
     await expect(page.getByText('Partial data', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Recorded, partial coverage', { exact: false })).toHaveCount(0);
@@ -2419,8 +2428,12 @@ test.describe('org recorded balances focused mocked browser pass', () => {
     missing = true;
     await page.getByRole('button', { name: 'Refresh', exact: true }).click();
     await expect(row('Missing Usage')).toContainText('Unavailable');
-    await expect(page.getByTestId('org-card-remaining')).toContainText('Unavailable');
-    await expect(page.getByTestId('org-card-over-budget')).toContainText('Unavailable');
+    await expect(page.getByTestId('org-card-remaining')).toContainText('Remaining Team Budgets (Known)');
+    await expect(page.getByTestId('org-card-remaining')).toContainText('$11,530.93');
+    await expect(page.getByTestId('org-card-remaining')).toContainText('4 of 5 funded teams; 1 unresolved.');
+    await expect(page.getByTestId('org-card-over-budget')).toContainText('Teams Over Budget (Known)');
+    await expect(page.getByTestId('org-card-over-budget')).toContainText('2');
+    await expect(page.getByTestId('org-card-over-budget')).toContainText('4 of 5 funded teams; 1 unresolved.');
     await expect(row('Recorded Team')).toContainText('$11,505.93');
   });
 });
@@ -2458,9 +2471,12 @@ test.describe('org budget chart focused mocked browser pass', () => {
       summary: {
         accountSpendUsd: 300,
         teamAllocationUsd: 500,
-        remainingUsd: 200,
+        remainingUsd: 270,
         teamsOverBudget: 0,
         unassignedSpendUsd: 55,
+        fundedTeamCount: 4,
+        resolvedTeamCount: 4,
+        unresolvedTeamCount: 0,
       },
       accountPoints: points([75, 165, 240, 300]),
       teams: [

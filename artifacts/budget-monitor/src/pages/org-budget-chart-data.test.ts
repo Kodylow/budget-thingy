@@ -50,6 +50,9 @@ const overview = (
     remainingUsd: null,
     teamsOverBudget: null,
     unassignedSpendUsd: null,
+    fundedTeamCount: 0,
+    resolvedTeamCount: 0,
+    unresolvedTeamCount: 0,
   },
   accountPoints: [],
   teams,
@@ -118,6 +121,9 @@ describe('organization budget chart data', () => {
           remainingUsd: 301,
           teamsOverBudget: 0,
           unassignedSpendUsd: 25,
+          fundedTeamCount: 1,
+          resolvedTeamCount: 1,
+          unresolvedTeamCount: 0,
         },
         accountPoints: [
           { date: '2026-05-20', spendUsd: 0 },
@@ -148,6 +154,9 @@ describe('organization budget chart data', () => {
         remainingUsd: null,
         teamsOverBudget: null,
         unassignedSpendUsd: null,
+          fundedTeamCount: 0,
+          resolvedTeamCount: 0,
+          unresolvedTeamCount: 0,
       },
       accountPoints: [
         { date: '2026-05-20', spendUsd: 0 },
@@ -175,6 +184,20 @@ describe('organization budget chart data', () => {
     expect(rows.at(-1)?.values.partial.benchmark).toBe(366);
   });
 
+  it('charts zero allocation with recorded spend against a zero benchmark', () => {
+    const zero = team('zero', 0, [{ date: '2026-06-01', spendUsd: 25 }]);
+    const data = overview([zero]);
+    const funded = getFundedTeams(data.teams);
+    const rows = buildOrgBudgetChartData(data, funded);
+
+    expect(funded.map(item => item.id)).toEqual(['zero']);
+    expect(rows.find(row => row.date === '2026-06-01')?.values.zero).toEqual({
+      actual: 25,
+      benchmark: 0,
+    });
+    expect(rows.at(-1)?.values.zero.benchmark).toBe(0);
+  });
+
   it('shows a known plan but no actual when as-of is missing', () => {
     const funded = team('planned', 366, [{ date: '2026-06-01', spendUsd: 99 }]);
     const rows = buildOrgBudgetChartData(overview([funded], { asOf: null }), [funded]);
@@ -194,7 +217,7 @@ describe('organization budget chart data', () => {
     expect(rows.every(row => row.values.funded.benchmark === null)).toBe(true);
   });
 
-  it('funds only positive finite allocations, deduplicated by stable ID', () => {
+  it('funds non-negative finite allocations, deduplicated by stable ID', () => {
     const first = { ...team('same-id', 10), name: 'Duplicate name' };
     const replacement = { ...team('same-id', 20), name: 'Other duplicate name' };
     const sameName = { ...team('other-id', 30), name: 'Duplicate name' };
@@ -215,6 +238,7 @@ describe('organization budget chart data', () => {
       'same-id',
       'other-id',
       'no-points',
+      'zero',
     ]);
     expect(getFundedTeams(teams)[0]).toBe(replacement);
     expect(buildOrgBudgetChartData(overview(teams), [fundedWithoutPoints])).toHaveLength(2);

@@ -3078,7 +3078,7 @@ components:
           type: ["string", "null"]
         summary:
           type: object
-          required: [accountSpendUsd, teamAllocationUsd, remainingUsd, teamsOverBudget, unassignedSpendUsd]
+          required: [accountSpendUsd, teamAllocationUsd, remainingUsd, teamsOverBudget, fundedTeamCount, resolvedTeamCount, unresolvedTeamCount, unassignedSpendUsd]
           properties:
             accountSpendUsd:
               type: ["number", "null"]
@@ -3087,14 +3087,27 @@ components:
             remainingUsd:
               type: ["number", "null"]
               description: >
-                Sum of every funded team's available remaining amount. Null
-                when there are no funded teams or any funded team's spend is
-                unavailable; independent of complete/reporting verification.
+                Sum of resolved funded teams' allocation minus recorded assigned
+                spend. Null when no funded teams are resolved. A known subtotal
+                when unresolvedTeamCount is positive, independent of usage verification.
             teamsOverBudget:
               type: ["integer", "null"]
               description: >
-                Count of funded teams with negative available remaining
-                amounts. Null under the same availability rule as remainingUsd.
+                Count of resolved funded teams with negative remaining amounts.
+                A known count, not an exact total, when unresolvedTeamCount is
+                positive. Null under the same availability rule as remainingUsd.
+            fundedTeamCount:
+              type: integer
+              minimum: 0
+              description: Number of teams with a known allocation, including zero allocations.
+            resolvedTeamCount:
+              type: integer
+              minimum: 0
+              description: Funded teams with calculable recorded-spend balances.
+            unresolvedTeamCount:
+              type: integer
+              minimum: 0
+              description: Funded teams without calculable balances; excluded from the known subtotal/count.
             unassignedSpendUsd:
               type: ["number", "null"]
         accountPoints:
@@ -3121,8 +3134,10 @@ components:
               spendUsd:
                 type: ["number", "null"]
                 description: >
-                  Observed allocation-eligible spend for the fixed term; null
-                  before the term or when this team has no observed usage scope.
+                  Recorded allocation-eligible assigned spend for the fixed term.
+                  A committed funding pool with no assigned groups has recorded
+                  zero, not a share of unassigned account charges. Null before
+                  the term or when assigned usage inputs cannot be resolved.
               remainingUsd:
                 type: ["number", "null"]
                 description: >

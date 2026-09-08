@@ -1,6 +1,6 @@
 import React from "react";
 import { useAuthContext } from "@/components/auth-context";
-import { useGetOrgBudgetOverview } from "@workspace/api-client-react";
+import { getGetOrgBudgetOverviewQueryKey, useGetOrgBudgetOverview } from "@workspace/api-client-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, RefreshCw, Target, DollarSign, Download, Users, Briefcase } from "lucide-react";
@@ -10,7 +10,7 @@ import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { OrgChartBoundary } from "./org-chart-recovery";
 
 export default function OrgInsights() {
-  const { capabilities } = useAuthContext();
+  const { authorizationKey, capabilities } = useAuthContext();
 
   if (capabilities.canViewAccountUsage !== true) {
     return (
@@ -24,12 +24,15 @@ export default function OrgInsights() {
     );
   }
 
-  return <OrgInsightsView />;
+  return <OrgInsightsView authorizationKey={authorizationKey} />;
 }
 
-function OrgInsightsView() {
-  // Use generated hook directly. No range filters accepted.
-  const { data, isLoading, isFetching, refetch } = useGetOrgBudgetOverview();
+function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
+  // Scope the cache entry to the complete identity/authorization fingerprint.
+  // React Query natively retains its last committed data during same-key refetches.
+  const { data, isLoading, isFetching, refetch } = useGetOrgBudgetOverview({
+    query: { queryKey: [...getGetOrgBudgetOverviewQueryKey(), authorizationKey] },
+  });
   const displayData = data;
 
   if (isLoading && !displayData) {
@@ -59,7 +62,16 @@ function OrgInsightsView() {
   }
 
   const { summary, complete, qualification, periodStart, periodEnd } = displayData;
+  const {
+    fundedTeamCount,
+    resolvedTeamCount,
+    unresolvedTeamCount,
+  } = summary;
   const isPartial = !complete;
+  const hasUnresolvedFundedTeams = unresolvedTeamCount > 0;
+  const knownCoverage = hasUnresolvedFundedTeams
+    ? `${resolvedTeamCount} of ${fundedTeamCount} funded teams; ${unresolvedTeamCount} unresolved.`
+    : undefined;
   const retryChart = async () => {
     const result = await refetch();
     if (result.isError) throw new Error('Chart refresh failed');
@@ -91,7 +103,7 @@ function OrgInsightsView() {
           <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2">
             <Download className="h-4 w-4" /> Print
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching} className="gap-2">
+          <Button data-testid="refresh-org-insights" variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching} className="gap-2">
             <RefreshCw className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
             {isFetching ? "Updating" : "Refresh"}
           </Button>
@@ -120,15 +132,17 @@ function OrgInsightsView() {
           testId="org-card-team-funding"
         />
         <InsightCard
-          title="Remaining Team Budgets"
+          title={hasUnresolvedFundedTeams ? "Remaining Team Budgets (Known)" : "Remaining Team Budgets"}
           icon={Briefcase}
           value={summary.remainingUsd == null ? "Unavailable" : formatFinancialUsd(summary.remainingUsd)}
+          subtitle={knownCoverage}
           testId="org-card-remaining"
         />
         <InsightCard
-          title="Teams Over Budget"
+          title={hasUnresolvedFundedTeams ? "Teams Over Budget (Known)" : "Teams Over Budget"}
           icon={Users}
           value={summary.teamsOverBudget == null ? "Unavailable" : summary.teamsOverBudget.toString()}
+          subtitle={knownCoverage}
           highlightText={summary.teamsOverBudget != null && summary.teamsOverBudget > 0 ? "Attention" : undefined}
           testId="org-card-over-budget"
         />
