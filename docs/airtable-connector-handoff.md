@@ -1,5 +1,9 @@
 # Airtable connector handoff
 
+> **Historical handoff:** This preserves the earlier connector-setup request and
+> its safety boundaries. It is not evidence that Airtable is currently configured,
+> and it does not authorize an allocation refresh.
+
 Please restore the Airtable connector used by the Group Budget Monitor and confirm it can read the bases containing:
 
 - `Replit Order Forms`

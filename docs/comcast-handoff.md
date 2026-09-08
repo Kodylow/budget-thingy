@@ -1,5 +1,10 @@
 # Comcast workspace handoff
 
+> **Historical transfer handoff:** The branch/history and release observations
+> below describe an earlier handoff, not verified current state or permission to
+> execute a transfer now. Preserve its privacy and backup safeguards; confirm
+> current authorization and repository state before using any transfer procedure.
+
 This repository contains the Budget Monitor frontend, API, shared packages,
 database migrations, tests, and operational documentation. Local attachments,
 the unrelated reference project, agent files, data exports, test environment

@@ -1,5 +1,9 @@
 # Project intelligence verification
 
+> **Historical verification report:** This is a point-in-time record of checks
+> observed on 2026-09-07, not a statement of current environment, release, or
+> production status. The evidence and release boundaries below are preserved.
+
 Verified in development on 2026-09-07.
 
 ## Completed checks

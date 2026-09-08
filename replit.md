@@ -1,100 +1,45 @@
 # Group Budget Monitor
 
-Monitors spending by group and team across the Comcast Replit Enterprise account, lets authorized operators set allocated pools, and emails configured recipients when an entity crosses 50/75/90/100% of its pool.
+Internal spending and funding monitor for the Comcast Replit Enterprise account. It combines personal usage, funding-team reporting, monthly Agent limits, and controlled budget alerts.
 
-## Run & Operate
+## Run and navigate
 
-- Fresh empty database setup: run `pnpm install --frozen-lockfile`, then `pnpm --filter @workspace/db run setup`. Populated imports require their matching migration journal; see [safe database setup](docs/database-setup.md).
-- Routine merges do not install dependencies, migrate, or seed. Explicit schema releases use `pnpm --filter @workspace/db run migrate`; canonical defaults are installed only with `setup` or `seed`.
-- On Replit, start the registered API Server and Group Budget Monitor artifact workflows; they inject the required ports and routing paths.
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm --filter @workspace/budget-monitor run dev` — run the web frontend
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run generate` — generate a migration for review; use the guarded `migrate` command to apply it. Do not use raw Drizzle migrate/push or reset migration journals.
-- Required env: `DATABASE_URL` — Postgres connection string; `REPLIT_ENTERPRISE_API_KEY` — Replit Enterprise API key (secret)
+- Use the registered API Server and Group Budget Monitor workflows; they provide ports and routing. Their commands are `pnpm --filter @workspace/api-server run dev` and `pnpm --filter @workspace/budget-monitor run dev`.
+- Checks: `pnpm run typecheck`, `pnpm run build`, and the relevant package's `test` script. Do not assume historical test results describe the current tree.
+- Fresh empty database setup: `pnpm install --frozen-lockfile`, then `pnpm --filter @workspace/db run setup`. Populated imports require their matching migration journal; see [database setup](docs/database-setup.md).
+- Routine merges do not install, migrate, or seed. Schema releases are explicit operator actions using the guarded `migrate` command; never repair migration history with raw push/reset commands.
+- [Full data sync](docs/full-data-sync.md) documents the separate data-only operator workflow, not permission to run it.
+- Required service configuration includes `DATABASE_URL` and `REPLIT_ENTERPRISE_API_KEY`. Use managed configuration for credentials and identities; no personal defaults belong here.
 
-## Stack
+The workspace uses TypeScript, pnpm, Express, PostgreSQL/Drizzle, and React/Vite. Main locations:
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Frontend: React + Vite, wouter, TanStack Query, shadcn/ui
-- Build: esbuild (CJS bundle)
+- `artifacts/api-server/`: API, Enterprise ingestion, accounting, authorization, and notifications.
+- `artifacts/budget-monitor/`: web app; Home is personal/team context, Org Insights is authorized account reporting, Spend is the analytical ledger, and Limits manages workspace-qualified current-cycle limits.
+- `artifacts/budget-walkthrough/`: walkthrough slides.
+- `lib/db/`: schema, migrations, and approved seed inputs.
+- `lib/api-spec/openapi.yaml`: API contract. Regenerate clients/validators with `pnpm --filter @workspace/api-spec run codegen` after contract edits.
 
-## Where things live
+## Product boundaries
 
-- `lib/api-spec/openapi.yaml` — API contract (source of truth); codegen → `lib/api-client-react` (hooks) and `lib/api-zod` (validation)
-- `lib/db/src/schema/` — DB tables for allocations, notifications, access, canonical team settings, auth, and durable daily usage facts
-- `artifacts/api-server/src/lib/ingest.ts` — the single scheduled ingest owner: directory refresh, daily usage replacement/backfill, reconciliation, threshold checks, and limit-policy work
-- `artifacts/api-server/src/lib/usage-store.ts` — memoized, DB-first reads over durable member/project/workspace/account daily facts, including coverage and freshness classification
-- `artifacts/api-server/src/lib/enterprise.ts` and `enterprise-directory-merge.ts` — Enterprise API admission plus canonical workspace → team → family → role-group directory construction
-- `artifacts/api-server/src/lib/checker.ts`, `notification-settings.ts`, and `email.ts` — threshold evaluation, the durable automated-email kill switch, recipient resolution, and AgentMail delivery
-- `artifacts/api-server/src/routes/monitor.ts` — authenticated route composition; concrete owners are the `monitor.groups-*`, `monitor.summary`, `monitor.teams`, `monitor.limits`, `monitor.alerts`, `monitor.admin`, `monitor.directory`, and export route modules
-- `artifacts/budget-monitor/` — web frontend (dashboard `/`, alerts `/alerts`, settings `/settings`); theme in `src/index.css`
+- Financial reporting uses canonical workspace-qualified totals. Overlapping memberships must not duplicate charges; unassigned spend stays reconcilable. Project attribution explains usage rather than replacing funding or alert totals.
+- Funding teams are defined by committed allocations and workspace/group mappings, not manager hierarchies or guessed names. Personal team context follows the effective person's actual memberships, not every team they administer.
+- Annual team allocations are planning baselines plus approved adjustments, separate from monthly Agent enforcement limits. The established funding term is **May 20, 2026–May 20, 2027, inclusive**; it does not roll forward automatically.
+- The approved starting allocation source is `lib/db/data/starting-team-allocations.json`: 29 teams, $771,620.02, PREPROD hidden. “Consumer Solutions” aliases “Customer Solutions”; it is not a second allocation. Initialization/imports must not overwrite later administrator edits.
+- Planning additions are local until Airtable is explicitly configured. Opening allocations are undated, not recurring monthly amounts. Historical connector handoffs do not establish a live integration.
+- Reporting ranges and forecast horizons do not redefine funding terms or billing cycles. Remaining/utilization requires matching scope, period, and sufficient observations; unknown is not zero, unlimited, or “not set.” Known recorded spend remains useful even when attribution is incomplete.
+- Full-term and billing-cycle budget comparisons use the whole authorized funding team across its mapped workspaces, with explicit full-team scope—not one workspace's contribution against the full budget. Annual funding uses all-service team spend; monthly limits use Agent-only spend in the verified billing cycle.
+- Replit member limits are workspace/user-scoped, not transferable pools. Current-cycle Agent consumption—not selected-range all-service spend—determines their remaining allowance. Read-only reconciliation is not authorization to write upstream limits; preserve explicit authorized application and deliberate operator overrides. Group-limit writes require revalidated explicit workspace/group targets, never name inference; legacy copies remain display-only.
+- Access is scope plus server capability, not a broad role label. Stable identity, revocation, and effective preview scope govern both reads and writes. Bootstrap/seed behavior must not undo revocation. Shared-team totals and alerts must not disclose out-of-scope spend; true-admin settings remain separate from managed-editor operations.
+- Automated email is disabled by default. Delivery uses configured, authorized recipients; unavailable/disabled delivery must not consume threshold fire state. Manual tests remain distinct from production alert history. Bootstrap and seeded administrator identities are environment configuration, never standing personal values.
 
-## Architecture decisions
+## Presentation and privacy
 
-- Enterprise traffic uses shared, header-driven rate-budget admission for interactive, scheduled, and backfill work. Every caller honors Retry-After and rate-limit reset boundaries; scheduled ingestion may fetch several independent workspace-days concurrently within that shared budget.
-- One advisory-locked ingest cycle runs at startup and every 10 minutes. It validates the fresh UTC roster, publishes three-day live usage in atomic slices, attempts billing metadata, rotates bounded current/older backfill and retries, reconciles pending units, runs dependent checks, and finally attempts optional project enrichment. Durable selection cursors survive restarts; facts and successful reconciliation checkpoints—not slice completion—determine remaining work.
-- Operator analytics sync: `pnpm --filter @workspace/api-server run ingest:full` (also the default `ingest:once`) is data-only and resumable. Explicit business-cycle behavior remains under `ingest:business-cycle`; the scheduler is unchanged. See `docs/full-data-sync.md` for coverage, progress, exit codes, and safe interruption.
-- Usage reads are durable-store first. A successful Postgres snapshot remains readable while refresh runs or fails; responses separately report missing/failed coverage, partial state, data age, and staleness. In-process memoization is invalidated after committed ingestion.
-- Ingestion request/time targets stop admission between atomic units, not midway through workspace-day replacement. Logs distinguish soft call targets from finite reserved pagination/retry ceilings. Do not describe soft targets as hard provider quotas; shared Enterprise admission and Retry-After remain authoritative.
-- Directory data is refreshed on a 15-minute freshness boundary, persisted, and returned stale-first so request authorization and views do not inherit Enterprise API latency.
-- Data views poll every 60 seconds independently of the ingest cadence. Numeric values from successful responses stay visible during refreshes; partial, stale, and request failures use deduplicated transient toasts that clear silently on recovery.
-- Canonical accounting is workspace-qualified. Stable group ownership deduplicates overlapping members, unmatched member/workspace charges remain visible in synthetic `No group` rows, and project attribution is explanatory rather than the source for allocations or alerts.
-- Billing period = the `interval.startTime` the Enterprise API resolves for `billingPeriod=current`; threshold fire state is keyed by (groupId, periodStart, threshold) in `fired_thresholds` so each threshold emails at most once per period and resets automatically on a new period.
-- Automated alert delivery is disabled by default and controlled by the persisted `automated_email_enabled` kill switch. When it is off, or email/recipients are unavailable, thresholds are not marked fired and can be evaluated again after operators restore delivery.
-- One email per check per group (highest due threshold) to avoid alert storms when a budget is first set on an already-over group.
-- Real production alerts use RBAC-derived recipients. Manual test delivery and any non-production fixed-recipient delivery use the verified address configured in `BOOTSTRAP_ADMIN_EMAIL`; they do not write Email Activity, fired-threshold, or delivery-claim state.
-- There is no personal default bootstrap or test recipient. If `BOOTSTRAP_ADMIN_EMAIL` is unset, the special test-email path is disabled. Non-production subjects receive a `[DEV]` prefix, and test sends also retain their `[TEST]` prefix.
-- Set `APP_BASE_URL` to the deployed app origin/base path to add safe group/team links to alert email; leave it unset to omit links.
-- Managed account editors are keyed by stable Replit user ID. When configured, the bootstrap editor is added once from the exact, verified OIDC email in `BOOTSTRAP_ADMIN_EMAIL`; a durable consumed marker prevents later logins from undoing admin revocation. An unset value grants no bootstrap access. Only true Enterprise account admins can manage the allowlist.
-- `APP_ADMIN_USER_IDS` is a comma-separated list of stable Replit user IDs seeded into the app-admin allowlist at server startup (and defensively at login). Seeded rows carry the placeholder email `seed-admin:<userId>` with no creator, and seeded users resolve as true account admins so a locked-out repl owner can reach the Access page. Seeding only inserts missing rows: revocation wins over seeding, so a seed ID revoked on the Access page is not re-granted on restart. Set it in development and production (currently `48871191`).
-- Team alerts use the same canonical, workspace-qualified rollup as dashboard team totals. Checks defer when required workspace facts are incomplete.
-- Workspace admins see read-only pools and rollups for teams represented in their scope. Account-wide alerts for teams spanning additional workspaces are omitted from their history to avoid exposing cross-workspace spend.
-- Authorization is scope plus capability, not a page-wide role shortcut: account, workspace-admin, team-admin, and member scopes are unions; true account admins retain access/settings and upstream group-limit authority, while managed editors receive only their explicit operational capabilities.
-- Annual team allocations are durable planning baselines plus approved adjustments. Derived or manual monthly Agent limits are a separate enforcement model; reconciliation is read-only and only an explicit authorized upstream apply can change a Replit hard-blocking limit.
-- The confirmed team funding period is May 20, 2026 through May 20, 2027, inclusive. Apply this fixed period to team budget balances and pacing; do not roll it forward automatically or substitute the selected reporting range. Incomplete funding-team scope or budget-to-date usage withholds remaining and pacing comparisons.
-- Starting allocations use the user-approved 29-team list in `lib/db/data/starting-team-allocations.json` ($771,620.02; PREPROD hidden). “Consumer Solutions” is a confirmed alias of the canonical “Customer Solutions” team, not another allocation.
-- Monthly planning additions are entered locally until Airtable is explicitly configured. Opening allocations are undated, not repeated monthly. The one-time import scripts are not startup jobs and must not overwrite later administrator edits.
+Keep Budget Monitor's Comcast-inspired operational identity, not an invented official design system. Current user-supplied designs and requirements take precedence over optional style defaults; a reference design does not authorize financial or access-model changes.
 
-## Product
+Detailed coverage, attribution, and methodology explanations belong in the effective-admin-only Data quality panel, **not ordinary chart badges, tooltips, or repeated footnotes**. The user rejected those inline coverage labels. Keep essential periods, value/basis labels, missing-value gaps, “Unavailable,” and actionable errors visible; do not imply that incomplete observations are complete balances.
 
-- Home pairs personal spend with its workspace limit and team spend with its funding allocation, followed by the team's budget trajectory and monthly comparison charts. The approved direction combines the paired-panel and trajectory mockups, without their illustrative data or demo controls. Organization-wide reporting belongs in Org Insights, not Home, including for account admins. Team panels use the caller's actual funding-team memberships, not every team they administer or can access. Spend remains the analytical ledger and Limits manages current-cycle member Agent limits; preserve existing route and query contracts.
-- Home has exactly two shared filters in its top-right header: Workspace and Period. Workspace selects personal usage and the user's funding-team membership. Personal metrics and selected-range contribution reports follow both filters. Full-term and billing-cycle budget comparisons use the whole authorized funding team across its mapped workspaces, explicitly labeled as full-team scope, rather than comparing one workspace's contribution with the full budget. Do not add independent workspace, funding-team, or benchmark controls inside cards. Annual funding uses all-service team spend; monthly limits use Agent-only spend in the verified billing cycle. Budget amounts remain tied to their actual funding/billing terms; mismatched selected periods must not produce misleading remaining balances or utilization.
-- Home's personal and team spend stories are cumulative line charts comparing the selected period and two preceding comparable periods, aligned by period day. Billing-cycle comparisons apply when Billing period is selected, not independently of the header. This is an intentional exception to bar charts elsewhere; missing historical data must remain visibly unavailable.
-- Org Insights is a top-level full-account view for authorized account readers, separate from Home's workspace filters. Put organization summary cards first, then an overlaid team-budget trajectory for the confirmed funding term. Compare each team's utilization against its own allocation; preserve dollar details, partial coverage, and unassigned-spend reconciliation.
-- Personal Overview identifies budgeted team, allocated workspace, and explicit group memberships independently of account-administration privileges. Prefer the committed team target workspace over duplicate legacy memberships; label intentional historical views and clear inherited workspace selection when the effective person changes.
-- Spend is the primary analytical reporting view, organized as budgeted team → workspace → groups → members. Custom Reports is consolidated into Spend; preserve existing report links and their team/range/scope selections. Child spend must reconcile to canonical parent totals without duplicating charges for overlapping memberships.
-- Keep spend drill-downs read-only for people limits and link to the workspace-qualified Limits editor. Use its existing review/commit/retry flow rather than introducing parallel inline or bulk write paths. Preserve ongoing baseline policies as distinct from one-time edits.
-- Prefer deleting unreachable or duplicate UI over adding abstraction or automation. Preserve compatibility redirects, accounting qualifications, and authorization boundaries; simpler presentation must not turn unavailable data into zero or “not set.”
-- Dashboard: canonical workspace → team → family → role-group spend for a selectable range (billing period / MTD / YTD / custom dates), allocations, remaining budget, % used, account-wide summary stats, and a `Data as of` usage timestamp.
-- Group drill-down (`/groups/:groupId`): per-member Monthly Agent limit (workspace user limit or workspace default), usage, remaining, % used, role; reconciliation footer (member spend + unattributed = group total). Monthly Agent limit · resets on billing cycle day · hard block.
-- Group accounting merges two sources: app allocations (set in this tool, used for email alerting) and platform limits read from the Enterprise `/budgets` API (`workspace_group_limit`); `budgetSource` distinguishes them. Platform limits are Monthly Agent limits that reset on the billing cycle day and hard-block paid services.
-- Alerts: group/team history with configured pool and spend, plus an account-operator "run check now" action and, when configured, bootstrap-admin-only fixed-recipient test examples.
-- Settings: true-admin-only notification recipients, managed editor allowlist, and system status; the configured bootstrap administrator can access the predefined email-test console.
+Development identity viewing is explicit, read-only, and private: anyone reaching that development preview can read data available through its directory picker. Never auto-select a person, grant authority from preview controls, or allow the no-login path in production. Missing identities fail closed, and identity changes must not reuse another person's protected data.
 
-## User preferences
+Public walkthroughs and screenshots use clearly labeled sample data, never live identities or financial details.
 
-- Comcast-inspired operational presentation: monochrome working surfaces, electric blue used selectively, Montserrat headings and Lato body text. This is a dashboard adaptation of public inspiration, not an official Comcast design-system implementation. Keep Budget Monitor identity; use no invented corporate logo or proprietary font binaries.
-- Reduce visible decisions: one compact Spend toolbar, a focused Overview rather than a second ledger, and responsive Groups/Members cards for Limits with editing revealed contextually. No reporting-range control in Limits.
-
-## Development identity viewing
-
-- Keep the logged-out screen minimal: logo, app name, Log in, and the optional preview picker. This is an internal tool entry point, not a marketing page; do not reintroduce hero copy, photos, or explanatory paragraphs.
-- Normal API development startup uses `NODE_ENV=development` and offers an optional **Preview as someone** picker beside normal login. A fresh tab never chooses an identity automatically: search the configured Enterprise directory or click Random. Explicit choices persist in that tab across refreshes. Once inside, the View-As chip switches people or exits preview.
-- Real Replit login remains available without disabling development preview. Only explicitly selected preview requests use the development identity; exiting clears preview headers and protected caches and returns to normal authentication. This separation prevents silently mistaking another person's view for the signed-in user's account.
-- This mode is strictly read-only: the server rejects mutations even when viewing an administrator or when requests are forged. The directory-derived identity determines actual visible scopes; the chip does not grant builder-preview or account-wide authority.
-- **Keep the development preview private. Anyone who can reach it can read data available through its directory picker, without logging in.** This is not a way to share a public demo.
-- The server requires explicit development runtime and no deployment marker. Production/test/unset runtime and Replit deployment mode cannot enable the no-login path, including through saved selections, client flags, headers, or cookies. Production frontend builds exclude the chip.
-- Unavailable/empty directory data and removed selections fail closed. Retry or choose another available user; no synthetic people or OAuth redirects are substituted.
-- Run the standalone browser checks with `pnpm --filter @workspace/budget-monitor exec playwright test --config playwright.development.config.ts`. They use sample identities and do not require OAuth or real directory writes.
-
-## Gotchas
-
-- After editing `lib/api-spec/openapi.yaml`, run codegen before touching server or frontend code. Avoid `format: email` in the spec — Orval emits `zod.email()` which doesn't exist in zod v3 index typings.
-- Express 5: async handlers must be `Promise<void>`; use `res.status().json(); return;`.
+Historical plans and dated verification reports are evidence, not current instructions or authorization. Consult the current request and task status before acting on them.

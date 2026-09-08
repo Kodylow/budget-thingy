@@ -1,5 +1,8 @@
 ## Budget Monitor: your practical walkthrough
 
+This is user-facing walkthrough guidance, not a verification report or evidence
+of current deployment status.
+
 - For Comcast members and team administrators
 - Find your spending and current projects
 - Understand funding, monthly Agent limits, and the actions your role permits
