@@ -1,10 +1,13 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, CartesianGrid, ReferenceLine
 } from 'recharts';
 import { OrgBudgetOverviewResponse } from '@workspace/api-client-react';
 import { formatUsd } from '@/pages/home-components/format';
+import { hasCompatibleOrgChartInput } from './org-chart-input';
+import { OrgChartUnavailable } from './org-chart-recovery';
+import { reportRenderFailure } from '@/lib/render-diagnostics';
 
 import {
   getFundedTeams,
@@ -22,24 +25,22 @@ const CHART_COLORS = [
   "#c026d3", "#0284c7", "#16a34a", "#ea580c", "#4338ca"
 ];
 
-export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
-  const fundedTeams = useMemo(() => getFundedTeams(data.teams), [data.teams]);
+export function OrgBudgetChart({ data, onRetry }: {
+  data: OrgBudgetOverviewResponse;
+  onRetry: () => Promise<void>;
+}) {
+  const compatible = hasCompatibleOrgChartInput(data);
+  const fundedTeams = useMemo(() => compatible ? getFundedTeams(data.teams) : [], [compatible, data?.teams]);
+  useEffect(() => {
+    if (!compatible) reportRenderFailure(new Error('ORG_CHART_INPUT_INCOMPATIBLE'), { componentStack: '' }, 'org-budget-chart');
+  }, [compatible]);
   
   const [selectedTeamIds, setSelectedTeamIds] = useState<Set<string>>(() => new Set());
   const [showTotal, setShowTotal] = useState(true);
   const availableSelection = new Set([...selectedTeamIds].filter(id => fundedTeams.some(team => team.id === id)));
-  if (availableSelection.size !== selectedTeamIds.size) {
+  if (compatible && availableSelection.size !== selectedTeamIds.size) {
     setSelectedTeamIds(availableSelection);
   }
-  const total: OrgChartSeries = {
-    id: TOTAL_SERIES_ID,
-    name: 'Total',
-    allocationUsd: data.summary.teamAllocationUsd,
-    spendUsd: data.summary.accountSpendUsd,
-    complete: data.complete,
-    points: data.accountPoints,
-  };
-
   const teamColors = useMemo(() => {
     const map = new Map<string, string>([[TOTAL_SERIES_ID, '#0D62FF']]);
     fundedTeams.forEach(t => {
@@ -50,6 +51,15 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
   }, [fundedTeams]);
 
   const selectedTeams = useMemo(() => fundedTeams.filter(t => selectedTeamIds.has(t.id)), [fundedTeams, selectedTeamIds]);
+  if (!compatible) return <OrgChartUnavailable incompatible onRetry={onRetry} />;
+  const total: OrgChartSeries = {
+    id: TOTAL_SERIES_ID,
+    name: 'Total',
+    allocationUsd: data.summary.teamAllocationUsd,
+    spendUsd: data.summary.accountSpendUsd,
+    complete: data.complete,
+    points: data.accountPoints,
+  };
   const selectedSeries = [...(showTotal ? [total] : []), ...selectedTeams];
   const chartData = buildOrgBudgetChartData(data, selectedSeries);
   const hasChartValues = chartData.some(row => Object.values(row.values).some(value => value.actual !== null || value.benchmark !== null));

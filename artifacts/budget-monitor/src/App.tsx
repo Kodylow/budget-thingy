@@ -1,4 +1,4 @@
-import React, { Component, lazy, Suspense, useEffect, useLayoutEffect, type ErrorInfo, type ReactNode } from 'react';
+import React, { Component, lazy, Suspense, useEffect, useLayoutEffect, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -21,6 +21,7 @@ import { previewScopedQueryHash } from '@/lib/preview-query-cache';
 import { createForbiddenRevalidator } from '@/lib/auth-transition';
 import { resolvedRootDestination, safeLoginReturnTarget } from '@/lib/login-navigation';
 import { UnavailableObserver } from '@/components/unavailable-observer';
+import { reportRenderFailure } from '@/lib/render-diagnostics';
 
 const Dashboard = lazy(() => import('@/pages/dashboard'));
 const Home = lazy(() => import('@/pages/home'));
@@ -330,11 +331,8 @@ export class RootErrorBoundary extends Component<{ children: ReactNode }, RootEr
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('ui_render_failed', {
-      errorType: error instanceof TypeError ? 'TypeError' : 'RenderError',
-      componentStack: info.componentStack,
-    });
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    reportRenderFailure(error, info, 'root');
   }
 
   render() {

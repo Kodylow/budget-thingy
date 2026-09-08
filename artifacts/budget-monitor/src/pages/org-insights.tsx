@@ -7,6 +7,7 @@ import { AlertTriangle, RefreshCw, Target, DollarSign, Download, Users, Briefcas
 import { formatFinancialUsd } from "@/lib/financial-format";
 import { InsightCard, OrgBudgetChart, OrgTeamsTable } from "./org-insights-components";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
+import { OrgChartBoundary } from "./org-chart-recovery";
 
 export default function OrgInsights() {
   const { capabilities } = useAuthContext();
@@ -59,6 +60,10 @@ function OrgInsightsView() {
 
   const { summary, complete, qualification, periodStart, periodEnd } = displayData;
   const isPartial = !complete;
+  const retryChart = async () => {
+    const result = await refetch();
+    if (result.isError) throw new Error('Chart refresh failed');
+  };
 
   return (
     <div className="mx-auto max-w-[1400px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8">
@@ -139,7 +144,9 @@ function OrgInsightsView() {
       </section>
 
       {/* Main Chart */}
-      <OrgBudgetChart data={displayData} />
+      <OrgChartBoundary onRetry={retryChart}>
+        <OrgBudgetChart data={displayData} onRetry={retryChart} />
+      </OrgChartBoundary>
 
       {/* Teams Table */}
       <section className="min-w-0 space-y-4">

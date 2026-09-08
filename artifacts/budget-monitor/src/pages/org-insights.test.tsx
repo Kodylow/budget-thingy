@@ -1,7 +1,12 @@
-import React from 'react';
+// @vitest-environment happy-dom
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import OrgInsights from './org-insights';
+
+const chartFailure = vi.hoisted(() => ({ enabled: false }));
+vi.mock('@/lib/render-diagnostics', () => ({ reportRenderFailure: vi.fn() }));
 
 vi.mock('wouter', () => ({
   useLocation: () => ['/org-insights', vi.fn()],
@@ -19,7 +24,10 @@ vi.mock('@workspace/api-client-react', () => ({
 
 vi.mock('./org-insights-components', () => ({
   InsightCard: ({ title, value, testId }: any) => <div data-testid="insight-card"><span data-testid={testId}>{title}: {value}</span></div>,
-  OrgBudgetChart: () => <div data-testid="org-budget-chart" />,
+  OrgBudgetChart: () => {
+    if (chartFailure.enabled) throw new TypeError('chart fixture render exception');
+    return <div data-testid="org-budget-chart" />;
+  },
   OrgTeamsTable: () => <div data-testid="org-teams-table" />,
 }));
 
@@ -34,8 +42,56 @@ vi.mock('@/components/admin-data-quality', () => ({
 
 import { useAuthContext } from '@/components/auth-context';
 import { useGetOrgBudgetOverview } from '@workspace/api-client-react';
+import { reportRenderFailure } from '@/lib/render-diagnostics';
+
+afterEach(() => { chartFailure.enabled = false; vi.restoreAllMocks(); });
 
 describe('OrgInsights', () => {
+  it('contains a genuine chart exception, keeps navigation/cards/table, and recovers with local retry', async () => {
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (useAuthContext as any).mockReturnValue({ capabilities: { canViewAccountUsage: true } });
+    const refetch = vi.fn(async () => ({ isError: false }));
+    (useGetOrgBudgetOverview as any).mockReturnValue({
+      refetch, data: {
+        periodStart: '2026-05-20', periodEnd: '2027-05-20', complete: true,
+        summary: { accountSpendUsd: 75, teamAllocationUsd: 400, remainingUsd: 325, teamsOverBudget: 0 },
+        teams: [], accountPoints: [],
+      },
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const navigate = vi.fn();
+    chartFailure.enabled = true;
+    try {
+      await act(async () => root.render(<><nav><button onClick={navigate}>Navigation</button></nav><OrgInsights /></>));
+      expect(container.querySelector('[data-testid="org-chart-unavailable"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="org-card-account-spend"]')?.textContent).toContain('$75.00');
+      expect(container.querySelector('[data-testid="org-teams-table"]')).not.toBeNull();
+      await act(async () => container.querySelector('nav button')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      expect(navigate).toHaveBeenCalledOnce();
+      expect(reportRenderFailure).toHaveBeenCalledWith(expect.any(TypeError), expect.any(Object), 'org-budget-chart');
+      const retry = () => [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Retry chart')!;
+      // A repeated rendering error stays local; there is no automatic retry loop.
+      await act(async () => retry().click());
+      expect(refetch).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="org-chart-unavailable"]')).not.toBeNull();
+      // Failed refetch does not clear the boundary or pretend it recovered.
+      refetch.mockResolvedValueOnce({ isError: true });
+      await act(async () => retry().click());
+      expect(container.textContent).toContain('Chart refresh failed.');
+      expect(container.querySelector('[data-testid="org-teams-table"]')).not.toBeNull();
+      chartFailure.enabled = false;
+      await act(async () => retry().click());
+      expect(container.querySelector('[data-testid="org-chart-unavailable"]')).toBeNull();
+      expect(container.querySelector('[data-testid="org-budget-chart"]')).not.toBeNull();
+      expect(refetch).toHaveBeenCalledTimes(3);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
   it('renders forbidden view if canViewAccountUsage is false', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: false },

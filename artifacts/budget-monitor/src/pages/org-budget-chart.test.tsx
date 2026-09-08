@@ -96,7 +96,7 @@ const buttonFor = (name: string) =>
   [...container.querySelectorAll<HTMLButtonElement>('button')]
     .find(button => button.textContent?.includes(name))!;
 const render = async (data = makeData(teams)) => {
-  await act(async () => root.render(<OrgBudgetChart data={data} />));
+  await act(async () => root.render(<OrgBudgetChart data={data} onRetry={async () => {}} />));
 };
 
 beforeEach(() => {
@@ -116,6 +116,37 @@ afterEach(async () => {
 });
 
 describe('organization budget chart controls', () => {
+  it('handles missing accountPoints across response versions without changing selections or inventing totals', async () => {
+    await render();
+    await act(async () => buttonFor('Alpha team').click());
+    await act(async () => buttonFor('Total').click());
+    const incompatible = makeData(teams);
+    delete (incompatible as Partial<OrgBudgetOverviewResponse>).accountPoints;
+    await render(incompatible);
+    expect(container.querySelector('[data-testid="org-chart-unavailable"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="mock-line-chart"]')).toBeNull();
+    await render();
+    expect(buttonFor('Alpha team').getAttribute('aria-pressed')).toBe('true');
+    expect(buttonFor('Total').getAttribute('aria-pressed')).toBe('false');
+    await act(async () => buttonFor('Total').click());
+    const row = observed.data.find(item => item.date === '2026-06-01');
+    expect(observed.lines.get('Total Actual').dataKey(row)).toBe(75);
+  });
+
+  it.each([
+    { accountPoints: null },
+    { accountPoints: [{ date: '2026-06-01', spendUsd: '75' }] },
+    { accountPoints: [null] },
+    { asOf: 42 },
+    { periodStart: '2026-02-30' },
+    { teams: [{ ...teams[0], points: undefined }] },
+  ])('shows explicit unavailability for malformed chart data %j', async overrides => {
+    await render(makeData(teams, overrides as any));
+    expect(container.querySelector('[data-testid="org-chart-unavailable"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="mock-line-chart"]')).toBeNull();
+    await render();
+    expect(container.querySelector('[data-testid="mock-line-chart"]')).not.toBeNull();
+  });
   it('defaults to only Total using account actuals and allocated-team pace', async () => {
     await render();
 

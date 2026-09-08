@@ -96,7 +96,7 @@ const mockData: OrgBudgetOverviewResponse = {
 
 describe("OrgBudgetChart", () => {
   it("renders the chart shell without crashing (including >100% domains and null gaps)", () => {
-    const html = renderToStaticMarkup(<OrgBudgetChart data={mockData} />);
+    const html = renderToStaticMarkup(<OrgBudgetChart data={mockData} onRetry={async () => {}} />);
     expect(html).toContain("Budget Trajectory");
     expect(html).toContain("Total eligible account spend");
     expect(html).not.toContain("historical rosters were not observed");
@@ -104,7 +104,7 @@ describe("OrgBudgetChart", () => {
 
   it("keeps the Total selector when no teams are eligible", () => {
     const emptyData = { ...mockData, teams: [mockData.teams[2]] }; // Only zero budget team
-    const html = renderToStaticMarkup(<OrgBudgetChart data={emptyData} />);
+    const html = renderToStaticMarkup(<OrgBudgetChart data={emptyData} onRetry={async () => {}} />);
     expect(html).toContain(">Total</span>");
     expect(html).not.toContain(">Zero Budget Team</span>");
   });

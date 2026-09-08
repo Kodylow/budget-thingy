@@ -1,0 +1,11 @@
+{
+  "before": {
+    "documentCount": 1,
+    "socketCount": 1
+  },
+  "after": {
+    "documentCount": 2,
+    "socketCount": 2
+  },
+  "documentReloaded": true
+}
