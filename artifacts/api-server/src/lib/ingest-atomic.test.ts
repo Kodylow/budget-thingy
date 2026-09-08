@@ -197,6 +197,21 @@ test("grouped usage ingestion follows pagination.cursor across every page", asyn
   ]);
   expect(members.rows).toEqual([{ user_id: "member-1" }, { user_id: "member-2" }]);
   expect(projects.rows).toEqual([{ project_id: "project-1" }, { project_id: "project-2" }]);
+
+  const replay = await enterprise.withEnterpriseIngestAccess(
+    () => ingestWorkspaceDay(cursorWorkspaceId, usageDate),
+  );
+  expect(replay.ok).toBe(true);
+  const totals = await pool.query(
+    `select total_cost_usd,
+      (select sum(total_cost_usd) from usage_member_day
+        where workspace_id=$1 and usage_date=$2::date)::float8 as member_total,
+      (select sum(total_cost_usd) from usage_project_day
+        where workspace_id=$1 and usage_date=$2::date)::float8 as project_total
+     from usage_workspace_day where workspace_id=$1 and usage_date=$2::date`,
+    [cursorWorkspaceId, usageDate],
+  );
+  expect(totals.rows).toEqual([{ total_cost_usd: 12, member_total: 12, project_total: 12 }]);
 });
 
 test("a grouped page with the wrong interval cannot replace the last-good day", async () => {

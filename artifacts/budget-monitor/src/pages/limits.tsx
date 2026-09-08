@@ -227,7 +227,6 @@ function WorkspaceSelectionList({
     </div>
   );
 }
-
 function WorkspaceLimitsView({
   workspaceId, amountUsd, setAmountUsd, availableWorkspaces, setWorkspaceId, activeOperations, addOperation, removeOperation,
   activeOperationId, setActiveOperationId, isReadOnly, clearWorkspace, contextGroupIds,

@@ -77,7 +77,7 @@ router.get("/export/users.csv", async (req, res): Promise<void> => {
   const canonical = computeSnapshotUsageRollup({
     snapshot, groups: visible, membersByGroup: scopedMembers,
     internalUserIds: dir.internalUserIds,
-    projectInfoByWorkspace: projectMetadata.byWorkspace,
+    projectInfoByWorkspace: projectMetadata.attributionByWorkspace,
   });
 
   const sortedGroupsForCsv = [...exportGroups].sort(
@@ -288,7 +288,7 @@ router.get("/users/activity", async (req, res): Promise<void> => {
     groups: orderedGroups,
     membersByGroup: scopedMembers,
     internalUserIds: dir.internalUserIds,
-    projectInfoByWorkspace: projectMetadata.byWorkspace,
+    projectInfoByWorkspace: projectMetadata.attributionByWorkspace,
   });
   const userGroupAttr = canonicalUserAttribution(
     canonical,

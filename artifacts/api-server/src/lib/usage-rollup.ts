@@ -10,6 +10,37 @@ export interface RollupGroup {
 
 export interface RollupProjectInfo {
   creatorId: string | null;
+  provenance?: "current_catalog_observation" | "verified_historical";
+  observedAt?: number;
+}
+
+export type UsageAcquisitionCoverage = "complete" | "partial" | "unavailable";
+export type RosterAttributionBasis =
+  | "observed_roster"
+  | "current_roster"
+  | "current_membership";
+export type ProjectCreatorCoverage = "complete" | "partial" | "not_applicable";
+export type ProjectCreatorAttributionBasis =
+  | "verified_historical"
+  | "current_catalog_observation"
+  | "mixed"
+  | "unavailable"
+  | "not_applicable";
+export type ReportingFreshness = "fresh" | "stale" | "unavailable";
+
+export interface SnapshotReportingSemantics {
+  acquisitionCoverage: UsageAcquisitionCoverage;
+  rosterAttributionBasis: RosterAttributionBasis;
+  creatorCoverage: ProjectCreatorCoverage;
+  creatorAttributionBasis: ProjectCreatorAttributionBasis;
+  freshness: ReportingFreshness;
+  /** True only when allocation comparisons may be presented as verified. */
+  comparisonsVerified: boolean;
+  /** Per-workspace daily acquisition used for qualified scoped summaries. */
+  workspaceAcquisitionCoverage: ReadonlyMap<
+    string,
+    "complete" | "unavailable"
+  >;
 }
 
 export interface SnapshotProjectAttribution {
@@ -17,6 +48,7 @@ export interface SnapshotProjectAttribution {
   projectToGroup: Map<string, string>;
   spendByGroup: Map<string, number>;
   creatorByProject: Map<string, string | null>;
+  creatorBasisByProject: Map<string, ProjectCreatorAttributionBasis>;
   aiSpendByProject: Map<string, number>;
   nonAiSpendByProject: Map<string, number>;
   unattributedSpendUsd: number;
@@ -33,6 +65,7 @@ export function projectAttributionKey(
 }
 
 export interface SnapshotUsageRollup extends DedupedUsageRollup {
+  reporting: SnapshotReportingSemantics;
   /** Authoritative workspace spend before internal Replit usage is removed. */
   grossSpendUsd: number;
   /** Internal member Agent plus internal creator-attributed non-Agent spend. */
@@ -78,6 +111,7 @@ export interface SnapshotRollupInput {
     string,
     ReadonlyMap<string, RollupProjectInfo>
   >;
+  rosterAttributionBasis?: RosterAttributionBasis;
 }
 
 export interface HistoricalSnapshotRollupInput
@@ -226,6 +260,8 @@ export function computeSnapshotUsageRollup(
   const projectToGroup = new Map<string, string>();
   const projectSpendByGroup = new Map<string, number>();
   const creatorByProject = new Map<string, string | null>();
+  const creatorBasisByProject =
+    new Map<string, ProjectCreatorAttributionBasis>();
   const aiSpendByProject = new Map<string, number>();
   const nonAiSpendByProject = new Map<string, number>();
   let projectUnattributedSpendUsd = 0;
@@ -319,6 +355,12 @@ export function computeSnapshotUsageRollup(
       const info = projectInfo?.get(projectId);
       const creatorId = info?.creatorId ?? null;
       creatorByProject.set(projectKey, creatorId);
+      creatorBasisByProject.set(
+        projectKey,
+        creatorId === null
+          ? "unavailable"
+          : info?.provenance ?? "current_catalog_observation",
+      );
       const owner = creatorId === null ? undefined : owners.get(creatorId);
       const attributedNonAiSpendUsd = allocatable(nonAiSpendUsd);
       if (creatorId !== null) {
@@ -358,7 +400,9 @@ export function computeSnapshotUsageRollup(
         projectUnattributedSpendUsd += usage.totalCostUsd;
         (ungrouped as { spendUsd: number }).spendUsd += attributedNonAiSpendUsd;
       }
-      if (!info && nonAiSpendUsd > 1e-9) projectPendingCount += 1;
+      if ((!info || info.creatorId === null) && nonAiSpendUsd > 1e-9) {
+        projectPendingCount += 1;
+      }
     }
 
     const workspaceGrossSpendUsd =
@@ -407,8 +451,72 @@ export function computeSnapshotUsageRollup(
   const projectTotalSpendUsd = [...snapshot.projects.values()]
     .flatMap((projects) => [...projects.values()])
     .reduce((sum, project) => sum + project.totalCostUsd, 0);
+  const creatorRelevantSpendUsd = [...nonAiSpendByProject.values()]
+    .reduce((sum, spend) => sum + spend, 0);
+  const presentWorkspaceDays = snapshot.coverage.presentWorkspaceDays;
+  const acquisitionCoverage: UsageAcquisitionCoverage =
+    presentWorkspaceDays === 0
+      ? "unavailable"
+      : snapshot.coverage.failedWorkspaceDays.length > 0 ||
+          snapshot.coverage.missingWorkspaceDays.length > 0
+        ? "partial"
+        : "complete";
+  const rosterAttributionBasis =
+    input.rosterAttributionBasis ?? "current_roster";
+  const creatorCoverage: ProjectCreatorCoverage =
+    creatorRelevantSpendUsd <= 1e-9
+      ? "not_applicable"
+      : projectPendingCount > 0
+        ? "partial"
+        : "complete";
+  const relevantCreatorBases = [...nonAiSpendByProject]
+    .filter(([, spend]) => spend > 1e-9)
+    .map(([key]) => creatorBasisByProject.get(key) ?? "unavailable");
+  const knownCreatorBases = new Set(relevantCreatorBases.filter((basis) =>
+    basis !== "unavailable"));
+  const creatorAttributionBasis: ProjectCreatorAttributionBasis =
+    creatorRelevantSpendUsd <= 1e-9
+      ? "not_applicable"
+      : knownCreatorBases.size === 0
+        ? "unavailable"
+        : knownCreatorBases.size > 1
+          ? "mixed"
+          : [...knownCreatorBases][0]!;
+  const freshness: ReportingFreshness =
+    acquisitionCoverage === "unavailable"
+      ? "unavailable"
+      : snapshot.status === "stale" || snapshot.workspaceStatus === "stale"
+        ? "stale"
+        : "fresh";
+  const failedWorkspaceIds = new Set(
+    snapshot.coverage.failedWorkspaceDays.map((item) => item.workspaceId),
+  );
+  const workspaceAcquisitionCoverage = new Map(
+    scopedWorkspaceIds(snapshot).map((workspaceId) => [
+      workspaceId,
+      snapshot.workspaces.has(workspaceId) &&
+          !failedWorkspaceIds.has(workspaceId)
+        ? "complete" as const
+        : "unavailable" as const,
+    ]),
+  );
 
   return {
+    reporting: {
+      acquisitionCoverage,
+      rosterAttributionBasis,
+      creatorCoverage,
+      creatorAttributionBasis,
+      freshness,
+      comparisonsVerified:
+        acquisitionCoverage === "complete" &&
+        rosterAttributionBasis !== "current_membership" &&
+        creatorCoverage !== "partial" &&
+        (creatorAttributionBasis === "verified_historical" ||
+          creatorAttributionBasis === "not_applicable") &&
+        freshness === "fresh",
+      workspaceAcquisitionCoverage,
+    },
     byGroup,
     byUser,
     ungroupedByWorkspace,
@@ -444,6 +552,7 @@ export function computeSnapshotUsageRollup(
       projectToGroup,
       spendByGroup: projectSpendByGroup,
       creatorByProject,
+      creatorBasisByProject,
       aiSpendByProject,
       nonAiSpendByProject,
       unattributedSpendUsd: projectUnattributedSpendUsd,
@@ -544,12 +653,18 @@ export function computeHistoricalSnapshotUsageRollups(
       input.completedRosterDays.has(usageDate)
         ? input.rosterMembersByDate.get(usageDate) ?? new Map()
         : input.currentMembersByGroup;
+    const rosterAttributionBasis = usageDate >= input.currentUtcDay
+      ? "current_roster" as const
+      : input.completedRosterDays.has(usageDate)
+        ? "observed_roster" as const
+        : "current_membership" as const;
     result.set(usageDate, computeSnapshotUsageRollup({
       snapshot: usageSnapshotForDay(input.snapshot, usageDate),
       groups: input.groups,
       membersByGroup,
       internalUserIds: input.internalUserIds,
       projectInfoByWorkspace: input.projectInfoByWorkspace,
+      rosterAttributionBasis,
     }));
   }
   return result;

@@ -6,6 +6,7 @@ import {
   apiBillingPeriodCacheTable,
   apiBillingPeriodObservationTable,
   apiDirectoryCacheTable,
+  apiProjectCreatorEvidenceTable,
   apiProjectMetadataStateTable,
   apiProjectMetadataTable,
   familyTeamMappingsTable,
@@ -14,7 +15,7 @@ import {
   applyFamilyMappingBackfill,
   type DiscoveredFamilyMapping,
 } from "@workspace/db/seed-teams";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { logger } from "./logger";
 import {
   buildCanonicalAccountDirectory,
@@ -1436,6 +1437,37 @@ export async function refreshProjectMetadata(
     const completedAt = new Date();
     transactionStarted = true;
     await db.transaction(async (tx) => {
+      const creatorEvidence = projects.flatMap((project) =>
+        project.creatorId
+          ? [{
+              workspaceId,
+              projectId: project.id,
+              creatorId: project.creatorId,
+              firstObservedAt: completedAt,
+              lastObservedAt: completedAt,
+            }]
+          : []);
+      if (creatorEvidence.length > 0) {
+        await tx.insert(apiProjectCreatorEvidenceTable)
+          .values(creatorEvidence)
+          .onConflictDoUpdate({
+            target: [
+              apiProjectCreatorEvidenceTable.workspaceId,
+              apiProjectCreatorEvidenceTable.projectId,
+              apiProjectCreatorEvidenceTable.creatorId,
+            ],
+            set: {
+              firstObservedAt: sql`LEAST(
+                ${apiProjectCreatorEvidenceTable.firstObservedAt},
+                excluded.first_observed_at
+              )`,
+              lastObservedAt: sql`GREATEST(
+                ${apiProjectCreatorEvidenceTable.lastObservedAt},
+                excluded.last_observed_at
+              )`,
+            },
+          });
+      }
       await tx.delete(apiProjectMetadataTable)
         .where(eq(apiProjectMetadataTable.workspaceId, workspaceId));
       if (projects.length > 0) {
@@ -1614,6 +1646,37 @@ async function refreshAccountProjectMetadata(
       ...projects.map((project) => project.workspace!.id!),
     ]);
     await db.transaction(async (tx) => {
+      const creatorEvidence = projects.flatMap((project) =>
+        project.creatorId
+          ? [{
+              workspaceId: project.workspace!.id!,
+              projectId: project.id,
+              creatorId: project.creatorId,
+              firstObservedAt: completedAt,
+              lastObservedAt: completedAt,
+            }]
+          : []);
+      if (creatorEvidence.length > 0) {
+        await tx.insert(apiProjectCreatorEvidenceTable)
+          .values(creatorEvidence)
+          .onConflictDoUpdate({
+            target: [
+              apiProjectCreatorEvidenceTable.workspaceId,
+              apiProjectCreatorEvidenceTable.projectId,
+              apiProjectCreatorEvidenceTable.creatorId,
+            ],
+            set: {
+              firstObservedAt: sql`LEAST(
+                ${apiProjectCreatorEvidenceTable.firstObservedAt},
+                excluded.first_observed_at
+              )`,
+              lastObservedAt: sql`GREATEST(
+                ${apiProjectCreatorEvidenceTable.lastObservedAt},
+                excluded.last_observed_at
+              )`,
+            },
+          });
+      }
       await tx.delete(apiProjectMetadataTable)
         .where(inArray(apiProjectMetadataTable.workspaceId,
           [...observedWorkspaceIds]));

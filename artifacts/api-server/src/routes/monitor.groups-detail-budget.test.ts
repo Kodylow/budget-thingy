@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { buildFixedTeamBudgetTracking } from "./monitor.groups-detail";
+import { reportingSemanticsForGroups } from "../services/scoped-accounting";
 
 const now = new Date("2026-05-21T18:00:00.000Z");
 const spend = new Map([
   ["2026-05-20", 10],
   ["2026-05-21", 15],
 ]);
+const otherWorkspace = {
+  reporting: {
+    acquisitionCoverage: "complete",
+    rosterAttributionBasis: "observed_roster",
+    creatorCoverage: "not_applicable",
+    creatorAttributionBasis: "not_applicable",
+    freshness: "fresh",
+    comparisonsVerified: true,
+    workspaceAcquisitionCoverage: new Map([["other", "complete"]]),
+  },
+  projectAttribution: {
+    nonAiSpendByProject: new Map(),
+    projectToGroup: new Map(),
+    creatorBasisByProject: new Map(),
+  },
+} as any;
 
 describe("fixed team budget tracking", () => {
   it("enables balances and benchmark only for complete full-team usage", () => {
@@ -68,16 +85,20 @@ describe("fixed team budget tracking", () => {
       canonicalSpendUsd: 25,
       now,
     });
+
     expect(result.remainingUsd).toBeNull();
     expect(result.percentUsed).toBeNull();
     expect(result.benchmarkEligible).toBe(
-      scopeComplete && allocationUsd !== null && allocationUsd > 0,
+      scopeComplete &&
+        unavailableDays.size === 0 &&
+        allocationUsd !== null &&
+        allocationUsd > 0,
     );
     expect(result.qualification).not.toBeNull();
     if (!scopeComplete) expect(result.allocationUsd).toBeNull();
     if (unavailableDays.size > 0) {
       expect(result.points).toEqual([
-        { date: "2026-05-20", spendUsd: null },
+        { date: "2026-05-20", spendUsd: 10 },
         { date: "2026-05-21", spendUsd: 25 },
       ]);
     }
@@ -132,7 +153,7 @@ describe("fixed team budget tracking", () => {
     });
   });
 
-  it("keeps the annual benchmark eligible when known usage coverage is partial", () => {
+  it("withholds annual pacing when known usage coverage is partial", () => {
     expect(buildFixedTeamBudgetTracking({
       dailySpend: spend,
       unavailableDays: new Set(["2026-05-20"]),
@@ -149,7 +170,7 @@ describe("fixed team budget tracking", () => {
       remainingUsd: null,
       percentUsed: null,
       usageComplete: false,
-      benchmarkEligible: true,
+      benchmarkEligible: false,
     });
   });
 
@@ -202,6 +223,84 @@ describe("fixed team budget tracking", () => {
       remainingUsd: 40,
       percentUsed: 0,
       points: [{ date: "2026-05-20", spendUsd: 0 }],
+    });
+  });
+
+  it("renders current-membership spend without deriving allocation comparisons", () => {
+    const result = buildFixedTeamBudgetTracking({
+      dailySpend: spend,
+      unavailableDays: new Set(),
+      scopeComplete: true,
+      usageObserved: true,
+      allocationUsd: 100,
+      canonicalSpendUsd: 25,
+      now,
+      reporting: {
+        acquisitionCoverage: "complete",
+        rosterAttributionBasis: "current_membership",
+        creatorCoverage: "complete",
+        creatorAttributionBasis: "not_applicable",
+        freshness: "fresh",
+        valueBasis: "current_membership_qualified",
+        comparisonsVerified: false,
+      },
+    });
+    expect(result.points).toEqual([
+      { date: "2026-05-20", spendUsd: 10 },
+      { date: "2026-05-21", spendUsd: 25 },
+    ]);
+    expect(result.spendUsd).toBe(25);
+    expect(result.remainingUsd).toBeNull();
+    expect(result.percentUsed).toBeNull();
+    expect(result.benchmarkEligible).toBe(false);
+    expect(result.reporting.valueBasis).toBe("current_membership_qualified");
+  });
+
+  it("keeps known cumulative values after source gaps and reconciles the final point", () => {
+    const result = buildFixedTeamBudgetTracking({
+      dailySpend: new Map([
+        ["2026-05-21", 0],
+        ["2026-05-23", 7],
+      ]),
+      unavailableDays: new Set(["2026-05-20", "2026-05-22"]),
+      scopeComplete: true,
+      usageObserved: true,
+      allocationUsd: 100,
+      canonicalSpendUsd: 7,
+      now: new Date("2026-05-23T18:00:00.000Z"),
+    });
+    expect(result.points).toEqual([
+      { date: "2026-05-20", spendUsd: null },
+      { date: "2026-05-21", spendUsd: 0 },
+      { date: "2026-05-22", spendUsd: 0 },
+      { date: "2026-05-23", spendUsd: 7 },
+    ]);
+    expect(result.points.at(-1)?.spendUsd).toBe(result.spendUsd);
+  });
+});
+
+describe("empty reporting scopes", () => {
+  it("keeps an empty daily source unavailable", () => {
+    expect(reportingSemanticsForGroups(new Map(), [])).toEqual({
+      acquisitionCoverage: "unavailable",
+      rosterAttributionBasis: "observed_roster",
+      creatorCoverage: "not_applicable",
+      creatorAttributionBasis: "not_applicable",
+      freshness: "unavailable",
+      valueBasis: "unavailable",
+      comparisonsVerified: false,
+    });
+  });
+
+  it("does not borrow another workspace's observed usage", () => {
+    expect(reportingSemanticsForGroups(
+      new Map([["2026-05-20", otherWorkspace]]),
+      [],
+    )).toMatchObject({
+      acquisitionCoverage: "unavailable",
+      freshness: "unavailable",
+      valueBasis: "unavailable",
+      comparisonsVerified: false,
     });
   });
 });

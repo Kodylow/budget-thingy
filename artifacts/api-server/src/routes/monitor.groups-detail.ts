@@ -9,6 +9,7 @@ import { type IRouter, type Response, eq, desc, inArray, db, pool, groupBudgetsT
 import {
   buildScopedAccounting,
   buildBudgetTrackingPoints,
+  reportingSemanticsForGroups,
   canonicalTeamPoolId,
   canExposeCanonicalAllocation,
   currentCycleLimitMetrics,
@@ -66,6 +67,7 @@ export function buildFixedTeamBudgetTracking(input: {
   periodEnd?: string | null;
   periodLabel?: string;
   asOf?: string | null;
+  reporting?: ReturnType<typeof reportingSemanticsForGroups>;
 }) {
   const period = fixedTeamBudgetPeriodAsOf(input.now);
   const reportingStart = input.reportingStart ?? period.start;
@@ -86,15 +88,14 @@ export function buildFixedTeamBudgetTracking(input: {
   const usageComplete = input.scopeComplete &&
     input.usageObserved &&
     input.unavailableDays.size === 0;
+  const comparisonsVerified =
+    input.reporting?.comparisonsVerified ?? true;
   const comparisonsMatchBudgetWindow =
     input.comparisonsMatchBudgetWindow ?? true;
   const comparisonsEligible = comparisonsMatchBudgetWindow &&
-    usageComplete && input.allocationUsd !== null;
-  const benchmarkEligible = comparisonsMatchBudgetWindow &&
-    input.scopeComplete &&
-    input.allocationUsd !== null &&
-    input.allocationUsd > 0 &&
-    (input.budgetKind !== "monthly_agent" || usageComplete);
+    usageComplete && comparisonsVerified && input.allocationUsd !== null;
+  const benchmarkEligible =
+    comparisonsEligible && input.allocationUsd! > 0;
   const spendUsd = input.usageObserved ? input.canonicalSpendUsd : null;
   const qualification = !comparisonsMatchBudgetWindow
     ? !input.scopeComplete
@@ -137,6 +138,15 @@ export function buildFixedTeamBudgetTracking(input: {
     benchmarkEligible,
     comparisonsMatchBudgetWindow,
     qualification,
+    reporting: input.reporting ?? {
+      acquisitionCoverage: input.usageObserved ? "complete" : "unavailable",
+      rosterAttributionBasis: "observed_roster",
+      creatorCoverage: "not_applicable",
+      creatorAttributionBasis: "not_applicable",
+      freshness: input.usageObserved ? "fresh" : "unavailable",
+      valueBasis: input.usageObserved ? "verified" : "unavailable",
+      comparisonsVerified: input.usageObserved,
+    },
     points,
   };
 }
@@ -406,10 +416,16 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
       .filter((item) => requestedWorkspaceIds.has(item.workspaceId));
     const relevantFailed = accounting.usage.snapshot.coverage.failedWorkspaceDays
       .filter((item) => requestedWorkspaceIds.has(item.workspaceId));
-    const selectedComplete = requestedWorkspaceIds.size === 0 ||
+    const detailReporting = reportingSemanticsForGroups(
+      accounting.daily,
+      selections.flatMap((selection) => selection.sources),
+    );
+    const selectedComplete = requestedWorkspaceIds.size > 0 &&
       (accounting.usage.snapshot.workspaceStatus !== "empty" &&
         relevantMissing.length === 0 &&
         relevantFailed.length === 0);
+    const comparisonsVerified =
+      selectedComplete && detailReporting.comparisonsVerified;
     const currentWorkspaceComplete = new Map(
       [...new Set(selections.flatMap((selection) =>
         selection.sources.map((group) => group.workspaceId)))].map((workspaceId) => [
@@ -466,10 +482,11 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
         agentSpendUsd: components.agentSpendUsd,
         otherServicesUsd: components.otherServicesUsd,
         allocationUsd,
-        remainingUsd: selectedComplete && allocationUsd !== null
+        remainingUsd: comparisonsVerified && allocationUsd !== null
           ? allocationUsd - components.spendUsd
           : null,
-        percentUsed: selectedComplete && allocationUsd !== null && allocationUsd > 0
+        percentUsed: comparisonsVerified &&
+            allocationUsd !== null && allocationUsd > 0
           ? components.spendUsd / allocationUsd * 100
           : null,
         sharedPool: row?.sharedPool ?? false,
@@ -943,12 +960,19 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
         const relevantBudgetFailed =
           budgetAccounting.usage.snapshot.coverage.failedWorkspaceDays
             .filter((item) => fundingWorkspaceIds.has(item.workspaceId));
-        const unavailableDays = new Set([
-          ...relevantBudgetMissing.map((item) => item.usageDate),
-          ...relevantBudgetFailed.map((item) => item.usageDate),
+        const unavailableByWorkspaceDay = new Set([
+          ...relevantBudgetMissing.map((item) =>
+            `${item.workspaceId}\0${item.usageDate}`),
+          ...relevantBudgetFailed.map((item) =>
+            `${item.workspaceId}\0${item.usageDate}`),
         ]);
+        const unavailableDays = new Set([...budgetAccounting.daily.keys()]
+          .filter((date) => fundingWorkspaceIds.size > 0 &&
+            [...fundingWorkspaceIds].every((workspaceId) =>
+              unavailableByWorkspaceDay.has(`${workspaceId}\0${date}`))));
         const dailySpend = new Map<string, number>();
         for (const [date, rollup] of budgetAccounting.daily) {
+          if (unavailableDays.has(date.slice(0, 10))) continue;
           const components = qualifiedGroupSpendComponents(
             rollup,
             budgetPrepared.effectiveAuth,
@@ -975,8 +999,10 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
           });
         const billingUsageValid = verifiedBilling &&
           agentBreakdownComplete &&
-          unavailableDays.size === 0;
+          relevantBudgetMissing.length === 0 &&
+          relevantBudgetFailed.length === 0;
         if (billingTracking && !billingUsageValid) {
+          dailySpend.clear();
           for (
             let time = Date.parse(budgetAccounting.period.start);
             time < Date.parse(budgetAccounting.period.endExclusive);
@@ -1006,6 +1032,10 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
           canonicalSpendUsd: billingTracking
             ? budgetTeamRow?.agentSpendUsd ?? 0
             : budgetTeamRow?.spendUsd ?? 0,
+          reporting: reportingSemanticsForGroups(
+            budgetAccounting.daily,
+            trackingGroups,
+          ),
           budgetKind: billingTracking ? "monthly_agent" : "annual",
           workspaceCount: new Set(
             trackingGroups.map((group) => group.workspaceId),
@@ -1049,10 +1079,11 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
         agentSpendUsd,
         otherServicesUsd: teamRow?.otherServicesUsd ?? spendUsd - agentSpendUsd,
         allocationUsd,
-        remainingUsd: selectedComplete && allocationUsd !== null
+        remainingUsd: comparisonsVerified && allocationUsd !== null
           ? allocationUsd - spendUsd
           : null,
-        percentUsed: selectedComplete && allocationUsd !== null && allocationUsd > 0
+        percentUsed: comparisonsVerified &&
+            allocationUsd !== null && allocationUsd > 0
           ? spendUsd / allocationUsd * 100
           : null,
         memberCount: includeHierarchy

@@ -1,3 +1,10 @@
+# Diagnose before recovering history
+
+Use `pnpm --filter @workspace/api-server diagnose:history` for bounded,
+read-only coverage and reconciliation checks. Missing historical roster or
+creator evidence does not imply missing daily usage and is not a reason to
+re-sync complete financial facts. See [Historical spend](historical-spend.md).
+
 # Full analytics sync
 
 Run from the workspace root:

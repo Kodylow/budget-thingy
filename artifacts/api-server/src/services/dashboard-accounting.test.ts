@@ -52,6 +52,7 @@ test("personal catalog chooses freshest ownership and qualifies ambiguous duplic
         lastSuccessfulAt: secondObservedAt,
       }],
     ]),
+    attributionByWorkspace: new Map(),
     revision: "test",
   });
   const self = auth({});

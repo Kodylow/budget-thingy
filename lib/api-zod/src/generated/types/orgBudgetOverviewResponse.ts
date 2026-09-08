@@ -7,6 +7,7 @@
  */
 import type { OrgBudgetOverviewResponseSummary } from './orgBudgetOverviewResponseSummary';
 import type { OrgBudgetOverviewResponseTeamsItem } from './orgBudgetOverviewResponseTeamsItem';
+import type { ReportingSemantics } from './reportingSemantics';
 
 export interface OrgBudgetOverviewResponse {
   /** @pattern ^\d{4}-\d{2}-\d{2}$ */
@@ -19,6 +20,7 @@ export interface OrgBudgetOverviewResponse {
      */
   asOf: string | null;
   complete: boolean;
+  reporting: ReportingSemantics;
   /** @nullable */
   qualification: string | null;
   summary: OrgBudgetOverviewResponseSummary;

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { and, eq, inArray, like } from "drizzle-orm";
 import {
   db,
+  apiProjectCreatorEvidenceTable,
   apiProjectMetadataStateTable,
   apiProjectMetadataTable,
   groupRosterSnapshotDaysTable,
@@ -625,6 +626,92 @@ afterAll(async () => {
 });
 
 describe("authenticated scoped accounting HTTP endpoints", () => {
+  test("billing-cycle comparison retains removed-project attribution without widening scope", async () => {
+    const projectId = `${PREFIX}-removed-billing-project`;
+    const observedAt = new Date(`${TODAY}T12:00:00.000Z`);
+    await db.insert(apiProjectCreatorEvidenceTable).values([
+      {
+        workspaceId: W5,
+        projectId,
+        creatorId: DETAIL_MEMBER,
+        provenance: "current_catalog_observation",
+        firstObservedAt: observedAt,
+        lastObservedAt: observedAt,
+      },
+      {
+        workspaceId: W8,
+        projectId,
+        creatorId: INTERNAL_PEER,
+        provenance: "current_catalog_observation",
+        firstObservedAt: new Date(observedAt.getTime() + 1_000),
+        lastObservedAt: new Date(observedAt.getTime() + 1_000),
+      },
+    ]);
+    await db.insert(usageProjectDayTable).values({
+      workspaceId: W5,
+      usageDate: TODAY,
+      projectId,
+      totalCostUsd: 9,
+      metricsJson: [{
+        id: "hosting",
+        name: "Hosting",
+        category: "compute",
+        costUsd: 9,
+      }],
+      fetchedAt: observedAt,
+    });
+    await db.update(usageWorkspaceDayTable).set({
+      totalCostUsd: 39,
+      memberUnattributableUsd: 9,
+    }).where(and(
+      eq(usageWorkspaceDayTable.workspaceId, W5),
+      eq(usageWorkspaceDayTable.usageDate, TODAY),
+    ));
+    invalidateUsageSnapshotMemo();
+    try {
+      const response = await get(
+        `/spend/billing-cycles?rangeType=custom&startDate=${TODAY}&endDate=${TODAY}`,
+        DETAIL_MEMBER,
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json() as {
+        hasTeams: boolean;
+        teamScope: string;
+        cycles: Array<{
+          points: Array<{
+            teamSpendUsd: number | null;
+          }>;
+        }>;
+      };
+      expect(body).toMatchObject({ hasTeams: true, teamScope: "partial" });
+      expect(body.cycles.flatMap((cycle) => cycle.points)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            teamSpendUsd: 19,
+          }),
+        ]),
+      );
+      expect(JSON.stringify(body)).not.toContain(COWORKER);
+      expect(JSON.stringify(body)).not.toContain(W3);
+    } finally {
+      await db.delete(apiProjectCreatorEvidenceTable).where(
+        eq(apiProjectCreatorEvidenceTable.projectId, projectId),
+      );
+      await db.delete(usageProjectDayTable).where(and(
+        eq(usageProjectDayTable.workspaceId, W5),
+        eq(usageProjectDayTable.projectId, projectId),
+      ));
+      await db.update(usageWorkspaceDayTable).set({
+        totalCostUsd: 30,
+        memberUnattributableUsd: 0,
+      }).where(and(
+        eq(usageWorkspaceDayTable.workspaceId, W5),
+        eq(usageWorkspaceDayTable.usageDate, TODAY),
+      ));
+      invalidateUsageSnapshotMemo();
+    }
+  });
+
   test("personal internal usage is self-only across dashboard, people, and projects", async () => {
     const dashboardResponse = await get(
       `/dashboard?viewScope=my&${RANGE}`,
@@ -903,7 +990,7 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
         id: `pool:team:${encodeURIComponent(ZERO_SPEND_TEAM)}`,
         spendUsd: 0,
         allocationUsd: 240,
-        remainingUsd: 240,
+        remainingUsd: null,
         usageObserved: true,
       })]);
 
@@ -1881,7 +1968,7 @@ describe("authenticated group detail qualification", () => {
       percentUsed: null,
       scopeComplete: true,
       usageComplete: false,
-      benchmarkEligible: true,
+      benchmarkEligible: false,
     });
     expect(value.budgetTracking.qualification).toMatch(/budget-to-date window/i);
     expect(value.budgetTracking.points.at(-1)).toEqual({
@@ -1947,9 +2034,9 @@ describe("authenticated group detail qualification", () => {
       headline: {
         spendUsd: 0,
         allocationUsd: 240,
-        remainingUsd: 240,
+        remainingUsd: null,
         memberCount: 0,
-        isComplete: true,
+        isComplete: false,
         usageObserved: true,
       },
       metadata: { status: "complete", coverage: { ratio: 1 } },

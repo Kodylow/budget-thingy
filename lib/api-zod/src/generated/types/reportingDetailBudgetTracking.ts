@@ -7,6 +7,7 @@
  */
 import type { ReportingDetailBudgetTrackingBudgetKind } from './reportingDetailBudgetTrackingBudgetKind';
 import type { ReportingDetailBudgetTrackingPointsItem } from './reportingDetailBudgetTrackingPointsItem';
+import type { ReportingSemantics } from './reportingSemantics';
 
 export type ReportingDetailBudgetTracking = {
   budgetKind: ReportingDetailBudgetTrackingBudgetKind;
@@ -60,5 +61,6 @@ export type ReportingDetailBudgetTracking = {
   comparisonsMatchBudgetWindow?: boolean;
   /** @nullable */
   qualification: string | null;
+  reporting: ReportingSemantics;
   points: ReportingDetailBudgetTrackingPointsItem[];
 };

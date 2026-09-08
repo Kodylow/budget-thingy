@@ -91,9 +91,9 @@ async function readCheckerUsage(dir: CheckerDirectory): Promise<CheckerUsage | n
     groups: dir.groups,
     membersByGroup: dir.groupMembers,
     internalUserIds: dir.internalUserIds,
-    projectInfoByWorkspace: projectMetadata.byWorkspace,
+    projectInfoByWorkspace: projectMetadata.attributionByWorkspace,
   });
-  if (!rollup.isComplete) return null;
+  if (!rollup.isComplete || !rollup.reporting.comparisonsVerified) return null;
   return {
     rollup,
     dataAsOf: new Date(snapshot.dataAsOf),

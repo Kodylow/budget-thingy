@@ -47,9 +47,15 @@ const CHART_COLORS = [
 interface ChartRow {
   date: string;
   day: number;
-  benchmark: number | null;
   [key: string]: number | string | boolean | null | undefined;
 }
+
+const basisLabel = (basis: OrgBudgetOverviewResponse["teams"][number]["reporting"]["valueBasis"]) =>
+  basis === "verified" ? "Verified"
+    : basis === "current_membership_qualified" ? "Current-membership qualified"
+    : basis === "current_catalog_qualified" ? "Current-catalog creator qualified"
+    : basis === "partial_known" ? "Recorded, partial coverage"
+    : "Unavailable";
 
 export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
   const [hiddenTeams, setHiddenTeams] = useState<Set<string>>(new Set());
@@ -77,32 +83,20 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
     if (data.asOf) dates.add(data.asOf.slice(0, 10));
 
     const sortedDates = [...dates].sort();
-    const startDay = data.periodStart ? dayNumber(data.periodStart) : null;
-    const endDay = data.periodEnd ? dayNumber(data.periodEnd) : null;
-    const duration = (startDay != null && endDay != null) ? endDay - startDay : -1;
-
     return sortedDates.map(date => {
-      const row: ChartRow = { date, day: dayNumber(date), benchmark: null };
+      const row: ChartRow = { date, day: dayNumber(date) };
 
       eligibleTeams.forEach((t, idx) => {
         const spend = pointsByTeam.get(t.id)?.get(date);
-        if (spend != null && t.allocationUsd != null && t.allocationUsd > 0) {
-          row[`t_${idx}_percent`] = (spend / t.allocationUsd) * 100;
+        if (spend != null) {
           row[`t_${idx}_spend`] = spend;
           row[`t_${idx}_allocation`] = t.allocationUsd;
           row[`t_${idx}_complete`] = t.complete;
           row[`t_${idx}_name`] = t.name;
         } else {
-          // Explicit null so connectNulls={false} yields a gap rather than dropping to 0
-          row[`t_${idx}_percent`] = null;
+          row[`t_${idx}_spend`] = null;
         }
       });
-
-      if (startDay != null && duration >= 0 && dayNumber(date) >= startDay && dayNumber(date) <= (endDay ?? Infinity)) {
-        const elapsed = dayNumber(date) - startDay;
-        // Inclusive bounds pacing logic: (elapsed + 1) / (duration + 1)
-        row.benchmark = Math.max(0, Math.min(100, ((elapsed + 1) / (duration + 1)) * 100));
-      }
       return row;
     });
   }, [data, eligibleTeams]);
@@ -125,7 +119,7 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
       <div className="flex justify-between items-start gap-4">
         <div>
           <h2 className="text-base font-semibold">Teams Budget Trajectory</h2>
-          <p className="text-xs text-muted-foreground mt-1">Cumulative spend as % of team allocation. Click legend to toggle.</p>
+          <p className="text-xs text-muted-foreground mt-1">Recorded cumulative spend. Click legend to toggle.</p>
         </div>
       </div>
 
@@ -149,11 +143,10 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
               tickLine={false}
               width={50}
               domain={[0, 'auto']}
-              tickFormatter={(v) => `${v}%`}
+              tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${Math.round(v)}`}
               tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
             />
             {asOfDate && <ReferenceLine x={dayNumber(asOfDate)} stroke="#0D62FF" strokeDasharray="4 4" label={{ value: 'As of', position: 'insideTopLeft', fontSize: 10, fill: '#0D62FF' }} />}
-            <ReferenceLine y={100} stroke="#ef4444" strokeDasharray="3 3" />
 
             <Tooltip
               cursor={{ stroke: '#CBD5E1', strokeDasharray: '4 4' }}
@@ -164,31 +157,23 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                     <div className="font-bold mb-3 pb-2 border-b">{dateLabel(Number(label))}</div>
                     <div className="flex flex-col gap-2">
                       {payload.map(p => {
-                        if (p.dataKey === 'benchmark') {
-                          return (
-                            <div key="benchmark" className="text-muted-foreground flex gap-4 justify-between border-t pt-2 mt-1">
-                              <span>Even-paced benchmark</span>
-                              <span>{Number(p.value).toFixed(1)}%</span>
-                            </div>
-                          );
-                        }
-                        const match = String(p.dataKey).match(/^t_(\d+)_percent$/);
+                        const match = String(p.dataKey).match(/^t_(\d+)_spend$/);
                         if (!match) return null;
 
                         const idx = parseInt(match[1], 10);
                         const spend = p.payload[`t_${idx}_spend`];
                         const alloc = p.payload[`t_${idx}_allocation`];
-                        const complete = p.payload[`t_${idx}_complete`];
                         const name = p.payload[`t_${idx}_name`];
+                        const team = eligibleTeams[idx];
                         return (
                           <div key={idx} className="flex gap-4 justify-between items-start" style={{ color: p.color }}>
                             <div className="flex flex-col">
                               <span className="font-semibold">{name}</span>
-                              {!complete && <span className="text-[10px] opacity-90 italic">Partial known lower bound</span>}
+                              {team && <span className="text-[10px] opacity-90 italic">{basisLabel(team.reporting.valueBasis)}</span>}
                             </div>
                             <div className="flex flex-col items-end text-right">
-                              <span className="font-mono font-semibold">{Number(p.value).toFixed(1)}%</span>
-                              <span className="text-[10px] font-mono opacity-80">{formatUsd(spend as number)} / {formatUsd(alloc as number)}</span>
+                              <span className="font-mono font-semibold">{formatUsd(spend as number)}</span>
+                              <span className="text-[10px] font-mono opacity-80">Funding: {formatUsd(alloc as number)}</span>
                             </div>
                           </div>
                         );
@@ -202,19 +187,13 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
             <Legend
               wrapperStyle={{ fontSize: 11, cursor: 'pointer', paddingTop: '16px' }}
               formatter={(value, entry: any) => {
-                if (entry.dataKey === 'benchmark') {
-                  return <span style={{ color: entry.color }}>Even-paced benchmark</span>;
-                }
-
                 let isHidden = false;
-                let isPartial = false;
-                const match = String(entry.dataKey).match(/^t_(\d+)_percent$/);
+                const match = String(entry.dataKey).match(/^t_(\d+)_spend$/);
                 if (match) {
                   const idx = parseInt(match[1], 10);
                   const team = eligibleTeams[idx];
                   if (team) {
                      isHidden = hiddenTeams.has(team.id);
-                     isPartial = !team.complete;
                   }
                 }
                 return (
@@ -228,28 +207,17 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                     color: isHidden ? 'var(--muted-foreground)' : entry.color,
                     textDecoration: isHidden ? 'line-through' : 'none'
                   }}>
-                    {value} {isPartial && !isHidden && <span className="text-[10px] opacity-75 font-normal ml-1">(Partial lower bound)</span>}
+                    {value}
                   </button>
                 );
               }}
-            />
-
-            <Line
-              type="linear"
-              dataKey="benchmark"
-              name="Benchmark"
-              stroke="#64748B"
-              strokeWidth={2}
-              strokeDasharray="6 4"
-              dot={false}
-              isAnimationActive={false}
             />
 
             {eligibleTeams.map((team, idx) => (
               <Line
                 key={team.id}
                 type="monotone"
-                dataKey={`t_${idx}_percent`}
+                dataKey={`t_${idx}_spend`}
                 name={team.name}
                 stroke={CHART_COLORS[idx % CHART_COLORS.length]}
                 strokeWidth={2}
@@ -266,7 +234,7 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
       </div>
       <div className="flex gap-2 bg-muted/20 px-4 py-3 mt-2 text-xs leading-relaxed text-muted-foreground rounded">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-        <span><b className="text-foreground">Planning benchmark, not a forecast.</b> The dashed line evenly paces verified funding across its budget-period boundaries. Partial known lines show lower bound spending.</span>
+        <span><b className="text-foreground">Recorded spend by reporting basis.</b> Current-membership qualified values apply today&apos;s qualified roster to dates without an observed roster. Verified remaining, utilization, and pacing stay unavailable until coverage is complete.</span>
       </div>
     </div>
   );
@@ -299,6 +267,7 @@ export function OrgTeamsTable({ teams }: { teams: OrgBudgetOverviewResponse['tea
                       {team.name}
                     </Link>
                     {!team.complete && <span className="text-[10px] text-amber-600 dark:text-amber-500">Partial data</span>}
+                    <span className="text-[10px] text-muted-foreground">{basisLabel(team.reporting.valueBasis)}</span>
                   </div>
                 </td>
                 <td className="p-3 text-right font-mono text-muted-foreground">

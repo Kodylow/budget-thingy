@@ -6,7 +6,7 @@ import {
   buildScopedAccounting,
   prepareScopedAccounting,
   qualifiedGroupSpendComponents,
-  qualifiedRollupTotals,
+  reportingSemanticsForGroups,
 } from "../services/scoped-accounting";
 import {
   fixedTeamBudgetPeriodAsOf,
@@ -16,7 +16,6 @@ import {
   isUsageGenerationUpdateActive,
 } from "../lib/usage-store";
 import { getConfigurationSnapshot } from "../lib/configuration-snapshot";
-import { getRosterHistory } from "../lib/history";
 import { projectAttributionKey } from "../lib/usage-rollup";
 import type {
   ProjectMetadataSnapshot,
@@ -56,18 +55,22 @@ export function projectCoverageGaps(input: {
   for (const [date, byWorkspace] of input.dailyProjects) {
     const rollup = input.dailyRollups.get(date);
     for (const [workspaceId, projects] of byWorkspace) {
-      const metadata = input.metadata.byWorkspace.get(workspaceId);
+      const attribution =
+        input.metadata.attributionByWorkspace?.get(workspaceId);
+      const currentCatalog = input.metadata.byWorkspace.get(workspaceId);
       for (const [projectId, usage] of projects) {
-        if (usage.totalCostUsd - usage.aiCostUsd <= 1e-9 ||
-            input.metadata.completeWorkspaceIds.has(workspaceId) &&
-              metadata?.has(projectId)) continue;
+        const retainedCandidate = attribution?.get(projectId);
+        const creatorId = retainedCandidate
+          ? retainedCandidate.creatorId
+          : currentCatalog?.get(projectId)?.creatorId ?? null;
+        if (usage.totalCostUsd - usage.aiCostUsd <= 1e-9) continue;
         const projectKey = projectAttributionKey(workspaceId, projectId);
         const groupId = rollup?.projectAttribution.projectToGroup.get(projectKey);
         const teamId = groupId ? input.teamByGroupId.get(groupId) : undefined;
         if (teamId) {
           byTeamDay.add(`${teamId}\0${date}`);
         } else if (
-          !metadata?.get(projectId)?.creatorId ||
+          !creatorId ||
           !rollup?.projectAttribution.creatorByProject.get(projectKey)
         ) {
           // Ownership is genuinely unknown. Any team sharing this workspace
@@ -109,12 +112,6 @@ router.get("/org-insights", async (req, res): Promise<void> => {
       authz, query, undefined, req.configurationSnapshot);
     const result = await buildScopedAccounting(
       authz, query, undefined, prepared);
-    const currentUtcDay = now.toISOString().slice(0, 10);
-    const roster = await getRosterHistory(
-      result.usage.groups.map((group) => group.id),
-      result.period.start.slice(0, 10),
-      period.asOf ?? period.periodStart,
-    );
     const currentConfiguration = await getConfigurationSnapshot();
     if (isUsageGenerationUpdateActive() ||
         getUsageSnapshotGeneration() !== prepared.usageGeneration ||
@@ -147,21 +144,22 @@ router.get("/org-insights", async (req, res): Promise<void> => {
         .filter((group): group is NonNullable<typeof group> => group !== undefined);
       const sourceWorkspaceIds = new Set(
         sourceGroups.map((group) => group.workspaceId));
+      const reporting = reportingSemanticsForGroups(result.daily, sourceGroups);
       const dailySpend = new Map<string, number>();
       const unavailableDays = new Set<string>();
       for (const [date, rollup] of result.daily) {
-        dailySpend.set(date, round(
-          qualifiedGroupSpendComponents(rollup, authz, sourceGroups).spendUsd));
-        const historicalRosterUnavailable = date < currentUtcDay &&
-          (!roster.completedDays.has(date) ||
-            sourceGroups.some((group) =>
-              !roster.membersByDate.get(date)?.has(group.id)));
-        if (historicalRosterUnavailable ||
-            [...sourceWorkspaceIds].some((workspaceId) =>
-              workspaceUnavailable.has(`${workspaceId}\0${date}`) ||
-              projectGaps.unknownWorkspaceDay.has(`${workspaceId}\0${date}`)) ||
-            projectGaps.byTeamDay.has(`${row.id}\0${date}`)) {
+        const missingWorkspaceCount = [...sourceWorkspaceIds].filter(
+          (workspaceId) =>
+            workspaceUnavailable.has(`${workspaceId}\0${date}`),
+        ).length;
+        if (sourceWorkspaceIds.size > 0 &&
+            missingWorkspaceCount === sourceWorkspaceIds.size) {
           unavailableDays.add(date);
+        } else {
+          dailySpend.set(date, round(
+            qualifiedGroupSpendComponents(
+              rollup, authz, sourceGroups,
+            ).spendUsd));
         }
       }
       const hasUsageScope = sourceGroups.length > 0 &&
@@ -170,8 +168,7 @@ router.get("/org-insights", async (req, res): Promise<void> => {
             !workspaceUnavailable.has(`${workspaceId}\0${date}`)));
       const complete = period.asOf !== null &&
         hasUsageScope &&
-        unavailableDays.size === 0 &&
-        !result.usage.snapshot.hasPersistentlyStaleRows &&
+        reporting.comparisonsVerified &&
         row.allocationUsd !== null;
       const spendUsd = period.asOf !== null && hasUsageScope
         ? row.spendUsd
@@ -189,6 +186,7 @@ router.get("/org-insights", async (req, res): Promise<void> => {
           ? round(row.spendUsd / row.allocationUsd * 100)
           : null,
         complete,
+        reporting,
         points: period.asOf === null
           ? []
           : hasUsageScope
@@ -225,11 +223,29 @@ router.get("/org-insights", async (req, res): Promise<void> => {
       periodEnd: period.periodEnd,
       asOf: period.asOf,
       complete,
+      reporting: reportingSemanticsForGroups(
+        result.daily,
+        result.usage.groups,
+      ),
       qualification: [
         "Amounts use canonical allocation-eligible committed usage.",
         "Remaining covers only eligible funded teams; it excludes unfunded residual and does not subtract unassigned account spend.",
         ...(period.asOf === null
           ? ["The confirmed allocation term has not started; usage is unavailable."]
+          : []),
+        ...(teams.some((team) =>
+          team.reporting.rosterAttributionBasis === "current_membership")
+          ? ["Recorded dates without observed roster snapshots use current-membership qualified attribution; this is not verified historical membership."]
+          : []),
+        ...(teams.some((team) =>
+          team.reporting.acquisitionCoverage === "partial")
+          ? ["Usage acquisition coverage is partial; recorded amounts remain visible and missing facts are not zero."]
+          : []),
+        ...(teams.some((team) =>
+          team.reporting.creatorAttributionBasis ===
+            "current_catalog_observation" ||
+          team.reporting.creatorAttributionBasis === "mixed")
+          ? ["Some creator attribution uses retained current-catalog observations; it is qualified current evidence, not verified historical ownership."]
           : []),
         ...(projectGaps.byTeamDay.size > 0
           ? ["Incomplete project metadata affects only the canonical teams identified by stored creator attribution."]

@@ -927,7 +927,7 @@ router.get("/directory/members", requireCapability("canManageAccess"), async (re
       groups: dir.groups,
       membersByGroup: dir.groupMembers,
       internalUserIds: dir.internalUserIds,
-      projectInfoByWorkspace: projectMetadata.byWorkspace,
+      projectInfoByWorkspace: projectMetadata.attributionByWorkspace,
     });
     const spendLoaded = canonical.isComplete;
     const members = [...dir.members.values()].map((m) => {

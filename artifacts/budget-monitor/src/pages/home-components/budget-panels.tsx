@@ -113,8 +113,8 @@ export function PersonalBudgetPanel({
 }
 
 export type TeamBudgetTracking =
-  Omit<ReportingDetailBudgetTracking, 'budgetKind' | 'workspaceCount'> &
-  Partial<Pick<ReportingDetailBudgetTracking, 'budgetKind' | 'workspaceCount'>>;
+  Omit<ReportingDetailBudgetTracking, 'budgetKind' | 'workspaceCount' | 'reporting'> &
+  Partial<Pick<ReportingDetailBudgetTracking, 'budgetKind' | 'workspaceCount' | 'reporting'>>;
 
 export function TeamBudgetPanel({
   team,
@@ -141,7 +141,10 @@ export function TeamBudgetPanel({
   const authorizedForPools = getAvailableSpendViews({ isAccountAdmin, isWorkspaceAdmin, isTeamAdmin, canEditAllocations: capabilities.canEditAllocations }).includes('pools');
 
   const [expanded, setExpanded] = useState(false);
-  const complete = comparisonsMatchBudgetWindow && tracking?.scopeComplete && tracking.usageComplete;
+  const complete = comparisonsMatchBudgetWindow &&
+    tracking?.reporting?.comparisonsVerified !== false &&
+    tracking?.scopeComplete &&
+    tracking.usageComplete;
   const monthlyAgent = tracking?.budgetKind === 'monthly_agent';
   const periodLabel = wholeBudgetMode && tracking?.periodLabel
     ? tracking.periodLabel
@@ -175,7 +178,10 @@ export function TeamBudgetPanel({
             <div className="flex flex-wrap items-end justify-between gap-4">
               {tracking.spendUsd != null && <div>
                 <p className="font-mono text-3xl font-semibold tracking-tight">{formatUsd(tracking.spendUsd)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{monthlyAgent ? 'Agent spend this billing period' : comparisonsMatchBudgetWindow ? 'Known spend to date' : 'Selected-period team spend'}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{monthlyAgent ? 'Agent spend this billing period' : comparisonsMatchBudgetWindow ? (tracking.usageComplete ? 'Spend to date' : 'Recorded spend to date') : 'Selected-period team spend'}</p>
+                {tracking.reporting?.valueBasis === 'current_membership_qualified' && <p className="mt-1 text-xs text-muted-foreground">Current-membership qualified</p>}
+                {tracking.reporting?.valueBasis === 'current_catalog_qualified' && <p className="mt-1 text-xs text-muted-foreground">Current-catalog creator qualified</p>}
+                {tracking.reporting?.valueBasis === 'partial_known' && <p className="mt-1 text-xs text-muted-foreground">Recorded, partial coverage</p>}
               </div>}
               {tracking.allocationUsd != null && <div className="text-right">
                 <p className="font-mono text-2xl font-semibold">{formatUsd(tracking.allocationUsd)}</p>

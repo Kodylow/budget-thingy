@@ -10,6 +10,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "ingest:once": "tsx ./src/ingest-once.ts",
     "ingest:full": "tsx ./src/ingest-once.ts --full-data",
+    "diagnose:history": "tsx ./src/diagnose-history.ts",
     "ingest:business-cycle": "tsx ./src/ingest-once.ts --business-cycle",
     "benchmark:warm": "NODE_ENV=development tsx ./src/benchmark-warm.ts",
     "test": "NODE_ENV=test LOG_LEVEL=silent vitest run",

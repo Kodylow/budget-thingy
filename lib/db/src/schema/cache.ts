@@ -65,6 +65,36 @@ export const apiProjectMetadataTable = pgTable(
   ],
 );
 
+/**
+ * Append-only workspace-qualified creator observations.  The current project
+ * catalog is replaceable; these rows are deliberately not, because historical
+ * usage continues to reference projects after removal or transfer.
+ *
+ * A row says only that the current catalog reported this creator at an
+ * observation time.  It does not assert that the creator owned the project
+ * before firstObservedAt.
+ */
+export const apiProjectCreatorEvidenceTable = pgTable(
+  "api_project_creator_evidence",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    projectId: text("project_id").notNull(),
+    creatorId: text("creator_id").notNull(),
+    provenance: text("provenance").notNull()
+      .default("current_catalog_observation"),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workspaceId, t.projectId, t.creatorId] }),
+    index("api_project_creator_evidence_workspace_project_idx")
+      .on(t.workspaceId, t.projectId),
+  ],
+);
+
+export type ApiProjectCreatorEvidence =
+  typeof apiProjectCreatorEvidenceTable.$inferSelect;
+
 /** Records even empty workspace project listings so they hydrate as complete. */
 export const apiProjectMetadataStateTable = pgTable("api_project_metadata_state", {
   workspaceId: text("workspace_id").primaryKey(),

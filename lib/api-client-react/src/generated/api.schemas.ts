@@ -52,6 +52,77 @@ export type OrgBudgetOverviewResponseTeamsItemPointsItem = {
   spendUsd: number | null;
 };
 
+export type ReportingSemanticsAcquisitionCoverage = typeof ReportingSemanticsAcquisitionCoverage[keyof typeof ReportingSemanticsAcquisitionCoverage];
+
+
+export const ReportingSemanticsAcquisitionCoverage = {
+  complete: 'complete',
+  partial: 'partial',
+  unavailable: 'unavailable',
+} as const;
+
+export type ReportingSemanticsRosterAttributionBasis = typeof ReportingSemanticsRosterAttributionBasis[keyof typeof ReportingSemanticsRosterAttributionBasis];
+
+
+export const ReportingSemanticsRosterAttributionBasis = {
+  observed_roster: 'observed_roster',
+  current_membership: 'current_membership',
+  mixed: 'mixed',
+} as const;
+
+export type ReportingSemanticsCreatorCoverage = typeof ReportingSemanticsCreatorCoverage[keyof typeof ReportingSemanticsCreatorCoverage];
+
+
+export const ReportingSemanticsCreatorCoverage = {
+  complete: 'complete',
+  partial: 'partial',
+  not_applicable: 'not_applicable',
+} as const;
+
+export type ReportingSemanticsCreatorAttributionBasis = typeof ReportingSemanticsCreatorAttributionBasis[keyof typeof ReportingSemanticsCreatorAttributionBasis];
+
+
+export const ReportingSemanticsCreatorAttributionBasis = {
+  verified_historical: 'verified_historical',
+  current_catalog_observation: 'current_catalog_observation',
+  mixed: 'mixed',
+  unavailable: 'unavailable',
+  not_applicable: 'not_applicable',
+} as const;
+
+export type ReportingSemanticsFreshness = typeof ReportingSemanticsFreshness[keyof typeof ReportingSemanticsFreshness];
+
+
+export const ReportingSemanticsFreshness = {
+  fresh: 'fresh',
+  stale: 'stale',
+  unavailable: 'unavailable',
+} as const;
+
+export type ReportingSemanticsValueBasis = typeof ReportingSemanticsValueBasis[keyof typeof ReportingSemanticsValueBasis];
+
+
+export const ReportingSemanticsValueBasis = {
+  verified: 'verified',
+  current_membership_qualified: 'current_membership_qualified',
+  current_catalog_qualified: 'current_catalog_qualified',
+  partial_known: 'partial_known',
+  unavailable: 'unavailable',
+} as const;
+
+/**
+ * Independent reporting dimensions. Recorded values remain usable when attribution is qualified, while verified funding comparisons require every dimension to be complete and fresh.
+ */
+export interface ReportingSemantics {
+  acquisitionCoverage: ReportingSemanticsAcquisitionCoverage;
+  rosterAttributionBasis: ReportingSemanticsRosterAttributionBasis;
+  creatorCoverage: ReportingSemanticsCreatorCoverage;
+  creatorAttributionBasis: ReportingSemanticsCreatorAttributionBasis;
+  freshness: ReportingSemanticsFreshness;
+  valueBasis: ReportingSemanticsValueBasis;
+  comparisonsVerified: boolean;
+}
+
 export type OrgBudgetOverviewResponseTeamsItem = {
   id: string;
   name: string;
@@ -64,6 +135,7 @@ export type OrgBudgetOverviewResponseTeamsItem = {
   /** @nullable */
   percentUsed: number | null;
   complete: boolean;
+  reporting: ReportingSemantics;
   /** @maxItems 367 */
   points: OrgBudgetOverviewResponseTeamsItemPointsItem[];
 };
@@ -79,6 +151,7 @@ export interface OrgBudgetOverviewResponse {
      */
   asOf: string | null;
   complete: boolean;
+  reporting: ReportingSemantics;
   /** @nullable */
   qualification: string | null;
   summary: OrgBudgetOverviewResponseSummary;
@@ -630,6 +703,7 @@ export type ReportingDetailBudgetTracking = {
   comparisonsMatchBudgetWindow?: boolean;
   /** @nullable */
   qualification: string | null;
+  reporting: ReportingSemantics;
   points: ReportingDetailBudgetTrackingPointsItem[];
 };
 

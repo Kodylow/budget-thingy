@@ -365,11 +365,18 @@ test("marks missing creator metadata incomplete only when non-Agent ownership is
     groups,
     membersByGroup: new Map([["a-group", ["creator"]]]),
     internalUserIds: new Set(),
-    projectInfoByWorkspace: new Map(),
+    projectInfoByWorkspace: new Map([["workspace-1", new Map([
+      ["hosting", {
+        creatorId: null,
+        provenance: "current_catalog_observation",
+      }],
+    ])]]),
   });
   expect(result.isComplete).toBe(false);
   expect(result.pendingCount).toBe(1);
   expect(result.ungroupedByWorkspace.get("workspace-1")?.spendUsd).toBe(9);
+  expect(result.reporting.creatorCoverage).toBe("partial");
+  expect(result.reporting.creatorAttributionBasis).toBe("unavailable");
 });
 
 test("caps observed attribution at workspace authority and reports reconciliation pending", () => {
@@ -520,9 +527,50 @@ test("rolls completed historical days with their roster and uncovered days with 
   expect(result.get("2026-08-01")?.byGroup.get("a-group")?.spendUsd).toBe(10);
   expect(result.get("2026-08-02")?.byGroup.get("a-group")?.spendUsd).toBe(20);
   expect(result.get("2026-08-03")?.byGroup.get("a-group")?.spendUsd).toBe(30);
+  expect(result.get("2026-08-01")?.reporting).toMatchObject({
+    acquisitionCoverage: "complete",
+    rosterAttributionBasis: "observed_roster",
+    comparisonsVerified: true,
+  });
+  expect(result.get("2026-08-02")?.reporting).toMatchObject({
+    acquisitionCoverage: "complete",
+    rosterAttributionBasis: "current_membership",
+    comparisonsVerified: false,
+  });
   expect(
     [...result.values()].reduce((sum, day) => sum + day.totalSpendUsd, 0),
   ).toBe(60);
+});
+
+test("uses workspace-qualified retained creator evidence for historical attribution", () => {
+  const result = computeSnapshotUsageRollup({
+    snapshot: snapshot({
+      workspaceIds: ["workspace-1"],
+      projects: new Map([["workspace-1", new Map([
+        ["moved-project", { totalCostUsd: 9, aiCostUsd: 0 }],
+      ])]]),
+      workspaces: new Map([["workspace-1", {
+        totalCostUsd: 9,
+        memberAttributableUsd: 9,
+        memberUnattributableUsd: 0,
+      }]]),
+    }),
+    groups: [groups[1]],
+    membersByGroup: new Map([["a-group", ["historical-creator"]]]),
+    projectInfoByWorkspace: new Map([["workspace-1", new Map([
+      ["moved-project", {
+        creatorId: "historical-creator",
+        provenance: "current_catalog_observation",
+        observedAt: Date.parse("2026-09-01T00:00:00Z"),
+      }],
+    ])]]),
+  });
+  expect(result.byGroup.get("a-group")?.spendUsd).toBe(9);
+  expect(result.projectAttribution.isComplete).toBe(true);
+  expect(result.reporting.creatorCoverage).toBe("complete");
+  expect(result.reporting.creatorAttributionBasis)
+    .toBe("current_catalog_observation");
+  expect(result.reporting.comparisonsVerified).toBe(false);
 });
 
 test("daily slices preserve missing account and failed workspace coverage", () => {

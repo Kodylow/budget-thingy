@@ -411,7 +411,7 @@ export async function usageForRequest(
       groups,
       membersByGroup: visibleGroupMembers(authz, dir.groupMembers),
       internalUserIds: dir.internalUserIds,
-      projectInfoByWorkspace: projectMetadata.byWorkspace,
+      projectInfoByWorkspace: projectMetadata.attributionByWorkspace,
     }),
     projectMetadata,
   };
@@ -482,7 +482,7 @@ export async function dailyUsageRollups(
       internalUserIds: dir.internalUserIds,
       completedRosterDays: roster.completedDays,
       rosterMembersByDate: visibleRosterMembers(usage.authz, roster.membersByDate),
-      projectInfoByWorkspace: usage.projectMetadata.byWorkspace,
+      projectInfoByWorkspace: usage.projectMetadata.attributionByWorkspace,
     });
   });
   byScope.set(key, computed);

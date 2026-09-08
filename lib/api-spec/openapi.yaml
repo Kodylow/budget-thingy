@@ -2941,7 +2941,7 @@ components:
           type: [string, "null"]
     OrgBudgetOverviewResponse:
       type: object
-      required: [periodStart, periodEnd, asOf, complete, qualification, summary, teams]
+      required: [periodStart, periodEnd, asOf, complete, reporting, qualification, summary, teams]
       properties:
         periodStart:
           type: string
@@ -2954,6 +2954,8 @@ components:
           pattern: '^\d{4}-\d{2}-\d{2}$'
         complete:
           type: boolean
+        reporting:
+          $ref: "#/components/schemas/ReportingSemantics"
         qualification:
           type: ["string", "null"]
         summary:
@@ -2975,7 +2977,7 @@ components:
           maxItems: 1000
           items:
             type: object
-            required: [id, name, allocationUsd, spendUsd, remainingUsd, percentUsed, complete, points]
+            required: [id, name, allocationUsd, spendUsd, remainingUsd, percentUsed, complete, reporting, points]
             properties:
               id:
                 type: string
@@ -2991,6 +2993,8 @@ components:
                 type: ["number", "null"]
               complete:
                 type: boolean
+              reporting:
+                $ref: "#/components/schemas/ReportingSemantics"
               points:
                 type: array
                 maxItems: 367
@@ -3168,6 +3172,35 @@ components:
         endExclusive: { type: string, format: date-time }
         timezone: { type: string, const: UTC }
         label: { type: string }
+    ReportingSemantics:
+      type: object
+      additionalProperties: false
+      required: [acquisitionCoverage, rosterAttributionBasis, creatorCoverage, creatorAttributionBasis, freshness, valueBasis, comparisonsVerified]
+      description: >
+        Independent reporting dimensions. Recorded values remain usable when
+        attribution is qualified, while verified funding comparisons require
+        every dimension to be complete and fresh.
+      properties:
+        acquisitionCoverage:
+          type: string
+          enum: [complete, partial, unavailable]
+        rosterAttributionBasis:
+          type: string
+          enum: [observed_roster, current_membership, mixed]
+        creatorCoverage:
+          type: string
+          enum: [complete, partial, not_applicable]
+        creatorAttributionBasis:
+          type: string
+          enum: [verified_historical, current_catalog_observation, mixed, unavailable, not_applicable]
+        freshness:
+          type: string
+          enum: [fresh, stale, unavailable]
+        valueBasis:
+          type: string
+          enum: [verified, current_membership_qualified, current_catalog_qualified, partial_known, unavailable]
+        comparisonsVerified:
+          type: boolean
     AccountingMetadata:
       type: object
       required: [generationId, costBasis, status, dataAsOf, directoryDataAsOf, stale, coverage, qualifications, limitObservation]
@@ -3350,7 +3383,7 @@ components:
           description: Canonical pool name; present when kind is team.
         budgetTracking:
           type: object
-          required: [budgetKind, workspaceCount, periodStart, periodEnd, periodLabel, asOf, allocationUsd, spendUsd, remainingUsd, percentUsed, scopeComplete, usageComplete, benchmarkEligible, qualification, points]
+          required: [budgetKind, workspaceCount, periodStart, periodEnd, periodLabel, asOf, allocationUsd, spendUsd, remainingUsd, percentUsed, scopeComplete, usageComplete, benchmarkEligible, qualification, reporting, points]
           properties:
             budgetKind:
               type: string
@@ -3385,6 +3418,8 @@ components:
               type: boolean
               description: True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff.
             qualification: { type: ["string", "null"] }
+            reporting:
+              $ref: "#/components/schemas/ReportingSemantics"
             points:
               type: array
               items:

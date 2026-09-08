@@ -68,7 +68,14 @@ export function BudgetTrajectory({
   comparisonsMatchBudgetWindow: boolean;
 }) {
   const chartData = useMemo(() => tracking ? trajectoryChartData(tracking) : [], [tracking]);
-  const benchmarkEligible = Boolean(comparisonsMatchBudgetWindow && tracking?.benchmarkEligible && tracking.periodStart && tracking.periodEnd && tracking.allocationUsd != null);
+  const benchmarkEligible = Boolean(
+    comparisonsMatchBudgetWindow &&
+    tracking?.benchmarkEligible &&
+    tracking.reporting?.comparisonsVerified !== false &&
+    tracking.periodStart &&
+    tracking.periodEnd &&
+    tracking.allocationUsd != null,
+  );
   const hasActual = chartData.some((point) => typeof point.actual === 'number' && Number.isFinite(point.actual));
   const asOfDate = tracking?.asOf?.slice(0, 10) ?? null;
   const benchmarkAsOf = benchmarkEligible && asOfDate && tracking
@@ -94,7 +101,13 @@ export function BudgetTrajectory({
 
       {tracking && (
         <div className="grid gap-4 bg-muted/15 px-5 py-4 sm:grid-cols-3">
-          {tracking.spendUsd != null && <div><span className="text-xs text-muted-foreground">{comparisonsMatchBudgetWindow ? (tracking.usageComplete ? 'Spent to date' : 'Known spend to date') : (tracking.usageComplete ? 'Selected-period spend' : 'Known selected-period spend')}</span><strong className="mt-1 block font-mono text-xl">{formatUsd(tracking.spendUsd)}</strong></div>}
+          {tracking.spendUsd != null && <div>
+            <span className="text-xs text-muted-foreground">{comparisonsMatchBudgetWindow ? (tracking.usageComplete ? 'Spent to date' : 'Recorded spend to date') : (tracking.usageComplete ? 'Selected-period spend' : 'Recorded selected-period spend')}</span>
+            <strong className="mt-1 block font-mono text-xl">{formatUsd(tracking.spendUsd)}</strong>
+            {tracking.reporting?.valueBasis === 'current_membership_qualified' && <small className="mt-1 block text-muted-foreground">Current-membership qualified</small>}
+            {tracking.reporting?.valueBasis === 'current_catalog_qualified' && <small className="mt-1 block text-muted-foreground">Current-catalog creator qualified</small>}
+            {tracking.reporting?.valueBasis === 'partial_known' && <small className="mt-1 block text-muted-foreground">Recorded, partial coverage</small>}
+          </div>}
           {benchmarkEligible && benchmarkAsOf != null && <div><span className="text-xs text-muted-foreground">Even pace as of reporting date</span><strong className="mt-1 block font-mono text-xl">{formatUsd(benchmarkAsOf)}</strong></div>}
           {comparisonsMatchBudgetWindow && tracking.scopeComplete && tracking.usageComplete && tracking.remainingUsd != null && <div><span className="text-xs text-muted-foreground">Funding not yet spent</span><strong className={`mt-1 block font-mono text-xl ${tracking.remainingUsd < 0 ? 'text-destructive' : ''}`}>{formatUsd(tracking.remainingUsd)}</strong></div>}
         </div>
@@ -111,7 +124,7 @@ export function BudgetTrajectory({
         ) : tracking && chartData.length > 0 ? (
           <>
             <div className="mb-2 flex flex-wrap gap-5 text-xs text-muted-foreground">
-              {hasActual && <span className="inline-flex items-center gap-2"><i className="w-5 border-t-[3px] border-primary" />{tracking.usageComplete ? 'Actual cumulative spend' : 'Known cumulative spend'}</span>}
+              {hasActual && <span className="inline-flex items-center gap-2"><i className="w-5 border-t-[3px] border-primary" />{tracking.usageComplete ? 'Actual cumulative spend' : 'Recorded cumulative spend'}</span>}
                {benchmarkEligible && <span className="inline-flex items-center gap-2"><i className="w-5 border-t-2 border-dashed border-slate-500" />Even-paced benchmark</span>}
             </div>
             <div

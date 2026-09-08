@@ -294,7 +294,6 @@ function Router() {
     </AppShell>
   );
 }
-
 function AuthorizedRouter() {
   const { authorizationKey } = useAuthContext();
   return <Router key={authorizationKey} />;

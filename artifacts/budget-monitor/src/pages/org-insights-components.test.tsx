@@ -14,6 +14,15 @@ const mockData: OrgBudgetOverviewResponse = {
   periodEnd: "2027-05-20",
   asOf: "2026-06-15",
   complete: true,
+  reporting: {
+    acquisitionCoverage: "complete",
+    rosterAttributionBasis: "observed_roster",
+    creatorCoverage: "complete",
+    creatorAttributionBasis: "not_applicable",
+    freshness: "fresh",
+    valueBasis: "verified",
+    comparisonsVerified: true,
+  },
   qualification: null,
   summary: {
     accountSpendUsd: 15000,
@@ -31,6 +40,11 @@ const mockData: OrgBudgetOverviewResponse = {
       remainingUsd: -10000,
       percentUsed: 120, // >100%
       complete: true,
+      reporting: {
+        acquisitionCoverage: "complete", rosterAttributionBasis: "observed_roster",
+        creatorCoverage: "complete", creatorAttributionBasis: "not_applicable", freshness: "fresh",
+        valueBasis: "verified", comparisonsVerified: true,
+      },
       points: [
         { date: "2026-05-20", spendUsd: 0 },
         { date: "2026-05-30", spendUsd: 20000 },
@@ -45,6 +59,11 @@ const mockData: OrgBudgetOverviewResponse = {
       remainingUsd: 10000,
       percentUsed: 50,
       complete: false, // partial data should show dotted
+      reporting: {
+        acquisitionCoverage: "complete", rosterAttributionBasis: "current_membership",
+        creatorCoverage: "complete", creatorAttributionBasis: "not_applicable", freshness: "fresh",
+        valueBasis: "current_membership_qualified", comparisonsVerified: false,
+      },
       points: [
         { date: "2026-05-20", spendUsd: 0 },
         { date: "2026-05-25", spendUsd: null }, // testing null gap
@@ -59,6 +78,11 @@ const mockData: OrgBudgetOverviewResponse = {
       remainingUsd: -500,
       percentUsed: null,
       complete: true,
+      reporting: {
+        acquisitionCoverage: "complete", rosterAttributionBasis: "observed_roster",
+        creatorCoverage: "complete", creatorAttributionBasis: "not_applicable", freshness: "fresh",
+        valueBasis: "verified", comparisonsVerified: true,
+      },
       points: [
         { date: "2026-06-10", spendUsd: 500 },
       ],
@@ -69,11 +93,8 @@ const mockData: OrgBudgetOverviewResponse = {
 describe("OrgBudgetChart", () => {
   it("renders the chart shell without crashing (including >100% domains and null gaps)", () => {
     const html = renderToStaticMarkup(<OrgBudgetChart data={mockData} />);
-
-    // Title is present
     expect(html).toContain("Teams Budget Trajectory");
-    // Explicit label check
-    expect(html).toContain("Planning benchmark, not a forecast.");
+    expect(html).toContain("Recorded spend by reporting basis.");
   });
 
   it("shows empty state when no teams are eligible", () => {

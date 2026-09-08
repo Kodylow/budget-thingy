@@ -110,7 +110,6 @@ export function RangeProvider({ children }: { children: ReactNode }) {
     </RangeContext.Provider>
   );
 }
-
 export function useRange() {
   const context = useContext(RangeContext);
   if (!context) throw new Error('useRange must be used within RangeProvider');

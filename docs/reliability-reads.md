@@ -1,3 +1,9 @@
+# Historical usage and attribution
+
+See [Historical spend](historical-spend.md) for the durable evidence lifecycle,
+independent reporting dimensions, bounded read-only diagnostic, and development
+reconciliation results.
+
 # Reliable usage reads
 
 Usage reports are assembled from daily member, project, workspace, and

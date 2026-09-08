@@ -495,19 +495,111 @@ export function buildBudgetTrackingPoints(
 ): Array<{ date: string; spendUsd: number | null }> {
   const points: Array<{ date: string; spendUsd: number | null }> = [];
   let cumulative = 0;
+  let hasObservedValue = false;
   for (
     let time = Date.parse(start);
     time < Date.parse(endExclusive);
     time += DAY_MS
   ) {
     const date = new Date(time).toISOString().slice(0, 10);
-    cumulative += dailySpend.get(date) ?? 0;
+    if (dailySpend.has(date)) {
+      cumulative += dailySpend.get(date) ?? 0;
+      hasObservedValue = true;
+    }
     points.push({
       date,
-      spendUsd: unavailableDays.has(date) ? null : cumulative,
+      // A leading wholly-unobserved period has no known cumulative value.
+      // Once any value (including a known zero) is observed, later source
+      // gaps do not erase the recorded cumulative history.
+      spendUsd: unavailableDays.has(date) && !hasObservedValue
+        ? null
+        : cumulative,
     });
   }
   return points;
+}
+
+export function summarizeReportingSemantics(
+  rollups: Iterable<SnapshotUsageRollup>,
+): {
+  acquisitionCoverage: "complete" | "partial" | "unavailable";
+  rosterAttributionBasis: "observed_roster" | "current_membership" | "mixed";
+  creatorCoverage: "complete" | "partial" | "not_applicable";
+  creatorAttributionBasis:
+    | "verified_historical"
+    | "current_catalog_observation"
+    | "mixed"
+    | "unavailable"
+    | "not_applicable";
+  freshness: "fresh" | "stale" | "unavailable";
+  valueBasis:
+    | "verified"
+    | "current_membership_qualified"
+    | "current_catalog_qualified"
+    | "partial_known"
+    | "unavailable";
+  comparisonsVerified: boolean;
+} {
+  const values = [...rollups];
+  const observed = values.filter((item) =>
+    item.reporting.acquisitionCoverage !== "unavailable");
+  const acquisitionCoverage = observed.length === 0
+    ? "unavailable" as const
+    : observed.length === values.length &&
+        values.every((item) => item.reporting.acquisitionCoverage === "complete")
+      ? "complete" as const
+      : "partial" as const;
+  const hasCurrentMembershipFallback = observed.some((item) =>
+    item.reporting.rosterAttributionBasis === "current_membership");
+  const hasVerifiedRoster = observed.some((item) =>
+    item.reporting.rosterAttributionBasis !== "current_membership");
+  const rosterAttributionBasis =
+    hasCurrentMembershipFallback && hasVerifiedRoster
+      ? "mixed" as const
+      : hasCurrentMembershipFallback
+        ? "current_membership" as const
+        : "observed_roster" as const;
+  const creatorCoverage = observed.some((item) =>
+    item.reporting.creatorCoverage === "partial")
+    ? "partial" as const
+    : observed.some((item) => item.reporting.creatorCoverage === "complete")
+      ? "complete" as const
+      : "not_applicable" as const;
+  const creatorBases = new Set(observed.map((item) =>
+    item.reporting.creatorAttributionBasis).filter((basis) =>
+      basis !== "not_applicable"));
+  const creatorAttributionBasis = creatorBases.size === 0
+    ? "not_applicable" as const
+    : creatorBases.size > 1
+      ? "mixed" as const
+      : [...creatorBases][0]!;
+  const freshness = observed.length === 0
+    ? "unavailable" as const
+    : observed.some((item) => item.reporting.freshness === "stale")
+      ? "stale" as const
+      : "fresh" as const;
+  const comparisonsVerified = values.length > 0 &&
+    values.every((item) => item.reporting.comparisonsVerified);
+  const valueBasis = acquisitionCoverage === "unavailable"
+    ? "unavailable" as const
+    : rosterAttributionBasis === "current_membership" ||
+        rosterAttributionBasis === "mixed"
+      ? "current_membership_qualified" as const
+      : creatorAttributionBasis === "current_catalog_observation" ||
+          creatorAttributionBasis === "mixed"
+        ? "current_catalog_qualified" as const
+        : comparisonsVerified
+          ? "verified" as const
+          : "partial_known" as const;
+  return {
+    acquisitionCoverage,
+    rosterAttributionBasis,
+    creatorCoverage,
+    creatorAttributionBasis,
+    freshness,
+    valueBasis,
+    comparisonsVerified,
+  };
 }
 
 export function qualifiedUserSpendByWorkspace(
@@ -975,6 +1067,8 @@ async function computeScopedAccounting(
     // hidden contributing workspace identities through observation state.
     const usageObserved = usageObservedFor(
       groups.map((group) => group.workspaceId));
+    const reporting = reportingSemanticsForGroups(daily, groups);
+    const comparisonsVerified = reporting.comparisonsVerified;
     const sourceGroupIds = [...new Set(groups.flatMap((group) => {
       const canonicalId =
         fullMergePlan.primaryByGroupId.get(group.id) ?? group.id;
@@ -989,11 +1083,14 @@ async function computeScopedAccounting(
         : null,
       spendUsd: round(spend), agentSpendUsd: round(agent),
       otherServicesUsd: round(spend - agent), allocationUsd: allocation,
-      remainingUsd: !usageObserved || allocation === null
+      remainingUsd: !usageObserved || !comparisonsVerified || allocation === null
         ? null : round(allocation - spend),
-      percentUsed: usageObserved && allocation && allocation > 0
+      percentUsed: usageObserved && comparisonsVerified &&
+          allocation && allocation > 0
         ? round(spend / allocation * 100) : null,
-      status: usageObserved ? statusFor(allocation, spend, shared) : "unavailable",
+      status: usageObserved && comparisonsVerified
+        ? statusFor(allocation, spend, shared)
+        : "unavailable",
       memberCount: new Set(groups.flatMap(
         (group) => scopedMembers.get(group.id) ?? [])).size,
       ownerName: null, limitState: "not_applicable",
@@ -1020,17 +1117,25 @@ async function computeScopedAccounting(
     const usageObserved = usageObservedFor(
       (visibleByCanonical.get(canonicalId) ?? [group])
         .map((item) => item.workspaceId));
+    const reporting = reportingSemanticsForGroups(
+      daily,
+      visibleByCanonical.get(canonicalId) ?? [group],
+    );
+    const comparisonsVerified = reporting.comparisonsVerified;
     poolRows.push({
       id: `pool:group:${group.workspaceId}:${group.id}`, kind: "pool", name: group.name,
       workspaceId: group.workspaceId,
       workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
       spendUsd: round(spend), agentSpendUsd: round(agent),
       otherServicesUsd: round(spend - agent), allocationUsd: allocation,
-      remainingUsd: !usageObserved || allocation === null
+      remainingUsd: !usageObserved || !comparisonsVerified || allocation === null
         ? null : round(allocation - spend),
-      percentUsed: usageObserved && allocation && allocation > 0
+      percentUsed: usageObserved && comparisonsVerified &&
+          allocation && allocation > 0
         ? round(spend / allocation * 100) : null,
-      status: usageObserved ? statusFor(allocation, spend, shared) : "unavailable",
+      status: usageObserved && comparisonsVerified
+        ? statusFor(allocation, spend, shared)
+        : "unavailable",
       memberCount: new Set((visibleByCanonical.get(canonicalId) ?? [group])
         .flatMap((item) => scopedMembers.get(item.id) ?? [])).size,
       ownerName: null, limitState: "not_applicable",
@@ -1080,17 +1185,25 @@ async function computeScopedAccounting(
     const usageObserved = usageObservedFor(
       (visibleByCanonical.get(canonicalId) ?? [group])
         .map((item) => item.workspaceId));
+    const reporting = reportingSemanticsForGroups(
+      daily,
+      visibleByCanonical.get(canonicalId) ?? [group],
+    );
+    const comparisonsVerified = reporting.comparisonsVerified;
     return {
       id: `group:${group.workspaceId}:${group.id}`, kind: "group", name: group.name,
       workspaceId: group.workspaceId,
       workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
       spendUsd: round(spend), agentSpendUsd: round(agent),
       otherServicesUsd: round(spend - agent), allocationUsd: allocation,
-      remainingUsd: !usageObserved || allocation === null
+      remainingUsd: !usageObserved || !comparisonsVerified || allocation === null
         ? null : round(allocation - spend),
-      percentUsed: usageObserved && allocation && allocation > 0
+      percentUsed: usageObserved && comparisonsVerified &&
+          allocation && allocation > 0
         ? round(spend / allocation * 100) : null,
-      status: usageObserved ? statusFor(allocation, spend, shared) : "unavailable",
+      status: usageObserved && comparisonsVerified
+        ? statusFor(allocation, spend, shared)
+        : "unavailable",
       memberCount: new Set(scopedMembers.get(group.id) ?? []).size,
       ownerName: null, limitState: "not_applicable" as const,
       limitObservationStatus: "not_applicable" as const, sharedPool: shared,
@@ -2106,4 +2219,81 @@ export function bucketRollupSpend(
   groups: readonly { id: string; workspaceId: string }[] = [],
 ): number {
   return qualifiedRollupTotals(rollup, authz, groups).reportedSpendUsd;
+}
+
+/**
+ * Shared qualified reporting semantics for a concrete group scope. Unknown
+ * creator evidence affects every group sharing that workspace; known evidence
+ * affects only the group to which the creator was attributed.
+ */
+export function reportingSemanticsForGroups(
+  daily: ReadonlyMap<string, SnapshotUsageRollup>,
+  groups: readonly { id: string; workspaceId: string }[],
+): ReturnType<typeof summarizeReportingSemantics> {
+  const groupIds = new Set(groups.map((group) => group.id));
+  const workspaceIds = new Set(groups.map((group) => group.workspaceId));
+  const scoped = [...daily.values()].map((rollup): SnapshotUsageRollup => {
+    const acquisition = [...workspaceIds].map((workspaceId) =>
+      rollup.reporting.workspaceAcquisitionCoverage.get(workspaceId) ??
+        "unavailable");
+    const acquisitionCoverage = acquisition.length === 0 ||
+        acquisition.every((status) => status === "unavailable")
+      ? "unavailable" as const
+      : acquisition.every((status) => status === "complete")
+        ? "complete" as const
+        : "partial" as const;
+    const creatorBases: string[] = [];
+    let creatorMissing = false;
+    for (const [projectKey, nonAiSpend] of
+      rollup.projectAttribution.nonAiSpendByProject) {
+      if (nonAiSpend <= 1e-9) continue;
+      const separator = projectKey.indexOf("\0");
+      const workspaceId = separator < 0
+        ? ""
+        : projectKey.slice(0, separator);
+      if (!workspaceIds.has(workspaceId)) continue;
+      const attributedGroup =
+        rollup.projectAttribution.projectToGroup.get(projectKey);
+      if (attributedGroup && !groupIds.has(attributedGroup)) continue;
+      const basis =
+        rollup.projectAttribution.creatorBasisByProject.get(projectKey) ??
+          "unavailable";
+      if (basis === "unavailable") creatorMissing = true;
+      else creatorBases.push(basis);
+    }
+    const uniqueCreatorBases = new Set(creatorBases);
+    const creatorCoverage = creatorMissing
+      ? "partial" as const
+      : creatorBases.length > 0
+        ? "complete" as const
+        : "not_applicable" as const;
+    const creatorAttributionBasis = creatorMissing &&
+        uniqueCreatorBases.size === 0
+      ? "unavailable" as const
+      : uniqueCreatorBases.size > 1 ||
+          creatorMissing && uniqueCreatorBases.size > 0
+        ? "mixed" as const
+        : uniqueCreatorBases.size === 1
+          ? [...uniqueCreatorBases][0] as
+            "verified_historical" | "current_catalog_observation"
+          : "not_applicable" as const;
+    const comparisonsVerified =
+      acquisitionCoverage === "complete" &&
+      rollup.reporting.rosterAttributionBasis !== "current_membership" &&
+      creatorCoverage !== "partial" &&
+      (creatorAttributionBasis === "verified_historical" ||
+        creatorAttributionBasis === "not_applicable") &&
+      rollup.reporting.freshness === "fresh";
+    return {
+      ...rollup,
+      reporting: {
+        ...rollup.reporting,
+        acquisitionCoverage,
+        creatorCoverage,
+        creatorAttributionBasis,
+        comparisonsVerified,
+      },
+    };
+  });
+  return summarizeReportingSemantics(scoped);
 }

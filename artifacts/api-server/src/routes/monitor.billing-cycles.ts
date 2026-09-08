@@ -257,7 +257,7 @@ router.get("/spend/billing-cycles", async (req, res): Promise<void> => {
       internalUserIds: dir.internalUserIds,
       completedRosterDays: roster.completedDays,
       rosterMembersByDate: visibleRosterMembers(authz, roster.membersByDate),
-      projectInfoByWorkspace: projectMetadata.byWorkspace,
+      projectInfoByWorkspace: projectMetadata.attributionByWorkspace,
     });
     const personalByDate = new Map<string, DailyComparisonValue>();
     const teamByDate = new Map<string, DailyComparisonValue>();

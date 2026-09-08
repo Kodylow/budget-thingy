@@ -140,7 +140,7 @@ beforeEach(async () => {
       group_budgets, team_budget_adjustments, team_budget_sync_state,
       team_budgets, team_limit_targets, workspace_default_limit_targets,
       team_budget_upstream_sync, admin_emails, budget_checker_state,
-      api_project_metadata, usage_member_day, usage_project_day,
+      api_project_metadata, api_project_creator_evidence, usage_member_day, usage_project_day,
        api_project_metadata_state, usage_workspace_day, usage_account_day, ingest_run,
        notification_settings CASCADE;
     CREATE TABLE alerts (
@@ -280,6 +280,10 @@ beforeEach(async () => {
   `);
   await pglite.exec(readFileSync(
     new URL("../../../../lib/db/drizzle/0012_richer_project_metadata.sql", import.meta.url),
+    "utf8",
+  ));
+  await pglite.exec(readFileSync(
+    new URL("../../../../lib/db/drizzle/0013_historical_project_creator_evidence.sql", import.meta.url),
     "utf8",
   ));
   groups = [GROUP];

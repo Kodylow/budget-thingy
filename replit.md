@@ -9,6 +9,7 @@ Internal spending and funding monitor for the Comcast Replit Enterprise account.
 - Fresh empty database setup: `pnpm install --frozen-lockfile`, then `pnpm --filter @workspace/db run setup`. Populated imports require their matching migration journal; see [database setup](docs/database-setup.md).
 - Routine merges do not install, migrate, or seed. Schema releases are explicit operator actions using the guarded `migrate` command; never repair migration history with raw push/reset commands.
 - [Full data sync](docs/full-data-sync.md) documents the separate data-only operator workflow, not permission to run it.
+- [Historical spend](docs/historical-spend.md) documents retained creator observations, independent coverage/basis/freshness, and bounded read-only diagnostics.
 - Required service configuration includes `DATABASE_URL` and `REPLIT_ENTERPRISE_API_KEY`. Use managed configuration for credentials and identities; no personal defaults belong here.
 
 The workspace uses TypeScript, pnpm, Express, PostgreSQL/Drizzle, and React/Vite. Main locations:

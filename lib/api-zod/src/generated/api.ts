@@ -413,6 +413,15 @@ export const GetReportingDetailResponse = zod.object({
   "benchmarkEligible": zod.boolean(),
   "comparisonsMatchBudgetWindow": zod.boolean().optional().describe('True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff.'),
   "qualification": zod.string().nullable(),
+  "reporting": zod.object({
+  "acquisitionCoverage": zod.enum(['complete', 'partial', 'unavailable']),
+  "rosterAttributionBasis": zod.enum(['observed_roster', 'current_membership', 'mixed']),
+  "creatorCoverage": zod.enum(['complete', 'partial', 'not_applicable']),
+  "creatorAttributionBasis": zod.enum(['verified_historical', 'current_catalog_observation', 'mixed', 'unavailable', 'not_applicable']),
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "valueBasis": zod.enum(['verified', 'current_membership_qualified', 'current_catalog_qualified', 'partial_known', 'unavailable']),
+  "comparisonsVerified": zod.boolean()
+}).describe('Independent reporting dimensions. Recorded values remain usable when attribution is qualified, while verified funding comparisons require every dimension to be complete and fresh.\n'),
   "points": zod.array(zod.object({
   "date": zod.string().regex(getReportingDetailResponseBudgetTrackingPointsItemDateRegExp),
   "spendUsd": zod.number().nullable()
@@ -636,6 +645,15 @@ export const GetBudgetTeamReportResponse = zod.object({
   "benchmarkEligible": zod.boolean(),
   "comparisonsMatchBudgetWindow": zod.boolean().optional().describe('True only when the reporting domain exactly equals the fixed budget-start through current budget cutoff.'),
   "qualification": zod.string().nullable(),
+  "reporting": zod.object({
+  "acquisitionCoverage": zod.enum(['complete', 'partial', 'unavailable']),
+  "rosterAttributionBasis": zod.enum(['observed_roster', 'current_membership', 'mixed']),
+  "creatorCoverage": zod.enum(['complete', 'partial', 'not_applicable']),
+  "creatorAttributionBasis": zod.enum(['verified_historical', 'current_catalog_observation', 'mixed', 'unavailable', 'not_applicable']),
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "valueBasis": zod.enum(['verified', 'current_membership_qualified', 'current_catalog_qualified', 'partial_known', 'unavailable']),
+  "comparisonsVerified": zod.boolean()
+}).describe('Independent reporting dimensions. Recorded values remain usable when attribution is qualified, while verified funding comparisons require every dimension to be complete and fresh.\n'),
   "points": zod.array(zod.object({
   "date": zod.string().regex(getBudgetTeamReportResponseBudgetTrackingPointsItemDateRegExp),
   "spendUsd": zod.number().nullable()
@@ -1398,6 +1416,15 @@ export const GetOrgBudgetOverviewResponse = zod.object({
   "periodEnd": zod.string().regex(getOrgBudgetOverviewResponsePeriodEndRegExp),
   "asOf": zod.string().regex(getOrgBudgetOverviewResponseAsOfRegExp).nullable(),
   "complete": zod.boolean(),
+  "reporting": zod.object({
+  "acquisitionCoverage": zod.enum(['complete', 'partial', 'unavailable']),
+  "rosterAttributionBasis": zod.enum(['observed_roster', 'current_membership', 'mixed']),
+  "creatorCoverage": zod.enum(['complete', 'partial', 'not_applicable']),
+  "creatorAttributionBasis": zod.enum(['verified_historical', 'current_catalog_observation', 'mixed', 'unavailable', 'not_applicable']),
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "valueBasis": zod.enum(['verified', 'current_membership_qualified', 'current_catalog_qualified', 'partial_known', 'unavailable']),
+  "comparisonsVerified": zod.boolean()
+}).describe('Independent reporting dimensions. Recorded values remain usable when attribution is qualified, while verified funding comparisons require every dimension to be complete and fresh.\n'),
   "qualification": zod.string().nullable(),
   "summary": zod.object({
   "accountSpendUsd": zod.number().nullable(),
@@ -1414,6 +1441,15 @@ export const GetOrgBudgetOverviewResponse = zod.object({
   "remainingUsd": zod.number().nullable(),
   "percentUsed": zod.number().nullable(),
   "complete": zod.boolean(),
+  "reporting": zod.object({
+  "acquisitionCoverage": zod.enum(['complete', 'partial', 'unavailable']),
+  "rosterAttributionBasis": zod.enum(['observed_roster', 'current_membership', 'mixed']),
+  "creatorCoverage": zod.enum(['complete', 'partial', 'not_applicable']),
+  "creatorAttributionBasis": zod.enum(['verified_historical', 'current_catalog_observation', 'mixed', 'unavailable', 'not_applicable']),
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "valueBasis": zod.enum(['verified', 'current_membership_qualified', 'current_catalog_qualified', 'partial_known', 'unavailable']),
+  "comparisonsVerified": zod.boolean()
+}).describe('Independent reporting dimensions. Recorded values remain usable when attribution is qualified, while verified funding comparisons require every dimension to be complete and fresh.\n'),
   "points": zod.array(zod.object({
   "date": zod.string().regex(getOrgBudgetOverviewResponseTeamsItemPointsItemDateRegExp),
   "spendUsd": zod.number().nullable()

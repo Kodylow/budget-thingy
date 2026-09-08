@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { OrgBudgetOverviewResponseTeamsItemPointsItem } from './orgBudgetOverviewResponseTeamsItemPointsItem';
+import type { ReportingSemantics } from './reportingSemantics';
 
 export type OrgBudgetOverviewResponseTeamsItem = {
   id: string;
@@ -19,6 +20,7 @@ export type OrgBudgetOverviewResponseTeamsItem = {
   /** @nullable */
   percentUsed: number | null;
   complete: boolean;
+  reporting: ReportingSemantics;
   /** @maxItems 367 */
   points: OrgBudgetOverviewResponseTeamsItemPointsItem[];
 };
