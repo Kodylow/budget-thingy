@@ -134,9 +134,10 @@ for (const { width, columns, availableWidth } of [
   { width: 320, columns: 1 },
   { width: 390, columns: 1 },
   { width: 768, columns: 2 },
-  { width: 1088, columns: 4 }, // 1024px after page padding
+  { width: 1024, columns: 5 },
+  { width: 1088, columns: 5 }, // 1024px after page padding
   { width: 1440, columns: 5 },
-  { width: 1440, columns: 4, availableWidth: 1088 }, // sidebar-sized constraint
+  { width: 1440, columns: 5, availableWidth: 1088 }, // sidebar-sized constraint
 ]) {
   test(`summary borders and values align at ${width}px${availableWidth ? ' with constrained content' : ''}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -180,6 +181,7 @@ for (const { width, columns, availableWidth } of [
     async function expectAlignedAndReadable() {
       const measurements = await cards.evaluateAll(elements => elements.map(card => {
         const border = card.getBoundingClientRect();
+        const inset = parseFloat(getComputedStyle(card).paddingLeft) - 1;
         const header = card.firstElementChild!;
         const label = header.firstElementChild!;
         const value = header.lastElementChild!;
@@ -189,7 +191,7 @@ for (const { width, columns, availableWidth } of [
         const textFits = [label, value, card.children[1]].filter(Boolean).every(element => {
           range.selectNodeContents(element);
           return [...range.getClientRects()].every(rect =>
-            rect.left >= border.left + 15 && rect.right <= border.right - 15 &&
+            rect.left >= border.left + inset && rect.right <= border.right - inset &&
             rect.top >= border.top && rect.bottom <= border.bottom);
         });
         return {
@@ -209,7 +211,7 @@ for (const { width, columns, availableWidth } of [
           for (const key of ['top', 'height', 'bottom', 'labelTop', 'valueTop', 'baseline'] as const) {
             expect(Math.abs(card[key] - row[0][key]), key).toBeLessThanOrEqual(1);
           }
-          expect(card.padding).toBe('16px');
+          expect(card.padding).toBe(width >= 1024 ? '12px' : '16px');
           expect(card.textFits).toBe(true);
           expect(card.valueLines).toBe(1);
           expect(card.overflow).toBe(false);
