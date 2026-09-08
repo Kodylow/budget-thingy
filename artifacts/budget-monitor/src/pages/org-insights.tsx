@@ -29,7 +29,7 @@ export default function OrgInsights() {
 
 function OrgInsightsView() {
   // Use generated hook directly. No range filters accepted.
-  const { data, isLoading, isError, isFetching, refetch } = useGetOrgBudgetOverview();
+  const { data, isLoading, isFetching, refetch } = useGetOrgBudgetOverview();
   const displayData = data;
 
   if (isLoading && !displayData) {
@@ -80,11 +80,6 @@ function OrgInsightsView() {
                   Partial data
                 </Badge>
               )}
-              {isError && (
-                <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 font-medium text-xs">
-                  <AlertTriangle className="h-3 w-3 mr-1.5 opacity-70" /> Refresh failed
-                </Badge>
-              )}
             </div>
           </div>
         </div>
@@ -99,18 +94,9 @@ function OrgInsightsView() {
         </div>
       </div>
 
-      {isError && (
-        <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <div className="flex-1">
-            <strong className="text-foreground">Refresh failed; showing last available values.</strong>
-          </div>
-          <button type="button" className="font-medium text-primary hover:underline" onClick={() => void refetch()}>Retry</button>
-        </div>
-      )}
       {(isPartial || qualification) && (
         <AdminDataQualityNote title="Budget overview data quality">
-          <p>{isPartial ? 'Coverage is partial.' : 'About these values.'}</p>
+          {isPartial && <p>Partial coverage.</p>}
           {qualification && <p>{qualification}</p>}
         </AdminDataQualityNote>
       )}
@@ -160,17 +146,9 @@ function OrgInsightsView() {
       <section className="min-w-0 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">All Teams</h2>
-          <p className="text-sm text-muted-foreground">Detailed view of team budgets for the funding period.</p>
         </div>
         <OrgTeamsTable teams={displayData.teams} />
       </section>
-
-      {summary.unassignedSpendUsd != null && summary.unassignedSpendUsd > 0 && (
-         <div className="text-xs text-muted-foreground flex gap-2 p-3 bg-muted/20 border rounded items-start">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
-            <p><strong>Reconciliation Note:</strong> There is {formatFinancialUsd(summary.unassignedSpendUsd)} of eligible account spend not mapped to any specific team budget in this view.</p>
-         </div>
-      )}
     </div>
   );
 }

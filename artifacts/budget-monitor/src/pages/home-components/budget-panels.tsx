@@ -86,7 +86,7 @@ export function PersonalBudgetPanel({
         {percent != null && Number.isFinite(percent) ? (
           <>
             <ProgressBar value={percent} label="Workspace Agent monthly limit used" />
-            <p className="text-xs font-medium">{percent.toFixed(1)}% of the monthly Agent limit used</p>
+            <p className="text-xs font-medium">{percent.toFixed(1)}% used</p>
           </>
         ) : null}
         {limit && (
@@ -101,7 +101,7 @@ export function PersonalBudgetPanel({
         )}
         {expanded && limit && (
           <div className="grid grid-cols-2 gap-3 rounded-sm border bg-muted/20 p-3 text-xs">
-            {(hasFiniteLimit && limit.amount != null) || limit.state === 'no_limit' ? <div><p className="text-muted-foreground">Monthly Agent limit</p><p className="mt-1 font-mono">{limit.state === 'no_limit' ? 'Unlimited' : formatUsd(limit.amount)}</p></div> : null}
+            <div><p className="text-muted-foreground">Monthly Agent limit</p><p className="mt-1 font-mono">{limit.state === 'no_limit' ? 'Unlimited' : formatUsd(hasFiniteLimit ? limit.amount : null)}</p></div>
             <div><p className="text-muted-foreground">Limit source</p><p className="mt-1 font-medium">{limit.state.replace('_', ' ')}</p></div>
             {billingPeriodLabel && <div><p className="text-muted-foreground">Reference period</p><p className="mt-1 font-medium">{billingPeriodLabel}</p></div>}
             {limit.currentCycleAgentSpendUsd != null && <div><p className="text-muted-foreground">Current-cycle Agent spend</p><p className="mt-1 font-mono">{formatUsd(limit.currentCycleAgentSpendUsd)}</p></div>}
@@ -168,7 +168,7 @@ export function TeamBudgetPanel({
       <div className="space-y-5 p-5">
         {loading ? (
           <div className="h-28 animate-pulse rounded-sm bg-muted" aria-label="Loading team budget" />
-        ) : error ? (
+        ) : error && !tracking ? (
           <div className="flex h-28 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
             Team budget unavailable
             <Button size="sm" variant="outline" onClick={onRetry}>Retry</Button>
@@ -195,7 +195,7 @@ export function TeamBudgetPanel({
             {complete && tracking.percentUsed != null ? (
               <>
                 <ProgressBar value={tracking.percentUsed} label={monthlyAgent ? 'Team monthly Agent limit used' : 'Team funding used'} />
-                <p className="text-xs font-medium">{tracking.percentUsed.toFixed(1)}% of {monthlyAgent ? 'monthly Agent limit' : 'funding'} used</p>
+                <p className="text-xs font-medium">{tracking.percentUsed.toFixed(1)}% used</p>
               </>
             ) : null}
           </>

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 
 vi.mock('../components/ui/toast', () => ({ ToastAction: () => null }));
 vi.mock('../hooks/use-toast', () => ({ toast: vi.fn() }));
@@ -158,6 +158,70 @@ describe('subscribeApiErrorToasts', () => {
       action: expect.anything(),
     }));
     unsubscribe();
+  });
+
+  it('shows one cached-refresh notice, keeps known zero, and retries the failed query', async () => {
+    const dismiss = vi.fn();
+    vi.mocked(toast).mockReturnValue({ id: 'cached-error', dismiss, update: vi.fn() });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryKey = ['/api/cached-refresh-regression'];
+    const saved = { spendUsd: 0 };
+    client.setQueryData(queryKey, saved);
+    let fails = true;
+    const observer = new QueryObserver(client, {
+      queryKey,
+      queryFn: async () => {
+        if (fails) throw { status: 503 };
+        return { spendUsd: 12 };
+      },
+      staleTime: Infinity,
+    });
+    const stopObserver = observer.subscribe(() => {});
+    const stopToasts = subscribeApiErrorToasts(client);
+
+    await observer.refetch();
+    await observer.refetch();
+    expect(toast).toHaveBeenCalledTimes(1);
+    const notice = vi.mocked(toast).mock.calls[0][0];
+    expect(notice).toMatchObject({
+      title: 'Couldn’t refresh data.',
+      description: 'Showing saved values.',
+      variant: 'destructive',
+    });
+    expect(client.getQueryData(queryKey)).toEqual(saved);
+
+    fails = false;
+    const recovered = new Promise<void>((resolve) => {
+      const stop = observer.subscribe((result) => {
+        if (result.data?.spendUsd === 12) { stop(); resolve(); }
+      });
+    });
+    (notice.action!.props as { onClick: () => void }).onClick();
+    await recovered;
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    stopToasts();
+    stopObserver();
+    client.clear();
+  });
+
+  it('replaces the same query’s health notice when its refresh fails', async () => {
+    const dismiss = vi.fn();
+    vi.mocked(toast).mockReturnValue({ id: 'notice', dismiss, update: vi.fn() });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const stop = subscribeApiErrorToasts(client);
+    const queryKey = ['/api/stale-refresh-regression'];
+    client.setQueryData(queryKey, { usageHealth: { status: 'stale' } });
+    await expect(client.fetchQuery({
+      queryKey,
+      queryFn: async () => { throw new TypeError('Failed to fetch'); },
+    })).rejects.toThrow();
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenLastCalledWith(expect.objectContaining({
+      title: 'Couldn’t refresh data.',
+      action: expect.anything(),
+    }));
+    stop();
+    client.clear();
   });
 });
 

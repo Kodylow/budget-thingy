@@ -137,7 +137,6 @@ export default function GroupDetail() {
       groupIds: data.sourceGroups.filter((source) => source.workspaceId === workspaceId).map((source) => source.groupId),
     }];
   });
-  const detailFailed = detailQuery.isError;
   const hasSelectedObservations = data.metadata.status !== 'empty' && !isUnknownSpendTotal(data.metadata);
   const projectsDenied = projectsQuery.isError && [403, 404].includes(errorStatus(projectsQuery.error) ?? 0);
   const budgetStatus: JourneyStatus | null = data.headline.percentUsed == null
@@ -158,18 +157,11 @@ export default function GroupDetail() {
 
   return (
     <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8" data-testid="page-group-detail">
-      {detailFailed && (
-        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm" data-testid="status-group-detail-stale-error">
-          <span>Showing the last available values. Refresh failed.</span>
-          <Button variant="outline" size="sm" onClick={() => void detailQuery.refetch()} data-testid="button-retry-group-detail-refresh">Retry</Button>
-        </div>
-      )}
-
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-2">
           <h1 className="flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight md:text-4xl">
             {group.name}
-            {detailQuery.isFetching && !detailFailed && (
+            {detailQuery.isFetching && (
               <Badge variant="outline" className="text-muted-foreground" data-testid="status-group-detail-updating">
                 <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
               </Badge>
@@ -208,7 +200,6 @@ export default function GroupDetail() {
 
       <div className="flex items-center justify-between gap-3">
         <BackLink />
-        <span className="text-xs text-muted-foreground">Authorized group detail</span>
       </div>
 
       <section className="grid gap-4 lg:grid-cols-[1.12fr_.88fr]" aria-label="Group headline">
@@ -221,9 +212,6 @@ export default function GroupDetail() {
                   <Badge variant="secondary" className="text-[10px] uppercase">{group.role}</Badge>
                   {budgetStatus && <StatusBadge status={budgetStatus} />}
                 </div>
-                <CardDescription className="mt-1.5">
-                  {group.sharedPool ? `Shared allocation across the ${group.name} role group` : `Allocation for the ${group.name} role group`}
-                </CardDescription>
               </div>
               <div className="flex flex-wrap gap-2">
                 {manageContexts.map((context) => (
@@ -249,7 +237,6 @@ export default function GroupDetail() {
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Agent</p>
               <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">{hasSelectedObservations ? `$${data.headline.agentSpendUsd.toFixed(2)}` : '—'}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Selected-period Agent usage</p>
             </div>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Other services</p>
@@ -296,7 +283,6 @@ export default function GroupDetail() {
           <CardHeader className="gap-4 border-b bg-muted/20 pb-0 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <CardTitle className="text-lg">Spending breakdown</CardTitle>
-              <CardDescription className="mt-1 pb-4">Full authorized group view; filters from results remain preserved.</CardDescription>
             </div>
             <TabsList aria-label="Group spending breakdown">
               <TabsTrigger value="members" data-testid="tab-group-members">Members</TabsTrigger>
@@ -308,12 +294,8 @@ export default function GroupDetail() {
               <Info className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
                 <p>
-                  Deduplicated member spending plus any unattributed residual reconciles to
-                  the authoritative group total above. This detail shows the full authorized group;
-                  ledger scope, workspace, search, and status filters are preserved in Back to results,
-                  not applied here.
-                  Limit, Agent spend, and remaining columns use the current billing cycle;
-                  total spend columns use the selected period.
+                  Member spend plus unattributed residual reconciles to the group total.
+                  Limit, Agent spend and remaining columns use the current billing cycle; total spend uses the selected period.
                 </p>
                 <InternalSpendExplanation />
               </div>
@@ -450,10 +432,8 @@ export default function GroupDetail() {
             <div className="border-b bg-muted/10 p-5">
               <h3 className="font-semibold tracking-tight text-lg">Projects</h3>
               <AdminDataQualityNote title="Group project attribution"><p>
-                Explanatory project attribution for the selected period, not the authoritative
-                group headline. Hosting and storage use available project metrics.
-                Other / unclassified is the remaining non-AI cost, not a provider or model breakdown.
-                A dash means category detail is unavailable, not zero cost.
+                Project attribution is explanatory, not the authoritative group total.
+                A dash means category detail is unavailable, not zero.
               </p></AdminDataQualityNote>
             </div>
             <div className="p-0">
@@ -465,15 +445,7 @@ export default function GroupDetail() {
                   <Button variant="outline" size="sm" onClick={() => void projectsQuery.refetch()} data-testid="button-retry-group-projects">Retry</Button>
                 </div>
               ) : (
-                <>
-                  {projectsQuery.isError && !projectsDenied && (
-                    <div className="mb-3 flex items-center justify-between border border-destructive/30 bg-destructive/5 p-3 text-sm" data-testid="status-group-projects-stale-error">
-                      <span>Showing the last available projects. Refresh failed.</span>
-                      <Button variant="outline" size="sm" onClick={() => void projectsQuery.refetch()} data-testid="button-retry-group-projects-refresh">Retry</Button>
-                    </div>
-                  )}
-                  <ProjectsTable data={projectsQuery.data} />
-                </>
+                <ProjectsTable data={projectsQuery.data} />
               )}
             </div>
           </TabsContent>

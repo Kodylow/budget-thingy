@@ -47,10 +47,7 @@ export function NotificationRecipients() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListAdminsQueryKey() });
           setNewEmail('');
-          toast({
-            title: 'Recipient added',
-            description: `${email} will receive budget threshold notifications`,
-          });
+          toast({ title: 'Recipient added' });
         },
         onError: (error: any) => {
           toast({
@@ -63,16 +60,13 @@ export function NotificationRecipients() {
     );
   };
 
-  const handleDeleteEmail = (adminId: number, email: string) => {
+  const handleDeleteEmail = (adminId: number) => {
     deleteAdmin.mutate(
       { adminId },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListAdminsQueryKey() });
-          toast({
-            title: 'Recipient removed',
-            description: `${email} will no longer receive budget threshold notifications`,
-          });
+          toast({ title: 'Recipient removed' });
         },
         onError: () => {
           toast({
@@ -143,7 +137,7 @@ export function NotificationRecipients() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleDeleteEmail(admin.id, admin.email)}
+                  onClick={() => handleDeleteEmail(admin.id)}
                   disabled={deleteAdmin.isPending}
                   aria-label={`Remove ${admin.email} from notification recipients`}
                   data-testid={`button-delete-email-${admin.id}`}
@@ -157,7 +151,6 @@ export function NotificationRecipients() {
           <div className="flex flex-col items-center py-8 text-center text-muted-foreground" data-testid="text-no-emails">
             <Mail className="mb-3 h-12 w-12 text-muted-foreground/40" />
             <p className="font-medium">No notification recipients configured</p>
-            <p className="mt-1 text-sm">Add an email address to receive budget notifications</p>
           </div>
         )}
       </CardContent>

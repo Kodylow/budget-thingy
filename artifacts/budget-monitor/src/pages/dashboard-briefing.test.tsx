@@ -258,14 +258,7 @@ describe('Overview financial briefing', () => {
       badge: 'Partial',
       hasRetry: false,
     },
-    {
-      name: 'refresh error',
-      data: baseData,
-      state: { isError: true },
-      badge: 'Refresh failed',
-      hasRetry: true,
-    },
-  ])('keeps the $name badge at the top and only offers Retry for errors', ({ data, state, badge, hasRetry }) => {
+  ])('keeps the $name evidence badge at the top', ({ data, state, badge, hasRetry }) => {
     const html = render(data, state);
 
     expect(html).toContain(badge);
@@ -273,6 +266,13 @@ describe('Overview financial briefing', () => {
     expect(html.includes('>Retry<')).toBe(hasRetry);
     expect(html).not.toContain('>Refresh<');
     expectRemovedOverviewSections(html);
+  });
+
+  it('keeps cached values without a local refresh-failure badge', () => {
+    const html = render(baseData, { isError: true });
+    expect(html).toContain('>Spend<');
+    expect(html).not.toContain('Refresh failed');
+    expect(html).not.toContain('>Retry<');
   });
 
   it('uses canonical accounting when a variant omits a spend card', () => {
@@ -355,10 +355,11 @@ describe('Overview financial briefing', () => {
     expectRemovedOverviewSections(html);
   });
 
-  it('retains Retry when a refresh fails without a headline', () => {
+  it('leaves cached values visible without a local refresh notice', () => {
     const html = render({ ...baseData, cards: [] }, { isError: true });
-    expect(html).toContain('Refresh failed');
-    expect(html).toContain('>Retry<');
+    expect(html).not.toContain('Refresh failed');
+    expect(html).not.toContain('>Retry<');
+    expect(html).toContain('$1,234.50');
     expect(html).toContain('Outlook unavailable');
     expectRemovedOverviewSections(html);
   });

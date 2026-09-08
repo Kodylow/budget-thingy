@@ -94,7 +94,7 @@ describe("OrgBudgetChart", () => {
   it("renders the chart shell without crashing (including >100% domains and null gaps)", () => {
     const html = renderToStaticMarkup(<OrgBudgetChart data={mockData} />);
     expect(html).toContain("Teams Budget Trajectory");
-    expect(html).toContain("Recorded spend by reporting basis.");
+    expect(html).not.toContain("historical rosters were not observed");
   });
 
   it("shows empty state when no teams are eligible", () => {

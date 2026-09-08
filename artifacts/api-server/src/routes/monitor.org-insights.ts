@@ -228,30 +228,29 @@ router.get("/org-insights", async (req, res): Promise<void> => {
         result.usage.groups,
       ),
       qualification: [
-        "Amounts use canonical allocation-eligible committed usage.",
-        "Remaining covers only eligible funded teams; it excludes unfunded residual and does not subtract unassigned account spend.",
+        "Amounts are allocation-eligible committed usage. Remaining includes funded teams only, excluding unfunded residual and unassigned account spend.",
         ...(period.asOf === null
-          ? ["The confirmed allocation term has not started; usage is unavailable."]
+          ? ["Usage is unavailable before the allocation term starts."]
           : []),
         ...(teams.some((team) =>
           team.reporting.rosterAttributionBasis === "current_membership")
-          ? ["Recorded dates without observed roster snapshots use current-membership qualified attribution; this is not verified historical membership."]
+          ? ["Missing historical rosters use current membership, not verified historical membership."]
           : []),
         ...(teams.some((team) =>
           team.reporting.acquisitionCoverage === "partial")
-          ? ["Usage acquisition coverage is partial; recorded amounts remain visible and missing facts are not zero."]
+          ? ["Usage coverage is partial; missing facts are not zero."]
           : []),
         ...(teams.some((team) =>
           team.reporting.creatorAttributionBasis ===
             "current_catalog_observation" ||
           team.reporting.creatorAttributionBasis === "mixed")
-          ? ["Some creator attribution uses retained current-catalog observations; it is qualified current evidence, not verified historical ownership."]
+          ? ["Some creator attribution uses current project metadata, not verified historical ownership."]
           : []),
         ...(projectGaps.byTeamDay.size > 0
-          ? ["Incomplete project metadata affects only the canonical teams identified by stored creator attribution."]
+          ? ["Project metadata is incomplete for affected teams."]
           : []),
         ...(projectGaps.unknownWorkspaceDay.size > 0
-          ? ["Some project ownership is genuinely unknown; every team sharing each affected workspace and day remains incomplete."]
+          ? ["Some project ownership is unknown."]
           : []),
         ...result.metadata.qualifications,
       ].join(" "),

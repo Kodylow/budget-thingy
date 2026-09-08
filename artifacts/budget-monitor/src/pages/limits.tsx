@@ -42,7 +42,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Search, ShieldAlert, AlertTriangle, CheckCircle2, ChevronRight,
@@ -113,7 +113,6 @@ export default function LimitsPage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Usage Limits</h1>
-          <p className="text-sm text-muted-foreground">Monthly Replit Agent limits · reset each billing cycle · separate from annual funding.</p>
           {capabilities.canViewAccountUsage && <Link href="/allocations" className="inline-block text-sm text-primary hover:underline">View Budget allocations</Link>}
         </div>
 
@@ -316,7 +315,7 @@ function WorkspaceLimitsView({
           </p>
         )}
         <p className="text-muted-foreground lg:ml-auto">
-          Each amount is an individual monthly Agent limit, not a shared group cap. Raising an individual limit does not raise the shared group cap.
+          Individual limits reset each billing cycle and do not change shared group caps or annual funding.
         </p>
       </div>
 
@@ -606,7 +605,7 @@ function WorkspaceLimitsManager({
             Advanced defaults and baseline policies
           </summary>
           <p className="mt-2 text-xs text-muted-foreground">
-            Defaults and policies provide ongoing per-person limits while preserving hand-set overrides. They are not shared group caps and are separate from the selected one-time limits below.
+            Defaults and policies set ongoing per-person limits; hand-set overrides remain.
           </p>
           {policiesQuery.isLoading && (
             <p className="mt-4 text-sm text-muted-foreground">Loading policy settings…</p>
@@ -647,7 +646,6 @@ function WorkspaceLimitsManager({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <CardTitle className="text-lg">Individual limits</CardTitle>
-              <CardDescription className="mt-1">Select people, or select people by group, to prepare a one-time monthly limit update. Each workspace/person is counted once.</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="font-mono font-semibold text-foreground">{selectableCount}</span> eligible
@@ -998,7 +996,6 @@ function SelectionActionBar({
     <div className="bg-card border border-primary/30 p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4" data-testid="bar-limit-selection">
       <div className="flex flex-col flex-1 sm:flex-none min-w-0">
         <span className="font-semibold text-foreground leading-tight">{selectedCount} members selected</span>
-        <span className="mt-1 text-xs text-muted-foreground">One explicit limit per eligible member. Not shared funding or a group cap.</span>
         {selectedOutsideCount > 0 && (
           <span className="text-xs font-medium text-amber-700 dark:text-amber-400 mt-1" data-testid="warning-selection-outside">
             {selectedOutsideCount} selected {selectedOutsideCount === 1 ? 'member is' : 'members are'} outside the visible results and will still be included.
@@ -1202,11 +1199,11 @@ export function OperationManagerDialog({
             </div>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Current cycle: {new Date(ws.billingPeriod.start).toLocaleDateString()} – {new Date(ws.billingPeriod.end).toLocaleDateString()}.
-            {' '}Review prepared {new Date(op.preparedAt).toLocaleString()}. Operation {op.id.slice(0, 8)}.
+            Cycle: {new Date(ws.billingPeriod.start).toLocaleDateString()} – {new Date(ws.billingPeriod.end).toLocaleDateString()}.
+            {' '}Prepared {new Date(op.preparedAt).toLocaleString()} · Operation {op.id.slice(0, 8)}.
           </p>
           <p className="mt-2 text-sm">
-            Replaces each selected member’s explicit limit in this workspace. Shared group caps, opening funding, monthly additions and ongoing policies are unchanged.
+            Replaces selected explicit limits; shared caps, opening funding, monthly additions and ongoing policies stay unchanged.
           </p>
           {ws.limitObservation.status !== 'available' && <p className="mt-2 text-sm text-amber-700">Current-cycle usage is not current or available. Any displayed usage is last observed, not a verified current balance.</p>}
           {writesDisabled && <p role="status" className="mt-2 text-sm font-medium">Read-only — applying and retrying limits are disabled.</p>}
@@ -1217,7 +1214,7 @@ export function OperationManagerDialog({
             <div role="alert" className="m-4 border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
               <p className="font-semibold">Request outcome not confirmed</p>
               <p>{(commitOp.error || retryTargets.error)?.message}</p>
-              <p>Refresh the saved status first. Recovery uses this operation, not a new set of writes. No automatic mutation retry is performed.</p>
+              <p>Refresh saved status before recovery; writes are not retried automatically.</p>
               <Button variant="outline" className="mt-2" disabled={isFetching} onClick={async () => {
                 const result = await refetch();
                 if (result.isSuccess) { commitOp.reset(); retryTargets.reset(); }
@@ -1291,7 +1288,7 @@ export function OperationManagerDialog({
           <div className="min-w-0 text-xs text-muted-foreground">
             {isPrepared && "Confirmation queues real platform writes. A limit at or below usage may block Agent immediately."}
             {isRunning && "You can close this window; the operation will continue in the background."}
-            {isComplete && hasUnresolved && "Only unresolved targets enter recovery. Verified targets are not resubmitted."}
+            {isComplete && hasUnresolved && "Recovery uses this operation’s unresolved targets only; verified targets are not resubmitted."}
             {isComplete && !hasUnresolved && "All targets verified successfully."}
           </div>
 

@@ -79,7 +79,7 @@ export default function Dashboard() {
     });
   }, [rangeType, startDate, endDate, viewScope, projectionHorizon]);
 
-  const { data, isLoading, isError, isFetching, refetch } = useGetDashboard(queryParams);
+  const { data, isLoading, isFetching, refetch } = useGetDashboard(queryParams);
 
   const querySignature = JSON.stringify(queryParams);
   const generation = useRef(-1);
@@ -260,17 +260,12 @@ export default function Dashboard() {
                   Partial
                 </Badge>
               )}
-              {metadata.stale && !isError && (
+              {metadata.stale && (
                 <Badge variant="secondary" className="border-border/50 text-muted-foreground font-normal text-xs" data-testid="status-dashboard-stale">
                   Cached
                 </Badge>
               )}
-              {isError && (
-                <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 font-medium text-xs" data-testid="status-dashboard-error">
-                  <AlertTriangle className="h-3 w-3 mr-1.5 opacity-70" /> Refresh failed
-                </Badge>
-              )}
-              {(isError || !headline) && (
+              {!headline && (
                 <Button variant="outline" size="sm" className="h-6 text-xs" onClick={() => void refetch()} disabled={isFetching}>
                   Retry
                 </Button>
@@ -368,9 +363,6 @@ export default function Dashboard() {
                 <Target className="w-4 h-4 text-secondary" /> At-current-rate outlook
                 <Badge variant="outline" className="text-[10px] normal-case tracking-normal">Estimate</Badge>
               </h2>
-              <AdminDataQualityNote title="At-current-rate outlook">
-                This is an estimate for the selected horizon, not additional actual spend.
-              </AdminDataQualityNote>
             </div>
             <div className="flex items-center gap-2">
                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Through</span>
@@ -389,7 +381,7 @@ export default function Dashboard() {
           <div className="p-5">
              {displayData.projection ? (
                <Suspense fallback={<Skeleton className="h-[280px] w-full" />}>
-                 <DashboardProjectionView projection={isError ? { ...displayData.projection, stale: true } : displayData.projection} animateKey={querySignature} />
+                 <DashboardProjectionView projection={displayData.projection} animateKey={querySignature} />
                </Suspense>
              ) : (
                <div className="flex items-center justify-center h-[280px]">

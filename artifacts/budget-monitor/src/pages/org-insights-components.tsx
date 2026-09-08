@@ -5,7 +5,6 @@ import {
 } from "recharts";
 import { MetricCard } from "@/components/journey-primitives";
 import { OrgBudgetOverviewResponse } from "@workspace/api-client-react";
-import { Info } from "lucide-react";
 import { Link } from "wouter";
 
 export function InsightCard({
@@ -119,7 +118,7 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
       <div className="flex justify-between items-start gap-4">
         <div>
           <h2 className="text-base font-semibold">Teams Budget Trajectory</h2>
-          <p className="text-xs text-muted-foreground mt-1">Recorded cumulative spend. Click legend to toggle.</p>
+          <p className="text-xs text-muted-foreground mt-1">Select a team in the legend to toggle it.</p>
         </div>
       </div>
 
@@ -231,10 +230,6 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
             ))}
           </LineChart>
         </ResponsiveContainer>
-      </div>
-      <div className="flex gap-2 bg-muted/20 px-4 py-3 mt-2 text-xs leading-relaxed text-muted-foreground rounded">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-        <span><b className="text-foreground">Recorded spend by reporting basis.</b> Current-membership qualified values apply today&apos;s qualified roster to dates without an observed roster. Verified remaining, utilization, and pacing stay unavailable until coverage is complete.</span>
       </div>
     </div>
   );

@@ -116,6 +116,11 @@ export const LogoutBrowserSessionResponse = zod.void()
  */
 
 
+
+
+
+
+
 export const ExchangeMobileAuthorizationCodeBody = zod.object({
   "code": zod.string().min(1),
   "code_verifier": zod.string().min(1),
@@ -203,6 +208,7 @@ export const ListGroupsHeader = zod.object({
 
 export const listGroupsResponseUsageHealthCoverageRatioMin = 0;
 export const listGroupsResponseUsageHealthCoverageRatioMax = 1;
+
 
 
 export const ListGroupsResponse = zod.object({
@@ -345,6 +351,7 @@ export const ListGroupsResponse = zod.object({
  */
 
 
+
 export const GetReportingDetailParams = zod.object({
   "groupIds": zod.coerce.string().min(1).describe('Comma-separated group IDs. IDs are trimmed, deduplicated, and limited to 32.')
 })
@@ -381,6 +388,7 @@ export const getReportingDetailResponseMetadataCoverageRatioMin = 0;
 export const getReportingDetailResponseMetadataCoverageRatioMax = 1;
 
 export const getReportingDetailResponseMetadataCoverageRequestedDaysMin = 0;
+
 
 
 export const GetReportingDetailResponse = zod.object({
@@ -562,6 +570,7 @@ export const GetReportingDetailResponse = zod.object({
  */
 
 
+
 export const GetBudgetTeamReportParams = zod.object({
   "poolId": zod.coerce.string().min(1).describe('Canonical qualified pool ID from the authorized pools table (pool:team:...).')
 })
@@ -611,6 +620,7 @@ export const getBudgetTeamReportResponseMetadataCoverageRatioMin = 0;
 export const getBudgetTeamReportResponseMetadataCoverageRatioMax = 1;
 
 export const getBudgetTeamReportResponseMetadataCoverageRequestedDaysMin = 0;
+
 
 
 export const GetBudgetTeamReportResponse = zod.object({
@@ -812,6 +822,7 @@ export const getGroupDetailResponseUsageHealthCoverageRatioMin = 0;
 export const getGroupDetailResponseUsageHealthCoverageRatioMax = 1;
 
 
+
 export const GetGroupDetailResponse = zod.object({
   "group": zod.object({
   "groupId": zod.string(),
@@ -923,6 +934,7 @@ export const getGroupProjectsResponseUsageHealthCoverageRatioMin = 0;
 export const getGroupProjectsResponseUsageHealthCoverageRatioMax = 1;
 
 
+
 export const GetGroupProjectsResponse = zod.object({
   "projects": zod.array(zod.object({
   "projectId": zod.string(),
@@ -993,6 +1005,7 @@ export const getClusterProjectsResponseUsageHealthCoverageRatioMin = 0;
 export const getClusterProjectsResponseUsageHealthCoverageRatioMax = 1;
 
 
+
 export const GetClusterProjectsResponse = zod.object({
   "projects": zod.array(zod.object({
   "projectId": zod.string(),
@@ -1061,6 +1074,7 @@ export const GetCanonicalClusterHeadlineHeader = zod.object({
 
 export const getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMin = 0;
 export const getCanonicalClusterHeadlineResponseUsageHealthCoverageRatioMax = 1;
+
 
 
 export const GetCanonicalClusterHeadlineResponse = zod.object({
@@ -1160,6 +1174,7 @@ export const getDashboardResponseInsightsMonthlyMin = 6;
 export const getDashboardResponseInsightsMonthlyMax = 6;
 
 export const getDashboardResponseInsightsTopSpendersMax = 10;
+
 
 
 export const GetDashboardResponse = zod.object({
@@ -1396,6 +1411,7 @@ export const getOrgBudgetOverviewResponseTeamsItemPointsMax = 367;
 export const getOrgBudgetOverviewResponseTeamsMax = 1000;
 
 
+
 export const GetOrgBudgetOverviewResponse = zod.object({
   "periodStart": zod.string().regex(getOrgBudgetOverviewResponsePeriodStartRegExp),
   "periodEnd": zod.string().regex(getOrgBudgetOverviewResponsePeriodEndRegExp),
@@ -1450,6 +1466,7 @@ export const GetOrgBudgetOverviewResponse = zod.object({
 export const getBillingCycleComparisonQueryWorkspaceIdMax = 200;
 
 
+
 export const GetBillingCycleComparisonQueryParams = zod.object({
   "workspaceId": zod.coerce.string().max(getBillingCycleComparisonQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.'),
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
@@ -1473,6 +1490,7 @@ export const getBillingCycleComparisonResponseCyclesItemPointsMax = 400;
 
 export const getBillingCycleComparisonResponseCyclesMin = 3;
 export const getBillingCycleComparisonResponseCyclesMax = 3;
+
 
 
 export const GetBillingCycleComparisonResponse = zod.object({
@@ -1506,6 +1524,7 @@ export const listSpendPoolsQueryPageDefault = 1;
 
 export const listSpendPoolsQueryPageSizeDefault = 25;
 export const listSpendPoolsQueryPageSizeMax = 100;
+
 
 
 export const ListSpendPoolsQueryParams = zod.object({
@@ -1544,6 +1563,7 @@ export const listSpendPoolsResponsePersonalProjectCatalogPublishedProjectCountMi
 export const listSpendPoolsResponsePersonalProjectCatalogPublicationKnownProjectCountMin = 0;
 
 export const listSpendPoolsResponsePersonalProjectCatalogPublicationUnknownProjectCountMin = 0;
+
 
 
 export const ListSpendPoolsResponse = zod.object({
@@ -1656,6 +1676,7 @@ export const listSpendGroupsQueryPageSizeDefault = 25;
 export const listSpendGroupsQueryPageSizeMax = 100;
 
 
+
 export const ListSpendGroupsQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
@@ -1692,6 +1713,7 @@ export const listSpendGroupsResponsePersonalProjectCatalogPublishedProjectCountM
 export const listSpendGroupsResponsePersonalProjectCatalogPublicationKnownProjectCountMin = 0;
 
 export const listSpendGroupsResponsePersonalProjectCatalogPublicationUnknownProjectCountMin = 0;
+
 
 
 export const ListSpendGroupsResponse = zod.object({
@@ -1804,6 +1826,7 @@ export const listSpendPeopleQueryPageSizeDefault = 25;
 export const listSpendPeopleQueryPageSizeMax = 100;
 
 
+
 export const ListSpendPeopleQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
@@ -1840,6 +1863,7 @@ export const listSpendPeopleResponsePersonalProjectCatalogPublishedProjectCountM
 export const listSpendPeopleResponsePersonalProjectCatalogPublicationKnownProjectCountMin = 0;
 
 export const listSpendPeopleResponsePersonalProjectCatalogPublicationUnknownProjectCountMin = 0;
+
 
 
 export const ListSpendPeopleResponse = zod.object({
@@ -1955,6 +1979,7 @@ export const listSpendProjectsQueryPageSizeDefault = 25;
 export const listSpendProjectsQueryPageSizeMax = 100;
 
 
+
 export const ListSpendProjectsQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
@@ -1996,6 +2021,7 @@ export const listSpendProjectsResponsePersonalProjectCatalogPublishedProjectCoun
 export const listSpendProjectsResponsePersonalProjectCatalogPublicationKnownProjectCountMin = 0;
 
 export const listSpendProjectsResponsePersonalProjectCatalogPublicationUnknownProjectCountMin = 0;
+
 
 
 export const ListSpendProjectsResponse = zod.object({
@@ -2143,6 +2169,8 @@ export const ListSpendProjectsResponse = zod.object({
  */
 
 
+
+
 export const GetWorkspaceProjectParams = zod.object({
   "workspaceId": zod.coerce.string().min(1),
   "projectId": zod.coerce.string().min(1).describe('Project UUID, qualified by the workspaceId path segment.')
@@ -2169,6 +2197,7 @@ export const getWorkspaceProjectResponseMetadataCoverageRequestedDaysMin = 0;
 
 export const getWorkspaceProjectResponseStaleEvaluationCoverageRatioMin = 0;
 export const getWorkspaceProjectResponseStaleEvaluationCoverageRatioMax = 1;
+
 
 
 export const GetWorkspaceProjectResponse = zod.object({
@@ -2284,6 +2313,7 @@ export const GetWorkspaceProjectResponse = zod.object({
  */
 
 
+
 export const ListUserOwnedProjectsParams = zod.object({
   "userId": zod.coerce.string().min(1)
 })
@@ -2298,6 +2328,7 @@ export const listUserOwnedProjectsQueryPageDefault = 1;
 
 export const listUserOwnedProjectsQueryPageSizeDefault = 25;
 export const listUserOwnedProjectsQueryPageSizeMax = 100;
+
 
 
 export const ListUserOwnedProjectsQueryParams = zod.object({
@@ -2347,6 +2378,7 @@ export const listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublishe
 export const listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublicationKnownProjectCountMin = 0;
 
 export const listUserOwnedProjectsResponseProjectsPersonalProjectCatalogPublicationUnknownProjectCountMin = 0;
+
 
 
 export const ListUserOwnedProjectsResponse = zod.object({
@@ -2504,6 +2536,7 @@ export const exportSpendPoolsCsvQuerySearchMax = 200;
 export const exportSpendPoolsCsvQueryWorkspaceIdMax = 200;
 
 
+
 export const ExportSpendPoolsCsvQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
@@ -2524,6 +2557,7 @@ export const ExportSpendPoolsCsvResponse = zod.unknown()
 export const exportSpendGroupsCsvQuerySearchMax = 200;
 
 export const exportSpendGroupsCsvQueryWorkspaceIdMax = 200;
+
 
 
 export const ExportSpendGroupsCsvQueryParams = zod.object({
@@ -2548,6 +2582,7 @@ export const exportSpendPeopleCsvQuerySearchMax = 200;
 export const exportSpendPeopleCsvQueryWorkspaceIdMax = 200;
 
 
+
 export const ExportSpendPeopleCsvQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
@@ -2568,6 +2603,7 @@ export const ExportSpendPeopleCsvResponse = zod.unknown()
 export const exportSpendProjectsTableCsvQuerySearchMax = 200;
 
 export const exportSpendProjectsTableCsvQueryWorkspaceIdMax = 200;
+
 
 
 export const ExportSpendProjectsTableCsvQueryParams = zod.object({
@@ -2603,6 +2639,7 @@ export const GetUserActivityHeader = zod.object({
 
 export const getUserActivityResponseUsageHealthCoverageRatioMin = 0;
 export const getUserActivityResponseUsageHealthCoverageRatioMax = 1;
+
 
 
 export const GetUserActivityResponse = zod.object({
@@ -2649,6 +2686,7 @@ export const GetUserActivityResponse = zod.object({
  * Exports the unique members of the explicitly requested visible groups, with an internal-user marker and separate eligible AI, hosting/non-AI, and total spend columns. Eligible spend excludes internal Replit users.
  * @summary Export canonical per-user activity as CSV
  */
+
 
 
 export const ExportUsersCsvQueryParams = zod.object({
@@ -2703,6 +2741,7 @@ export const exportProjectsCsvQuerySearchMax = 200;
 export const exportProjectsCsvQueryWorkspaceIdMax = 200;
 
 
+
 export const ExportProjectsCsvQueryParams = zod.object({
   "rangeType": zod.enum(['billing', 'full-term', 'mtd', 'ytd', 'custom']).optional().describe('Date range for usage. full-term = rolling May 20, 2026 through today (default), billing = current billing cycle, mtd = month to date, ytd = year to date, custom requires startDate and endDate.'),
   "startDate": zod.coerce.string().optional().describe('Inclusive UTC start date (YYYY-MM-DD), required when rangeType=custom'),
@@ -2745,6 +2784,7 @@ export const SetGroupBudgetParams = zod.object({
 export const setGroupBudgetBodyAmountUsdExclusiveMin = 0;
 
 
+
 export const SetGroupBudgetBody = zod.object({
   "amountUsd": zod.number().gt(setGroupBudgetBodyAmountUsdExclusiveMin)
 })
@@ -2774,6 +2814,7 @@ export const DeleteGroupBudgetResponse = zod.object({
 export const getTeamsBudgetsQueryScopeDefault = `authorized`;
 export const getTeamsBudgetsQueryPeriodDefault = `billing`;
 export const getTeamsBudgetsQueryWorkspaceIdMax = 200;
+
 
 
 export const GetTeamsBudgetsQueryParams = zod.object({
@@ -2856,6 +2897,20 @@ export const GetTeamBudgetHistoryResponse = zod.object({
 }))
 })
 
+
+/**
+ * Available to callers with account-usage visibility. Returns the scoped custom-group inventory from the existing directory snapshot; it does not query or mutate platform limits. Built-in groups and synthetic accounting rows are excluded. Hidden destinations follow the existing team visibility policy.
+ * @summary List funding-group assignments and destinations
+ */
+
+
+
+
+
+
+
+
+
 export const GetFundingGroupsResponse = zod.object({
   "revision": zod.string().min(1).describe('Opaque committed configuration revision for conflict detection.'),
   "groups": zod.array(zod.object({
@@ -2877,11 +2932,91 @@ export const GetFundingGroupsResponse = zod.object({
   "error": zod.string().nullable()
 })
 })
+
+
+/**
+ * Requires the narrow funding-mapping capability. The workspace/group pair, destination, and expected committed configuration revision are validated atomically. Null teamName is an explicit unmapped decision. This operation has no platform, Airtable, allocation, or limit side effect.
+ * @summary Assign, reassign, or explicitly unmap one funding group
+ */
+
+
+
+
+
+
+export const UpdateFundingGroupBody = zod.object({
+  "workspaceId": zod.string().min(1),
+  "groupId": zod.string().min(1),
+  "teamName": zod.string().min(1).nullable(),
+  "expectedRevision": zod.string().min(1)
+})
+
+
+
+
+
+
+
+
+
+
+export const UpdateFundingGroupResponse = zod.object({
+  "revision": zod.string().min(1).describe('Opaque committed configuration revision for conflict detection.'),
+  "groups": zod.array(zod.object({
+  "workspaceId": zod.string().min(1),
+  "workspaceName": zod.string().min(1),
+  "groupId": zod.string().min(1),
+  "groupName": zod.string().min(1),
+  "teamName": zod.string().min(1).nullable(),
+  "origin": zod.enum(['inferred', 'explicit', 'unmapped']),
+  "isHidden": zod.boolean().describe('True when the effective destination is a hidden budget team.')
+})),
+  "teams": zod.array(zod.object({
+  "teamName": zod.string().min(1),
+  "isHidden": zod.boolean()
+})),
+  "freshness": zod.object({
+  "status": zod.enum(['fresh', 'stale', 'unavailable']),
+  "dataAsOf": zod.coerce.date().nullable(),
+  "error": zod.string().nullable()
+})
+})
+
+
+/**
+ * Requires the narrow funding-mapping capability. Changes are returned newest first, at most 200 per page.
+ * @summary List funding-group assignment changes
+ */
+export const getFundingGroupAuditQueryBeforeIdMax = 2147483647;
+
+
+
+export const GetFundingGroupAuditQueryParams = zod.object({
+  "beforeId": zod.coerce.number().min(1).max(getFundingGroupAuditQueryBeforeIdMax).optional()
+})
+
+export const GetFundingGroupAuditResponse = zod.object({
+  "changes": zod.array(zod.object({
+  "id": zod.number(),
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string(),
+  "groupId": zod.string(),
+  "groupName": zod.string(),
+  "previousTeamName": zod.string().nullable(),
+  "newTeamName": zod.string().nullable(),
+  "actor": zod.string(),
+  "changedAt": zod.coerce.date()
+})),
+  "nextBeforeId": zod.number().nullable()
+})
+
+
 /**
  * Returns authorized allocation administration changes newest first, at most 200 per page. Continue with beforeId set to the final returned ID; a short page ends traversal.
  * @summary List annual allocation and visibility changes
  */
 export const getTeamAllocationAuditQueryBeforeIdMax = 2147483647;
+
 
 
 export const GetTeamAllocationAuditQueryParams = zod.object({
@@ -2920,6 +3055,7 @@ export const UpdateTeamAnnualAllocationParams = zod.object({
 })
 
 export const updateTeamAnnualAllocationBodyAnnualAllocationUsdMin = 0;
+
 
 
 export const UpdateTeamAnnualAllocationBody = zod.object({
@@ -3123,6 +3259,7 @@ export const UpdateTeamBudgetLimitParams = zod.object({
 export const updateTeamBudgetLimitBodyMonthlyLimitUsdMin = 0;
 
 
+
 export const UpdateTeamBudgetLimitBody = zod.object({
   "monthlyLimitUsd": zod.number().min(updateTeamBudgetLimitBodyMonthlyLimitUsdMin).nullable()
 })
@@ -3194,6 +3331,9 @@ export const GetTeamBudgetTargetsResponse = zod.object({
  */
 
 
+
+
+
 export const AssignTeamBudgetTargetBody = zod.object({
   "teamName": zod.string().min(1),
   "workspaceId": zod.string().min(1),
@@ -3224,6 +3364,7 @@ export const UpdateTeamBudgetTargetParams = zod.object({
 export const updateTeamBudgetTargetBodyMonthlyLimitUsdMin = 0;
 
 
+
 export const UpdateTeamBudgetTargetBody = zod.object({
   "monthlyLimitUsd": zod.number().min(updateTeamBudgetTargetBodyMonthlyLimitUsdMin).nullable()
 })
@@ -3247,6 +3388,7 @@ export const UpdateTeamBudgetTargetResponse = zod.object({
 export const updateLegacyWorkspaceLimitBodyMonthlyLimitUsdMin = 0;
 
 
+
 export const UpdateLegacyWorkspaceLimitBody = zod.object({
   "monthlyLimitUsd": zod.number().min(updateLegacyWorkspaceLimitBodyMonthlyLimitUsdMin).nullable()
 })
@@ -3265,9 +3407,12 @@ export const UpdateLegacyWorkspaceLimitResponse = zod.object({
  */
 
 
+
 export const applyTeamBudgetLimitsBodyTargetsItemReviewedDesiredAmountUsdMin = 0;
 
 export const applyTeamBudgetLimitsBodyTargetsItemReviewedUpstreamAmountUsdMin = 0;
+
+
 
 
 export const ApplyTeamBudgetLimitsBody = zod.object({
@@ -3332,6 +3477,7 @@ export const ListAdminsResponse = zod.array(ListAdminsResponseItem)
 export const addAdminBodyEmailMin = 3;
 
 
+
 export const AddAdminBody = zod.object({
   "email": zod.string().min(addAdminBodyEmailMin)
 })
@@ -3372,6 +3518,7 @@ export const ListAppAdminsResponse = zod.array(ListAppAdminsResponseItem)
  * Available only to Enterprise account administrators and the designated account delegate. The stable Replit user ID must already have signed in.
  * @summary Add an account-wide app admin
  */
+
 
 
 export const AddAppAdminBody = zod.object({
@@ -3442,6 +3589,7 @@ export const ListVisibleWorkspacesQueryParams = zod.object({
 export const listVisibleWorkspacesResponseMemberCountMin = 0;
 
 
+
 export const ListVisibleWorkspacesResponseItem = zod.object({
   "workspaceId": zod.string(),
   "workspaceName": zod.string(),
@@ -3454,6 +3602,7 @@ export const ListVisibleWorkspacesResponse = zod.array(ListVisibleWorkspacesResp
  * Usage is always for the current Replit billing cycle and is independent of the dashboard reporting range. Budget failures are returned explicitly.
  * @summary List members and Agent budgets for a visible workspace
  */
+
 
 
 export const ListVisibleWorkspaceMembersParams = zod.object({
@@ -3512,11 +3661,13 @@ export const ListVisibleWorkspaceMembersResponse = zod.object({
  */
 
 
+
 export const ListWorkspaceUsageLimitAuditsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
 
 export const listWorkspaceUsageLimitAuditsQueryBeforeIdMax = 2147483647;
+
 
 
 export const ListWorkspaceUsageLimitAuditsQueryParams = zod.object({
@@ -3547,6 +3698,7 @@ export const ListWorkspaceUsageLimitAuditsResponse = zod.array(ListWorkspaceUsag
  */
 
 
+
 export const GetWorkspaceLimitPoliciesParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -3575,11 +3727,13 @@ export const GetWorkspaceLimitPoliciesResponse = zod.object({
  */
 
 
+
 export const SetWorkspaceDefaultLimitPolicyParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
 
 export const setWorkspaceDefaultLimitPolicyBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const SetWorkspaceDefaultLimitPolicyBody = zod.object({
@@ -3611,12 +3765,15 @@ export const SetWorkspaceDefaultLimitPolicyResponse = zod.object({
  */
 
 
+
+
 export const SetGroupMemberLimitPolicyParams = zod.object({
   "workspaceId": zod.coerce.string().min(1),
   "groupId": zod.coerce.string().min(1)
 })
 
 export const setGroupMemberLimitPolicyBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const SetGroupMemberLimitPolicyBody = zod.object({
@@ -3648,6 +3805,7 @@ export const SetGroupMemberLimitPolicyResponse = zod.object({
  */
 
 
+
 export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
   "workspaceId": zod.coerce.string().min(1)
 })
@@ -3656,6 +3814,7 @@ export const BulkSetWorkspaceMemberBudgetsParams = zod.object({
 export const bulkSetWorkspaceMemberBudgetsBodyUserIdsMax = 100;
 
 export const bulkSetWorkspaceMemberBudgetsBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const BulkSetWorkspaceMemberBudgetsBody = zod.object({
@@ -3681,12 +3840,15 @@ export const BulkSetWorkspaceMemberBudgetsResponse = zod.object({
  */
 
 
+
+
 export const SetWorkspaceMemberBudgetParams = zod.object({
   "workspaceId": zod.coerce.string().min(1),
   "userId": zod.coerce.string().min(1)
 })
 
 export const setWorkspaceMemberBudgetBodyAmountUsdExclusiveMin = 0;
+
 
 
 export const SetWorkspaceMemberBudgetBody = zod.object({
@@ -3704,6 +3866,8 @@ export const SetWorkspaceMemberBudgetResponse = zod.object({
  * Account-wide operators only. Clearing an already-unset budget is idempotent.
  * @summary Clear a member's desired Agent budget
  */
+
+
 
 
 export const ClearWorkspaceMemberBudgetParams = zod.object({
@@ -3756,6 +3920,7 @@ export const ListDirectoryGroupsResponse = zod.object({
 export const listWorkspaceGroupsQueryWorkspaceIdMax = 200;
 
 
+
 export const ListWorkspaceGroupsQueryParams = zod.object({
   "workspaceId": zod.coerce.string().max(listWorkspaceGroupsQueryWorkspaceIdMax).optional().describe('Exact authorized workspace facet. Omit to include every workspace in the resolved scope.')
 })
@@ -3768,6 +3933,7 @@ export const ListWorkspaceGroupsHeader = zod.object({
 })
 
 export const listWorkspaceGroupsResponseWorkspacesItemGroupsItemMemberCountMin = 0;
+
 
 
 export const ListWorkspaceGroupsResponse = zod.object({
@@ -3795,6 +3961,7 @@ export const ListWorkspaceGroupsResponse = zod.object({
  */
 
 
+
 export const ListWorkspaceGroupMembersParams = zod.object({
   "workspaceId": zod.coerce.string().min(1),
   "groupId": zod.coerce.string()
@@ -3804,6 +3971,7 @@ export const listWorkspaceGroupMembersQueryPageDefault = 1;
 
 export const listWorkspaceGroupMembersQueryPageSizeDefault = 25;
 export const listWorkspaceGroupMembersQueryPageSizeMax = 100;
+
 
 
 export const ListWorkspaceGroupMembersQueryParams = zod.object({
@@ -3824,6 +3992,7 @@ export const listWorkspaceGroupMembersResponseGroupMemberCountMin = 0;
 export const listWorkspaceGroupMembersResponsePageSizeMax = 100;
 
 export const listWorkspaceGroupMembersResponseTotalMembersMin = 0;
+
 
 
 export const ListWorkspaceGroupMembersResponse = zod.object({
@@ -3882,6 +4051,8 @@ export const ListWorkspaceAdminsResponse = zod.array(ListWorkspaceAdminsResponse
 export const listAlertsQueryLimitMax = 200;
 
 
+
+
 export const ListAlertsQueryParams = zod.object({
   "limit": zod.coerce.number().min(1).max(listAlertsQueryLimitMax).optional(),
   "beforeId": zod.coerce.number().min(1).optional().describe('Return records older than this exclusive alert ID.')
@@ -3895,6 +4066,7 @@ export const ListAlertsHeader = zod.object({
 })
 
 export const listAlertsResponseBlockedMemberCountMin = 0;
+
 
 
 export const ListAlertsResponseItem = zod.object({
@@ -3925,6 +4097,7 @@ export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
  * @summary Run the budget threshold check now
  */
 export const runAlertCheckResponseAlertsItemBlockedMemberCountMin = 0;
+
 
 
 export const RunAlertCheckResponse = zod.object({
@@ -4117,6 +4290,7 @@ export const listRecentUsageIngestRunsQueryLimitDefault = 20;
 export const listRecentUsageIngestRunsQueryLimitMax = 100;
 
 
+
 export const ListRecentUsageIngestRunsQueryParams = zod.object({
   "limit": zod.coerce.number().min(1).max(listRecentUsageIngestRunsQueryLimitMax).default(listRecentUsageIngestRunsQueryLimitDefault)
 })
@@ -4140,6 +4314,7 @@ export const ListRecentUsageIngestRunsResponse = zod.array(ListRecentUsageIngest
  * Reads persisted directory, billing-cycle usage, and limit observations without refreshing upstream data.
  * @summary Get the composed Set Limits read model
  */
+
 
 
 export const GetSetLimitsWorkspaceParams = zod.object({
@@ -4207,6 +4382,7 @@ export const prepareLimitOperationBodyIdempotencyKeyMin = 8;
 export const prepareLimitOperationBodyIdempotencyKeyMax = 200;
 
 
+
 export const PrepareLimitOperationBody = zod.object({
   "workspaceId": zod.string().regex(prepareLimitOperationBodyWorkspaceIdRegExp),
   "amountUsd": zod.number().gt(prepareLimitOperationBodyAmountUsdExclusiveMin).multipleOf(prepareLimitOperationBodyAmountUsdMultipleOf),
@@ -4264,7 +4440,6 @@ export const PrepareLimitOperationResponse = zod.object({
 }))
 })
 
-
 /**
  * @summary Commit an exactly reviewed limit operation
  */
@@ -4283,6 +4458,7 @@ export const commitLimitOperationBodyAmountUsdMultipleOf = 0.01;
 
 export const commitLimitOperationBodyUserIdsItemRegExp = new RegExp('^[1-9]\\d*$');
 export const commitLimitOperationBodyUserIdsMax = 1000;
+
 
 
 export const CommitLimitOperationBody = zod.object({
@@ -4339,8 +4515,6 @@ export const CommitLimitOperationResponse = zod.object({
   "failedAt": zod.coerce.date().nullable()
 }))
 })
-
-
 /**
  * @summary Get and resume a durable limit operation
  */
@@ -4418,6 +4592,7 @@ export const retryLimitOperationTargetsBodyIdempotencyKeyMin = 8;
 export const retryLimitOperationTargetsBodyIdempotencyKeyMax = 200;
 
 
+
 export const RetryLimitOperationTargetsBody = zod.object({
   "userIds": zod.array(zod.string().regex(retryLimitOperationTargetsBodyUserIdsItemRegExp)).min(1).max(retryLimitOperationTargetsBodyUserIdsMax),
   "idempotencyKey": zod.string().min(retryLimitOperationTargetsBodyIdempotencyKeyMin).max(retryLimitOperationTargetsBodyIdempotencyKeyMax)
@@ -4470,59 +4645,4 @@ export const RetryLimitOperationTargetsResponse = zod.object({
   "verifiedAt": zod.coerce.date().nullable(),
   "failedAt": zod.coerce.date().nullable()
 }))
-})
-
-
-/**
- * Requires the narrow funding-mapping capability. Changes are returned newest first, at most 200 per page.
- * @summary List funding-group assignment changes
- */
-export const getFundingGroupAuditQueryBeforeIdMax = 2147483647;
-
-export const GetFundingGroupAuditQueryParams = zod.object({
-  "beforeId": zod.coerce.number().min(1).max(getFundingGroupAuditQueryBeforeIdMax).optional()
-})
-
-export const UpdateFundingGroupResponse = zod.object({
-  "revision": zod.string().min(1).describe('Opaque committed configuration revision for conflict detection.'),
-  "groups": zod.array(zod.object({
-  "workspaceId": zod.string().min(1),
-  "workspaceName": zod.string().min(1),
-  "groupId": zod.string().min(1),
-  "groupName": zod.string().min(1),
-  "teamName": zod.string().min(1).nullable(),
-  "origin": zod.enum(['inferred', 'explicit', 'unmapped']),
-  "isHidden": zod.boolean().describe('True when the effective destination is a hidden budget team.')
-})),
-  "teams": zod.array(zod.object({
-  "teamName": zod.string().min(1),
-  "isHidden": zod.boolean()
-})),
-  "freshness": zod.object({
-  "status": zod.enum(['fresh', 'stale', 'unavailable']),
-  "dataAsOf": zod.coerce.date().nullable(),
-  "error": zod.string().nullable()
-})
-})
-
-export const GetFundingGroupAuditResponse = zod.object({
-  "changes": zod.array(zod.object({
-  "id": zod.number(),
-  "workspaceId": zod.string(),
-  "workspaceName": zod.string(),
-  "groupId": zod.string(),
-  "groupName": zod.string(),
-  "previousTeamName": zod.string().nullable(),
-  "newTeamName": zod.string().nullable(),
-  "actor": zod.string(),
-  "changedAt": zod.coerce.date()
-})),
-  "nextBeforeId": zod.number().nullable()
-})
-
-export const UpdateFundingGroupBody = zod.object({
-  "workspaceId": zod.string().min(1),
-  "groupId": zod.string().min(1),
-  "teamName": zod.string().min(1).nullable(),
-  "expectedRevision": zod.string().min(1)
 })

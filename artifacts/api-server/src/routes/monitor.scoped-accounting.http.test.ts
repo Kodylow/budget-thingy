@@ -1882,7 +1882,7 @@ describe("authenticated group detail qualification", () => {
         remainingUsd: null,
       });
     expect(value.metadata.qualifications.join(" ")).toContain(
-      "Current-cycle Agent metric classification is unavailable",
+      "Agent metric classification is unavailable",
     );
 
     const hidden = await get(

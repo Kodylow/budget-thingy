@@ -10,7 +10,7 @@ import { useRange } from "@/components/range-context";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { formatObservedCurrency } from "@/lib/spend-presentation";
 import { spendDetailHref, sanitizeSpendReturnTo } from "@/lib/spend-exploration";
-import { DeploymentChip, DeploymentLink, ProjectDate, StaleSpendingChip } from "@/components/project-observation";
+import { DeploymentChip, DeploymentLink, ProjectDataFreshness, ProjectDate, StaleSpendingChip } from "@/components/project-observation";
 
 export default function ProjectDetail() {
   const { workspaceId, projectId } = useParams();
@@ -37,7 +37,7 @@ export default function ProjectDetail() {
   const returnTo = sanitizeSpendReturnTo(searchParams.get("returnTo"));
   const currentPath = `${location}${searchString ? `?${searchString}` : ""}`;
 
-  if (query.isError) {
+  if (query.isError && !query.data) {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] space-y-4">
         <AlertTriangle className="h-10 w-10 text-destructive" />
@@ -80,15 +80,10 @@ export default function ProjectDetail() {
           </div>
 
           <AdminDataQualityNote title="Project data quality">
-            <p>Spend observations are for the selected period ({data.period.label}). Current month total is independent of the selected range.</p>
-            <p>{data.metadata.stale ? 'Data may be stale. ' : ''}{data.metadata.status === 'empty' ? 'Selected-period usage is unavailable. ' : data.metadata.status === 'partial' ? 'Selected-period usage is partial. ' : ''}{data.metadata.dataAsOf ? <>Data as of <ProjectDate value={data.metadata.dataAsOf} />.</> : 'Freshness unknown.'}</p>
+            <p>Selected-period spend and current-month spend use separate ranges.</p>
             {data.metadata.qualifications?.map(qualification => <p key={qualification}>{qualification}</p>)}
           </AdminDataQualityNote>
-          <p className="text-xs text-muted-foreground">
-            {data.metadata.dataAsOf
-              ? <>Project data as of <ProjectDate value={data.metadata.dataAsOf} />{data.metadata.stale ? ' · Stale' : ''}</>
-              : 'Project data freshness unknown'}
-          </p>
+          <ProjectDataFreshness metadata={data.metadata} />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-4">

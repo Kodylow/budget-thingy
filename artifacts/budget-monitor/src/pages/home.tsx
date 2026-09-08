@@ -18,7 +18,7 @@ import { AdminDataQualityNote } from '@/components/admin-data-quality';
 import { RangeFilter } from '@/components/range-filter';
 import { useRange } from '@/components/range-context';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
@@ -76,7 +76,7 @@ function HomeTeamReport({
   });
   const tracking: TeamBudgetTracking | null = report.data?.budgetTracking ?? null;
   const comparisonsMatchBudgetWindow = tracking?.comparisonsMatchBudgetWindow === true;
-  const hasTrajectory = !report.isError && Boolean(
+  const hasTrajectory = Boolean(
     tracking?.points.some((point) => Number.isFinite(point.spendUsd)) ||
     (
       tracking?.benchmarkEligible &&
@@ -93,7 +93,7 @@ function HomeTeamReport({
         team={team}
         tracking={tracking}
         loading={report.isLoading}
-        error={report.isError}
+        error={report.isError && !report.data}
         onRetry={() => void report.refetch()}
         search={search}
         selectedPeriodLabel={selectedPeriodLabel}
@@ -106,7 +106,7 @@ function HomeTeamReport({
           teamName={team.teamName}
           tracking={tracking}
           loading={report.isLoading}
-          error={report.isError}
+          error={report.isError && !report.data}
           onRetry={() => void report.refetch()}
           comparisonsMatchBudgetWindow={comparisonsMatchBudgetWindow}
     />
@@ -330,7 +330,7 @@ export default function Home() {
     );
   }
 
-  if (membershipQuery.isError || !selectedWorkspace || !myDashboard) {
+  if ((membershipQuery.isError && !membershipContext) || !selectedWorkspace || !myDashboard) {
     return (
       <div className="mx-auto max-w-[1280px] space-y-6 p-4 md:p-8">
         {overviewHeader}
@@ -394,15 +394,6 @@ export default function Home() {
         </div>
       </section>
 
-      {(myDashboardQuery.isError || teamBudgetsQuery.isError) && (
-        <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-          <strong className="flex-1 text-foreground">Couldn’t refresh data.</strong>
-          <button type="button" className="font-medium text-primary hover:underline" onClick={() => {
-            void myDashboardQuery.refetch();
-            void teamBudgetsQuery.refetch();
-          }}>Retry</button>
-        </div>
-      )}
       {myDashboard.metadata.qualifications.length > 0 && <AdminDataQualityNote title="Home overview">{myDashboard.metadata.qualifications.join(' ')}</AdminDataQualityNote>}
 
       {showSpendStory && <section id="monthly-context" className="grid scroll-mt-6 grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Selected-period spend comparisons">
@@ -412,10 +403,9 @@ export default function Home() {
         {(hasPersonalComparison || billingCyclesQuery.isLoading || billingCyclesQuery.isError) && <Card className={`rounded-md shadow-none ${!hasTeamComparison ? 'lg:col-span-2' : ''}`}>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base"><TrendingUp className="h-4 w-4 text-primary" /> My spend</CardTitle>
-            <CardDescription>{selectedPeriodLabel}</CardDescription>
           </CardHeader>
           <CardContent><div className="h-64 rounded-sm border bg-muted/25 p-3">
-            {billingCyclesQuery.isLoading ? <Skeleton className="h-full w-full" /> : billingCyclesQuery.isError ? (
+            {billingCyclesQuery.isLoading ? <Skeleton className="h-full w-full" /> : billingCyclesQuery.isError && !billingCyclesQuery.data ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">Spend comparison unavailable<Button size="sm" variant="outline" onClick={() => void billingCyclesQuery.refetch()}>Retry</Button></div>
             ) : <SpendStoryChart cycles={cycles} scope="personal" />}
           </div></CardContent>
@@ -423,7 +413,6 @@ export default function Home() {
         {hasTeamComparison && <Card className={`rounded-md shadow-none ${!hasPersonalComparison ? 'lg:col-span-2' : ''}`}>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4 text-primary" /> Team spend</CardTitle>
-            <CardDescription>{selectedPeriodLabel}</CardDescription>
           </CardHeader>
           <CardContent><div className="h-64 rounded-sm border bg-muted/25 p-3">
             <SpendStoryChart cycles={cycles} scope="team" />
@@ -435,14 +424,12 @@ export default function Home() {
         {hasTrend && <Card className={`rounded-md shadow-none ${activity == null ? 'lg:col-span-2' : ''}`}>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base"><BarChart3 className="h-4 w-4 text-primary" /> Selected-period trend</CardTitle>
-            <CardDescription>{selectedPeriodLabel}</CardDescription>
           </CardHeader>
           <CardContent><div className="h-56"><TrendChart trend={myDashboard.trend} onClick={() => setLocation(reportingNavigationHref('/spend?viewScope=my', searchString))} /></div></CardContent>
         </Card>}
         {activity != null && <Card className={`rounded-md shadow-none ${!hasTrend ? 'lg:col-span-2' : ''}`}>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base"><Flame className="h-4 w-4 text-primary" /> Activity</CardTitle>
-            <CardDescription>{selectedPeriodLabel}</CardDescription>
           </CardHeader>
           <CardContent>
               <div className="font-mono text-2xl font-semibold">{formatInt(activity)} <span className="font-sans text-sm font-normal text-muted-foreground">active days</span></div>

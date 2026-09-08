@@ -444,7 +444,7 @@ describe('Home selected-period regressions', () => {
     expect(body.textContent).toContain('0 active days');
   });
 
-  it('retains retry actions for dashboard, team lookup, comparison, and team-report errors', () => {
+  it('retains local retry actions for initial comparison and team-report failures', () => {
     mocks.dashboard.mockReturnValue(query(dashboardData, { isError: true }));
     mocks.teamBudgets.mockReturnValue(query({
       budgets: [{ poolId: 'pool-1', teamName: 'Platform' }],
@@ -453,8 +453,20 @@ describe('Home selected-period regressions', () => {
     mocks.teamReport.mockReturnValue(query(undefined, { isError: true }));
 
     const buttons = [...renderHome().querySelectorAll('button')].map((button) => button.textContent);
-    expect(buttons.filter((text) => text?.includes('Retry')).length).toBeGreaterThanOrEqual(3);
+    expect(buttons.filter((text) => text?.includes('Retry')).length).toBe(2);
     expect(buttons).toContain('Retry team report');
+  });
+
+  it('keeps cached values and charts without duplicating the shared refresh notice', () => {
+    for (const mock of [mocks.membership, mocks.dashboard, mocks.comparison, mocks.teamBudgets, mocks.teamReport]) {
+      mock.mockReturnValue({ ...mock(), isError: true });
+    }
+    const body = renderHome();
+    expect(body.querySelector('[aria-label="Personal selected spend"]')?.textContent).toBe('47.25');
+    expect(body.querySelector('[aria-label="Team selected spend"]')?.textContent).toBe('321');
+    expect(body.querySelector('[aria-label="Platform trajectory"]')).not.toBeNull();
+    expect(body.querySelector('[aria-label="personal spend story"]')).not.toBeNull();
+    expect(body.textContent).not.toMatch(/refresh|unavailable|Retry/i);
   });
 
   it('does not substitute selected-period active-project analytics for missing current project inventory', () => {

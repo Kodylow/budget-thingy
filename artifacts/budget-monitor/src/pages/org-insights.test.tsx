@@ -147,7 +147,7 @@ describe('OrgInsights', () => {
     expect(html).toContain('Data is delayed due to upstream sync.');
   });
 
-  it('shows unassigned spend reconciliation note when unassigned is positive', () => {
+  it('shows unassigned spend once when unassigned is positive', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
       role: 'account',
@@ -170,8 +170,7 @@ describe('OrgInsights', () => {
     });
     
     const html = renderToStaticMarkup(<OrgInsights />);
-    expect(html).toContain('Reconciliation Note');
-    expect(html).toContain('$5,000');
-    expect(html).toContain('not mapped to any specific team budget');
+    expect(html.match(/data-testid="insight-card"/g)).toHaveLength(5);
+    expect(html).not.toContain('Reconciliation Note');
   });
 });

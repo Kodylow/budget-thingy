@@ -1,4 +1,5 @@
 import React from "react";
+import { AdminDataQualityNote } from "@/components/admin-data-quality";
 
 export function safeExternalUrl(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -15,6 +16,32 @@ export function ProjectDate({ value, unknown = "Unknown" }: { value: string | nu
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return <>{unknown}</>;
   return <time dateTime={value}>{date.toLocaleDateString()}</time>;
+}
+
+export function ProjectDataFreshness({
+  metadata,
+}: {
+  metadata: {
+    status: string;
+    stale: boolean;
+    dataAsOf?: string | null;
+  };
+}) {
+  return (
+    <>
+    {(metadata.status === "empty" || metadata.status === "partial") && (
+      <AdminDataQualityNote title="Project usage">
+        {metadata.status === "empty" ? "Selected-period usage unavailable." : "Selected-period usage partial."}
+      </AdminDataQualityNote>
+    )}
+    <p className="text-xs text-muted-foreground">
+      Project data
+      {metadata.dataAsOf
+        ? <> as of <ProjectDate value={metadata.dataAsOf} />{metadata.stale ? " · Stale" : ""}</>
+        : <> freshness unknown{metadata.stale ? " · Stale" : ""}</>}
+    </p>
+    </>
+  );
 }
 
 export function DeploymentChip({

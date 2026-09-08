@@ -120,7 +120,7 @@ export function BudgetTrajectory({
       <div className="px-5 py-4">
         {loading ? (
           <div className="h-[280px] animate-pulse rounded-sm bg-muted" aria-label="Loading budget trajectory" />
-        ) : error ? (
+        ) : error && !tracking ? (
           <div className="flex h-[280px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
             Budget trajectory unavailable
             <Button size="sm" variant="outline" onClick={onRetry}>Retry</Button>

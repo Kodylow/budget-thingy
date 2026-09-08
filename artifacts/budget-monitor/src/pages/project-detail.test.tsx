@@ -61,6 +61,13 @@ describe('ProjectDetail correctness states', () => {
     expect(renderToStaticMarkup(<ProjectDetail />)).toContain('Deployment observation unavailable');
   });
 
+  it('keeps cached project details visible when a refresh fails', () => {
+    getProject.mockReturnValue({ data: response, isError: true });
+    const html = renderToStaticMarkup(<ProjectDetail />);
+    expect(html).toContain('Production project');
+    expect(html).not.toContain('Project details are unavailable');
+  });
+
   it('uses the qualified route workspace over a conflicting query facet', () => {
     search = 'viewScope=my&workspaceId=other-workspace';
     renderToStaticMarkup(<ProjectDetail />);

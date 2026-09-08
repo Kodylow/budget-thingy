@@ -94,7 +94,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     const source = readFileSync(new URL('./dashboard.tsx', import.meta.url), 'utf8');
     expect(source).toContain('status-dashboard-partial');
     expect(source).toContain('status-dashboard-stale');
-    expect(source).toContain('status-dashboard-error');
+    expect(source).not.toContain('status-dashboard-error');
     expect(source).not.toContain('dashboard-data-quality');
     expect(source).not.toContain('Reconciliation details');
     expect(source).not.toContain('Data details');
@@ -105,6 +105,8 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(source).toContain('card.qualification');
     expect(source).toContain('AdminDataQualityNote');
     expect(source).not.toContain('dashboard-data-qualifications');
+    expect(source).not.toContain('This is an estimate for the selected horizon');
+    expect(source).not.toContain('projection={isError ?');
   });
 
   it('dashboard range control implements narrow layout', () => {

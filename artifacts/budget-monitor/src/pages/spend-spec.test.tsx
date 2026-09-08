@@ -293,4 +293,9 @@ describe('Spend Behaviors', () => {
     expect(html).toContain('Unavailable');
     expect(html).not.toContain('$0.00');
   });
+
+  it('does not repeat read-only state in the ledger metadata', () => {
+    vi.mocked(api.useListSpendPools).mockReturnValue(mockQueryReturn([], 0, 0));
+    expect(renderComponent()).not.toContain('· Read-only');
+  });
 });

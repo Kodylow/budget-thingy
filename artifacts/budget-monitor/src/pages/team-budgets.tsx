@@ -512,9 +512,7 @@ export default function TeamBudgets() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl" data-testid="text-team-budgets-title">Budget allocations</h1>
-          <p className="max-w-3xl text-sm text-muted-foreground">
-             {canEdit ? 'Manage' : 'View'} local planning funding. Undated opening funding, dated monthly additions, and carried-forward additions remain separate from platform limits.
-          </p>
+          <p className="max-w-3xl text-sm text-muted-foreground">Planning funding by source and date.</p>
           {(capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn.length > 0) && (
             <Link href="/limits" className="inline-block text-sm text-primary hover:underline">Manage monthly Agent caps in Usage Limits</Link>
           )}
@@ -523,13 +521,6 @@ export default function TeamBudgets() {
           {canEdit && <AddAllocationDialog key={authorizationKey} teams={teams} onSuccess={() => invalidateBudgetCaches(queryClient)} />}
         </div>
       </div>
-
-      {historyQuery.isError && historyQuery.data && (
-        <div className="flex items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm" role="status">
-          <span>Refresh failed — showing the last available allocations.</span>
-          <Button variant="outline" size="sm" onClick={() => void historyQuery.refetch()}>Retry</Button>
-        </div>
-      )}
 
       <Card className="overflow-hidden rounded-md shadow-none">
         <CardHeader className="border-b bg-card pb-4">
@@ -833,12 +824,6 @@ export default function TeamBudgets() {
                       <p className="px-5 py-3 text-xs text-muted-foreground">
                         Page {auditCursors.length} · up to 200 changes per page.
                       </p>
-                      {auditQuery.isError && (
-                        <div className="mx-5 mb-3 flex items-center justify-between border border-destructive/30 bg-destructive/5 p-3 text-sm">
-                          <span>Refresh failed. Showing the last successful history page.</span>
-                          <Button variant="outline" size="sm" onClick={() => void auditQuery.refetch()}>Retry</Button>
-                        </div>
-                      )}
                       <div className="max-w-full overflow-x-auto overscroll-x-contain" tabIndex={0} aria-label="Allocation audit history">
                       <table className="w-full min-w-[760px] text-sm">
                         <thead className="bg-muted/20 text-left text-xs uppercase text-muted-foreground">

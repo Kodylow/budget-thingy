@@ -45,7 +45,27 @@ describe('UserProjects', () => {
     expect(html).toContain('aria-label="Previous page"');
     expect(html).toContain('aria-label="Next page"');
     expect(html).toContain('Deployment unknown');
-    expect(html).toContain('Project data freshness unknown');
+    expect(html).not.toContain('Project usage partial');
+    expect(html).not.toContain('Selected-period usage partial');
+    expect(html).toContain('freshness unknown');
     expect(html).toContain('returnTo=%2Fusers%2Fuser-1');
+  });
+
+  it('keeps cached projects visible when a refresh fails', () => {
+    listProjects.mockReturnValue({
+      isError: true,
+      data: {
+        user: { userId: 'user-1', name: 'Owner', username: null, email: null },
+        projects: {
+          rows: [],
+          page: 2, pageSize: 25, totalRows: 0, filteredRows: 0,
+          totals: { spendUsd: 0, agentSpendUsd: 0, otherServicesUsd: 0 },
+          metadata: { status: 'complete', stale: false, dataAsOf: null, qualifications: [] },
+        },
+      },
+    });
+    const html = renderToStaticMarkup(<UserProjects />);
+    expect(html).toContain('Owner');
+    expect(html).not.toContain('Owned projects are unavailable');
   });
 });

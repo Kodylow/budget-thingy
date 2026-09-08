@@ -141,8 +141,12 @@ function showErrorToast(
   recentToasts.set(dedupeKey, now);
 
   return toast({
-    title: detail.title,
-    description: detail.detail,
+    title: query?.state.data !== undefined && (detail.kind === 'server' || detail.kind === 'network')
+      ? 'Couldn’t refresh data.'
+      : detail.title,
+    description: query?.state.data !== undefined && (detail.kind === 'server' || detail.kind === 'network')
+      ? 'Showing saved values.'
+      : detail.detail,
     variant: 'destructive',
     action: query
       ? createElement(
@@ -186,7 +190,6 @@ export function subscribeApiErrorToasts(queryClient: QueryClient): () => void {
       const hasPartial = [...degradedQueries.values()].includes('partial');
       usageHealthToast = toast({
         title: hasPartial ? 'Some usage data is still updating' : 'Usage data may be out of date',
-        description: 'Available values remain visible and refresh automatically.',
       });
     } else if (degradedQueries.size === 0 && usageHealthToast) {
       usageHealthToast.dismiss();
@@ -206,6 +209,9 @@ export function subscribeApiErrorToasts(queryClient: QueryClient): () => void {
     if (event.type !== 'updated') return;
 
     if (event.action.type === 'error') {
+      // The request notice replaces the same query's background-health notice.
+      degradedQueries.delete(event.query.queryHash);
+      updateUsageHealthToast();
       if (
         updateNoticeState(activeQueryErrorKeys, event.query.queryHash, true) === 'unchanged'
       ) return;

@@ -103,18 +103,18 @@ export function buildFixedTeamBudgetTracking(input: {
   const spendUsd = input.usageObserved ? input.canonicalSpendUsd : null;
   const qualification = !comparisonsMatchBudgetWindow
     ? !input.scopeComplete
-      ? "The selected reporting range does not exactly match the budget-to-date window and the full funding team is outside the selected authorized scope; remaining, percent used, and benchmark are withheld."
-      : "The selected reporting range does not exactly match the budget-to-date window; remaining, percent used, and benchmark are withheld."
+      ? "Comparisons are unavailable because the range differs from the budget-to-date window and the full funding team is outside scope."
+      : "Comparisons are unavailable because the range differs from the budget-to-date window."
     : !input.scopeComplete
-    ? "The full funding team is outside the authorized scope; allocation-period comparisons are withheld."
+    ? "Allocation comparisons are unavailable outside the full funding-team scope."
     : !usageComplete
       ? input.budgetKind === "monthly_agent"
-        ? "Agent usage does not completely cover the verified billing cycle-to-date window; cycle spend, remaining, percent used, and benchmark are withheld."
-        : "Usage does not completely cover the budget-to-date window; remaining and percent used are withheld."
+        ? "Cycle comparisons are unavailable because Agent usage coverage is incomplete."
+        : "Budget comparisons are unavailable because budget-to-date window coverage is incomplete."
       : input.allocationUsd === null
-        ? "The team allocation is unavailable; remaining, percent used, and benchmark are withheld."
+        ? "Budget comparisons are unavailable because the team allocation is unavailable."
         : input.allocationUsd <= 0
-          ? "The allocation is not positive; percent used and benchmark are withheld."
+          ? "Percent used and benchmark are unavailable for a non-positive allocation."
           : null;
   return {
     budgetKind: input.budgetKind ?? "annual",
@@ -838,33 +838,33 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     );
     if (!selectedComplete) {
       detailQualifications.push(
-        "Partial usage coverage for the requested workspaces; missing facts are not zero.",
+        "Usage coverage is partial; missing facts are not zero.",
       );
     }
     if (groupRows.some((group) =>
       group.sharedPool && group.allocationUsd === null)) {
       detailQualifications.push(
-        "Shared canonical allocation is unavailable for this scope; only authorized contribution is shown.",
+        "Shared allocation is unavailable; only authorized contribution is shown.",
       );
     }
     if (currentCycle.status === "stale") {
       detailQualifications.push(
-        "Current-cycle Agent usage is stale; known values are shown and limit remaining may be outdated.",
+        "Current-cycle Agent usage is stale; remaining may be outdated.",
       );
     }
     if (currentRelevantFailed.length > 0) {
       detailQualifications.push(
-        "Current-cycle Agent usage failed for a requested workspace; affected usage and remaining values are unknown.",
+        "Current-cycle Agent usage is unavailable for an affected workspace.",
       );
     } else if (currentRelevantMissing.length > 0 ||
         currentCycle.status === "empty") {
       detailQualifications.push(
-        "Current-cycle Agent usage is incomplete for a requested workspace; affected usage and remaining values are unknown.",
+        "Current-cycle Agent usage is incomplete for an affected workspace.",
       );
     }
     if (metricClassificationUnknown) {
       detailQualifications.push(
-        "Current-cycle Agent metric classification is unavailable for one or more members; affected usage and remaining values are unknown.",
+        "Agent metric classification is unavailable for affected members.",
       );
     }
     const includeBudgetTracking = teamMode &&

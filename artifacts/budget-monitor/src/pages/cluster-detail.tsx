@@ -167,18 +167,11 @@ export default function ClusterDetail() {
   return (
     <div className="mx-auto max-w-[1280px] space-y-8 px-4 py-6 md:px-8 md:py-8" data-testid="page-cluster-detail">
       <BackLink />
-      {detailQuery.isError && (
-        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm" data-testid="status-cluster-detail-stale-error">
-          <span>Showing the last available values. Refresh failed.</span>
-          <Button variant="outline" size="sm" onClick={() => void detailQuery.refetch()} data-testid="button-retry-cluster-detail-refresh">Retry</Button>
-        </div>
-      )}
-
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-2">
           <h1 className="flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight md:text-4xl">
             {data.headline.familyName}
-            {detailQuery.isFetching && !detailQuery.isError && (
+            {detailQuery.isFetching && (
               <Badge variant="outline" className="text-muted-foreground" data-testid="status-cluster-detail-updating">
                 <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> Updating
               </Badge>
@@ -236,7 +229,7 @@ export default function ClusterDetail() {
         <MetricCard
           label="Group spend"
           value={hasSelectedObservations ? `$${data.headline.spendUsd.toFixed(2)}` : '—'}
-          detail="Canonical spend used for allocations and alerts"
+          detail="Allocation and alert basis"
         />
         <MetricCard
           label="Members"
@@ -249,9 +242,8 @@ export default function ClusterDetail() {
         <CardHeader className="gap-1 border-b pb-4">
           <CardTitle className="text-lg">Members</CardTitle>
           <CardDescription>
-            Each workspace member appears once. Role badges show membership across {roles.map(roleLabel).join(' / ')} sub-groups.
-            Spend combines member AI with creator-attributed hosting and other non-AI costs.
-            Limit, Agent spend, and remaining columns use the current billing cycle; total spend uses the selected period.
+            One row per workspace member across {roles.map(roleLabel).join(' / ')} roles.
+            Limit, Agent spend and remaining columns use the current billing cycle; total spend uses the selected period.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -395,12 +387,6 @@ export default function ClusterDetail() {
                   <p className="mb-3 text-xs text-muted-foreground" data-testid="text-limit-history-window">
                     Page {auditCursors.length} · up to 200 changes per page.
                   </p>
-                  {auditsQuery.isError && (
-                    <div className="mb-3 flex items-center justify-between border border-destructive/30 bg-destructive/5 p-3 text-sm">
-                      <span>Refresh failed. Showing the last successful history page.</span>
-                      <Button variant="outline" size="sm" onClick={() => void auditsQuery.refetch()}>Retry</Button>
-                    </div>
-                  )}
                   <div className="overflow-x-auto">
                    <Table className="min-w-[720px] [&_td]:px-4 [&_td]:py-3 [&_th]:px-4 [&_th]:py-3">
                      <TableHeader className="bg-muted/50">
@@ -482,15 +468,7 @@ export default function ClusterDetail() {
               <Button variant="outline" size="sm" onClick={() => void projectsQuery.refetch()} data-testid="button-retry-cluster-projects">Retry</Button>
             </div>
           ) : (
-            <>
-              {projectsQuery.isError && !projectsDenied && (
-                <div className="mb-3 flex items-center justify-between border border-destructive/30 bg-destructive/5 p-3 text-sm" data-testid="status-cluster-projects-stale-error">
-                  <span>Showing the last available projects. Refresh failed.</span>
-                  <Button variant="outline" size="sm" onClick={() => void projectsQuery.refetch()} data-testid="button-retry-cluster-projects-refresh">Retry</Button>
-                </div>
-              )}
-              <ProjectsTable data={projectsQuery.data} />
-            </>
+            <ProjectsTable data={projectsQuery.data} />
           )}
         </CardContent>
       </Card>

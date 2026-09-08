@@ -55,9 +55,6 @@ export default function Access() {
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Access</h1>
-          <p className="text-sm text-muted-foreground">
-            Govern application access while keeping workspace and team membership aligned with Replit.
-          </p>
         </div>
         <Button variant="outline" asChild className="w-full gap-2 sm:w-auto">
           <Link href="/settings">
@@ -79,9 +76,6 @@ export default function Access() {
                   <CardTitle id="application-grants-heading" className="text-lg">
                     Application grants
                   </CardTitle>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Control who can administer Budget Monitor at the account level.
-                  </p>
                 </div>
               </div>
             </CardHeader>
@@ -92,15 +86,11 @@ export default function Access() {
                   aria-hidden="true"
                 />
                 <p className="text-sm leading-6 text-muted-foreground">
-                  Individual grants cannot currently be changed from this page. Application
-                  administrator assignments are managed in{' '}
+                  Application administrators are managed in{' '}
                   <span className="font-medium text-foreground">Settings</span>.
                 </p>
               </div>
-              <div className="flex flex-col gap-3 border-t bg-muted/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs text-muted-foreground">
-                  Assignments are read-only in Access.
-                </p>
+              <div className="flex justify-end border-t bg-muted/20 px-5 py-4">
                 <Button variant="outline" size="sm" asChild className="w-full gap-2 sm:w-auto">
                   <Link href="/settings">
                     Manage in Settings
@@ -125,9 +115,6 @@ export default function Access() {
                   Synced
                 </Badge>
               </div>
-              <p className="text-sm leading-5 text-muted-foreground">
-                Two systems work together to keep access predictable.
-              </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex gap-3">
@@ -177,9 +164,6 @@ export default function Access() {
           <UsersRound className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
           <div>
             <h2 id="workspace-groups-heading" className="text-lg font-semibold">Workspace groups</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Authorized workspace members derived from the directory.
-            </p>
           </div>
         </div>
         <WorkspaceGroupsList key={`${authorizationKey}:${workspaceId || 'all'}`} workspaceId={workspaceId} />

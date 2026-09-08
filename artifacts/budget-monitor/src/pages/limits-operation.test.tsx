@@ -83,7 +83,9 @@ describe('fixture-backed limit review and recovery presentation', () => {
     expect(html).toContain('Not applied');
     expect(html).toContain('no limits have been changed');
     expect(html).toContain('may block Agent');
-    expect(html).toContain('Shared group caps, opening funding, monthly additions and ongoing policies are unchanged');
+    expect(html).toContain('shared caps, opening funding, monthly additions and ongoing policies stay unchanged');
+    expect(html).toContain('Cycle:');
+    expect(html).toContain('Operation operatio');
     expect(html).toContain('Confirm and apply limits');
     expect(mocks.mutationOptions).toEqual([{ mutation: { retry: false } }, { mutation: { retry: false } }]);
   });

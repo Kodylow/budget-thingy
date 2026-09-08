@@ -11,7 +11,7 @@ import { sanitizeSpendReturnTo, spendDetailHref, updateSpendParams } from "@/lib
 import { useRange } from "@/components/range-context";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { formatObservedCurrency, isUnknownSpendTotal } from "@/lib/spend-presentation";
-import { DeploymentChip, ProjectDate, StaleSpendingChip } from "@/components/project-observation";
+import { DeploymentChip, ProjectDataFreshness, ProjectDate, StaleSpendingChip } from "@/components/project-observation";
 
 export default function UserProjects() {
   const { userId } = useParams();
@@ -51,7 +51,7 @@ export default function UserProjects() {
   };
   const totalPages = Math.max(1, Math.ceil((data?.projects.filteredRows ?? 0) / pageSize));
 
-  if (query.isError) {
+  if (query.isError && !query.data) {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] space-y-4">
         <AlertTriangle className="h-10 w-10 text-destructive" />
@@ -83,14 +83,9 @@ export default function UserProjects() {
       ) : (
         <div className="space-y-6">
           <AdminDataQualityNote title="User projects data quality">
-            <p>Spend columns represent the selected reporting period. Projects are currently owned by this user.</p>
-            <p>{data.projects.metadata.stale ? 'Data may be stale. ' : ''}{data.projects.metadata.status === 'empty' ? 'Selected-period usage is unavailable. ' : data.projects.metadata.status === 'partial' ? 'Selected-period usage is partial. ' : ''}{data.projects.metadata.dataAsOf ? <>Data as of <ProjectDate value={data.projects.metadata.dataAsOf} />.</> : 'Freshness unknown.'}</p>
+            <p>Spend uses the selected range; ownership is current.</p>
           </AdminDataQualityNote>
-          <p className="text-xs text-muted-foreground">
-            {data.projects.metadata.dataAsOf
-              ? <>Project data as of <ProjectDate value={data.projects.metadata.dataAsOf} />{data.projects.metadata.stale ? ' · Stale' : ''}</>
-              : 'Project data freshness unknown'}
-          </p>
+          <ProjectDataFreshness metadata={data.projects.metadata} />
           
           <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
              <div className="p-4 border-b border-border flex flex-wrap gap-4 items-center justify-between">

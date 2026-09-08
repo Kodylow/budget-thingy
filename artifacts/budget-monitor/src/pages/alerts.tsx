@@ -19,7 +19,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, EmptyState, StatusBadge } from '@/components/journey-primitives';
 import { useToast } from '@/hooks/use-toast';
 import { useAuthContext } from '@/components/auth-context';
@@ -72,7 +72,6 @@ export default function Alerts() {
         });
         toast({
           title: 'Alert check completed',
-          description: `Checked ${result.checkedGroups} groups, sent ${result.alertsSent} alerts`,
         });
         setRunningCheck(false);
       },
@@ -158,9 +157,6 @@ export default function Alerts() {
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl" data-testid="text-alerts-title">
             Email activity
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Review recipients, delivery history, and authorized operational checks
-          </p>
         </div>
         {capabilities.canRunChecks && (
           <Button
@@ -180,7 +176,7 @@ export default function Alerts() {
         <Card className="rounded-md border-primary/20 bg-primary/[0.03] shadow-none">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between gap-3">
-              <CardDescription>Operational check</CardDescription>
+              <CardTitle className="text-base">Budget alerts monitored</CardTitle>
               {capabilities.canRunChecks && (
                 <Badge variant="outline" className="gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700">
                   <ShieldCheck className="h-3.5 w-3.5" />
@@ -188,7 +184,6 @@ export default function Alerts() {
                 </Badge>
               )}
             </div>
-            <CardTitle className="text-base">Budget alerts monitored</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center gap-2 text-sm text-emerald-700">
@@ -222,8 +217,7 @@ export default function Alerts() {
             )}
           </div>
           <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
-            Delivery history for allocated-pool and member-limit notifications, including recipients and failures.
-            Test sends reuse the selected alert without changing threshold state.
+            Test sends do not change threshold state.
           </p>
         </div>
 
@@ -371,12 +365,6 @@ export default function Alerts() {
           </div>
         )}
 
-        {isError && alerts && (
-          <p className="mt-4 text-sm text-muted-foreground">
-            Refresh failed. Showing the last successful history page.{' '}
-            <button className="underline" onClick={() => refetch()}>Retry</button>
-          </p>
-        )}
         <div className="flex flex-col items-stretch justify-between gap-3 pt-4 min-[390px]:flex-row min-[390px]:items-center">
           <span className="text-xs text-muted-foreground">
             Page {cursors.length} · up to 100 records per page

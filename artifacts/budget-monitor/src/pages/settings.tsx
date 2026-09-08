@@ -513,7 +513,7 @@ function AdministratorsCard() {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListAppAdminsQueryKey() });
         setUserIdDraft('');
-        toast({ title: 'Editor added', description: 'Account-wide pool access is now enabled.' });
+        toast({ title: 'Editor added' });
       },
     });
   };
@@ -546,7 +546,7 @@ function AdministratorsCard() {
   }
   return (
     <Card className="rounded-md shadow-none">
-      <CardHeader className="border-b pb-4"><CardTitle className="text-base">Application administrators</CardTitle><CardDescription>Replit users with account-level access to this application.</CardDescription></CardHeader>
+      <CardHeader className="border-b pb-4"><CardTitle className="text-base">Application administrators</CardTitle></CardHeader>
       <CardContent className="space-y-4 pt-5">
         <div className="flex gap-2">
           <Input aria-label="New administrator user ID" placeholder="Stable Replit user ID" value={userIdDraft} onChange={(event) => setUserIdDraft(event.target.value)} onKeyDown={(event) => {
@@ -590,7 +590,6 @@ export default function Settings() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl" data-testid="text-settings-title">Settings</h1>
-          <p className="text-sm text-muted-foreground">Monitor system freshness, email policy, and authorized test facilities</p>
         </div>
         {role === 'account' && <RangeFilter selectedLabel={dashboard.data?.period.label} />}
       </div>

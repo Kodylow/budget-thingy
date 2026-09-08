@@ -125,5 +125,6 @@ describe('BudgetTeamDetail', () => {
     
     // Unobserved workspace shows Unavailable instead of $0
     expect(html).toContain('Unavailable');
+    expect(html).not.toContain('Nested breakdown of workspaces, groups, and members');
   });
 });

@@ -78,6 +78,12 @@ describe('admin data quality', () => {
     expect(document.body.textContent).not.toContain('fully qualified');
   });
 
+  it('does not expose notes to an account admin previewing effective member access', () => {
+    render({ ...memberAuth, authorizationKey: 'admin:preview-member', realIsAccountAdmin: true } as AuthContextValue);
+    expect(document.querySelector('[data-testid="button-data-quality"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('fully qualified');
+  });
+
   it('does not retain notes after page unmount and lets Radix close with Escape', async () => {
     render(adminAuth);
     const trigger = container.querySelector<HTMLButtonElement>('[data-testid="button-data-quality"]')!;

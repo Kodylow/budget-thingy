@@ -169,18 +169,16 @@ export default function MyTeam() {
   const hasPartialMonth = (dashboard.data?.insights?.monthly ?? []).slice(-6).some(month => month.isPartial);
   const isOrganization = viewScope === 'all_authorized';
   const scopeCopy = role === 'member'
-    ? 'Your activity.'
+    ? 'Your activity'
     : isOrganization
-      ? 'Organization activity.'
-      : 'Activity across your teams and workspaces.';
+      ? 'Organization activity'
+      : 'Activity across your teams and workspaces';
   const refreshAll = () => void Promise.all([dashboard.refetch(), people.refetch(), projects.refetch()]);
   const pageHeader = (
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div className="min-w-0 space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{isOrganization ? 'My Organization' : 'My Team'}</h1>
-        <p className="text-sm text-muted-foreground">
-          {scopeCopy} Review member spending, current-cycle limits, and activity across your available scope.
-        </p>
+        <p className="text-sm text-muted-foreground">{scopeCopy}</p>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={refreshAll}>
@@ -196,10 +194,6 @@ export default function MyTeam() {
   );
   const rangePanel = (
     <div className="flex flex-col gap-4 rounded-md border bg-card p-4 shadow-none lg:flex-row lg:items-end lg:justify-between">
-      <div>
-        <p className="mb-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Team view</p>
-        <p className="text-sm text-foreground">Scope and reporting period apply to every value below.</p>
-      </div>
       <div className="w-full lg:w-auto">
         <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Reporting period</span>
         <RangeFilter selectedLabel={dashboard.data?.period?.label} />
@@ -229,7 +223,6 @@ export default function MyTeam() {
     ...projects.data.metadata.qualifications,
     ...(spendCard?.qualification ? [spendCard.qualification] : []),
   ]));
-  const requestFailed = dashboard.isError || people.isError || projects.isError;
   const incomplete = [dashboard.data.metadata, people.data.metadata, projects.data.metadata]
     .some(metadata => metadata.status !== 'complete' || metadata.stale);
 
@@ -238,17 +231,14 @@ export default function MyTeam() {
       {pageHeader}
       {rangePanel}
       <div className="grid gap-4 md:grid-cols-3">
-        <MetricCard label="People with recorded spend" value={recordedPeople == null ? 'Unavailable' : recordedPeople.toLocaleString()} detail={`Positive recorded spend in ${dashboard.data.period.label}`} />
-        <MetricCard label={role === 'member' ? 'My spend' : isOrganization ? 'Organization spend' : 'Team spend'} value={formatUsd(totalSpend)} detail={dashboard.data.period.label} />
+        <MetricCard label="People with recorded spend" value={recordedPeople == null ? 'Unavailable' : recordedPeople.toLocaleString()} detail="Positive recorded spend" />
+        <MetricCard label={role === 'member' ? 'My spend' : isOrganization ? 'Organization spend' : 'Team spend'} value={formatUsd(totalSpend)} />
         <MetricCard label="Average per active user" value={totalSpend == null ? 'Unavailable' : formatUsd(insights?.avgSpendPerActiveUserUsd)} detail="Among people with positive recorded spend" />
       </div>
-      {requestFailed && <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"><span>Refresh failed; last available values are shown.</span><button type="button" className="font-semibold underline underline-offset-2" onClick={refreshAll}>Retry</button></div>}
       <AdminDataQualityNote title={isOrganization ? 'Organization activity' : 'Team activity'}>
         {incomplete && <p>{dashboard.data.metadata.status === 'partial' ? 'Partial coverage.' : 'Data may be stale or incomplete.'}</p>}
         {qualifications.map(qualification => <p key={qualification}>{qualification}</p>)}
-        <p>Activity follows your current permissions. Managed scope may include your own usage.</p>
-        <p>People rows are workspace memberships; cycle columns use the current billing cycle, independent of the selected period.</p>
-        <p>The latest six months are independent of the selected period. Missing months remain gaps.{hasPartialMonth && ' Partial months show known spend and users only.'}</p>
+        <p>Limit columns use the current billing cycle. Six-month activity is independent of the selected period; missing months remain gaps.{hasPartialMonth && ' Partial months show known values only.'}</p>
       </AdminDataQualityNote>
       <div className="grid min-w-0 gap-5 xl:grid-cols-2">
         <TablePanel title="Top People" caption="Selected-period spend and current-cycle limits." viewAllHref={peopleHref}><PeopleTable rows={people.data.rows} /></TablePanel>

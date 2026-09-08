@@ -4,10 +4,10 @@ import { useGetBudgetTeamReport, getGetBudgetTeamReportQueryKey, type GetBudgetT
 import { MetricCard, BudgetMeter } from '@/components/journey-primitives';
 import { formatUsd } from '@/pages/home-components/format';
 import { Button } from '@/components/ui/button';
-import { ChevronRight, ChevronDown, ArrowLeft, Search, AlertCircle } from 'lucide-react';
+import { ChevronRight, ChevronDown, ArrowLeft, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
 
 export function BudgetTeamDetail({ poolId, rangeParams, viewScope, onBack }: { poolId: string, rangeParams: { rangeType: string, startDate?: string, endDate?: string }, viewScope: string, onBack: () => void }) {
@@ -58,13 +58,6 @@ export function BudgetTeamDetail({ poolId, rangeParams, viewScope, onBack }: { p
     <div className="space-y-6">
       {headerControls}
 
-      {isError && (
-        <div className="flex items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 p-3 text-sm">
-          <span>Showing cached data. Refresh failed.</span>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
-        </div>
-      )}
-
       <div>
         <h2 className="text-2xl font-semibold tracking-tight">{report.name || decodeURIComponent(poolId.split(':').pop() || poolId)}</h2>
         <p className="text-sm text-muted-foreground mt-1">Selected period · {report.period.label}</p>
@@ -95,8 +88,7 @@ export function BudgetTeamDetail({ poolId, rangeParams, viewScope, onBack }: { p
       </div>
 
       <AdminDataQualityNote title="Budget team qualifications">
-        <p>Canonical Agent usage is shown for the selected period.</p>
-        {!complete && selectedObserved && <p>Selected-period values are a known subtotal with partial coverage.</p>}
+        {!complete && selectedObserved && <p>Known subtotal with partial coverage.</p>}
         {report.metadata.qualifications.map((q, i) => <p key={i}>{q}</p>)}
       </AdminDataQualityNote>
 
@@ -132,7 +124,6 @@ function HierarchyTable({ report }: { report: ReportingDetail }) {
       <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b bg-muted/20 pb-4">
         <div>
           <CardTitle className="text-base">Team Hierarchy</CardTitle>
-          <CardDescription>Nested breakdown of workspaces, groups, and members.</CardDescription>
         </div>
         <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

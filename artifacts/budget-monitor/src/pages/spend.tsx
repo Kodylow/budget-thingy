@@ -403,7 +403,7 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
     setSearch('');
     updateUrlParams({ search: null, status: null, workspaceId: null, deployedOnly: null, staleButSpending: null });
   };
-  const exportDisabled = isExporting || searchValue !== search || !data || query.isFetching || query.isError;
+  const exportDisabled = isExporting || searchValue !== search || !data || query.isFetching;
 
   const totalsObserved = Boolean(data && !isUnknownSpendTotal(data.metadata));
 
@@ -592,7 +592,6 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
            {data?.metadata.status === 'partial' && ' · Partial'}
            {data?.metadata.stale && ' · Stale'}
            {type === 'projects' && data?.personalProjectCatalog?.coverage !== 'complete' && ` · Project catalog ${data?.personalProjectCatalog?.coverage ?? 'unavailable'}`}
-          {' · Read-only'}
         </p>
         {activeFilterCount > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="Applied filters">
@@ -605,19 +604,6 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
           </div>
         )}
       </div>
-      {data && query.isError && (
-        <div
-          className="flex-none border-b border-border bg-red-50 px-4 py-2 text-xs text-red-800"
-          role="status"
-          aria-live="polite"
-        >
-          <span className="font-medium">Refresh failed — showing the last successful data</span>
-          <Button variant="link" size="sm" className="ml-2 h-auto p-0 text-xs text-red-800 underline" onClick={() => void query.refetch()}>
-            Retry
-          </Button>
-        </div>
-      )}
-
       {data && <AdminDataQualityNote title="Spend ledger data quality">
         <p>
           {data.metadata.stale ? 'Stale data. ' : ''}
@@ -627,15 +613,10 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
           {data.metadata.dataAsOf && <>Data as of <time dateTime={data.metadata.dataAsOf}>{new Date(data.metadata.dataAsOf).toLocaleString()}</time>. </>}
           {data.metadata.qualifications?.join(' ')}
         </p>
-        <dl>
-          {[['Total spend', data.totals.spendUsd], ['Agent', data.totals.agentSpendUsd], ['Other services', data.totals.otherServicesUsd]].map(([label, value]) => (
-            <div key={String(label)}><dt>{label}</dt><dd className="font-mono text-sm text-foreground">{formatObservedCurrency(value as number, !isUnknownSpendTotal(data.metadata))}</dd></div>
-          ))}
-        </dl>
-        <p className="mt-2">All {data.filteredRows} filtered results, not just this page. Other services includes hosting, storage, and other non-Agent costs. CSV includes all filtered rows and export columns, regardless of column visibility.</p>
-        <p className="mt-1">{type === 'projects' ? 'This is the current project catalog; spend columns use the selected reporting period. Project attribution is explanatory and workspace rollups remain authoritative.' : 'Workspace-qualified rollups are authoritative. Unattributed and reconciliation rows remain part of the results when they match your filters.'}</p>
-        {type === 'people' && <p className="mt-1">Total, Agent, and other services use the selected reporting period. Optional limit and current-cycle columns refer to monthly Agent enforcement, not this reporting range.</p>}
-        {type === 'pools' && <p className="mt-1">Allocations are planning baselines. Utilization applies to the full term, not a monthly Agent limit.</p>}
+        {type === 'projects' && <p>Catalog metadata is current; spend uses the selected period. Workspace rollups remain authoritative.</p>}
+        {type === 'people' && <p>Spend uses the selected period; limit columns use the current billing cycle.</p>}
+        {type === 'groups' && <p>Workspace-qualified totals include matching unattributed and reconciliation rows.</p>}
+        {type === 'pools' && <p>Allocations are full-term planning baselines, not monthly Agent limits.</p>}
       </AdminDataQualityNote>}
       <div className="relative min-h-[240px] max-h-[60vh] overflow-auto bg-background" data-virtual-scroll tabIndex={0} aria-label="Spend results">
         {!data ? query.isError ? <div className="p-8 text-center space-y-3" role="status">
@@ -669,11 +650,11 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
           density={density}
           sort={sort}
           updateUrlParams={updateUrlParams}
-           rangeType={rangeType}
-           dataThrough={data.metadata.dataAsOf}
-           stale={Boolean(data.metadata.stale || query.isError)}
-           incomplete={Boolean(data.metadata.status && data.metadata.status !== 'complete' && data.metadata.status !== 'stale')}
-           onSort={(col) => {
+          rangeType={rangeType}
+          dataThrough={data.metadata.dataAsOf}
+          stale={Boolean(data.metadata.stale)}
+          incomplete={Boolean(data.metadata.status && data.metadata.status !== 'complete' && data.metadata.status !== 'stale')}
+          onSort={(col) => {
             let newSort: string | null = null;
             if (col === 'name') {
               newSort = sort === 'name_asc' ? 'name_desc' : 'name_asc';
