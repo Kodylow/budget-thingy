@@ -260,6 +260,7 @@ export function FundingGroupsHierarchy({
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [unmappedExpanded, setUnmappedExpanded] = useState(false);
+  const [mappedExpanded, setMappedExpanded] = useState(false);
   const [editing, setEditing] = useState<{ group: FundingGroup; teamName: string | null } | null>(null);
   const hierarchy = useMemo(
     () => buildFundingHierarchy(inventory?.groups ?? [], teamNames, searchQuery, showHidden),
@@ -270,6 +271,7 @@ export function FundingGroupsHierarchy({
     setEditing(null);
     setExpanded(new Set());
     setUnmappedExpanded(false);
+    setMappedExpanded(false);
   }, [authorizationKey]);
 
   if (inventoryLoading && !inventory) {
@@ -303,6 +305,7 @@ export function FundingGroupsHierarchy({
 
   const canEdit = canManage && !inventoryError && !inventoryLoading && inventory.freshness.status === 'fresh';
   const unmappedOpen = unmappedExpanded || Boolean(searchQuery.trim() && hierarchy.unmapped.length);
+  const mappedOpen = mappedExpanded || Boolean(searchQuery.trim() && hierarchy.teams.length);
 
   return (
     <section className="space-y-4" aria-labelledby="funding-groups-heading" data-testid="funding-groups-hierarchy">
@@ -375,8 +378,17 @@ export function FundingGroupsHierarchy({
         )}
         </CollapsibleContent>
       </Collapsible>
-      <div className="overflow-hidden rounded-md border">
-        <div className="border-b bg-muted/20 px-4 py-3 text-sm font-semibold">Budget teams and mapped groups</div>
+      <Collapsible open={mappedOpen} onOpenChange={setMappedExpanded} className="overflow-hidden rounded-md border">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" className="h-auto w-full justify-between gap-3 rounded-none bg-muted/20 px-4 py-3 text-left whitespace-normal" data-testid="button-toggle-mapped-groups">
+            <strong>Budget teams and mapped groups</strong>
+            <span className="flex shrink-0 items-center gap-2">
+              <Badge variant="outline">{hierarchy.teams.length} {hierarchy.teams.length === 1 ? 'team' : 'teams'}</Badge>
+              <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${mappedOpen ? 'rotate-180' : ''}`} />
+            </span>
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="border-t">
         {hierarchy.teams.length === 0 ? (
           <div className="px-4 py-5 text-sm text-muted-foreground">No budget teams match this search.</div>
         ) : hierarchy.teams.map(teamName => {
@@ -428,7 +440,8 @@ export function FundingGroupsHierarchy({
             </Collapsible>
           );
         })}
-      </div>
+        </CollapsibleContent>
+      </Collapsible>
       <MappingDialog
         key={`${authorizationKey}:${editing ? fundingGroupKey(editing.group) : 'closed'}`}
         group={editing?.group ?? null}
@@ -442,6 +455,7 @@ export function FundingGroupsHierarchy({
           await onSave(input);
           const teamName = input.teamName;
           if (teamName !== null) {
+            setMappedExpanded(true);
             setExpanded(current => new Set([...current, teamName]));
           }
         }}

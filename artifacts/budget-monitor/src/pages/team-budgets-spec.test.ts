@@ -56,6 +56,13 @@ describe('Allocation page safety regressions', () => {
     expect(source).toContain('Planning allocations do not change Replit platform limits.');
   });
 
+  it('renders the funding ledger table before the funding groups hierarchy', () => {
+    const ledgerTableIndex = source.indexOf('data-testid="table-team-budget-history"');
+    const hierarchyIndex = source.indexOf('<FundingGroupsHierarchy');
+    expect(ledgerTableIndex).toBeGreaterThan(-1);
+    expect(hierarchyIndex).toBeGreaterThan(ledgerTableIndex);
+  });
+
   it('integrates exact funding-group edits without optimistic success', () => {
     expect(source).toContain('<FundingGroupsHierarchy');
     expect(source).toContain('await updateFundingGroup.mutateAsync({ data })');

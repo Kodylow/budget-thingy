@@ -560,46 +560,6 @@ export default function TeamBudgets() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="border-b p-4 sm:p-5">
-            <FundingGroupsHierarchy
-              inventory={fundingGroupsQuery.data}
-              inventoryLoading={fundingGroupsQuery.isLoading}
-              inventoryError={fundingGroupsQuery.isError}
-              teamNames={(fundingGroupsQuery.data?.teams ?? [])
-                .filter(team => (showHidden && canManageVisibility) || !team.isHidden)
-                .map(team => team.teamName)}
-              searchQuery={searchQuery}
-              showHidden={showHidden && canManageVisibility}
-              teamAllocations={Object.fromEntries(rowData.map(row => [row.team.teamName, row.rowTotal]))}
-              allocationYear={selectedYear}
-              authorizationKey={authorizationKey}
-              canManage={canManageFundingMappings}
-              onRetry={() => { void fundingGroupsQuery.refetch(); }}
-              onRefresh={async () => {
-                const refreshed = await fundingGroupsQuery.refetch();
-                if (refreshed.isError || !refreshed.data) {
-                  throw refreshed.error ?? new Error('Funding group inventory is unavailable.');
-                }
-                return refreshed.data.revision;
-              }}
-              onSave={async data => {
-                const saved = await updateFundingGroup.mutateAsync({ data });
-                queryClient.setQueryData(getGetFundingGroupsQueryKey(), saved);
-                invalidateBudgetCaches(queryClient);
-                toast({
-                  title: data.teamName === null ? 'Group moved to Unmapped' : 'Funding assignment saved',
-                  description: `${data.teamName ?? 'Unmapped groups'} is now the reporting destination. No allocation or platform limit changed.`,
-                });
-                void revalidateAuthorization().catch(() => {
-                  toast({
-                    title: 'Assignment saved; access refresh failed',
-                    description: 'The mapping was committed, but authorization could not be refreshed. Reload before making another change.',
-                    variant: 'destructive',
-                  });
-                });
-              }}
-            />
-          </div>
           <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-3">
             <div className="text-sm">
               <strong>Funding ledger</strong>
@@ -746,6 +706,46 @@ export default function TeamBudgets() {
             )}
           </table>
         </div>
+          <div className="border-b p-4 sm:p-5">
+            <FundingGroupsHierarchy
+              inventory={fundingGroupsQuery.data}
+              inventoryLoading={fundingGroupsQuery.isLoading}
+              inventoryError={fundingGroupsQuery.isError}
+              teamNames={(fundingGroupsQuery.data?.teams ?? [])
+                .filter(team => (showHidden && canManageVisibility) || !team.isHidden)
+                .map(team => team.teamName)}
+              searchQuery={searchQuery}
+              showHidden={showHidden && canManageVisibility}
+              teamAllocations={Object.fromEntries(rowData.map(row => [row.team.teamName, row.rowTotal]))}
+              allocationYear={selectedYear}
+              authorizationKey={authorizationKey}
+              canManage={canManageFundingMappings}
+              onRetry={() => { void fundingGroupsQuery.refetch(); }}
+              onRefresh={async () => {
+                const refreshed = await fundingGroupsQuery.refetch();
+                if (refreshed.isError || !refreshed.data) {
+                  throw refreshed.error ?? new Error('Funding group inventory is unavailable.');
+                }
+                return refreshed.data.revision;
+              }}
+              onSave={async data => {
+                const saved = await updateFundingGroup.mutateAsync({ data });
+                queryClient.setQueryData(getGetFundingGroupsQueryKey(), saved);
+                invalidateBudgetCaches(queryClient);
+                toast({
+                  title: data.teamName === null ? 'Group moved to Unmapped' : 'Funding assignment saved',
+                  description: `${data.teamName ?? 'Unmapped groups'} is now the reporting destination. No allocation or platform limit changed.`,
+                });
+                void revalidateAuthorization().catch(() => {
+                  toast({
+                    title: 'Assignment saved; access refresh failed',
+                    description: 'The mapping was committed, but authorization could not be refreshed. Reload before making another change.',
+                    variant: 'destructive',
+                  });
+                });
+              }}
+            />
+          </div>
         </CardContent>
       </Card>
 

@@ -105,6 +105,7 @@ describe('FundingGroupsHierarchy interactions', () => {
   };
 
   const unmappedTrigger = () => container.querySelector<HTMLButtonElement>('[data-testid="button-toggle-unmapped-groups"]')!;
+  const mappedTrigger = () => container.querySelector<HTMLButtonElement>('[data-testid="button-toggle-mapped-groups"]')!;
   const teamTrigger = () => [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Alpha'))!;
 
   it('starts collapsed with a count and toggles the real accessible disclosure', async () => {
@@ -113,7 +114,8 @@ describe('FundingGroupsHierarchy interactions', () => {
     expect(unmappedTrigger().textContent).toContain('Unmapped groups');
     expect(unmappedTrigger().textContent).toContain('1');
     expect(container.querySelector('[data-testid="unmapped-group-card"]')).toBeNull();
-    expect(teamTrigger().getAttribute('aria-expanded')).toBe('false');
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('false');
+    expect(teamTrigger()).toBeUndefined();
 
     await act(async () => unmappedTrigger().click());
     expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('true');
@@ -122,6 +124,38 @@ describe('FundingGroupsHierarchy interactions', () => {
     await act(async () => unmappedTrigger().click());
     expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('[data-testid="unmapped-group-card"]')).toBeNull();
+  });
+
+  it('collapses the mapped section independently and preserves nested expansion', async () => {
+    await act(async () => root.render(<FundingGroupsHierarchy {...props} />));
+    expect(mappedTrigger().textContent).toContain('1 team');
+    await act(async () => mappedTrigger().click());
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    expect(teamTrigger().getAttribute('aria-expanded')).toBe('false');
+    await act(async () => teamTrigger().click());
+    expect(container.textContent).toContain('One Group');
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('false');
+    await act(async () => mappedTrigger().click());
+    expect(container.textContent).not.toContain('One Group');
+    await act(async () => mappedTrigger().click());
+    expect(container.textContent).toContain('One Group');
+  });
+
+  it('reveals matching teams during search and restores mapped expansion after clear and refresh', async () => {
+    const render = async (searchQuery = '', inventory = initialInventory, authorizationKey = 'auth') =>
+      act(async () => root.render(<FundingGroupsHierarchy {...props} {...{ searchQuery, inventory, authorizationKey }} />));
+    await render('One');
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    expect(container.textContent).toContain('One Group');
+    await render('');
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('false');
+    await act(async () => mappedTrigger().click());
+    await render('Alpha');
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    await render('', { ...initialInventory, revision: 'r2', groups: [...initialInventory.groups] });
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    await render('', initialInventory, 'different-auth');
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('false');
   });
 
   it('reveals search matches without losing explicit state on clear or refresh', async () => {
@@ -153,6 +187,7 @@ describe('FundingGroupsHierarchy interactions', () => {
     const card = container.querySelector('[data-testid="unmapped-group-card"]')!;
     expect(card.textContent).toContain('3 people');
     expect(card.textContent).not.toContain('One Group');
+    await act(async () => mappedTrigger().click());
     await act(async () => teamTrigger().click());
     expect(container.textContent).toContain('One Group');
     expect(container.textContent).toContain('0 people');
@@ -191,10 +226,12 @@ describe('FundingGroupsHierarchy interactions', () => {
 
     await act(async () => root.render(<Harness />));
     await act(async () => unmappedTrigger().click());
+    await act(async () => mappedTrigger().click());
     await act(async () => teamTrigger().click());
     expect(container.textContent).toContain('0 people');
     expect(container.textContent).toContain('1 person');
     expect(container.querySelectorAll('[data-testid="unmapped-group-card"]')).toHaveLength(1);
+    await act(async () => mappedTrigger().click());
 
     const select = container.querySelector(
       '[aria-label="Budgeted team for Zero Group in Workspace"]',
@@ -212,6 +249,8 @@ describe('FundingGroupsHierarchy interactions', () => {
     expect(container.querySelectorAll('[data-testid="unmapped-group-card"]')).toHaveLength(1);
 
     await act(async () => resolveSave());
+    expect(mappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    expect(container.textContent).toContain('Zero Group');
     expect(container.querySelectorAll('[data-testid="unmapped-group-card"]')).toHaveLength(0);
     expect(container.textContent).toContain('2 groups');
   });
@@ -236,6 +275,7 @@ describe('FundingGroupsHierarchy interactions', () => {
         />,
       ));
       await act(async () => unmappedTrigger().click());
+      await act(async () => mappedTrigger().click());
       await act(async () => teamTrigger().click());
       const selectors = [...container.querySelectorAll('select')];
       expect(selectors).toHaveLength(2);
