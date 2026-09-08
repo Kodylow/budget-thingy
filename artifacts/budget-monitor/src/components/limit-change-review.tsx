@@ -70,12 +70,14 @@ export function LimitChangeReview({
   operationId,
   preparedOperation,
   readOnly,
+  notices = [],
   onOperation,
   onClose,
 }: {
   operationId: string | null;
   preparedOperation?: LimitChangeOperation | null;
   readOnly: boolean;
+  notices?: string[];
   onOperation: (operation: LimitChangeOperation) => void;
   onClose: () => void;
 }) {
@@ -179,6 +181,7 @@ export function LimitChangeReview({
           </div>
         ) : operation ? (
           <>
+            {notices.length > 0 && <div className="mx-5 mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><div className="font-semibold">Skipped or ineligible people were not added</div><ul className="mt-1 list-disc pl-5">{notices.map(notice => <li key={notice}>{notice}</li>)}</ul></div>}
             <div className="min-h-0 flex-1 overflow-auto">
               <table className="w-full min-w-[720px] text-sm" data-testid="table-limit-review">
                 <thead className="sticky top-0 border-b bg-muted/90 text-left text-xs text-muted-foreground">

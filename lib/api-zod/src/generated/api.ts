@@ -4463,6 +4463,125 @@ export const GetSetLimitsWorkspaceResponse = zod.object({
 
 
 /**
+ * Returns one complete stored planning inventory. Recommendations use canonical all-service spend and complete full-team rosters; unavailable inputs fail closed.
+ * @summary Read authorized local group plans and funding recommendations
+ */
+
+export const getGroupPlanInventoryResponseFundingPeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getGroupPlanInventoryResponseFundingPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+
+
+
+export const getGroupPlanInventoryResponsePlansItemSavedAmountUsdCentsOneMin = 0;
+export const getGroupPlanInventoryResponsePlansItemSavedAmountUsdCentsOneMax = 9007199254740991;
+
+
+export const getGroupPlanInventoryResponsePlansItemRecommendationAmountUsdCentsOneMin = 0;
+export const getGroupPlanInventoryResponsePlansItemRecommendationAmountUsdCentsOneMax = 9007199254740991;
+
+
+export const getGroupPlanInventoryResponsePlansItemTeamEnvelopeUsdCentsOneMin = 0;
+export const getGroupPlanInventoryResponsePlansItemTeamEnvelopeUsdCentsOneMax = 9007199254740991;
+
+export const getGroupPlanInventoryResponsePlansItemOverlapAdjustedMemberWeightMin = 0;
+
+export const getGroupPlanInventoryResponsePlansItemEligibleMemberCountMin = 0;
+
+export const getGroupPlanInventoryResponsePlansItemWritableMemberCountMin = 0;
+
+export const getGroupPlanInventoryResponsePlansItemSkippedMemberCountMin = 0;
+
+export const getGroupPlanInventoryResponsePlansItemMemberSuggestionAmountUsdCentsOneMin = 0;
+export const getGroupPlanInventoryResponsePlansItemMemberSuggestionAmountUsdCentsOneMax = 9007199254740991;
+
+
+export const getGroupPlanInventoryResponsePlansItemExistingIndividualLimitAmountUsdCentsOneMin = 0;
+export const getGroupPlanInventoryResponsePlansItemExistingIndividualLimitAmountUsdCentsOneMax = 9007199254740991;
+
+
+
+export const GetGroupPlanInventoryResponse = zod.object({
+  "revision": zod.string().min(1).describe('Opaque funding configuration revision.'),
+  "fundingPeriod": zod.object({
+  "start": zod.string().regex(getGroupPlanInventoryResponseFundingPeriodStartRegExp),
+  "end": zod.string().regex(getGroupPlanInventoryResponseFundingPeriodEndRegExp)
+}),
+  "plans": zod.array(zod.object({
+  "workspaceId": zod.string().min(1),
+  "workspaceName": zod.string().min(1),
+  "groupId": zod.string().min(1),
+  "groupName": zod.string().min(1),
+  "teamName": zod.string().min(1).nullable(),
+  "canEditPlan": zod.boolean(),
+  "savedAmountUsdCents": zod.union([zod.number().min(getGroupPlanInventoryResponsePlansItemSavedAmountUsdCentsOneMin).max(getGroupPlanInventoryResponsePlansItemSavedAmountUsdCentsOneMax).describe('Nonnegative USD cents represented as a JavaScript safe integer.'),zod.null()]),
+  "savedStatus": zod.enum(['unset', 'confirmed', 'requires_reconfirmation']),
+  "planRevision": zod.number().min(1).nullable(),
+  "recommendationAmountUsdCents": zod.union([zod.number().min(getGroupPlanInventoryResponsePlansItemRecommendationAmountUsdCentsOneMin).max(getGroupPlanInventoryResponsePlansItemRecommendationAmountUsdCentsOneMax).describe('Nonnegative USD cents represented as a JavaScript safe integer.'),zod.null()]),
+  "recommendationStatus": zod.enum(['available', 'not_started', 'expired', 'missing_funding', 'missing_history', 'exhausted']),
+  "recommendationReason": zod.string().min(1),
+  "teamEnvelopeUsdCents": zod.union([zod.number().min(getGroupPlanInventoryResponsePlansItemTeamEnvelopeUsdCentsOneMin).max(getGroupPlanInventoryResponsePlansItemTeamEnvelopeUsdCentsOneMax).describe('Nonnegative USD cents represented as a JavaScript safe integer.'),zod.null()]),
+  "overlapAdjustedMemberWeight": zod.number().min(getGroupPlanInventoryResponsePlansItemOverlapAdjustedMemberWeightMin).nullable(),
+  "eligibleMemberCount": zod.number().min(getGroupPlanInventoryResponsePlansItemEligibleMemberCountMin).nullable(),
+  "writableMemberCount": zod.number().min(getGroupPlanInventoryResponsePlansItemWritableMemberCountMin).nullable(),
+  "skippedMemberCount": zod.number().min(getGroupPlanInventoryResponsePlansItemSkippedMemberCountMin).nullable(),
+  "memberSuggestionAmountUsdCents": zod.union([zod.number().min(getGroupPlanInventoryResponsePlansItemMemberSuggestionAmountUsdCentsOneMin).max(getGroupPlanInventoryResponsePlansItemMemberSuggestionAmountUsdCentsOneMax).describe('Nonnegative USD cents represented as a JavaScript safe integer.'),zod.null()]),
+  "memberSuggestionReason": zod.string().min(1),
+  "billingAlignmentStatus": zod.enum(['aligned', 'misaligned', 'unavailable']),
+  "existingIndividualLimitStatus": zod.enum(['unavailable', 'none', 'uniform', 'mixed']),
+  "existingIndividualLimitAmountUsdCents": zod.union([zod.number().min(getGroupPlanInventoryResponsePlansItemExistingIndividualLimitAmountUsdCentsOneMin).max(getGroupPlanInventoryResponsePlansItemExistingIndividualLimitAmountUsdCentsOneMax).describe('Nonnegative USD cents represented as a JavaScript safe integer.'),zod.null()]),
+  "savedExceedsRecommendation": zod.boolean(),
+  "suggestedAllowancesExceedPlan": zod.boolean()
+}))
+})
+
+
+/**
+ * Saves only the local planning value. It never writes an upstream group or individual limit.
+ * @summary Save a local combined monthly group plan
+ */
+
+
+
+
+export const SaveGroupPlanParams = zod.object({
+  "workspaceId": zod.coerce.string().min(1),
+  "groupId": zod.coerce.string().min(1)
+})
+
+export const saveGroupPlanBodyAmountUsdCentsMin = 0;
+export const saveGroupPlanBodyAmountUsdCentsMax = 9007199254740991;
+
+
+
+
+
+export const SaveGroupPlanBody = zod.object({
+  "amountUsdCents": zod.number().min(saveGroupPlanBodyAmountUsdCentsMin).max(saveGroupPlanBodyAmountUsdCentsMax).describe('Nonnegative USD cents represented as a JavaScript safe integer.'),
+  "expectedPlanRevision": zod.number().min(1).nullable(),
+  "expectedConfigurationRevision": zod.string().min(1)
+})
+
+
+
+export const saveGroupPlanResponseAmountUsdCentsMin = 0;
+export const saveGroupPlanResponseAmountUsdCentsMax = 9007199254740991;
+
+
+
+
+export const SaveGroupPlanResponse = zod.object({
+  "workspaceId": zod.string().min(1),
+  "groupId": zod.string().min(1),
+  "amountUsdCents": zod.number().min(saveGroupPlanResponseAmountUsdCentsMin).max(saveGroupPlanResponseAmountUsdCentsMax).describe('Nonnegative USD cents represented as a JavaScript safe integer.'),
+  "status": zod.enum(['confirmed']),
+  "revision": zod.number().min(1),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Read the complete visible live Limits table
  */
 export const getLimitsResponseLimitsItemOneOneWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');

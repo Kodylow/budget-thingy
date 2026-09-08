@@ -9,6 +9,8 @@ import {
   index,
   unique,
   boolean,
+  bigint,
+  date,
   jsonb,
   check,
 } from "drizzle-orm/pg-core";
@@ -100,6 +102,68 @@ export const fundingGroupOverrideAuditsTable = pgTable(
   },
   (table) => [
     index("funding_group_override_audits_identity_created_idx").on(
+      table.workspaceId,
+      table.groupId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
+/**
+ * Local combined monthly planning amounts. These values are never sent to the
+ * Enterprise limits API. The approved funding and mapping identities make a
+ * formerly-approved amount unusable until an operator explicitly reconfirms it
+ * after any committed funding configuration change.
+ */
+export const groupPlansTable = pgTable(
+  "group_plans",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    groupId: text("group_id").notNull(),
+    teamName: text("team_name").notNull(),
+    fundingPeriodStart: date("funding_period_start", { mode: "string" }).notNull(),
+    fundingPeriodEnd: date("funding_period_end", { mode: "string" }).notNull(),
+    mappingIdentity: text("mapping_identity").notNull(),
+    amountUsdCents: bigint("amount_usd_cents", { mode: "number" }).notNull(),
+    revision: integer("revision").notNull().default(1),
+    updatedBy: text("updated_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: "group_plans_pkey",
+      columns: [table.workspaceId, table.groupId],
+    }),
+    check("group_plans_nonnegative_amount", sql`${table.amountUsdCents} >= 0`),
+    check(
+      "group_plans_safe_integer_amount",
+      sql`${table.amountUsdCents} <= 9007199254740991`,
+    ),
+    check("group_plans_positive_revision", sql`${table.revision} > 0`),
+    index("group_plans_team_name_idx").on(table.teamName),
+  ],
+);
+
+export const groupPlanAuditsTable = pgTable(
+  "group_plan_audits",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    workspaceId: text("workspace_id").notNull(),
+    groupId: text("group_id").notNull(),
+    teamName: text("team_name").notNull(),
+    fundingPeriodStart: date("funding_period_start", { mode: "string" }).notNull(),
+    fundingPeriodEnd: date("funding_period_end", { mode: "string" }).notNull(),
+    mappingIdentity: text("mapping_identity").notNull(),
+    previousAmountUsdCents: bigint("previous_amount_usd_cents", { mode: "number" }),
+    newAmountUsdCents: bigint("new_amount_usd_cents", { mode: "number" }).notNull(),
+    previousRevision: integer("previous_revision"),
+    newRevision: integer("new_revision").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("group_plan_audits_identity_created_idx").on(
       table.workspaceId,
       table.groupId,
       table.createdAt,
@@ -290,6 +354,8 @@ export type FamilyTeamMapping = typeof familyTeamMappingsTable.$inferSelect;
 export type FundingGroupOverride = typeof fundingGroupOverridesTable.$inferSelect;
 export type FundingGroupOverrideAudit =
   typeof fundingGroupOverrideAuditsTable.$inferSelect;
+export type GroupPlan = typeof groupPlansTable.$inferSelect;
+export type GroupPlanAudit = typeof groupPlanAuditsTable.$inferSelect;
 
 export const insertTeamBudgetSchema = createInsertSchema(teamBudgetsTable).omit({
   updatedAt: true,

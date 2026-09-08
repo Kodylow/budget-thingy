@@ -2642,6 +2642,65 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/group-plans:
+    get:
+      operationId: getGroupPlanInventory
+      tags: [limits]
+      summary: Read authorized local group plans and funding recommendations
+      description: Returns one complete stored planning inventory. Recommendations use canonical all-service spend and complete full-team rosters; unavailable inputs fail closed.
+      responses:
+        "200":
+          description: Authorized group planning inventory
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GroupPlanInventoryResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Coherent stored planning inputs are unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /limits/group-plans/{workspaceId}/{groupId}:
+    put:
+      operationId: saveGroupPlan
+      tags: [limits]
+      summary: Save a local combined monthly group plan
+      description: Saves only the local planning value. It never writes an upstream group or individual limit.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceIdPath"
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GroupPlanSaveInput" }
+      responses:
+        "200":
+          description: Confirmed saved group plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GroupPlanSaveResponse" }
+        "400":
+          description: Invalid group plan save
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Current mapped funding group not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "409":
+          description: Saved plan or funding identity is stale
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
   /limits:
     get:
       operationId: getLimits
@@ -5872,6 +5931,140 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TeamBudgetMatchIssue"
+    SafeUsdCents:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+      description: Nonnegative USD cents represented as a JavaScript safe integer.
+    GroupPlanFundingPeriod:
+      type: object
+      additionalProperties: false
+      required: [start, end]
+      properties:
+        start:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        end:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+    GroupPlanInventoryRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - workspaceId
+        - workspaceName
+        - groupId
+        - groupName
+        - teamName
+        - canEditPlan
+        - savedAmountUsdCents
+        - savedStatus
+        - planRevision
+        - recommendationAmountUsdCents
+        - recommendationStatus
+        - recommendationReason
+        - teamEnvelopeUsdCents
+        - overlapAdjustedMemberWeight
+        - eligibleMemberCount
+        - writableMemberCount
+        - skippedMemberCount
+        - memberSuggestionAmountUsdCents
+        - memberSuggestionReason
+        - billingAlignmentStatus
+        - existingIndividualLimitStatus
+        - existingIndividualLimitAmountUsdCents
+        - savedExceedsRecommendation
+        - suggestedAllowancesExceedPlan
+      properties:
+        workspaceId: { type: string, minLength: 1 }
+        workspaceName: { type: string, minLength: 1 }
+        groupId: { type: string, minLength: 1 }
+        groupName: { type: string, minLength: 1 }
+        teamName: { type: [string, "null"], minLength: 1 }
+        canEditPlan: { type: boolean }
+        savedAmountUsdCents:
+          oneOf:
+            - $ref: "#/components/schemas/SafeUsdCents"
+            - type: "null"
+        savedStatus:
+          type: string
+          enum: [unset, confirmed, requires_reconfirmation]
+        planRevision: { type: [integer, "null"], minimum: 1 }
+        recommendationAmountUsdCents:
+          oneOf:
+            - $ref: "#/components/schemas/SafeUsdCents"
+            - type: "null"
+        recommendationStatus:
+          type: string
+          enum: [available, not_started, expired, missing_funding, missing_history, exhausted]
+        recommendationReason: { type: string, minLength: 1 }
+        teamEnvelopeUsdCents:
+          oneOf:
+            - $ref: "#/components/schemas/SafeUsdCents"
+            - type: "null"
+        overlapAdjustedMemberWeight: { type: [number, "null"], minimum: 0 }
+        eligibleMemberCount: { type: [integer, "null"], minimum: 0 }
+        writableMemberCount: { type: [integer, "null"], minimum: 0 }
+        skippedMemberCount: { type: [integer, "null"], minimum: 0 }
+        memberSuggestionAmountUsdCents:
+          oneOf:
+            - $ref: "#/components/schemas/SafeUsdCents"
+            - type: "null"
+        memberSuggestionReason: { type: string, minLength: 1 }
+        billingAlignmentStatus:
+          type: string
+          enum: [aligned, misaligned, unavailable]
+        existingIndividualLimitStatus:
+          type: string
+          enum: [unavailable, none, uniform, mixed]
+        existingIndividualLimitAmountUsdCents:
+          oneOf:
+            - $ref: "#/components/schemas/SafeUsdCents"
+            - type: "null"
+        savedExceedsRecommendation: { type: boolean }
+        suggestedAllowancesExceedPlan: { type: boolean }
+    GroupPlanInventoryResponse:
+      type: object
+      additionalProperties: false
+      required: [revision, fundingPeriod, plans]
+      properties:
+        revision:
+          type: string
+          minLength: 1
+          description: Opaque funding configuration revision.
+        fundingPeriod:
+          $ref: "#/components/schemas/GroupPlanFundingPeriod"
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupPlanInventoryRecord"
+    GroupPlanSaveInput:
+      type: object
+      additionalProperties: false
+      required: [amountUsdCents, expectedPlanRevision, expectedConfigurationRevision]
+      properties:
+        amountUsdCents:
+          $ref: "#/components/schemas/SafeUsdCents"
+        expectedPlanRevision:
+          type: [integer, "null"]
+          minimum: 1
+        expectedConfigurationRevision:
+          type: string
+          minLength: 1
+    GroupPlanSaveResponse:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, groupId, amountUsdCents, status, revision, updatedAt]
+      properties:
+        workspaceId: { type: string, minLength: 1 }
+        groupId: { type: string, minLength: 1 }
+        amountUsdCents:
+          $ref: "#/components/schemas/SafeUsdCents"
+        status:
+          type: string
+          enum: [confirmed]
+        revision: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
     FundingGroup:
       type: object
       additionalProperties: false

@@ -1,20 +1,24 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   getGetFundingGroupsQueryKey,
+  getGetGroupPlanInventoryQueryKey,
   getGetLimitsQueryKey,
   getListVisibleWorkspacesQueryKey,
   type LimitChangeInput,
   type LimitChangeOperation,
   type LimitRow,
+  type GroupPlanInventoryRecord,
   type SetLimitsGroup,
   type SetLimitsMember,
   type SetLimitsWorkspace,
   useGetFundingGroups,
+  useGetGroupPlanInventory,
   useGetLimits,
   useGetSetLimitsWorkspace,
   useListVisibleWorkspaces,
   usePrepareClearAllLimits,
   usePrepareLimitChanges,
+  useSaveGroupPlan,
 } from '@workspace/api-client-react';
 import {
   AlertTriangle, BriefcaseBusiness, ChevronDown, ChevronRight, RotateCcw, Search, Trash2, User, Users,
@@ -31,8 +35,9 @@ import { BudgetMeter } from '@/components/journey-primitives';
 import { getSelectableGroupUserIds, isMemberSelectable, parseLimitsUrlContext } from '@/lib/limits-utils';
 import { LimitChangeReview } from './limit-change-review';
 import {
-  buildLimitsTeamHierarchy, dedupeLimitDrafts, describeLimitValue, personTargetKey, positiveUsdAmount,
-  selectableTeamPersonKeys, type LimitsPersonRef, type LimitsTeamNode, type LiveLimitDraft,
+  buildLimitsTeamHierarchy, describeLimitValue, mergeLimitDrafts, nonnegativeUsdCents, personTargetKey, positiveUsdAmount,
+  replaceConflictingDrafts, selectableTeamPersonKeys, type LimitsPersonRef, type LimitsTeamNode,
+  type LiveLimitDraft, type LiveLimitDraftConflict,
 } from './limits-table-model';
 
 const currency = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' });
@@ -58,6 +63,8 @@ function configuredRow(rows: LimitRow[], workspaceId: string, type: LiveLimitDra
 export function LiveLimitsTable() {
   const { auth, capabilities, isPreviewing, realIsAccountAdmin, authorizationKey, user } = useAuthContext();
   const operationStorageKey = `${OPERATIONS_KEY}:${user?.id ?? authorizationKey}`;
+  const identityRef = useRef(authorizationKey);
+  identityRef.current = authorizationKey;
   const url = parseLimitsUrlContext(useSearch());
   const previewReadOnly = isPreviewing || auth?.previewReadOnly === true;
   const accountScope = capabilities.canViewAccountUsage === true;
@@ -68,8 +75,12 @@ export function LiveLimitsTable() {
   const funding = useGetFundingGroups({
     query: { enabled: accountScope, queryKey: getGetFundingGroupsQueryKey(), refetchOnMount: 'always' },
   });
+  const groupPlans = useGetGroupPlanInventory({
+    query: { queryKey: getGetGroupPlanInventoryQueryKey(), refetchOnMount: 'always' },
+  });
   const prepare = usePrepareLimitChanges({ mutation: { retry: false } });
   const prepareClear = usePrepareClearAllLimits({ mutation: { retry: false } });
+  const savePlan = useSaveGroupPlan({ mutation: { retry: false } });
   const [search, setSearch] = useState('');
   const [drafts, setDrafts] = useState<LiveLimitDraft[]>([]);
   const [selectedPeople, setSelectedPeople] = useState<Set<string>>(new Set());
@@ -80,11 +91,26 @@ export function LiveLimitsTable() {
   const [prepared, setPrepared] = useState<LimitChangeOperation | null>(null);
   const [clearWarningOpen, setClearWarningOpen] = useState(false);
   const [rosters, setRosters] = useState<Record<string, SetLimitsWorkspace | null>>({});
+  const [draftConflicts, setDraftConflicts] = useState<LiveLimitDraftConflict[]>([]);
+  const [draftNotices, setDraftNotices] = useState<string[]>([]);
+  const [planSaveState, setPlanSaveState] = useState<Record<string, { kind: 'saved' | 'error'; message: string }>>({});
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    setSearch('');
     setDrafts([]);
     setSelectedPeople(new Set());
+    setEditing(null);
+    setBulkOpen(false);
+    setPrepared(null);
     setOperationId(null);
+    setClearWarningOpen(false);
+    setRosters({});
+    setDraftConflicts([]);
+    setDraftNotices([]);
+    setPlanSaveState({});
+    prepare.reset();
+    prepareClear.reset();
+    savePlan.reset();
     setOperationIds(storedOperations(operationStorageKey));
   }, [authorizationKey, operationStorageKey]);
 
@@ -104,18 +130,52 @@ export function LiveLimitsTable() {
       ...workspace,
       canWrite: workspace.canWrite && !workspace.unavailableReason && workspace.limitObservation.status === 'available',
     })), [rosters, visibleWorkspaceIds]);
-  const fundingByGroup = useMemo(() => new Map(
-    (funding.data?.groups ?? []).map(group => [`${group.workspaceId}:${group.groupId}`, group.teamName]),
-  ), [funding.data?.groups]);
+  const planningMappings = useMemo(() => {
+    const byGroup = new Map<string, { workspaceId: string; groupId: string; teamName: string | null }>();
+    for (const group of funding.data?.groups ?? []) {
+      byGroup.set(`${group.workspaceId}:${group.groupId}`, {
+        workspaceId: group.workspaceId,
+        groupId: group.groupId,
+        teamName: group.teamName,
+      });
+    }
+    // Non-account operators do not load the account-wide funding inventory.
+    // Their capability-scoped planning inventory still carries the canonical
+    // team mapping for every authorized concrete workspace/group.
+    for (const plan of groupPlans.data?.plans ?? []) {
+      byGroup.set(`${plan.workspaceId}:${plan.groupId}`, {
+        workspaceId: plan.workspaceId,
+        groupId: plan.groupId,
+        teamName: plan.teamName,
+      });
+    }
+    return [...byGroup.values()];
+  }, [funding.data?.groups, groupPlans.data?.plans]);
   const teamHierarchy = useMemo(() => buildLimitsTeamHierarchy(
     loadedWorkspaces,
-    funding.data?.groups ?? [],
-  ), [funding.data?.groups, loadedWorkspaces]);
+    planningMappings,
+  ), [loadedWorkspaces, planningMappings]);
+  const plansByGroup = useMemo(() => new Map(
+    (groupPlans.data?.plans ?? []).map(plan => [`${plan.workspaceId}:${plan.groupId}`, plan]),
+  ), [groupPlans.data?.plans]);
   const canClear = Boolean(realIsAccountAdmin && !previewReadOnly && limits.data?.canClearAll);
   const tableUnavailable = limits.isError || !limits.data || workspaces.isError || (accountScope && funding.isError);
   const stage = (draft: LiveLimitDraft) => {
     if (previewReadOnly) return;
-    setDrafts(current => dedupeLimitDrafts([...current, draft]));
+    setDrafts(current => {
+      const merged = mergeLimitDrafts(current, [draft]);
+      setDraftConflicts(merged.conflicts);
+      return merged.drafts;
+    });
+  };
+  const stageMany = (proposed: LiveLimitDraft[], notice?: string) => {
+    if (previewReadOnly) return;
+    if (notice) setDraftNotices(current => current.includes(notice) ? current : [...current, notice]);
+    setDrafts(current => {
+      const merged = mergeLimitDrafts(current, proposed);
+      setDraftConflicts(merged.conflicts);
+      return merged.drafts;
+    });
   };
   const rememberOperation = (operation: LimitChangeOperation) => {
     setPrepared(operation);
@@ -128,18 +188,64 @@ export function LiveLimitsTable() {
   };
   const prepareDrafts = () => {
     if (previewReadOnly || drafts.length === 0) return;
+    const identity = authorizationKey;
+    prepare.reset();
     prepare.mutate({
       data: { idempotencyKey: crypto.randomUUID(), targets: drafts as LimitChangeInput[] },
-    }, { onSuccess: operation => { setDrafts([]); rememberOperation(operation); } });
+    }, { onSuccess: operation => {
+      if (identityRef.current !== identity) return;
+      setDrafts([]);
+      rememberOperation(operation);
+    } });
   };
   const prepareBulk = (amountUsd: number | null) => {
     const targets = [...selectedPeople].map(key => {
       const [workspaceId, , targetId] = key.split('\0');
       return { workspaceId, type: 'workspace_user_limit' as const, targetId, amountUsd };
     });
-    setDrafts(current => dedupeLimitDrafts([...current, ...targets]));
+    stageMany(targets);
     setSelectedPeople(new Set());
     setBulkOpen(false);
+  };
+  const saveGroupPlan = (plan: GroupPlanInventoryRecord, amountUsdCents: number) => {
+    const key = `${plan.workspaceId}:${plan.groupId}`;
+    const identity = authorizationKey;
+    savePlan.reset();
+    setPlanSaveState(current => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    savePlan.mutate({
+      workspaceId: plan.workspaceId,
+      groupId: plan.groupId,
+      data: {
+        amountUsdCents,
+        expectedPlanRevision: plan.planRevision,
+        expectedConfigurationRevision: groupPlans.data!.revision,
+      },
+    }, {
+      onSuccess: async () => {
+        if (identityRef.current !== identity) return;
+        setPlanSaveState(current => ({ ...current, [key]: { kind: 'saved', message: 'Plan saved locally. No limits were applied.' } }));
+        await groupPlans.refetch();
+      },
+      onError: error => {
+        if (identityRef.current !== identity) return;
+        setPlanSaveState(current => ({
+          ...current,
+          [key]: { kind: 'error', message: `Plan save was not confirmed${error.message ? `: ${error.message}` : '.'} Refresh planning data before resolving the conflict or retrying.` },
+        }));
+      },
+    });
+  };
+  const refreshGroupPlan = async (key: string) => {
+    await groupPlans.refetch();
+    setPlanSaveState(current => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
   };
 
   return (
@@ -153,6 +259,7 @@ export function LiveLimitsTable() {
       </div>
       <div className="rounded-md border bg-muted/20 px-4 py-3 text-sm">
         Limits apply per person for the current billing cycle. Funding allocations and period dates are context only; they do not set an upstream limit.
+        {groupPlans.data && <div className="mt-1 text-xs text-muted-foreground">Local group planning term: {groupPlans.data.fundingPeriod.start} through {groupPlans.data.fundingPeriod.end}.</div>}
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full max-w-sm">
@@ -175,6 +282,8 @@ export function LiveLimitsTable() {
           </Button>
         </div>
       </div>
+      {prepare.isError && <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm" role="alert" data-testid="error-prepare-limit-changes"><strong>Review could not be prepared.</strong> {prepare.error.message} Your {drafts.length} staged change{drafts.length === 1 ? '' : 's'} remain{drafts.length === 1 ? 's' : ''} available.</div>}
+      {prepareClear.isError && <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm" role="alert" data-testid="error-prepare-clear-limits"><strong>Clear Limits review could not be prepared.</strong> {prepareClear.error.message} No limits or policies were changed.</div>}
       {visibleWorkspaceIds.map(workspaceId => (
         <RosterLoader key={workspaceId} workspaceId={workspaceId} onResult={captureRoster} />
       ))}
@@ -192,26 +301,26 @@ export function LiveLimitsTable() {
       ) : (
         <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1040px] text-left text-sm">
+              <table className="w-full min-w-[1180px] text-left text-sm">
               <thead className="border-b bg-muted/80 text-[11px] uppercase tracking-wide text-muted-foreground">
-                <tr><th className="w-12 px-3 py-3">Select</th><th className="px-4 py-3">Budget entity</th><th className="px-4 py-3">Scope context</th><th className="px-4 py-3 text-right">Monthly limit</th><th className="px-4 py-3">State</th><th className="px-4 py-3">Effective limit / usage</th><th className="px-4 py-3 text-right">Actions</th></tr>
+                <tr><th className="w-12 px-3 py-3">Select</th><th className="px-4 py-3">Budget entity</th><th className="px-4 py-3">Scope context</th><th className="px-4 py-3">Group plan / month</th><th className="px-4 py-3">Individual limit / person</th><th className="px-4 py-3">State</th><th className="px-4 py-3">Effective limit / usage</th><th className="px-4 py-3 text-right">Actions</th></tr>
               </thead>
               <tbody className="divide-y">
-                <tr className="bg-muted/50"><td colSpan={7} className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace default context</td></tr>
+                <tr className="bg-muted/50"><td colSpan={8} className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace default context</td></tr>
                 {visibleWorkspaceIds.map(workspaceId => {
                   const roster = rosters[workspaceId];
                   const workspaceName = roster?.workspaceName ?? workspaces.data?.find(item => item.workspaceId === workspaceId)?.workspaceName ?? workspaceId;
                   const row = configuredRow(limits.data.limits, workspaceId, 'workspace_default_user_limit', workspaceId);
                   return <WorkspaceDefaultRow key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} billingPeriod={roster?.billingPeriod} row={row} unavailable={roster === null || roster?.limitObservation.status !== 'available'} readOnly={previewReadOnly || roster?.canWrite !== true} onEdit={setEditing} onStage={stage} />;
                 })}
-                {visibleWorkspaceIds.some(workspaceId => !(workspaceId in rosters)) && <tr><td colSpan={7} className="p-4"><Skeleton className="h-10" /></td></tr>}
-                {visibleWorkspaceIds.filter(workspaceId => rosters[workspaceId] === null).map(workspaceId => <tr key={`error:${workspaceId}`}><td colSpan={7} className="bg-amber-50 p-4 text-sm text-amber-900" role="alert">Roster and membership for workspace {workspaceId} are unavailable. No empty group or person result is inferred, and its controls are disabled.</td></tr>)}
-                <tr className="bg-muted/50"><td colSpan={7} className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Budget allocation teams</td></tr>
+                {visibleWorkspaceIds.some(workspaceId => !(workspaceId in rosters)) && <tr><td colSpan={8} className="p-4"><Skeleton className="h-10" /></td></tr>}
+                {visibleWorkspaceIds.filter(workspaceId => rosters[workspaceId] === null).map(workspaceId => <tr key={`error:${workspaceId}`}><td colSpan={8} className="bg-amber-50 p-4 text-sm text-amber-900" role="alert">Roster and membership for workspace {workspaceId} are unavailable. No empty group or person result is inferred, and its controls are disabled.</td></tr>)}
+                <tr className="bg-muted/50"><td colSpan={8} className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Budget allocation teams</td></tr>
                 {teamHierarchy.map(team => (
-                  <TeamLimitRows key={team.key} team={team} rows={limits.data.limits} search={search} contextGroupIds={url.groupIds} selectedPeople={selectedPeople} onSelectedPeople={setSelectedPeople} onEdit={setEditing} onStage={stage} readOnly={previewReadOnly} />
+                  <TeamLimitRows key={`${authorizationKey}:${team.key}`} team={team} rows={limits.data.limits} plansByGroup={plansByGroup} planningUnavailable={groupPlans.isError} planningRevision={groupPlans.data?.revision ?? null} planSaveState={planSaveState} planSavePending={savePlan.isPending} onSavePlan={saveGroupPlan} onRefreshPlan={refreshGroupPlan} search={search} contextGroupIds={url.groupIds} selectedPeople={selectedPeople} onSelectedPeople={setSelectedPeople} onEdit={setEditing} onStage={stage} onStageMany={stageMany} readOnly={previewReadOnly} />
                 ))}
-                {visibleWorkspaceIds.length === 0 && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">No authorized workspaces are available.</td></tr>}
-                {visibleWorkspaceIds.length > 0 && teamHierarchy.length === 0 && visibleWorkspaceIds.every(workspaceId => workspaceId in rosters) && !visibleWorkspaceIds.some(workspaceId => rosters[workspaceId] === null) && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">No groups or people are present in the complete authorized rosters.</td></tr>}
+                {visibleWorkspaceIds.length === 0 && <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">No authorized workspaces are available.</td></tr>}
+                {visibleWorkspaceIds.length > 0 && teamHierarchy.length === 0 && visibleWorkspaceIds.every(workspaceId => workspaceId in rosters) && !visibleWorkspaceIds.some(workspaceId => rosters[workspaceId] === null) && <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">No groups or people are present in the complete authorized rosters.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -231,15 +340,38 @@ export function LiveLimitsTable() {
       )}
 
       <AmountEditor draft={editing} onClose={() => setEditing(null)} onSave={draft => { stage(draft); setEditing(null); }} />
-      <BulkEditor open={bulkOpen} count={selectedPeople.size} onClose={() => setBulkOpen(false)} onSave={prepareBulk} />
+      <BulkEditor key={authorizationKey} open={bulkOpen} count={selectedPeople.size} onClose={() => setBulkOpen(false)} onSave={prepareBulk} />
+      <Dialog open={draftConflicts.length > 0} onOpenChange={open => !open && setDraftConflicts([])}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Resolve overlapping individual limits</DialogTitle>
+            <DialogDescription>{draftConflicts.length} exact workspace/person target{draftConflicts.length === 1 ? '' : 's'} already has a different staged amount. No value was replaced.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-64 space-y-2 overflow-auto text-sm">
+            {draftConflicts.map(conflict => <div key={conflict.key} className="rounded-md border p-3"><div className="font-mono text-xs">{conflict.existing.workspaceId} · {conflict.existing.targetId}</div><div className="mt-1">Keep {conflict.existing.amountUsd == null ? 'clear' : currency.format(conflict.existing.amountUsd)} or replace with {conflict.proposed.amountUsd == null ? 'clear' : currency.format(conflict.proposed.amountUsd)}</div></div>)}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDraftConflicts([])}>Keep existing</Button>
+            <Button onClick={() => { setDrafts(current => replaceConflictingDrafts(current, draftConflicts)); setDraftConflicts([]); }} data-testid="button-resolve-limit-conflicts">Replace staged amounts</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={clearWarningOpen} onOpenChange={setClearWarningOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Prepare a complete Clear Limits review?</DialogTitle><DialogDescription>This does not write immediately. The server will freshly discover and freeze the exact complete inventory for review.</DialogDescription></DialogHeader>
           <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">Cleared targets may allow uncapped Agent spend. The reviewed automatic workspace/group baseline policies are disabled so those caps do not return after refresh. Funding and account spending controls are not changed.</div>
-          <DialogFooter><Button variant="outline" onClick={() => setClearWarningOpen(false)}>Cancel</Button><Button variant="destructive" disabled={!canClear || prepareClear.isPending} onClick={() => prepareClear.mutate({ data: { idempotencyKey: crypto.randomUUID() } }, { onSuccess: operation => { setClearWarningOpen(false); rememberOperation(operation); } })} data-testid="button-prepare-clear-all-limits">Prepare complete inventory</Button></DialogFooter>
+           <DialogFooter><Button variant="outline" onClick={() => setClearWarningOpen(false)}>Cancel</Button><Button variant="destructive" disabled={!canClear || prepareClear.isPending} onClick={() => {
+             const identity = authorizationKey;
+             prepareClear.reset();
+             prepareClear.mutate({ data: { idempotencyKey: crypto.randomUUID() } }, { onSuccess: operation => {
+               if (identityRef.current !== identity) return;
+               setClearWarningOpen(false);
+               rememberOperation(operation);
+             } });
+           }} data-testid="button-prepare-clear-all-limits">Prepare complete inventory</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-      <LimitChangeReview operationId={operationId} preparedOperation={prepared} readOnly={previewReadOnly} onOperation={rememberOperation} onClose={() => setOperationId(null)} />
+      <LimitChangeReview operationId={operationId} preparedOperation={prepared} readOnly={previewReadOnly} notices={draftNotices} onOperation={rememberOperation} onClose={() => { setOperationId(null); setDraftNotices([]); }} />
     </div>
   );
 }
@@ -265,6 +397,7 @@ function WorkspaceDefaultRow({ workspaceId, workspaceName, billingPeriod, row, u
       <td className="px-3 py-3" />
       <td className="px-4 py-3"><div className="inline-flex items-center gap-2 font-semibold"><BriefcaseBusiness className="h-4 w-4" />{workspaceName}</div><div className="font-mono text-[10px] text-muted-foreground">{workspaceId}</div></td>
       <td className="px-4 py-3 text-xs text-muted-foreground">Workspace default · applies per person{billingPeriod ? <div>Billing cycle {new Date(billingPeriod.start).toLocaleDateString()} – {new Date(billingPeriod.end).toLocaleDateString()}</div> : null}</td>
+      <td className="px-4 py-3 text-xs text-muted-foreground">Not a group plan</td>
       <td className="px-4 py-3 text-right font-mono">{unavailable ? 'Unavailable' : row ? currency.format(row.amountUsd) : '—'}</td>
       <td className="px-4 py-3"><LimitBadge state={unavailable ? 'unavailable' : row ? 'explicit' : 'none'} /></td>
       <td className="px-4 py-3 text-xs text-muted-foreground">Separate from allocation-team funding</td>
@@ -273,13 +406,20 @@ function WorkspaceDefaultRow({ workspaceId, workspaceName, billingPeriod, row, u
   );
 }
 
-function TeamLimitRows({ team, rows, search, contextGroupIds, selectedPeople, onSelectedPeople, onEdit, onStage, readOnly }: {
+function TeamLimitRows({ team, rows, plansByGroup, planningUnavailable, planningRevision, planSaveState, planSavePending, onSavePlan, onRefreshPlan, search, contextGroupIds, selectedPeople, onSelectedPeople, onEdit, onStage, onStageMany, readOnly }: {
   team: LimitsTeamNode<SetLimitsMember, SetLimitsGroup>; rows: LimitRow[]; search: string; contextGroupIds: string[];
+  plansByGroup: Map<string, GroupPlanInventoryRecord>; planningUnavailable: boolean; planningRevision: string | null;
+  planSaveState: Record<string, { kind: 'saved' | 'error'; message: string }>; planSavePending: boolean;
+  onSavePlan: (plan: GroupPlanInventoryRecord, amountUsdCents: number) => void;
+  onRefreshPlan: (key: string) => void;
   selectedPeople: Set<string>; onSelectedPeople: (next: Set<string>) => void;
-  onEdit: (draft: LiveLimitDraft) => void; onStage: (draft: LiveLimitDraft) => void; readOnly: boolean;
+  onEdit: (draft: LiveLimitDraft) => void; onStage: (draft: LiveLimitDraft) => void;
+  onStageMany: (drafts: LiveLimitDraft[], notice?: string) => void; readOnly: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manuallyCollapsed, setManuallyCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set(contextGroupIds));
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const selectableKeys = selectableTeamPersonKeys(team);
   const allSelected = selectableKeys.length > 0 && selectableKeys.every(key => selectedPeople.has(key));
   const someSelected = !allSelected && selectableKeys.some(key => selectedPeople.has(key));
@@ -294,6 +434,17 @@ function TeamLimitRows({ team, rows, search, contextGroupIds, selectedPeople, on
   const ungroupedPeople = team.ungroupedPeople.filter(({ member, workspaceName, workspaceId }) =>
     teamMatches || `${member.name} ${member.username} ${member.email} ${workspaceName} ${workspaceId}`.toLowerCase().includes(query));
   if (groups.length === 0 && ungroupedPeople.length === 0) return null;
+  const revealTeam = Boolean(query) || (contextGroupIds.length > 0 && groups.length > 0);
+  const open = manualOpen || (revealTeam && !manuallyCollapsed);
+  const toggleOpen = () => {
+    if (open) {
+      setManualOpen(false);
+      setManuallyCollapsed(true);
+    } else {
+      setManualOpen(true);
+      setManuallyCollapsed(false);
+    }
+  };
   const toggleTeam = () => {
     if (readOnly) return;
     const next = new Set(selectedPeople);
@@ -304,28 +455,44 @@ function TeamLimitRows({ team, rows, search, contextGroupIds, selectedPeople, on
     <>
       <tr className="bg-primary/[0.04]" data-testid={`row-limit-team-${team.key}`}>
         <td className="px-3 py-3"><Checkbox checked={allSelected ? true : someSelected ? 'indeterminate' : false} disabled={readOnly || selectableKeys.length === 0} onCheckedChange={toggleTeam} aria-label={`Select all eligible writable people in ${team.name}`} data-testid={`checkbox-limit-team-${team.key}`} /></td>
-        <td className="px-4 py-3"><button onClick={() => setOpen(value => !value)} className="inline-flex items-center gap-2 font-semibold">{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}<BriefcaseBusiness className="h-4 w-4" />{team.name}</button></td>
+        <td className="px-4 py-3"><button onClick={toggleOpen} aria-expanded={open} className="inline-flex items-center gap-2 font-semibold" data-testid={`button-toggle-limit-team-${team.key}`}>{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}<BriefcaseBusiness className="h-4 w-4" />{team.name}</button></td>
         <td className="px-4 py-3 text-xs text-muted-foreground">{team.groups.length} mapped group{team.groups.length === 1 ? '' : 's'} · {selectableKeys.length} eligible writable people</td>
-        <td className="px-4 py-3 text-right text-muted-foreground">—</td>
+        <td className="px-4 py-3 text-muted-foreground">Expand to plan groups</td>
+        <td className="px-4 py-3 text-muted-foreground">Expand to stage people</td>
         <td className="px-4 py-3"><Badge variant="outline">Funding context</Badge></td>
         <td className="px-4 py-3 text-xs text-muted-foreground">Read-only allocation team · never a limit pool</td>
         <td className="px-4 py-3 text-right text-xs text-muted-foreground">No funding controls</td>
       </tr>
       {open && groups.map(node => {
         const groupRow = configuredRow(rows, node.workspaceId, 'workspace_group_limit', node.group.groupId);
+        const planKey = `${node.workspaceId}:${node.group.groupId}`;
+        const plan = plansByGroup.get(planKey);
         const selectedKeys = node.members.filter(person => person.canWrite && isMemberSelectable(person.member)).map(person => personTargetKey(node.workspaceId, person.member.userId));
         const groupSelected = selectedKeys.length > 0 && selectedKeys.every(key => selectedPeople.has(key));
         const groupOpenKey = `${node.workspaceId}:${node.group.groupId}`;
-        const groupOpen = openGroups.has(groupOpenKey) || contextGroupIds.includes(node.group.groupId) || Boolean(query);
-        return <GroupRows key={groupOpenKey} workspaceId={node.workspaceId} workspaceName={node.workspaceName} group={node.group} groupRow={groupRow} members={node.members.map(person => person.member)} team={team.name} open={groupOpen} selected={groupSelected} selectedPeople={selectedPeople} readOnly={readOnly || !node.canWrite} onToggleOpen={() => { const next = new Set(openGroups); next.has(groupOpenKey) ? next.delete(groupOpenKey) : next.add(groupOpenKey); setOpenGroups(next); }} onToggle={() => {
+        const revealGroup = contextGroupIds.includes(node.group.groupId) || Boolean(query);
+        const groupOpen = openGroups.has(groupOpenKey) || (revealGroup && !collapsedGroups.has(groupOpenKey));
+        return <GroupRows key={groupOpenKey} workspaceId={node.workspaceId} workspaceName={node.workspaceName} group={node.group} groupRow={groupRow} plan={plan} planningUnavailable={planningUnavailable || (planningRevision !== null && !plan)} planSaveState={planSaveState[planKey]} planSavePending={planSavePending} onSavePlan={onSavePlan} onRefreshPlan={() => onRefreshPlan(planKey)} members={node.members.map(person => person.member)} team={team.name} open={groupOpen} selected={groupSelected} selectedPeople={selectedPeople} readOnly={readOnly || !node.canWrite} onToggle={() => {
           if (readOnly) return;
           const next = new Set(selectedPeople);
           selectedKeys.forEach(key => groupSelected ? next.delete(key) : next.add(key));
           onSelectedPeople(next);
-        }} onSelectedPeople={onSelectedPeople} onEdit={onEdit} onStage={onStage} billingPeriod={node.billingPeriod} />;
+        }} onSelectedPeople={onSelectedPeople} onEdit={onEdit} onStage={onStage} onStageMany={onStageMany} billingPeriod={node.billingPeriod} onDisclosure={() => {
+          const nextOpen = new Set(openGroups);
+          const nextCollapsed = new Set(collapsedGroups);
+          if (groupOpen) {
+            nextOpen.delete(groupOpenKey);
+            nextCollapsed.add(groupOpenKey);
+          } else {
+            nextOpen.add(groupOpenKey);
+            nextCollapsed.delete(groupOpenKey);
+          }
+          setOpenGroups(nextOpen);
+          setCollapsedGroups(nextCollapsed);
+        }} />;
       })}
       {open && ungroupedPeople.length > 0 && (
-        <tr className="bg-muted/10"><td /><td className="px-4 py-2 pl-10 font-medium">No observed group</td><td colSpan={5} className="px-4 py-2 text-xs text-muted-foreground">People with no known authorized roster group remain visible; unknown membership is not treated as empty.</td></tr>
+        <tr className="bg-muted/10"><td /><td className="px-4 py-2 pl-10 font-medium">No observed group</td><td colSpan={6} className="px-4 py-2 text-xs text-muted-foreground">People with no known authorized roster group remain visible; unknown membership is not treated as empty.</td></tr>
       )}
       {open && ungroupedPeople.map(person => <UngroupedPersonRow key={`${person.workspaceId}:${person.member.userId}`} person={person} rows={rows} selectedPeople={selectedPeople} onSelectedPeople={onSelectedPeople} onEdit={onEdit} onStage={onStage} readOnly={readOnly || !person.canWrite} />)}
     </>
@@ -346,6 +513,7 @@ function UngroupedPersonRow({ person, rows, selectedPeople, onSelectedPeople, on
       <td className="px-3 py-2 pl-10"><Checkbox checked={selectedPeople.has(key)} disabled={readOnly || !selectable} onCheckedChange={() => { const next = new Set(selectedPeople); next.has(key) ? next.delete(key) : next.add(key); onSelectedPeople(next); }} aria-label={`Select ${member.name ?? member.username}`} /></td>
       <td className="px-4 py-2 pl-16"><div className="font-medium">{member.name ?? member.username}</div><div className="text-[11px] text-muted-foreground">@{member.username}</div></td>
       <td className="px-4 py-2 text-xs text-muted-foreground">{workspaceName} · {workspaceId}</td>
+      <td className="px-4 py-2 text-xs text-muted-foreground">Unmapped planning context</td>
       <td className="px-4 py-2 text-right font-mono">{describeLimitValue(member.limitState === 'no_limit' ? 'none' : member.limitState, member.effectiveLimitUsd)}</td>
       <td className="px-4 py-2"><LimitBadge state={member.limitState === 'no_limit' ? 'none' : member.limitState} /></td>
       <td className="px-4 py-2 text-xs text-muted-foreground">{member.usageUsd == null ? 'Usage unavailable' : `${currency.format(member.usageUsd)} used this cycle`}</td>
@@ -354,20 +522,87 @@ function UngroupedPersonRow({ person, rows, selectedPeople, onSelectedPeople, on
   );
 }
 
-function GroupRows({ workspaceId, workspaceName, group, groupRow, members, team, open, selected, selectedPeople, readOnly, onToggleOpen, onToggle, onSelectedPeople, onEdit, onStage, billingPeriod }: {
+function GroupRows({ workspaceId, workspaceName, group, groupRow, plan, planningUnavailable, planSaveState, planSavePending, onSavePlan, onRefreshPlan, members, team, open, selected, selectedPeople, readOnly, onToggle, onSelectedPeople, onEdit, onStage, onStageMany, billingPeriod, onDisclosure }: {
   workspaceId: string; workspaceName?: string; group: SetLimitsGroup; groupRow?: LimitRow; members: SetLimitsMember[]; team: string | null | undefined; open: boolean; selected: boolean;
-  selectedPeople: Set<string>; readOnly: boolean; onToggleOpen: () => void; onToggle: () => void; onSelectedPeople: (next: Set<string>) => void;
-  onEdit: (draft: LiveLimitDraft) => void; onStage: (draft: LiveLimitDraft) => void; billingPeriod?: { start: string; end: string };
+  plan?: GroupPlanInventoryRecord; planningUnavailable: boolean;
+  planSaveState?: { kind: 'saved' | 'error'; message: string }; planSavePending: boolean;
+  onSavePlan: (plan: GroupPlanInventoryRecord, amountUsdCents: number) => void;
+  onRefreshPlan: () => void;
+  selectedPeople: Set<string>; readOnly: boolean; onToggle: () => void; onSelectedPeople: (next: Set<string>) => void;
+  onEdit: (draft: LiveLimitDraft) => void; onStage: (draft: LiveLimitDraft) => void; onStageMany: (drafts: LiveLimitDraft[], notice?: string) => void;
+  billingPeriod?: { start: string; end: string }; onDisclosure: () => void;
 }) {
+  const [individualValue, setIndividualValue] = useState('');
+  const [planValue, setPlanValue] = useState('');
+  const [planDirty, setPlanDirty] = useState(false);
+  useEffect(() => {
+    if (!planDirty) setPlanValue(plan?.savedAmountUsdCents == null ? '' : String(plan.savedAmountUsdCents / 100));
+  }, [plan?.savedAmountUsdCents, planDirty]);
+  const planAmountCents = nonnegativeUsdCents(planValue);
+  const individualAmount = positiveUsdAmount(individualValue);
+  const eligibleMembers = members.filter(isMemberSelectable);
+  const eligibleIds = new Set(group.eligibleUserIds);
+  const writableMembers = readOnly ? [] : eligibleMembers.filter(member => eligibleIds.has(member.userId));
+  const skippedMembers = members.filter(member => !writableMembers.includes(member));
+  const effectivePlanCents = plan?.savedStatus === 'confirmed'
+    ? plan.savedAmountUsdCents
+    : plan?.recommendationAmountUsdCents;
+  const proposedExceedsPlan = individualAmount != null && effectivePlanCents != null &&
+    Math.round(individualAmount * 100) * writableMembers.length > effectivePlanCents;
   return (
     <>
       <tr data-testid={`row-limit-group-${workspaceId}-${group.groupId}`}>
         <td className="px-3 py-3 pl-7"><Checkbox checked={selected} disabled={readOnly || getSelectableGroupUserIds(group, members).length === 0} onCheckedChange={onToggle} aria-label={`Select eligible people in ${group.name}`} data-testid={`checkbox-limit-group-${workspaceId}-${group.groupId}`} /></td>
-        <td className="px-4 py-3 pl-10"><button onClick={onToggleOpen} className="inline-flex items-center gap-2 font-medium">{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}<Users className="h-4 w-4" />{group.name}</button><div className="ml-8 font-mono text-[10px] text-muted-foreground">{group.groupId}</div></td>
+        <td className="px-4 py-3 pl-10"><button onClick={onDisclosure} aria-expanded={open} className="inline-flex items-center gap-2 font-medium">{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}<Users className="h-4 w-4" />{group.name}</button><div className="ml-8 font-mono text-[10px] text-muted-foreground">{group.groupId}</div></td>
         <td className="px-4 py-3 text-xs"><div className="font-medium">{workspaceName ?? workspaceId}</div><div className="font-mono text-[10px] text-muted-foreground">{workspaceId}</div>{!team && <span className="text-muted-foreground">Unmapped funding context</span>}</td>
-        <td className="px-4 py-3 text-right font-mono">{groupRow ? currency.format(groupRow.amountUsd) : '—'}</td>
-        <td className="px-4 py-3"><LimitBadge state={groupRow ? 'explicit' : 'none'} /></td>
-        <td className="px-4 py-3 text-xs text-muted-foreground">Per person · not a funding pool</td>
+        <td className="px-4 py-3">
+          {planningUnavailable || !plan ? <div className="text-xs text-amber-700">Planning data unavailable</div> : (
+            <div className="min-w-[230px] space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Input value={planValue} onChange={event => { setPlanValue(event.target.value); setPlanDirty(true); }} disabled={!plan.canEditPlan || planSavePending} inputMode="decimal" placeholder="USD / month" className="h-8 w-28" aria-label={`Group plan per month for ${group.name}`} data-testid={`input-group-plan-${workspaceId}-${group.groupId}`} />
+                <Button size="sm" variant="outline" disabled={!plan.canEditPlan || planAmountCents == null || planSavePending} onClick={() => {
+                  if (planAmountCents == null) return;
+                  onSavePlan(plan, planAmountCents);
+                }} data-testid={`button-save-group-plan-${workspaceId}-${group.groupId}`}>{plan.savedStatus === 'requires_reconfirmation' ? 'Re-confirm' : planSavePending ? 'Saving…' : 'Save plan'}</Button>
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                Recommended: {plan.recommendationAmountUsdCents == null ? 'Unavailable' : currency.format(plan.recommendationAmountUsdCents / 100)}
+                {plan.recommendationAmountUsdCents != null && <Button variant="link" size="sm" className="h-auto px-1 py-0 text-[11px]" disabled={!plan.canEditPlan} onClick={() => { setPlanValue(String(plan.recommendationAmountUsdCents! / 100)); setPlanDirty(true); }}>Copy</Button>}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {plan.savedStatus === 'confirmed' ? 'Saved locally' : plan.savedStatus === 'requires_reconfirmation' ? 'Funding changed · re-confirm required' : 'No saved plan'}
+                {plan.recommendationStatus !== 'available' && <> · {plan.recommendationReason}</>}
+              </div>
+              {plan.savedExceedsRecommendation && <div className="text-[11px] font-medium text-amber-700">Saved plan exceeds this group recommendation.</div>}
+              {planSaveState && <div role={planSaveState.kind === 'error' ? 'alert' : 'status'} className={`text-[11px] ${planSaveState.kind === 'error' ? 'text-destructive' : 'text-emerald-700'}`}>{planSaveState.message}{planSaveState.kind === 'error' && <Button variant="link" size="sm" className="h-auto px-1 py-0 text-[11px]" onClick={onRefreshPlan}>Refresh plan</Button>}</div>}
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-3">
+          <div className="flex min-w-[220px] items-center gap-2">
+            <Input value={individualValue} onChange={event => setIndividualValue(event.target.value)} disabled={readOnly} inputMode="decimal" placeholder="USD / person" className="h-8 w-28" aria-label={`Individual limit per person in ${group.name}`} data-testid={`input-group-person-limit-${workspaceId}-${group.groupId}`} />
+            <Button size="sm" disabled={readOnly || individualAmount == null || writableMembers.length === 0} onClick={() => {
+              if (individualAmount == null) return;
+              onStageMany(
+                writableMembers.map(member => ({ workspaceId, type: 'workspace_user_limit', targetId: member.userId, amountUsd: individualAmount })),
+                skippedMembers.length > 0 ? `${group.name}: ${skippedMembers.length} skipped/ineligible — ${skippedMembers.map(member => member.name ?? member.username).join(', ')}` : undefined,
+              );
+              setIndividualValue('');
+            }} data-testid={`button-stage-group-person-limits-${workspaceId}-${group.groupId}`}>Stage {writableMembers.length}</Button>
+          </div>
+          {plan && <div className="mt-1 text-[11px] text-muted-foreground">
+            Recommended: {plan.memberSuggestionAmountUsdCents == null ? 'Unavailable' : currency.format(plan.memberSuggestionAmountUsdCents / 100)}
+            {(plan.memberSuggestionAmountUsdCents ?? 0) > 0 && <Button variant="link" size="sm" className="h-auto px-1 py-0 text-[11px]" disabled={readOnly} onClick={() => setIndividualValue(String(plan.memberSuggestionAmountUsdCents! / 100))}>Copy</Button>}
+            <span> · {plan.memberSuggestionAmountUsdCents == null ? plan.memberSuggestionReason : 'Current-cycle Agent suggestion · not a pool'}</span>
+          </div>}
+          <div className="mt-1 text-[11px] text-muted-foreground">{writableMembers.length} eligible writable{skippedMembers.length > 0 ? ` · ${skippedMembers.length} skipped: ${skippedMembers.map(member => member.name ?? member.username).join(', ')}` : ''}</div>
+          {plan?.existingIndividualLimitStatus === 'mixed' && <div className="text-[11px] font-medium text-amber-700">Existing individual limits are mixed.</div>}
+          {plan?.billingAlignmentStatus !== 'aligned' && <div className="text-[11px] font-medium text-amber-700">Current billing cycle is not verified as aligned; review before applying.</div>}
+          {proposedExceedsPlan && <div className="text-[11px] font-medium text-amber-700">Proposed individual allowances exceed this group&apos;s planning amount.</div>}
+          {plan?.suggestedAllowancesExceedPlan && <div className="text-[11px] font-medium text-amber-700">Suggested allowances exceed the planning amount.</div>}
+        </td>
+        <td className="px-4 py-3"><LimitBadge state={groupRow ? 'explicit' : 'none'} /><div className="mt-1 text-[11px] text-muted-foreground">{groupRow ? `${currency.format(groupRow.amountUsd)} inherited group default / person` : 'No inherited group default'}</div></td>
+        <td className="px-4 py-3 text-xs text-muted-foreground">Group default applies per person · not a funding pool</td>
         <td className="px-4 py-3 text-right"><RowActions row={groupRow} identity={{ workspaceId, type: 'workspace_group_limit', targetId: group.groupId, amountUsd: groupRow?.amountUsd ?? null }} readOnly={readOnly || groupRow?.canWrite === false} onEdit={onEdit} onStage={onStage} /></td>
       </tr>
       {open && members.map(member => {
@@ -378,6 +613,7 @@ function GroupRows({ workspaceId, workspaceName, group, groupRow, members, team,
             <td className="px-3 py-2 pl-10"><Checkbox checked={selectedPeople.has(key)} disabled={readOnly || !selectable} onCheckedChange={() => { const next = new Set(selectedPeople); next.has(key) ? next.delete(key) : next.add(key); onSelectedPeople(next); }} aria-label={`Select ${member.name ?? member.username}`} /></td>
             <td className="px-4 py-2 pl-16"><div className="flex items-center gap-2"><User className="h-4 w-4 text-muted-foreground" /><div><div className="font-medium">{member.name ?? member.username}</div><div className="text-[11px] text-muted-foreground">@{member.username}</div></div></div></td>
             <td className="px-4 py-2 text-xs text-muted-foreground">{member.role}</td>
+            <td className="px-4 py-2 text-xs text-muted-foreground">Group planning context</td>
             <td className="px-4 py-2 text-right font-mono">{describeLimitValue(member.limitState === 'no_limit' ? 'none' : member.limitState, member.effectiveLimitUsd)}</td>
             <td className="px-4 py-2"><LimitBadge state={member.limitState === 'no_limit' ? 'none' : member.limitState} /></td>
             <td className="px-4 py-2">{billingPeriod ? <BudgetMeter actualUsd={member.usageUsd} budgetUsd={member.limitState === 'unavailable' ? null : member.effectiveLimitUsd} periodStart={billingPeriod.start} periodEnd={billingPeriod.end} incomplete={member.limitState === 'unavailable'} label="Current-cycle Agent usage" /> : <span className="text-xs text-muted-foreground">Billing period unavailable</span>}</td>
@@ -413,6 +649,9 @@ function AmountEditor({ draft, onClose, onSave }: { draft: LiveLimitDraft | null
 
 function BulkEditor({ open, count, onClose, onSave }: { open: boolean; count: number; onClose: () => void; onSave: (amount: number | null) => void }) {
   const [value, setValue] = useState('');
+  useEffect(() => {
+    if (!open) setValue('');
+  }, [open]);
   const amount = positiveUsdAmount(value);
   return <Dialog open={open} onOpenChange={next => !next && onClose()}><DialogContent><DialogHeader><DialogTitle>Set individual limits</DialogTitle><DialogDescription>Stage the same explicit limit for {count} exact workspace/person targets. Duplicate selections are removed; funding groups are not targets.</DialogDescription></DialogHeader><Input value={value} onChange={event => setValue(event.target.value)} inputMode="decimal" placeholder="Monthly USD" data-testid="input-bulk-limit-amount" /><DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button disabled={amount == null} onClick={() => amount != null && onSave(amount)} data-testid="button-stage-bulk-limits">Stage individual limits</Button></DialogFooter></DialogContent></Dialog>;
 }

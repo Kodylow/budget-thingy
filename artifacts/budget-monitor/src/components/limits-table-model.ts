@@ -15,6 +15,17 @@ export interface LiveLimitDraft extends LiveLimitIdentity {
   amountUsd: number | null;
 }
 
+export interface LiveLimitDraftConflict {
+  key: string;
+  existing: LiveLimitDraft;
+  proposed: LiveLimitDraft;
+}
+
+export interface LiveLimitDraftMerge {
+  drafts: LiveLimitDraft[];
+  conflicts: LiveLimitDraftConflict[];
+}
+
 export interface LimitsRosterMember {
   userId: string;
   groupIds: string[];
@@ -76,10 +87,48 @@ export function dedupeLimitDrafts(drafts: LiveLimitDraft[]): LiveLimitDraft[] {
   return [...byIdentity.values()];
 }
 
+/**
+ * Merges staged changes without silently replacing an earlier amount.
+ * A person may be reached through several overlapping groups, so differing
+ * proposals for the same exact workspace/user must be resolved by the user.
+ */
+export function mergeLimitDrafts(
+  existing: LiveLimitDraft[],
+  proposed: LiveLimitDraft[],
+): LiveLimitDraftMerge {
+  const byIdentity = new Map(existing.map(draft => [limitTargetKey(draft), draft]));
+  const conflicts = new Map<string, LiveLimitDraftConflict>();
+  for (const draft of proposed) {
+    const key = limitTargetKey(draft);
+    const current = byIdentity.get(key);
+    if (!current || current.amountUsd === draft.amountUsd) {
+      byIdentity.set(key, draft);
+      continue;
+    }
+    conflicts.set(key, { key, existing: current, proposed: draft });
+  }
+  return { drafts: [...byIdentity.values()], conflicts: [...conflicts.values()] };
+}
+
+export function replaceConflictingDrafts(
+  drafts: LiveLimitDraft[],
+  conflicts: LiveLimitDraftConflict[],
+): LiveLimitDraft[] {
+  const replacements = new Map(conflicts.map(conflict => [conflict.key, conflict.proposed]));
+  return drafts.map(draft => replacements.get(limitTargetKey(draft)) ?? draft);
+}
+
 export function positiveUsdAmount(value: string): number | null {
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(value)) return null;
   const amount = Number(value);
   return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+export function nonnegativeUsdCents(value: string): number | null {
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(value)) return null;
+  const [dollars, fraction = ''] = value.split('.');
+  const cents = BigInt(dollars) * 100n + BigInt(fraction.padEnd(2, '0') || '0');
+  return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null;
 }
 
 export function personTargetKey(workspaceId: string, userId: string): string {

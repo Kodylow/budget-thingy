@@ -71,6 +71,9 @@ import type {
   GroupBudget,
   GroupBudgetInput,
   GroupDetail,
+  GroupPlanInventoryResponse,
+  GroupPlanSaveInput,
+  GroupPlanSaveResponse,
   GroupProjectsResponse,
   GroupsResponse,
   HandleBrowserLoginCallbackParams,
@@ -6849,6 +6852,159 @@ export function useGetSetLimitsWorkspace<TData = Awaited<ReturnType<typeof getSe
 
 
 
+
+export const getGetGroupPlanInventoryUrl = () => {
+
+
+
+
+  return `/api/limits/group-plans`
+}
+
+/**
+ * Returns one complete stored planning inventory. Recommendations use canonical all-service spend and complete full-team rosters; unavailable inputs fail closed.
+ * @summary Read authorized local group plans and funding recommendations
+ */
+export const getGroupPlanInventory = async ( options?: RequestInit): Promise<GroupPlanInventoryResponse> => {
+
+  return customFetch<GroupPlanInventoryResponse>(getGetGroupPlanInventoryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetGroupPlanInventoryQueryKey = () => {
+    return [
+    `/api/limits/group-plans`
+    ] as const;
+    }
+
+
+export const getGetGroupPlanInventoryQueryOptions = <TData = Awaited<ReturnType<typeof getGroupPlanInventory>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupPlanInventory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGroupPlanInventoryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGroupPlanInventory>>> = ({ signal }) => getGroupPlanInventory({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGroupPlanInventory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetGroupPlanInventoryQueryResult = NonNullable<Awaited<ReturnType<typeof getGroupPlanInventory>>>
+export type GetGroupPlanInventoryQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Read authorized local group plans and funding recommendations
+ */
+
+export function useGetGroupPlanInventory<TData = Awaited<ReturnType<typeof getGroupPlanInventory>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGroupPlanInventory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetGroupPlanInventoryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSaveGroupPlanUrl = (workspaceId: string,
+    groupId: string,) => {
+
+
+
+
+  return `/api/limits/group-plans/${encodeURIComponent(String(workspaceId))}/${encodeURIComponent(String(groupId))}`
+}
+
+/**
+ * Saves only the local planning value. It never writes an upstream group or individual limit.
+ * @summary Save a local combined monthly group plan
+ */
+export const saveGroupPlan = async (workspaceId: string,
+    groupId: string,
+    groupPlanSaveInput: GroupPlanSaveInput, options?: RequestInit): Promise<GroupPlanSaveResponse> => {
+
+  return customFetch<GroupPlanSaveResponse>(getSaveGroupPlanUrl(workspaceId,groupId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(groupPlanSaveInput)
+  }
+);}
+
+
+
+
+
+export const getSaveGroupPlanMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveGroupPlan>>, TError,{workspaceId: string;groupId: string;data: BodyType<GroupPlanSaveInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveGroupPlan>>, TError,{workspaceId: string;groupId: string;data: BodyType<GroupPlanSaveInput>}, TContext> => {
+
+const mutationKey = ['saveGroupPlan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveGroupPlan>>, {workspaceId: string;groupId: string;data: BodyType<GroupPlanSaveInput>}> = (props) => {
+          const {workspaceId,groupId,data} = props ?? {};
+
+          return  saveGroupPlan(workspaceId,groupId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveGroupPlanMutationResult = NonNullable<Awaited<ReturnType<typeof saveGroupPlan>>>
+    export type SaveGroupPlanMutationBody = BodyType<GroupPlanSaveInput>
+    export type SaveGroupPlanMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Save a local combined monthly group plan
+ */
+export const useSaveGroupPlan = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveGroupPlan>>, TError,{workspaceId: string;groupId: string;data: BodyType<GroupPlanSaveInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof saveGroupPlan>>,
+        TError,
+        {workspaceId: string;groupId: string;data: BodyType<GroupPlanSaveInput>},
+        TContext
+      > => {
+      return useMutation(getSaveGroupPlanMutationOptions(options));
+    }
 
 export const getGetLimitsUrl = () => {
 

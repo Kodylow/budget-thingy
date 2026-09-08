@@ -3068,6 +3068,157 @@ export interface TeamBudgetHistoryResponse {
   issues: TeamBudgetMatchIssue[];
 }
 
+/**
+ * Nonnegative USD cents represented as a JavaScript safe integer.
+ * @minimum 0
+ * @maximum 9007199254740991
+ */
+export type SafeUsdCents = number;
+
+export interface GroupPlanFundingPeriod {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  start: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  end: string;
+}
+
+export type GroupPlanInventoryRecordSavedStatus = typeof GroupPlanInventoryRecordSavedStatus[keyof typeof GroupPlanInventoryRecordSavedStatus];
+
+
+export const GroupPlanInventoryRecordSavedStatus = {
+  unset: 'unset',
+  confirmed: 'confirmed',
+  requires_reconfirmation: 'requires_reconfirmation',
+} as const;
+
+export type GroupPlanInventoryRecordRecommendationStatus = typeof GroupPlanInventoryRecordRecommendationStatus[keyof typeof GroupPlanInventoryRecordRecommendationStatus];
+
+
+export const GroupPlanInventoryRecordRecommendationStatus = {
+  available: 'available',
+  not_started: 'not_started',
+  expired: 'expired',
+  missing_funding: 'missing_funding',
+  missing_history: 'missing_history',
+  exhausted: 'exhausted',
+} as const;
+
+export type GroupPlanInventoryRecordBillingAlignmentStatus = typeof GroupPlanInventoryRecordBillingAlignmentStatus[keyof typeof GroupPlanInventoryRecordBillingAlignmentStatus];
+
+
+export const GroupPlanInventoryRecordBillingAlignmentStatus = {
+  aligned: 'aligned',
+  misaligned: 'misaligned',
+  unavailable: 'unavailable',
+} as const;
+
+export type GroupPlanInventoryRecordExistingIndividualLimitStatus = typeof GroupPlanInventoryRecordExistingIndividualLimitStatus[keyof typeof GroupPlanInventoryRecordExistingIndividualLimitStatus];
+
+
+export const GroupPlanInventoryRecordExistingIndividualLimitStatus = {
+  unavailable: 'unavailable',
+  none: 'none',
+  uniform: 'uniform',
+  mixed: 'mixed',
+} as const;
+
+export interface GroupPlanInventoryRecord {
+  /** @minLength 1 */
+  workspaceId: string;
+  /** @minLength 1 */
+  workspaceName: string;
+  /** @minLength 1 */
+  groupId: string;
+  /** @minLength 1 */
+  groupName: string;
+  /**
+     * @minLength 1
+     * @nullable
+     */
+  teamName: string | null;
+  canEditPlan: boolean;
+  savedAmountUsdCents: SafeUsdCents | null;
+  savedStatus: GroupPlanInventoryRecordSavedStatus;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  planRevision: number | null;
+  recommendationAmountUsdCents: SafeUsdCents | null;
+  recommendationStatus: GroupPlanInventoryRecordRecommendationStatus;
+  /** @minLength 1 */
+  recommendationReason: string;
+  teamEnvelopeUsdCents: SafeUsdCents | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  overlapAdjustedMemberWeight: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  eligibleMemberCount: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  writableMemberCount: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  skippedMemberCount: number | null;
+  memberSuggestionAmountUsdCents: SafeUsdCents | null;
+  /** @minLength 1 */
+  memberSuggestionReason: string;
+  billingAlignmentStatus: GroupPlanInventoryRecordBillingAlignmentStatus;
+  existingIndividualLimitStatus: GroupPlanInventoryRecordExistingIndividualLimitStatus;
+  existingIndividualLimitAmountUsdCents: SafeUsdCents | null;
+  savedExceedsRecommendation: boolean;
+  suggestedAllowancesExceedPlan: boolean;
+}
+
+export interface GroupPlanInventoryResponse {
+  /**
+     * Opaque funding configuration revision.
+     * @minLength 1
+     */
+  revision: string;
+  fundingPeriod: GroupPlanFundingPeriod;
+  plans: GroupPlanInventoryRecord[];
+}
+
+export interface GroupPlanSaveInput {
+  amountUsdCents: SafeUsdCents;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  expectedPlanRevision: number | null;
+  /** @minLength 1 */
+  expectedConfigurationRevision: string;
+}
+
+export type GroupPlanSaveResponseStatus = typeof GroupPlanSaveResponseStatus[keyof typeof GroupPlanSaveResponseStatus];
+
+
+export const GroupPlanSaveResponseStatus = {
+  confirmed: 'confirmed',
+} as const;
+
+export interface GroupPlanSaveResponse {
+  /** @minLength 1 */
+  workspaceId: string;
+  /** @minLength 1 */
+  groupId: string;
+  amountUsdCents: SafeUsdCents;
+  status: GroupPlanSaveResponseStatus;
+  /** @minimum 1 */
+  revision: number;
+  updatedAt: string;
+}
+
 export type FundingGroupOrigin = typeof FundingGroupOrigin[keyof typeof FundingGroupOrigin];
 
 
