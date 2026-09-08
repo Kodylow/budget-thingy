@@ -28,6 +28,8 @@ import type {
 import type {
   SnapshotUsageRollup,
 } from "../lib/usage-rollup";
+import type { Authorization } from "../lib/authz";
+import type { SpendRow } from "../services/scoped-accounting";
 
 const router: IRouter = Router();
 let nowForOrgInsights = () => new Date();
@@ -72,6 +74,167 @@ export function fundedBudgetAvailability(
     resolvedTeamCount: resolvedTeams.length,
     unresolvedTeamCount: fundedTeams.length - resolvedTeams.length,
   };
+}
+
+export function unassignedDetailObservation(input: {
+  accountSpendUsd: number | null;
+  workspaceIds: ReadonlySet<string>;
+  coverage: {
+    requestedDays: number;
+    requestedWorkspaceDays: number;
+    presentWorkspaceDays: number;
+    failedWorkspaceDays: readonly unknown[];
+    missingWorkspaceDays: readonly unknown[];
+    presentAccountDays: number;
+    missingAccountDays: readonly unknown[];
+  };
+}): "complete" | "partial" | "unavailable" {
+  if (input.accountSpendUsd === null || input.workspaceIds.size === 0 ||
+      input.coverage.presentWorkspaceDays === 0) return "unavailable";
+  return input.coverage.presentWorkspaceDays ===
+      input.coverage.requestedWorkspaceDays &&
+      input.coverage.presentAccountDays === input.coverage.requestedDays &&
+      input.coverage.failedWorkspaceDays.length === 0 &&
+      input.coverage.missingWorkspaceDays.length === 0 &&
+      input.coverage.missingAccountDays.length === 0
+    ? "complete"
+    : "partial";
+}
+
+type UnassignedDetailRow = {
+  id: string;
+  groupName: string | null;
+  source: "unmapped_group" | "no_group" | "unresolved_difference";
+  spendUsd: number;
+};
+
+export function buildUnassignedDetail(input: {
+  accountSpendUsd: number | null;
+  authz: Authorization;
+  daily: ReadonlyMap<string, SnapshotUsageRollup>;
+  groups: readonly { id: string; name: string; workspaceId: string }[];
+  workspaceNames?: ReadonlyMap<string, string | null>;
+  poolRows: readonly SpendRow[];
+  observation: "complete" | "partial" | "unavailable";
+}) {
+  if (input.accountSpendUsd === null || input.observation === "unavailable") {
+    return { observation: "unavailable" as const, workspaces: [] };
+  }
+
+  const teamRows = input.poolRows.filter((row) => row.id.startsWith("pool:team:"));
+  const targetUnits = Math.round(round(
+    input.accountSpendUsd -
+      teamRows.reduce((sum, row) => sum + row.spendUsd, 0),
+  ) * 1e8);
+  const groupById = new Map(input.groups.map((group) => [group.id, group]));
+  const unmappedGroupIds = new Set(input.poolRows
+    .filter((row) => row.id.startsWith("pool:group:"))
+    .flatMap((row) => row.sourceGroupIds ?? []));
+  const candidates: Array<{
+    workspaceId: string | null;
+    workspaceName: string | null;
+    rawSpendUsd: number;
+    row: Omit<UnassignedDetailRow, "spendUsd">;
+  }> = [];
+
+  for (const groupId of [...unmappedGroupIds].sort()) {
+    const group = groupById.get(groupId);
+    if (!group) continue;
+    const rawSpendUsd = [...input.daily.values()].reduce((sum, rollup) =>
+      sum + qualifiedGroupSpendComponents(rollup, input.authz, [group]).spendUsd, 0);
+    if (Math.abs(rawSpendUsd) < 0.5e-8) continue;
+    candidates.push({
+      workspaceId: group.workspaceId,
+      workspaceName: input.workspaceNames?.get(group.workspaceId) ??
+        input.poolRows.find((row) =>
+          row.workspaceId === group.workspaceId)?.workspaceName ?? null,
+      rawSpendUsd,
+      row: {
+        id: `group:${group.workspaceId}:${group.id}`,
+        groupName: group.name,
+        source: "unmapped_group",
+      },
+    });
+  }
+  for (const pool of input.poolRows.filter((row) =>
+    row.id.startsWith("pool:unbudgeted:") && Math.abs(row.spendUsd) >= 0.5e-8)) {
+    candidates.push({
+      workspaceId: pool.workspaceId,
+      workspaceName: pool.workspaceName,
+      rawSpendUsd: pool.spendUsd,
+      row: {
+        id: `no-group:${pool.workspaceId}`,
+        groupName: null,
+        source: "no_group",
+      },
+    });
+  }
+
+  const locatedRawUnits = Math.round(
+    candidates.reduce((sum, item) => sum + item.rawSpendUsd, 0) * 1e8);
+  const roundingToleranceUnits = teamRows.length + 1;
+  const locatedTargetUnits =
+    Math.abs(targetUnits - locatedRawUnits) <= roundingToleranceUnits
+      ? targetUnits
+      : locatedRawUnits;
+  const rows = candidates.map((item) => ({
+    ...item,
+    units: Math.round(item.rawSpendUsd * 1e8),
+  }));
+  if (rows.length > 0) {
+    rows.sort((a, b) => b.rawSpendUsd - a.rawSpendUsd ||
+      a.row.id.localeCompare(b.row.id));
+    rows[0]!.units += locatedTargetUnits -
+      rows.reduce((sum, item) => sum + item.units, 0);
+  }
+
+  const byWorkspace = new Map<string, {
+    workspaceId: string | null;
+    workspaceName: string | null;
+    rows: UnassignedDetailRow[];
+  }>();
+  const add = (
+    workspaceId: string | null,
+    workspaceName: string | null,
+    row: UnassignedDetailRow,
+  ) => {
+    const key = workspaceId ?? "\0";
+    const workspace = byWorkspace.get(key) ?? {
+      workspaceId,
+      workspaceName,
+      rows: [],
+    };
+    workspace.rows.push(row);
+    byWorkspace.set(key, workspace);
+  };
+  for (const item of rows) {
+    if (item.units === 0) continue;
+    add(item.workspaceId, item.workspaceName, {
+      ...item.row,
+      spendUsd: item.units / 1e8,
+    });
+  }
+  const unresolvedUnits = targetUnits - locatedTargetUnits;
+  if (unresolvedUnits !== 0 || (rows.length === 0 && targetUnits !== 0)) {
+    add(null, null, {
+      id: "unresolved-difference",
+      groupName: null,
+      source: "unresolved_difference",
+      spendUsd: (rows.length === 0 ? targetUnits : unresolvedUnits) / 1e8,
+    });
+  }
+
+  const workspaces = [...byWorkspace.values()].map((workspace) => {
+    workspace.rows.sort((a, b) => b.spendUsd - a.spendUsd ||
+      a.id.localeCompare(b.id));
+    return {
+      ...workspace,
+      spendUsd: round(workspace.rows.reduce((sum, row) => sum + row.spendUsd, 0)),
+    };
+  }).sort((a, b) => b.spendUsd - a.spendUsd ||
+    (a.workspaceName ?? a.workspaceId ?? "").localeCompare(
+      b.workspaceName ?? b.workspaceId ?? ""));
+  return { observation: input.observation, workspaces };
 }
 
 export function projectCoverageGaps(input: {
@@ -279,15 +442,30 @@ router.get("/org-insights", async (req, res): Promise<void> => {
     const unassignedSpendUsd = accountSpendUsd === null
       ? null
       : round(accountSpendUsd - knownTeamSpend);
+    const accountReporting = reportingSemanticsForGroups(
+      result.daily,
+      result.usage.groups,
+    );
+    const unassignedDetail = buildUnassignedDetail({
+      accountSpendUsd,
+      authz,
+      daily: result.daily,
+      groups: result.usage.groups,
+      workspaceNames: new Map([...result.dir.workspaces].map(
+        ([id, workspace]) => [id, workspace.name])),
+      poolRows: result.poolRows,
+      observation: unassignedDetailObservation({
+        accountSpendUsd,
+        workspaceIds: result.usage.workspaceIds,
+        coverage: result.usage.snapshot.coverage,
+      }),
+    });
     const response = {
       periodStart: period.periodStart,
       periodEnd: period.periodEnd,
       asOf: period.asOf,
       complete,
-      reporting: reportingSemanticsForGroups(
-        result.daily,
-        result.usage.groups,
-      ),
+      reporting: accountReporting,
       qualification: [
         "Amounts are allocation-eligible committed usage. Remaining includes funded teams only, excluding unfunded residual and unassigned account spend.",
         ...(period.asOf === null
@@ -325,6 +503,7 @@ router.get("/org-insights", async (req, res): Promise<void> => {
         unassignedSpendUsd,
       },
       accountPoints,
+      unassignedDetail,
       teams,
     };
     res.json(GetOrgBudgetOverviewResponse.parse(response));

@@ -61,6 +61,10 @@ function overviewFixture(teams: ChartTeam[], accountSpendUsd = 300) {
       resolvedTeamCount: fundedTeamCount,
       unresolvedTeamCount: 0,
     },
+    unassignedDetail: {
+      observation: 'complete',
+      workspaces: [],
+    },
     accountPoints: points(accountSpendUsd),
     teams: teams.map(teamFixture),
   };

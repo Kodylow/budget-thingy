@@ -55,6 +55,10 @@ const overview = (
     resolvedTeamCount: 0,
     unresolvedTeamCount: 0,
   },
+  unassignedDetail: {
+    observation: 'unavailable',
+    workspaces: [],
+  },
   accountPoints: [],
   teams,
   ...overrides,

@@ -91,7 +91,7 @@ async function readMigrationFixtures(): Promise<MigrationFixture[]> {
 }
 
 async function createLegacyFixture(
-  history: "baseline-only" | "through-4",
+  history: "baseline-only" | "through-1" | "through-2" | "through-3" | "through-4",
   options: { failSeed?: boolean } = {},
 ): Promise<{
   database: { name: string; url: string };
@@ -102,7 +102,7 @@ async function createLegacyFixture(
   const migrations = await readMigrationFixtures();
   const recorded = history === "baseline-only"
     ? migrations.slice(0, 1)
-    : migrations.slice(0, 5);
+    : migrations.slice(0, Number(history.slice(-1)) + 1);
 
   await inDatabase(database.url, async (client) => {
     // This is a newly-created database on the disposable test postmaster. Run
@@ -563,7 +563,7 @@ describe.sequential("production database bootstrap CLI", () => {
     }
   });
 
-  it.each(["baseline-only", "through-4"] as const)(
+  it.each(["baseline-only", "through-1", "through-2", "through-3", "through-4"] as const)(
     "upgrades authentic %s legacy history without rewriting recorded identities",
     { timeout: 60_000 },
     async (history) => {
@@ -600,19 +600,29 @@ describe.sequential("production database bootstrap CLI", () => {
           `SELECT amount_usd FROM public.team_budgets
             WHERE team_name = 'Operator Legacy Allocation'`,
         );
+        const alertIndex = await client.query<{ columns: string[]; unique: boolean }>(`
+          SELECT array_agg(a.attname::text ORDER BY k.ordinality) AS columns, i.indisunique AS unique
+          FROM pg_index i
+          CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
+          JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+          WHERE i.indexrelid = 'public.alert_delivery_claims_unique'::regclass
+          GROUP BY i.indisunique
+        `);
         return {
           journal: journal.rows,
           relations: relations.rows[0],
           alertColumns: alertColumns.rows.map((row) => row.column_name),
           allocation: allocation.rows[0]?.amount_usd,
+          alertIndex: alertIndex.rows[0],
         };
       });
 
       expect(state.journal.slice(0, fixture.originalJournal.length))
         .toEqual(fixture.originalJournal);
-      if (history === "baseline-only") {
+      if (history !== "through-4") {
         const skipped = new Set(
-          fixture.migrations.slice(1, 5).map((migration) => String(migration.when)),
+          fixture.migrations.slice(fixture.originalJournal.length, 5)
+            .map((migration) => String(migration.when)),
         );
         expect(state.journal.some((row) =>
           skipped.has(String(row.created_at))
@@ -626,6 +636,10 @@ describe.sequential("production database bootstrap CLI", () => {
       });
       expect(state.alertColumns).toEqual(["alert_type", "blocked_member_count"]);
       expect(state.allocation).toBe(654.32);
+      expect(state.alertIndex).toEqual({
+        columns: ["entity_type", "entity_id", "alert_type", "billing_period", "threshold"],
+        unique: true,
+      });
     },
   );
 

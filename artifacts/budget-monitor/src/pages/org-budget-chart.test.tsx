@@ -81,6 +81,10 @@ const makeData = (
     resolvedTeamCount: 2,
     unresolvedTeamCount: 0,
   },
+  unassignedDetail: {
+    observation: 'complete',
+    workspaces: [],
+  },
   accountPoints: [
     { date: '2026-05-20', spendUsd: 0 },
     { date: '2026-06-01', spendUsd: 75 },

@@ -3175,7 +3175,7 @@ components:
           type: ["number", "null"]
     OrgBudgetOverviewResponse:
       type: object
-      required: [periodStart, periodEnd, asOf, complete, reporting, qualification, summary, accountPoints, teams]
+      required: [periodStart, periodEnd, asOf, complete, reporting, qualification, summary, accountPoints, unassignedDetail, teams]
       properties:
         periodStart:
           type: string
@@ -3234,6 +3234,45 @@ components:
             accounting snapshot as summary.accountSpendUsd.
           items:
             $ref: "#/components/schemas/BudgetTrackingPoint"
+        unassignedDetail:
+          type: object
+          additionalProperties: false
+          required: [observation, workspaces]
+          properties:
+            observation:
+              type: string
+              enum: [complete, partial, unavailable]
+            workspaces:
+              type: array
+              maxItems: 1000
+              items:
+                type: object
+                additionalProperties: false
+                required: [workspaceId, workspaceName, spendUsd, rows]
+                properties:
+                  workspaceId:
+                    type: [string, "null"]
+                  workspaceName:
+                    type: [string, "null"]
+                  spendUsd:
+                    type: number
+                  rows:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, groupName, source, spendUsd]
+                      properties:
+                        id:
+                          type: string
+                        groupName:
+                          type: [string, "null"]
+                        source:
+                          type: string
+                          enum: [unmapped_group, no_group, unresolved_difference]
+                        spendUsd:
+                          type: number
         teams:
           type: array
           maxItems: 1000

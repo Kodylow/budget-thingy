@@ -8,6 +8,7 @@
 import type { BudgetTrackingPoint } from './budgetTrackingPoint';
 import type { OrgBudgetOverviewResponseSummary } from './orgBudgetOverviewResponseSummary';
 import type { OrgBudgetOverviewResponseTeamsItem } from './orgBudgetOverviewResponseTeamsItem';
+import type { OrgBudgetOverviewResponseUnassignedDetail } from './orgBudgetOverviewResponseUnassignedDetail';
 import type { ReportingSemantics } from './reportingSemantics';
 
 export interface OrgBudgetOverviewResponse {
@@ -30,6 +31,7 @@ export interface OrgBudgetOverviewResponse {
      * @maxItems 367
      */
   accountPoints: BudgetTrackingPoint[];
+  unassignedDetail: OrgBudgetOverviewResponseUnassignedDetail;
   /** @maxItems 1000 */
   teams: OrgBudgetOverviewResponseTeamsItem[];
 }

@@ -1199,6 +1199,8 @@ async function computeScopedAccounting(
       ownerName: null, limitState: "not_applicable",
       limitObservationStatus: "not_applicable", sharedPool: shared,
       usageObserved,
+      sourceGroupIds: (visibleByCanonical.get(canonicalId) ?? [group])
+        .map((source) => source.id).sort(),
     });
   }
   for (const [workspaceId, ungrouped] of ungroupedByWorkspace) {

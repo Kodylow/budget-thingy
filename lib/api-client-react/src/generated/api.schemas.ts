@@ -73,6 +73,48 @@ export type OrgBudgetOverviewResponseSummary = {
   unassignedSpendUsd: number | null;
 };
 
+export type OrgBudgetOverviewResponseUnassignedDetailObservation = typeof OrgBudgetOverviewResponseUnassignedDetailObservation[keyof typeof OrgBudgetOverviewResponseUnassignedDetailObservation];
+
+
+export const OrgBudgetOverviewResponseUnassignedDetailObservation = {
+  complete: 'complete',
+  partial: 'partial',
+  unavailable: 'unavailable',
+} as const;
+
+export type OrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsItemSource = typeof OrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsItemSource[keyof typeof OrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsItemSource];
+
+
+export const OrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsItemSource = {
+  unmapped_group: 'unmapped_group',
+  no_group: 'no_group',
+  unresolved_difference: 'unresolved_difference',
+} as const;
+
+export type OrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsItem = {
+  id: string;
+  /** @nullable */
+  groupName: string | null;
+  source: OrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsItemSource;
+  spendUsd: number;
+};
+
+export type OrgBudgetOverviewResponseUnassignedDetailWorkspacesItem = {
+  /** @nullable */
+  workspaceId: string | null;
+  /** @nullable */
+  workspaceName: string | null;
+  spendUsd: number;
+  /** @maxItems 1000 */
+  rows: OrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsItem[];
+};
+
+export type OrgBudgetOverviewResponseUnassignedDetail = {
+  observation: OrgBudgetOverviewResponseUnassignedDetailObservation;
+  /** @maxItems 1000 */
+  workspaces: OrgBudgetOverviewResponseUnassignedDetailWorkspacesItem[];
+};
+
 export type ReportingSemanticsAcquisitionCoverage = typeof ReportingSemanticsAcquisitionCoverage[keyof typeof ReportingSemanticsAcquisitionCoverage];
 
 
@@ -190,6 +232,7 @@ export interface OrgBudgetOverviewResponse {
      * @maxItems 367
      */
   accountPoints: BudgetTrackingPoint[];
+  unassignedDetail: OrgBudgetOverviewResponseUnassignedDetail;
   /** @maxItems 1000 */
   teams: OrgBudgetOverviewResponseTeamsItem[];
 }

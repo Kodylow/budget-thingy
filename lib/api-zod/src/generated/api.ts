@@ -1420,6 +1420,10 @@ export const getOrgBudgetOverviewResponseSummaryUnresolvedTeamCountMin = 0;
 export const getOrgBudgetOverviewResponseAccountPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponseAccountPointsMax = 367;
 
+export const getOrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsMax = 1000;
+
+export const getOrgBudgetOverviewResponseUnassignedDetailWorkspacesMax = 1000;
+
 export const getOrgBudgetOverviewResponseTeamsItemPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponseTeamsItemPointsMax = 367;
 
@@ -1456,6 +1460,20 @@ export const GetOrgBudgetOverviewResponse = zod.object({
   "date": zod.string().regex(getOrgBudgetOverviewResponseAccountPointsItemDateRegExp),
   "spendUsd": zod.number().nullable()
 })).max(getOrgBudgetOverviewResponseAccountPointsMax).describe('Cumulative allocation-eligible account spend from the same committed accounting snapshot as summary.accountSpendUsd.\n'),
+  "unassignedDetail": zod.object({
+  "observation": zod.enum(['complete', 'partial', 'unavailable']),
+  "workspaces": zod.array(zod.object({
+  "workspaceId": zod.string().nullable(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "rows": zod.array(zod.object({
+  "id": zod.string(),
+  "groupName": zod.string().nullable(),
+  "source": zod.enum(['unmapped_group', 'no_group', 'unresolved_difference']),
+  "spendUsd": zod.number()
+})).max(getOrgBudgetOverviewResponseUnassignedDetailWorkspacesItemRowsMax)
+})).max(getOrgBudgetOverviewResponseUnassignedDetailWorkspacesMax)
+}),
   "teams": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),

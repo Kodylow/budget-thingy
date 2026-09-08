@@ -382,4 +382,110 @@ describe('OrgInsights', () => {
       container.remove();
     }
   });
+
+  it('closes an open unassigned detail and removes its financial data when the authorization key changes', async () => {
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    let authorizationKey = 'user-a:account-scope';
+    (useAuthContext as any).mockImplementation(() => ({
+      capabilities: { canViewAccountUsage: true }, authorizationKey,
+    }));
+    (useGetOrgBudgetOverview as any).mockImplementation((options: any) => (
+      options.query.queryKey.at(-1) === 'user-a:account-scope'
+        ? {
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+            data: {
+              periodStart: '2026-05-20', periodEnd: '2027-05-20', asOf: '2026-09-08',
+              complete: true, qualification: null,
+              summary: {
+                accountSpendUsd: 975, teamAllocationUsd: 400, remainingUsd: 325,
+                teamsOverBudget: 0, unassignedSpendUsd: 91.23,
+                fundedTeamCount: 1, resolvedTeamCount: 1, unresolvedTeamCount: 0,
+              },
+              unassignedDetail: {
+                observation: 'complete',
+                workspaces: [{
+                  workspaceId: 'old-secret-workspace',
+                  workspaceName: 'Old Financial Workspace',
+                  spendUsd: 91.23,
+                  rows: [{
+                    id: 'old-detail',
+                    groupName: 'Old Financial Group',
+                    source: 'unmapped_group',
+                    spendUsd: 91.23,
+                  }],
+                }],
+              },
+              accountPoints: [], teams: [],
+            },
+          }
+        : { isLoading: true, data: undefined }
+    ));
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<OrgInsights />));
+      const trigger = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Inspect Unassigned Spend"]',
+      )!;
+      await act(async () => trigger.click());
+      expect(document.body.textContent).toContain('Old Financial Workspace');
+      expect(document.body.textContent).toContain('$91.23');
+
+      authorizationKey = 'user-b:team-scope';
+      await act(async () => root.render(<OrgInsights />));
+      expect(document.querySelector('[data-testid="org-unassigned-dialog"]')).toBeNull();
+      expect(document.body.textContent).not.toContain('Old Financial Workspace');
+      expect(document.body.textContent).not.toContain('Old Financial Group');
+      expect(document.body.textContent).not.toContain('$91.23');
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it.each([401, 403])('hides retained overview and unassigned details after a %s response', status => {
+    (useAuthContext as any).mockReturnValue({
+      capabilities: { canViewAccountUsage: true },
+      authorizationKey: 'account:revoked',
+    });
+    (useGetOrgBudgetOverview as any).mockReturnValue({
+      isLoading: false,
+      isFetching: false,
+      isError: true,
+      error: { status },
+      data: {
+        periodStart: '2026-05-20', periodEnd: '2027-05-20', complete: true,
+        summary: {
+          accountSpendUsd: 999, teamAllocationUsd: 400, remainingUsd: 325,
+          teamsOverBudget: 0, unassignedSpendUsd: 88.76,
+          fundedTeamCount: 1, resolvedTeamCount: 1, unresolvedTeamCount: 0,
+        },
+        unassignedDetail: {
+          observation: 'complete',
+          workspaces: [{
+            workspaceId: 'retained-secret',
+            workspaceName: 'Retained Financial Workspace',
+            spendUsd: 88.76,
+            rows: [{
+              id: 'retained-row',
+              groupName: 'Retained Financial Group',
+              source: 'unmapped_group',
+              spendUsd: 88.76,
+            }],
+          }],
+        },
+        accountPoints: [], teams: [],
+      },
+    });
+
+    const html = renderToStaticMarkup(<OrgInsights />);
+    expect(html).toContain('Failed to load organization budget overview.');
+    expect(html).not.toContain('Retained Financial Workspace');
+    expect(html).not.toContain('Retained Financial Group');
+    expect(html).not.toContain('$88.76');
+    expect(html).not.toContain('$999.00');
+  });
 });

@@ -8,6 +8,7 @@ import { formatFinancialUsd } from "@/lib/financial-format";
 import { InsightCard, OrgBudgetChart, OrgTeamsTable } from "./org-insights-components";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { OrgChartBoundary } from "./org-chart-recovery";
+import { UnassignedSpendCard } from "./org-unassigned-spend";
 
 export default function OrgInsights() {
   const { authorizationKey, capabilities } = useAuthContext();
@@ -24,16 +25,17 @@ export default function OrgInsights() {
     );
   }
 
-  return <OrgInsightsView authorizationKey={authorizationKey} />;
+  return <OrgInsightsView key={authorizationKey} authorizationKey={authorizationKey} />;
 }
 
 function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
   // Scope the cache entry to the complete identity/authorization fingerprint.
   // React Query natively retains its last committed data during same-key refetches.
-  const { data, isLoading, isFetching, refetch } = useGetOrgBudgetOverview({
+  const { data, isLoading, isFetching, isError, error, refetch } = useGetOrgBudgetOverview({
     query: { queryKey: [...getGetOrgBudgetOverviewQueryKey(), authorizationKey] },
   });
-  const displayData = data;
+  const denied = isError && [401, 403].includes(Number((error as { status?: number })?.status));
+  const displayData = denied ? undefined : data;
 
   if (isLoading && !displayData) {
     return (
@@ -85,6 +87,7 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Organization Budget Overview</h1>
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <span>Funding Period: {periodStart} to {periodEnd}</span>
+            <span>Recorded through: {displayData.asOf ?? "Unavailable"}</span>
             <div className="flex items-center gap-1.5">
               {isFetching && (
                 <Badge variant="secondary" className="border-border/50 text-[11px] font-normal text-muted-foreground">
@@ -109,6 +112,12 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
           </Button>
         </div>
       </div>
+
+      {isError && (
+        <p role="alert" className="text-sm text-destructive">
+          Refresh failed. Showing the last recorded overview and details.
+        </p>
+      )}
 
       {(isPartial || qualification) && (
         <AdminDataQualityNote title="Budget overview data quality">
@@ -146,15 +155,7 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
           highlightText={summary.teamsOverBudget != null && summary.teamsOverBudget > 0 ? "Attention" : undefined}
           testId="org-card-over-budget"
         />
-        {summary.unassignedSpendUsd != null && summary.unassignedSpendUsd > 0 && (
-          <InsightCard
-            title="Unassigned Spend"
-            icon={AlertTriangle}
-            value={formatFinancialUsd(summary.unassignedSpendUsd)}
-            subtitle="Not mapped to any team"
-            testId="org-card-unassigned"
-          />
-        )}
+        <UnassignedSpendCard data={displayData} isFetching={isFetching} isError={isError} />
       </section>
 
       {/* Main Chart */}

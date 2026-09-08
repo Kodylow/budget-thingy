@@ -1480,6 +1480,75 @@ describe("organization budget overview", () => {
     }
   });
 
+  it("reports observed no-group-only workspaces instead of hiding known detail", async () => {
+    const directory = await enterprise.getCachedDirectory();
+    try {
+      __setDirectoryCacheForTests({
+        ...directory,
+        groups: [],
+        groupMembers: new Map(),
+      });
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-17T12:00:00.000Z"));
+      invalidateUsageSnapshotMemo();
+
+      const response = await request("/org-insights", fixtures[0]);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.unassignedDetail.observation).toBe("partial");
+      expect(body.unassignedDetail.workspaces).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: GROWTH,
+          rows: expect.arrayContaining([
+            expect.objectContaining({ source: "no_group" }),
+          ]),
+        }),
+        expect.objectContaining({
+          workspaceId: PLATFORM,
+          rows: expect.arrayContaining([
+            expect.objectContaining({ source: "no_group" }),
+          ]),
+        }),
+      ]));
+      expect(body.unassignedDetail.workspaces.reduce(
+        (sum, workspace) => sum + workspace.spendUsd, 0,
+      )).toBe(body.summary.unassignedSpendUsd);
+    } finally {
+      __setDirectoryCacheForTests(directory);
+      invalidateUsageSnapshotMemo();
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
+  it("classifies overlapping charges from hidden team mappings as unmapped once", async () => {
+    try {
+      await db.update(teamBudgetsTable)
+        .set({ isHidden: true })
+        .where(eq(teamBudgetsTable.teamName, TEAM));
+      resetConfigurationSnapshotForTests();
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-17T12:00:00.000Z"));
+
+      const response = await request("/org-insights", fixtures[0]);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.teams.some((team) => team.name === TEAM)).toBe(false);
+      const rows = body.unassignedDetail.workspaces.flatMap(
+        (workspace) => workspace.rows);
+      expect(rows.some((row) => row.source === "unmapped_group")).toBe(true);
+      expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+      expect(body.unassignedDetail.workspaces.reduce(
+        (sum, workspace) => sum + workspace.spendUsd, 0,
+      )).toBe(body.summary.accountSpendUsd);
+    } finally {
+      await db.update(teamBudgetsTable)
+        .set({ isHidden: false })
+        .where(eq(teamBudgetsTable.teamName, TEAM));
+      resetConfigurationSnapshotForTests();
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
   it("keeps wholly missing and preterm team availability unknown", async () => {
     try {
       __setOrgInsightsNowForTests(
@@ -1498,6 +1567,10 @@ describe("organization budget overview", () => {
         "/org-insights", fixtures[0])).json();
       expect(preterm.asOf).toBeNull();
       expect(preterm.accountPoints).toEqual([]);
+      expect(preterm.unassignedDetail).toEqual({
+        observation: "unavailable",
+        workspaces: [],
+      });
       expect(preterm.teams.every((team) =>
         team.spendUsd === null &&
         team.remainingUsd === null &&
@@ -1747,6 +1820,7 @@ describe("organization budget overview", () => {
         teamsOverBudget: 0,
         unassignedSpendUsd: 0,
       });
+      expect(body.unassignedDetail.workspaces).toEqual([]);
     } finally {
       await db.delete(groupRosterSnapshotsTable)
         .where(inArray(groupRosterSnapshotsTable.groupId, [primaryGroup, aliasGroup]));
@@ -1825,6 +1899,7 @@ describe("organization budget overview", () => {
         resolvedTeamCount: baseline.summary.resolvedTeamCount,
         unresolvedTeamCount: baseline.summary.unresolvedTeamCount + 1,
       });
+      expect(unresolved.unassignedDetail).toEqual(baseline.unassignedDetail);
 
       await db.update(fundingGroupOverridesTable)
         .set({ teamName: null })
@@ -2084,6 +2159,20 @@ describe("organization budget overview", () => {
         8,
       );
       expect(body.summary.unassignedSpendUsd).toBeGreaterThan(0);
+      expect(body.unassignedDetail.observation).toBe("partial");
+      expect(body.unassignedDetail.workspaces.reduce(
+        (sum, workspace) => sum + workspace.spendUsd, 0,
+      )).toBeCloseTo(body.summary.unassignedSpendUsd, 8);
+      expect(body.unassignedDetail.workspaces.every((workspace) =>
+        workspace.rows.every((row, index, rows) =>
+          index === 0 || rows[index - 1].spendUsd >= row.spendUsd))).toBe(true);
+      expect(body.unassignedDetail.workspaces.every((workspace, index, rows) =>
+        index === 0 || rows[index - 1].spendUsd >= workspace.spendUsd)).toBe(true);
+      expect(body.unassignedDetail.workspaces.flatMap((workspace) =>
+        workspace.rows).every((row) =>
+          !("agentSpendUsd" in row) &&
+          !("members" in row) &&
+          !("projects" in row))).toBe(true);
       expect(body.accountPoints[0].spendUsd).toBeNull();
       expect(body.accountPoints.at(-1).spendUsd)
         .toBeCloseTo(body.summary.accountSpendUsd, 8);
@@ -2153,6 +2242,7 @@ describe("organization budget overview", () => {
       const body = await (await request("/org-insights", fixtures[0])).json();
       expect(body.summary.accountSpendUsd)
         .toBeCloseTo(baseline.summary.accountSpendUsd, 8);
+      expect(body.unassignedDetail).toEqual(baseline.unassignedDetail);
       expect(body.accountPoints[0].spendUsd).toBeNull();
       expect(body.accountPoints.at(-1).spendUsd)
         .toBeCloseTo(body.summary.accountSpendUsd, 8);
