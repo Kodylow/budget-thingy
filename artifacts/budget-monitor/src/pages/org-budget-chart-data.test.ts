@@ -83,13 +83,13 @@ describe('organization budget chart data', () => {
     }));
   });
 
-  it('preserves zero and null gaps, and excludes observations after as-of', () => {
+  it.each([true, false])('preserves zero and null gaps, and excludes observations after as-of (complete: %s)', complete => {
     const funded = team('a', 366, [
       { date: '2026-05-20', spendUsd: 0 },
       { date: '2026-05-21', spendUsd: null },
       { date: '2026-09-09', spendUsd: 900 },
-    ]);
-    const rows = buildOrgBudgetChartData(overview([funded]), [funded]);
+    ], complete);
+    const rows = buildOrgBudgetChartData(overview([funded], { complete }), [funded]);
 
     expect(rows.find(row => row.date === '2026-05-20')?.values.a.actual).toBe(0);
     expect(rows.find(row => row.date === '2026-05-21')?.values.a.actual).toBeNull();

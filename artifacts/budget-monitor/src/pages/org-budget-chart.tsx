@@ -230,12 +230,7 @@ export function OrgBudgetChart({ data, onRetry }: {
                    </div>
                    <div className="pl-6 text-xs text-muted-foreground flex justify-between w-full font-mono">
                      <span>
-                       {team.spendUsd != null ? (
-                         <>
-                           {formatUsd(team.spendUsd)}
-                           {!team.complete && <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-500 font-sans tracking-tight">(Partial)</span>}
-                         </>
-                        ) : 'No spend data'}
+                       {team.spendUsd != null ? formatUsd(team.spendUsd) : 'No spend data'}
                      </span>
                      <span className="opacity-70">{team.allocationUsd == null ? 'Unavailable' : formatUsd(team.allocationUsd)}</span>
                    </div>

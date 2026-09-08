@@ -207,6 +207,7 @@ describe('OrgInsights', () => {
     expect(html).toContain('Teams Over Budget (Known): Unavailable');
     expect(html.match(/0 of 2 funded teams; 2 unresolved\./g)).toHaveLength(2);
     expect(html).toContain('Budget overview data quality');
+    expect(html).toContain('Balances use available recorded spend, not verified complete usage. Missing inputs remain unavailable.');
     expect(html).toContain('Data is delayed due to upstream sync.');
   });
 
@@ -233,6 +234,9 @@ describe('OrgInsights', () => {
     expect(html).toContain('Teams Over Budget: 0');
     expect(html.match(/Balances based on recorded spend/g)).toHaveLength(1);
     expect(html).not.toContain('Partial data');
+    expect(html).toContain('Budget overview data quality');
+    expect(html).toContain('Balances use available recorded spend, not verified complete usage. Missing inputs remain unavailable.');
+    expect(html).toContain('Missing historical rosters use current membership.');
   });
 
   it('shows unassigned spend once when unassigned is positive', () => {

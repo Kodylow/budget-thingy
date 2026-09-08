@@ -119,6 +119,39 @@ afterEach(async () => {
 });
 
 describe('organization budget chart controls', () => {
+  it.each([
+    { spendUsd: 50, label: '$50.00' },
+    { spendUsd: 0, label: '$0.00' },
+    { spendUsd: null, label: 'No spend data' },
+  ])('shows incomplete Total and team spend as $label without selector qualifiers', async ({ spendUsd, label }) => {
+    const points = [
+      { date: '2026-06-01', spendUsd },
+      { date: '2026-06-02', spendUsd: null },
+    ];
+    const data = makeData([{ ...makeTeam('alpha', 'Alpha team', 100, spendUsd), complete: false, points }], {
+      complete: false,
+      accountPoints: points,
+      summary: { ...makeData([]).summary, accountSpendUsd: spendUsd },
+    });
+    const original = structuredClone(data);
+    await render(data);
+
+    expect(buttonFor('Total').textContent).toBe(`Total${label}$400.00`);
+    expect(buttonFor('Alpha team').textContent).toBe(`Alpha team${label}$100.00`);
+    expect(buttonFor('Total').getAttribute('aria-pressed')).toBe('true');
+    expect(buttonFor('Alpha team').getAttribute('aria-pressed')).toBe('false');
+    await act(async () => buttonFor('Alpha team').click());
+    expect(buttonFor('Alpha team').getAttribute('aria-pressed')).toBe('true');
+    for (const name of ['Total', 'Alpha team']) {
+      expect(buttonFor(name).textContent).not.toContain('Partial');
+      const line = observed.lines.get(`${name} Actual`);
+      expect(line.dataKey(observed.data.find(row => row.date === '2026-06-01'))).toBe(spendUsd);
+      expect(line.dataKey(observed.data.find(row => row.date === '2026-06-02'))).toBeNull();
+      expect(line.connectNulls).toBe(false);
+    }
+    expect(data).toEqual(original);
+  });
+
   it('handles missing accountPoints across response versions without changing selections or inventing totals', async () => {
     await render();
     await act(async () => buttonFor('Alpha team').click());
