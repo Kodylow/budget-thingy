@@ -130,6 +130,147 @@ async function installApi(page: Page, getOverview: (route: Route) => void | Prom
   });
 }
 
+for (const { width, columns, availableWidth } of [
+  { width: 320, columns: 1 },
+  { width: 390, columns: 1 },
+  { width: 768, columns: 2 },
+  { width: 1088, columns: 4 }, // 1024px after page padding
+  { width: 1440, columns: 5 },
+  { width: 1440, columns: 4, availableWidth: 1088 }, // sidebar-sized constraint
+]) {
+  test(`summary borders and values align at ${width}px${availableWidth ? ' with constrained content' : ''}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let current = {
+      ...detailedOverview,
+      summary: {
+        ...detailedOverview.summary,
+        accountSpendUsd: 123456789.01 as number | null,
+        teamAllocationUsd: 98765432.10 as number | null,
+        remainingUsd: -24691356.91 as number | null,
+        teamsOverBudget: 2 as number | null,
+        fundedTeamCount: 123,
+        resolvedTeamCount: 121,
+        unresolvedTeamCount: 2,
+      },
+    };
+    await installApi(page, async route => {
+      await held;
+      return json(route, current);
+    });
+    await page.goto('/org-insights');
+    if (availableWidth) {
+      // Exercise usable width independently of viewport media queries.
+      await page.locator('main').evaluate((main, size) => {
+        main.style.width = `${size}px`;
+      }, availableWidth);
+    }
+    const loading = page.getByTestId('org-summary-loading');
+    await expect(loading).toBeVisible();
+    const loadingColumns = await loading.evaluate(el => getComputedStyle(el).gridTemplateColumns);
+    expect(loadingColumns.split(' ')).toHaveLength(columns);
+    release();
+    const grid = page.getByRole('region', { name: 'Organization budget summary' });
+    const cards = grid.locator('.org-summary-card');
+    await expect(cards).toHaveCount(5);
+    await page.evaluate(() => document.fonts.ready);
+    expect(await grid.evaluate(el => getComputedStyle(el).gridTemplateColumns)).toBe(loadingColumns);
+
+    async function expectAlignedAndReadable() {
+      const measurements = await cards.evaluateAll(elements => elements.map(card => {
+        const border = card.getBoundingClientRect();
+        const header = card.firstElementChild!;
+        const label = header.firstElementChild!;
+        const value = header.lastElementChild!;
+        const range = document.createRange();
+        range.selectNodeContents(value);
+        const valueLines = [...range.getClientRects()];
+        const textFits = [label, value, card.children[1]].filter(Boolean).every(element => {
+          range.selectNodeContents(element);
+          return [...range.getClientRects()].every(rect =>
+            rect.left >= border.left + 15 && rect.right <= border.right - 15 &&
+            rect.top >= border.top && rect.bottom <= border.bottom);
+        });
+        return {
+          top: border.top, height: border.height, bottom: border.bottom,
+          labelTop: label.getBoundingClientRect().top,
+          valueTop: value.getBoundingClientRect().top,
+          baseline: valueLines[0].bottom,
+          valueLines: valueLines.length,
+          textFits,
+          padding: getComputedStyle(card).padding,
+          overflow: card.scrollWidth > card.clientWidth,
+        };
+      }));
+      for (let i = 0; i < measurements.length; i += columns) {
+        const row = measurements.slice(i, i + columns);
+        for (const card of row) {
+          for (const key of ['top', 'height', 'bottom', 'labelTop', 'valueTop', 'baseline'] as const) {
+            expect(Math.abs(card[key] - row[0][key]), key).toBeLessThanOrEqual(1);
+          }
+          expect(card.padding).toBe('16px');
+          expect(card.textFits).toBe(true);
+          expect(card.valueLines).toBe(1);
+          expect(card.overflow).toBe(false);
+        }
+      }
+      expect(await page.evaluate(() =>
+        document.documentElement.scrollWidth <= innerWidth &&
+        [...document.querySelectorAll('main, .org-summary-grid')].every(el => el.scrollWidth <= el.clientWidth),
+      )).toBe(true);
+    }
+
+    await expectAlignedAndReadable();
+    await expect(page.getByTestId('org-card-account-spend')).toContainText('$123,456,789.01');
+    await expect(page.getByTestId('org-card-team-funding')).toContainText('$98,765,432.10');
+    await expect(page.getByTestId('org-card-remaining')).toContainText('-$24,691,356.91');
+    await expect(page.getByTestId('org-card-remaining')).toContainText('Remaining Team Budgets (Known)');
+    await expect(page.getByTestId('org-card-over-budget')).toContainText('Attention 121 of 123 funded teams; 2 unresolved.');
+    await expect(page.getByTestId('org-card-unassigned')).toContainText('View workspace and group details →');
+    await expect(cards.nth(0).locator(':scope > div')).toHaveCount(1); // no empty detail region
+    await page.screenshot({ path: testInfo.outputPath('summary-known.png') });
+
+    const trigger = grid.getByRole('button', { name: 'Inspect Unassigned Spend' });
+    const triggerBox = await trigger.boundingBox();
+    const borderBox = await cards.last().boundingBox();
+    expect(triggerBox).toEqual(borderBox);
+    await trigger.focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+    await expect(trigger).toBeFocused();
+    expect(await trigger.evaluate(el => el.matches(':focus-visible') && getComputedStyle(el).boxShadow !== 'none')).toBe(true);
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('org-unassigned-dialog')).toContainText('North Workspace');
+    await page.keyboard.press('Escape');
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press(' ');
+    await expect(page.getByTestId('org-unassigned-dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    // The blank padded corner activates the same dialog, not just its text.
+    await trigger.click({ position: { x: 4, y: 4 } });
+    await expect(page.getByTestId('org-unassigned-dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    current = {
+      ...current,
+      summary: { ...current.summary, accountSpendUsd: null, teamAllocationUsd: null, remainingUsd: null, teamsOverBudget: null },
+    };
+    await page.getByTestId('refresh-org-insights').click();
+    await expect(cards.first()).toContainText('Unavailable');
+    await expectAlignedAndReadable();
+    current = {
+      ...current,
+      summary: { ...detailedOverview.summary, fundedTeamCount: 1, resolvedTeamCount: 1, unresolvedTeamCount: 0 },
+    };
+    await page.getByTestId('refresh-org-insights').click();
+    await expect(cards.first()).toContainText('$300.00');
+    await expectAlignedAndReadable();
+    await expect(grid).not.toContainText('(Known)');
+    await expect(grid).not.toContainText('Attention');
+  });
+}
+
 test('unassigned is the only interactive summary and its real dialog is keyboard accessible', async ({ page }) => {
   await installApi(page, route => json(route, detailedOverview));
   await page.goto('/org-insights');

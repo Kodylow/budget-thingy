@@ -9,9 +9,10 @@ export interface MetricCardProps {
   value: ReactNode;
   detail?: ReactNode;
   tone?: 'default' | 'warning' | 'danger';
+  className?: string;
 }
 
-export function MetricCard({ label, value, detail, tone = 'default' }: MetricCardProps) {
+export function MetricCard({ label, value, detail, tone = 'default', className }: MetricCardProps) {
   const color = tone === 'warning'
     ? 'text-amber-700 dark:text-amber-400'
     : tone === 'danger'
@@ -19,7 +20,7 @@ export function MetricCard({ label, value, detail, tone = 'default' }: MetricCar
       : '';
 
   return (
-    <Card className="rounded-md shadow-none">
+    <Card className={cn("rounded-md shadow-none", className)}>
       <CardHeader className="pb-2">
         <CardDescription>{label}</CardDescription>
         <CardTitle className={cn('font-mono text-2xl font-semibold tracking-tight', color)}>

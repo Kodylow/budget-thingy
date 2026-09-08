@@ -25,7 +25,7 @@ export function UnassignedSpendCard({
       <DialogTrigger asChild>
         <button
           type="button"
-          className="min-w-0 rounded-md text-left transition-colors hover:ring-1 hover:ring-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          className="org-summary-trigger min-w-0 rounded-md text-left transition-colors hover:ring-1 hover:ring-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           aria-label="Inspect Unassigned Spend"
         >
           <InsightCard

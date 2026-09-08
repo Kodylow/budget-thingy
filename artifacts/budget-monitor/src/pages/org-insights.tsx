@@ -9,6 +9,7 @@ import { InsightCard, OrgBudgetChart, OrgTeamsTable } from "./org-insights-compo
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
 import { OrgChartBoundary } from "./org-chart-recovery";
 import { UnassignedSpendCard } from "./org-unassigned-spend";
+import "./org-summary-cards.css";
 
 export default function OrgInsights() {
   const { authorizationKey, capabilities } = useAuthContext();
@@ -42,7 +43,7 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
       <div className="mx-auto max-w-[1400px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8 animate-pulse">
          <div className="h-10 w-48 bg-muted rounded-md mb-2" />
          <div className="h-4 w-64 bg-muted rounded-md" />
-         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-8">
+          <div className="org-summary-grid mt-8" data-testid="org-summary-loading">
             {[1,2,3,4,5].map(i => <div key={i} className="h-32 bg-muted rounded-xl" />)}
          </div>
          <div className="h-[400px] bg-muted rounded-xl mt-8" />
@@ -127,7 +128,7 @@ function OrgInsightsView({ authorizationKey }: { authorizationKey: string }) {
       )}
 
       {/* Top Cards */}
-      <section className="grid min-w-0 gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+      <section className="org-summary-grid" aria-label="Organization budget summary">
         <InsightCard
           title="Account Spend (Eligible)"
           icon={DollarSign}

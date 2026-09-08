@@ -20,11 +20,12 @@ export function InsightCard({
   highlightText?: React.ReactNode;
 }) {
   return (
-    <div className="min-w-0 h-full" data-testid={testId}>
+    <div className="org-summary-item min-w-0 h-full" data-testid={testId}>
       <MetricCard
+        className="org-summary-card"
         label={title}
         value={typeof value === "string" || typeof value === "number" ? String(value) : "Unavailable"}
-        detail={[highlightText, subtitle].filter(Boolean).join(" ")}
+        detail={[highlightText, subtitle].filter(Boolean).join(" ") || undefined}
         tone={highlightText === "Attention" ? "warning" : "default"}
       />
     </div>
