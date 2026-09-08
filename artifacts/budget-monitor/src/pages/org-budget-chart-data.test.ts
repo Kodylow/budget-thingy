@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { OrgBudgetOverviewResponse } from '@workspace/api-client-react';
 import {
   buildOrgBudgetChartData,
+  allocationPercent,
   getFundedTeams,
   TOTAL_SERIES_ID,
   type OrgChartSeries,
@@ -69,6 +70,30 @@ const totalSeries = (data: OrgBudgetOverviewResponse): OrgChartSeries => ({
 });
 
 describe('organization budget chart data', () => {
+  it('presents per-allocation ratios without changing inclusive trajectory data', () => {
+    const alpha = team('alpha', 366, [{ date: '2026-05-20', spendUsd: 183 }], false);
+    const beta = team('beta', 3660, [{ date: '2026-05-20', spendUsd: 1830 }]);
+    const rows = buildOrgBudgetChartData(overview([alpha, beta]), [alpha, beta]);
+    for (const series of [alpha, beta]) {
+      expect(allocationPercent(rows[0].values[series.id].actual, series.allocationUsd)).toBe(50);
+      expect(allocationPercent(rows[0].values[series.id].benchmark, series.allocationUsd)).toBeCloseTo(100 / 366);
+      expect(allocationPercent(rows.at(-1)!.values[series.id].benchmark, series.allocationUsd)).toBe(100);
+    }
+    expect(rows[0].values.beta.actual).toBe(1830);
+  });
+
+  it('does not clamp overspend, replace gaps, or divide by unusable allocations', () => {
+    expect(allocationPercent(150, 100)).toBe(150);
+    expect(allocationPercent(0, 100)).toBe(0);
+    expect(allocationPercent(null, 100)).toBeNull();
+    expect(allocationPercent(undefined, 100)).toBeNull();
+    for (const allocation of [0, null, undefined, -100, NaN, Infinity]) {
+      expect(allocationPercent(50, allocation)).toBeNull();
+      expect(allocationPercent(0, allocation)).toBeNull();
+    }
+    expect(allocationPercent(Number.MAX_VALUE, Number.MIN_VALUE)).toBeNull();
+  });
+
   it('reuses the Home inclusive budget pace through the exact term end', () => {
     const funded = team('funded', 3660, [{ date: '2026-05-20', spendUsd: 0 }]);
     const rows = buildOrgBudgetChartData(overview([funded]), [funded]);

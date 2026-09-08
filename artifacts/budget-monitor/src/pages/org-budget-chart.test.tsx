@@ -10,6 +10,7 @@ const observed = vi.hoisted(() => ({
   data: [] as any[],
   lines: new Map<string, any>(),
   referenceLines: [] as any[],
+  yAxis: null as any,
   tooltip: null as null | ((props: any) => React.ReactNode),
 }));
 
@@ -26,7 +27,7 @@ vi.mock('recharts', () => ({
     return <i data-line-name={props.name} />;
   },
   XAxis: () => null,
-  YAxis: () => null,
+  YAxis: (props: any) => { observed.yAxis = props; return null; },
   CartesianGrid: () => null,
   ReferenceLine: (props: any) => {
     observed.referenceLines.push(props);
@@ -120,10 +121,10 @@ afterEach(async () => {
 
 describe('organization budget chart controls', () => {
   it.each([
-    { spendUsd: 50, label: '$50.00' },
-    { spendUsd: 0, label: '$0.00' },
-    { spendUsd: null, label: 'No spend data' },
-  ])('shows incomplete Total and team spend as $label without selector qualifiers', async ({ spendUsd, label }) => {
+    { spendUsd: 50, label: '$50.00', percent: '50%' },
+    { spendUsd: 0, label: '$0.00', percent: '0%' },
+    { spendUsd: null, label: 'No spend data', percent: 'No spend data' },
+  ])('shows incomplete Total and team spend as $label without selector qualifiers', async ({ spendUsd, label, percent }) => {
     const points = [
       { date: '2026-06-01', spendUsd },
       { date: '2026-06-02', spendUsd: null },
@@ -149,7 +150,114 @@ describe('organization budget chart controls', () => {
       expect(line.dataKey(observed.data.find(row => row.date === '2026-06-02'))).toBeNull();
       expect(line.connectNulls).toBe(false);
     }
+    await act(async () => buttonFor('% of allocation').click());
+    expect(buttonFor('Alpha team').textContent).toBe(`Alpha team${percent}$100.00`);
+    expect(buttonFor('Total').textContent).not.toContain('Partial');
     expect(data).toEqual(original);
+  });
+
+  it('normalizes each allocation independently, preserves raw dollars, dates, colors and selections across modes/refetch', async () => {
+    const unequalTeams = [
+      { ...makeTeam('alpha', 'Alpha team', 100, 50), complete: false },
+      makeTeam('beta', 'Beta team', 1000, 500),
+    ];
+    await render(makeData(unequalTeams));
+    expect(buttonFor('Dollars').getAttribute('aria-pressed')).toBe('true');
+    await act(async () => { buttonFor('Alpha team').click(); });
+    await act(async () => { buttonFor('Beta team').click(); });
+    const dates = observed.data.map(row => row.date);
+    const color = observed.lines.get('Alpha team Actual').stroke;
+    await act(async () => buttonFor('% of allocation').click());
+    expect(buttonFor('% of allocation').getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[role="group"]')?.getAttribute('aria-label')).toBe('Trajectory units');
+    expect(container.textContent).toContain('Recorded spend (%)');
+    expect(buttonFor('Beta team').textContent).toContain('50%');
+    expect(buttonFor('Beta team').textContent).toContain('$1,000.00');
+    const row = observed.data.find(item => item.date === '2026-06-01');
+    expect(observed.lines.get('Alpha team Actual').dataKey(row)).toBe(50);
+    expect(observed.lines.get('Beta team Actual').dataKey(row)).toBe(50);
+    expect(observed.lines.get('Total Actual').dataKey(row)).toBe(18.75);
+    expect(row.values.beta.actual).toBe(500);
+    for (const name of ['Total Budget', 'Alpha team Budget', 'Beta team Budget']) {
+      expect(observed.lines.get(name).dataKey(observed.data.at(-1))).toBe(100);
+    }
+    expect(observed.yAxis.tickFormatter(150)).toBe('150%');
+    expect(observed.yAxis.domain).toEqual([0, 'auto']);
+    expect(observed.yAxis.label.value).toBe('% of allocation');
+    const tooltip = renderToStaticMarkup(<>{observed.tooltip?.({ active: true, label: row.day, payload: [{ payload: row }] })}</>);
+    expect(tooltip).toContain('Recorded: 50% ($500.00)');
+    expect(tooltip).toMatch(/Pace: [\d.]+% \(\$[\d.]+\)/);
+    expect(tooltip).toContain('Allocated: $1,000.00');
+    await act(async () => buttonFor('Alpha team').click());
+    expect(observed.lines.get('Total Actual').dataKey(row)).toBe(18.75);
+    await act(async () => buttonFor('Total').click());
+    await render(makeData([...unequalTeams].reverse()));
+    expect(buttonFor('Total').getAttribute('aria-pressed')).toBe('false');
+    expect(buttonFor('Beta team').getAttribute('aria-pressed')).toBe('true');
+    expect(buttonFor('% of allocation').getAttribute('aria-pressed')).toBe('true');
+    expect(observed.data.map(row => row.date)).toEqual(dates);
+    await act(async () => buttonFor('Alpha team').click());
+    expect(observed.lines.get('Alpha team Actual').stroke).toBe(color);
+    await act(async () => buttonFor('Dollars').click());
+    expect(observed.lines.get('Beta team Actual').dataKey(row)).toBe(500);
+    expect(observed.yAxis.tickFormatter(150)).toBe('$150');
+  });
+
+  it.each([0, null, undefined, -1, Infinity, NaN])('handles unusable Total allocation %s without changing eligibility or dollar data', async allocation => {
+    const data = makeData([
+      makeTeam('zero', 'Zero team', 0, 25),
+      makeTeam('invalid', 'Invalid team', allocation as number | null, 10),
+    ]);
+    data.summary.teamAllocationUsd = allocation as number | null;
+    await render(data);
+    await act(async () => buttonFor('Zero team').click());
+    await act(async () => buttonFor('% of allocation').click());
+    expect(container.textContent).toContain('Normalization unavailable.');
+    expect(container.textContent).toContain('Switch to Dollars');
+    expect(container.textContent).not.toContain('Spend and budget data unavailable.');
+    expect(buttonFor('Zero team').textContent).toContain('Unavailable');
+    expect(buttonFor('Zero team').textContent).toContain('$0.00');
+    expect(buttonFor('Total').textContent).toContain('Unavailable');
+    expect(container.querySelector('[data-testid="mock-line-chart"]')).toBeNull();
+    if (allocation !== 0) expect(buttonFor('Invalid team')).toBeUndefined();
+    await act(async () => buttonFor('Dollars').click());
+    const row = observed.data.find(item => item.date === '2026-06-01');
+    expect(observed.lines.get('Zero team Actual').dataKey(row)).toBe(25);
+    expect(observed.lines.get('Total Actual').dataKey(row)).toBe(75);
+    expect(buttonFor('Zero team').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('omits only unusable lines while keeping zeroes, gaps, overspend and as-of cutoff in normalized mode', async () => {
+    const data = makeData([
+      makeTeam('zero', 'Zero team', 0, 25),
+      makeTeam('positive', 'Positive team', 100, 0),
+      makeTeam('missing', 'Missing spend', 100, null),
+    ], {
+      complete: false,
+      asOf: '2026-06-03',
+      accountPoints: [
+        { date: '2026-06-01', spendUsd: 0 },
+        { date: '2026-06-02', spendUsd: null },
+        { date: '2026-06-03', spendUsd: 600 },
+        { date: '2026-06-04', spendUsd: 900 },
+      ],
+    });
+    await render(data);
+    await act(async () => buttonFor('Zero team').click());
+    await act(async () => buttonFor('% of allocation').click());
+    expect([...observed.lines.keys()]).toEqual(['Total Actual', 'Total Budget']);
+    const actual = observed.lines.get('Total Actual');
+    expect(actual.dataKey(observed.data.find(row => row.date === '2026-06-01'))).toBe(0);
+    expect(actual.dataKey(observed.data.find(row => row.date === '2026-06-02'))).toBeNull();
+    expect(actual.dataKey(observed.data.find(row => row.date === '2026-06-03'))).toBe(150);
+    expect(actual.connectNulls).toBe(false);
+    expect(observed.data.find(row => row.date === '2026-06-04')).toBeUndefined();
+    expect(buttonFor('Positive team').textContent).toContain('0%');
+    expect(buttonFor('Missing spend').textContent).toContain('No spend data');
+    const row = observed.data.find(item => item.date === '2026-06-01');
+    const tooltip = renderToStaticMarkup(<>{observed.tooltip?.({ active: true, label: row.day, payload: [{ payload: row }] })}</>);
+    expect(tooltip).toContain('Recorded: Unavailable ($25.00)');
+    expect(tooltip).toContain('Allocated: $0.00');
   });
 
   it('handles missing accountPoints across response versions without changing selections or inventing totals', async () => {
@@ -210,7 +318,7 @@ describe('organization budget chart controls', () => {
     expect(container.querySelector('[data-testid="mock-line-chart"]')).toBeNull();
   });
 
-  it('does not render selector headers, search, All, Clear, or any inputs', async () => {
+  it('does not add search, All, Clear, or any inputs', async () => {
     await render();
 
     expect(container.querySelector('input')).toBeNull();

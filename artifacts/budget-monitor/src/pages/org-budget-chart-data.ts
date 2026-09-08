@@ -4,6 +4,15 @@ import { trajectoryChartData } from './home-components/budget-trajectory';
 export type OrgChartTeam = OrgBudgetOverviewResponse['teams'][number];
 export type OrgChartSeries = Pick<OrgChartTeam, 'id' | 'name' | 'allocationUsd' | 'spendUsd' | 'complete' | 'points'>;
 export const TOTAL_SERIES_ID = 'account-total';
+export const hasUsableAllocation = (allocation: number | null | undefined): allocation is number =>
+  allocation != null && Number.isFinite(allocation) && allocation > 0;
+
+export function allocationPercent(value: number | null | undefined, allocation: number | null | undefined): number | null {
+  if (value == null || !hasUsableAllocation(allocation)) return null;
+  const percent = (value / allocation) * 100;
+  return Number.isFinite(percent) ? percent : null;
+}
+
 export type OrgBudgetChartRow = {
   date: string;
   day: number;

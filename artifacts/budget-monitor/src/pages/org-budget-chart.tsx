@@ -12,6 +12,8 @@ import { reportRenderFailure } from '@/lib/render-diagnostics';
 import {
   getFundedTeams,
   buildOrgBudgetChartData,
+  allocationPercent,
+  hasUsableAllocation,
   orgChartDay,
   orgChartDateLabel,
   TOTAL_SERIES_ID,
@@ -25,6 +27,10 @@ const CHART_COLORS = [
   "#c026d3", "#0284c7", "#16a34a", "#ea580c", "#4338ca"
 ];
 
+const formatPercent = (value: number | null) => value == null
+  ? 'Unavailable'
+  : `${value.toLocaleString('en-US', { maximumFractionDigits: 2 })}%`;
+
 export function OrgBudgetChart({ data, onRetry }: {
   data: OrgBudgetOverviewResponse;
   onRetry: () => Promise<void>;
@@ -37,6 +43,7 @@ export function OrgBudgetChart({ data, onRetry }: {
   
   const [selectedTeamIds, setSelectedTeamIds] = useState<Set<string>>(() => new Set());
   const [showTotal, setShowTotal] = useState(true);
+  const [normalized, setNormalized] = useState(false);
   const availableSelection = new Set([...selectedTeamIds].filter(id => fundedTeams.some(team => team.id === id)));
   if (compatible && availableSelection.size !== selectedTeamIds.size) {
     setSelectedTeamIds(availableSelection);
@@ -62,6 +69,8 @@ export function OrgBudgetChart({ data, onRetry }: {
   };
   const selectedSeries = [...(showTotal ? [total] : []), ...selectedTeams];
   const chartData = buildOrgBudgetChartData(data, selectedSeries);
+  const plottedSeries = normalized ? selectedSeries.filter(team => hasUsableAllocation(team.allocationUsd)) : selectedSeries;
+  const normalizationUnavailable = normalized && selectedSeries.length > 0 && plottedSeries.length === 0;
   const hasChartValues = chartData.some(row => Object.values(row.values).some(value => value.actual !== null || value.benchmark !== null));
   
   const toggleTeam = (id: string) => {
@@ -85,10 +94,10 @@ export function OrgBudgetChart({ data, onRetry }: {
         </div>
 
         <div className="w-full h-[320px] lg:h-auto lg:flex-1 min-h-[280px]">
-          {selectedSeries.length === 0 || !hasChartValues ? (
+          {selectedSeries.length === 0 || normalizationUnavailable || !hasChartValues ? (
             <div className="w-full h-full flex flex-col items-center justify-center text-sm text-muted-foreground border-2 border-dashed rounded bg-muted/20 p-6 text-center">
-              <p>{selectedSeries.length === 0 ? 'No series selected.' : 'Spend and budget data unavailable.'}</p>
-              <p className="mt-1 text-xs opacity-75">{selectedSeries.length === 0 ? 'Turn on Total or a team to view its trajectory.' : 'Selected series have no recorded spend or allocated budget yet.'}</p>
+              <p>{selectedSeries.length === 0 ? 'No series selected.' : normalizationUnavailable ? 'Normalization unavailable.' : 'Spend and budget data unavailable.'}</p>
+              <p className="mt-1 text-xs opacity-75">{selectedSeries.length === 0 ? 'Turn on Total or a team to view its trajectory.' : normalizationUnavailable ? 'Switch to Dollars to view recorded spend without a usable allocation.' : 'Selected series have no recorded spend or allocated budget yet.'}</p>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -110,7 +119,8 @@ export function OrgBudgetChart({ data, onRetry }: {
                   tickLine={false} 
                   width={55} 
                   domain={[0, 'auto']} 
-                  tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${Math.round(v)}`} 
+                  tickFormatter={(v) => normalized ? formatPercent(v) : v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${Math.round(v)}`}
+                  label={normalized ? { value: '% of allocation', angle: -90, position: 'insideLeft', fontSize: 10 } : undefined}
                   tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} 
                 />
                 {data.asOf && (
@@ -148,8 +158,8 @@ export function OrgBudgetChart({ data, onRetry }: {
                                   {!team.complete && <span className="text-[10px] text-amber-600 dark:text-amber-500 pl-3.5">Partial data</span>}
                                 </div>
                                 <div className="flex flex-col items-end text-right shrink-0">
-                                  {vals.actual != null && <span className="font-mono font-medium">{formatUsd(vals.actual)}</span>}
-                                  {vals.benchmark != null && <span className="text-[10px] font-mono text-muted-foreground">Pace: {formatUsd(vals.benchmark)}</span>}
+                                  {vals.actual != null && <span className="font-mono font-medium">{normalized ? `Recorded: ${formatPercent(allocationPercent(vals.actual, team.allocationUsd))} (${formatUsd(vals.actual)})` : formatUsd(vals.actual)}</span>}
+                                  {vals.benchmark != null && <span className="text-[10px] font-mono text-muted-foreground">Pace: {normalized ? `${formatPercent(allocationPercent(vals.benchmark, team.allocationUsd))} (${formatUsd(vals.benchmark)})` : formatUsd(vals.benchmark)}</span>}
                                   <span className="text-[10px] font-mono text-muted-foreground opacity-80">Allocated: {team.allocationUsd == null ? 'Unavailable' : formatUsd(team.allocationUsd)}</span>
                                 </div>
                               </div>
@@ -161,14 +171,14 @@ export function OrgBudgetChart({ data, onRetry }: {
                   }}
                 />
 
-                {selectedSeries.flatMap(team => {
+                {plottedSeries.flatMap(team => {
                   const id = team.id;
                   const color = teamColors.get(id);
                   return [
                       <Line
                         key={`${id}:actual`}
                         type="monotone"
-                        dataKey={(row: OrgBudgetChartRow) => row.values[id]?.actual}
+                        dataKey={(row: OrgBudgetChartRow) => normalized ? allocationPercent(row.values[id]?.actual, team.allocationUsd) : row.values[id]?.actual}
                         name={`${team.name} Actual`}
                         stroke={color}
                         strokeWidth={3}
@@ -180,7 +190,7 @@ export function OrgBudgetChart({ data, onRetry }: {
                       <Line
                         key={`${id}:benchmark`}
                         type="linear"
-                        dataKey={(row: OrgBudgetChartRow) => row.values[id]?.benchmark}
+                        dataKey={(row: OrgBudgetChartRow) => normalized ? allocationPercent(row.values[id]?.benchmark, team.allocationUsd) : row.values[id]?.benchmark}
                         name={`${team.name} Budget`}
                         stroke={color}
                         strokeWidth={2}
@@ -200,8 +210,19 @@ export function OrgBudgetChart({ data, onRetry }: {
       </div>
       
       <div className="w-full lg:w-[320px] shrink-0 min-h-0 flex flex-col border-t lg:border-t-0 lg:border-l bg-muted/10 lg:h-full h-[400px]">
+        <div role="group" aria-label="Trajectory units" className="flex shrink-0 gap-1 border-b p-3">
+          {[{ label: 'Dollars', value: false }, { label: '% of allocation', value: true }].map(mode => (
+            <button
+              key={mode.label}
+              type="button"
+              aria-pressed={normalized === mode.value}
+              onClick={() => setNormalized(mode.value)}
+              className={`flex-1 rounded border px-2 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${normalized === mode.value ? 'bg-background border-primary/50' : 'border-transparent text-muted-foreground hover:bg-muted/50'}`}
+            >{mode.label}</button>
+          ))}
+        </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-3">
-          <div className="flex justify-between px-3 pl-9 pb-2 text-[10px] text-muted-foreground"><span>Recorded spend</span><span>Allocation</span></div>
+          <div className="flex justify-between px-3 pl-9 pb-2 text-[10px] text-muted-foreground"><span>{normalized ? 'Recorded spend (%)' : 'Recorded spend'}</span><span>Allocation</span></div>
           <div className="flex flex-col gap-2 pb-4">
              {[total, ...fundedTeams].map(team => {
                const isSelected = team.id === TOTAL_SERIES_ID ? showTotal : selectedTeamIds.has(team.id);
@@ -230,7 +251,9 @@ export function OrgBudgetChart({ data, onRetry }: {
                    </div>
                    <div className="pl-6 text-xs text-muted-foreground flex justify-between w-full font-mono">
                      <span>
-                       {team.spendUsd != null ? formatUsd(team.spendUsd) : 'No spend data'}
+                       {normalized && !hasUsableAllocation(team.allocationUsd) ? 'Unavailable' : team.spendUsd != null
+                         ? normalized ? formatPercent(allocationPercent(team.spendUsd, team.allocationUsd)) : formatUsd(team.spendUsd)
+                         : 'No spend data'}
                      </span>
                      <span className="opacity-70">{team.allocationUsd == null ? 'Unavailable' : formatUsd(team.allocationUsd)}</span>
                    </div>

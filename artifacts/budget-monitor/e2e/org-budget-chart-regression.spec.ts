@@ -146,6 +146,40 @@ async function expectNativeLines(page: Page, count: number) {
   return lines;
 }
 
+function trajectoryUnits(page: Page) {
+  return page.getByTestId('org-budget-chart').getByRole('group', { name: 'Trajectory units' });
+}
+
+async function linePaths(page: Page) {
+  return page.getByTestId('org-budget-chart').locator('.recharts-line-curve').evaluateAll(lines =>
+    lines.map(line => line.getAttribute('d')),
+  );
+}
+
+async function lineStrokes(page: Page) {
+  return page.getByTestId('org-budget-chart').locator('.recharts-line-curve').evaluateAll(lines =>
+    lines.map(line => line.getAttribute('stroke')),
+  );
+}
+
+async function xAxisDates(page: Page) {
+  return page.getByTestId('org-budget-chart')
+    .locator('.recharts-xAxis .recharts-cartesian-axis-tick-value')
+    .allTextContents();
+}
+
+async function hoverLineEnd(page: Page, lineIndex = 0) {
+  const point = await page.getByTestId('org-budget-chart').locator('.recharts-line-curve').nth(lineIndex).evaluate(path => {
+    const line = path as SVGPathElement;
+    const local = line.getPointAtLength(line.getTotalLength());
+    const screen = line.getScreenCTM();
+    if (!screen) throw new Error('Chart line does not have a screen transform');
+    const transformed = new DOMPoint(local.x, local.y).matrixTransform(screen);
+    return { x: transformed.x, y: transformed.y };
+  });
+  await page.mouse.move(point.x, point.y);
+}
+
 test('native chart survives data replacement, selected-team removal, and reorder', async ({ page }, testInfo) => {
   const failures = captureRuntimeFailures(page);
   let overview = overviewFixture([
@@ -175,12 +209,10 @@ test('native chart survives data replacement, selected-team removal, and reorder
 
   await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveCount(0);
   await expect(chart.getByRole('button', { name: 'Beta Team' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(chart.getByRole('button')).toHaveText([
-    /Total/,
-    /Gamma Team/,
-    /Beta Team/,
-    /Delta Team/,
-  ]);
+  await expect(chart.getByRole('button', { name: /^Total/ })).toBeVisible();
+  await expect(chart.getByRole('button', { name: 'Gamma Team' })).toBeVisible();
+  await expect(chart.getByRole('button', { name: 'Delta Team' })).toBeVisible();
+  await expect(trajectoryUnits(page).getByRole('button')).toHaveText(['Dollars', '% of allocation']);
   await expectNativeLines(page, 4);
   await expect(lines.first()).not.toHaveAttribute('d', initialTotalPath!);
   await page.screenshot({
@@ -196,6 +228,172 @@ test('native chart survives data replacement, selected-team removal, and reorder
   await total.click();
   await expectNativeLines(page, 2);
   expectNoHookOrChartTypeErrors(failures);
+});
+
+for (const fixture of [
+  { name: 'desktop', viewport: { width: 1280, height: 900 } },
+  { name: 'mobile', viewport: { width: 390, height: 844 } },
+]) {
+  test(`normalizes native SVG trajectories and keeps the unit control reachable on ${fixture.name}`, async ({ page }) => {
+    await page.setViewportSize(fixture.viewport);
+    const overview = overviewFixture([
+      { id: 'alpha', name: 'Alpha Team', allocationUsd: 100, spendUsd: 50 },
+      { id: 'beta', name: 'Beta Team', allocationUsd: 200, spendUsd: 100 },
+      { id: 'over', name: 'Over Team', allocationUsd: 80, spendUsd: 120 },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `overflow-${index}`,
+        name: `Overflow Team ${index + 1}`,
+        allocationUsd: 100 + index,
+        spendUsd: 10 + index,
+      })),
+    ], 270);
+    await installChartApi(page, () => overview);
+    await page.goto('/org-insights');
+
+    const chart = page.getByTestId('org-budget-chart');
+    const units = trajectoryUnits(page);
+    const dollars = units.getByRole('button', { name: 'Dollars', exact: true });
+    const percent = units.getByRole('button', { name: '% of allocation', exact: true });
+    await expect(units).toBeVisible();
+    await expect(dollars).toHaveAttribute('aria-pressed', 'true');
+    await expect(percent).toHaveAttribute('aria-pressed', 'false');
+    await expect(units.locator('button')).toHaveCount(2);
+
+    await chart.getByRole('button', { name: /^Total/ }).click();
+    await chart.getByRole('button', { name: 'Alpha Team' }).click();
+    await chart.getByRole('button', { name: 'Beta Team' }).click();
+    await chart.getByRole('button', { name: 'Over Team' }).click();
+    await expectNativeLines(page, 6);
+
+    await percent.focus();
+    await page.keyboard.press('Enter');
+    await expect(percent).toHaveAttribute('aria-pressed', 'true');
+    await expect(dollars).toHaveAttribute('aria-pressed', 'false');
+    await expectNativeLines(page, 6);
+
+    const normalizedPaths = await linePaths(page);
+    expect(normalizedPaths[0]).toBe(normalizedPaths[2]);
+    expect(normalizedPaths[1]).toBe(normalizedPaths[3]);
+    expect(normalizedPaths[4]).not.toBe(normalizedPaths[0]);
+    const yAxisLabels = await chart.locator('.recharts-yAxis .recharts-cartesian-axis-tick-value').allTextContents();
+    expect(yAxisLabels.some(label => Number.parseFloat(label) > 100)).toBe(true);
+    await expect(chart.getByText('Recorded spend (%)', { exact: true })).toBeVisible();
+    const alphaSelector = chart.getByRole('button', { name: 'Alpha Team' });
+    const betaSelector = chart.getByRole('button', { name: 'Beta Team' });
+    const overSelector = chart.getByRole('button', { name: 'Over Team' });
+    await expect(alphaSelector).toContainText('50%');
+    await expect(alphaSelector).toContainText('$100.00');
+    await expect(betaSelector).toContainText('50%');
+    await expect(betaSelector).toContainText('$200.00');
+    await expect(overSelector).toContainText('150%');
+    await expect(overSelector).toContainText('$80.00');
+
+    const scrollingList = chart.locator('.overflow-y-auto').last();
+    await expect(scrollingList).toBeVisible();
+    await expect(scrollingList.getByRole('group', { name: 'Trajectory units' })).toHaveCount(0);
+    expect(await scrollingList.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    const unitBoxBefore = await units.boundingBox();
+    await scrollingList.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const unitBoxAfter = await units.boundingBox();
+    expect(unitBoxBefore).not.toBeNull();
+    expect(unitBoxAfter).not.toBeNull();
+    expect(unitBoxAfter!.y).toBe(unitBoxBefore!.y);
+    await expect(percent).toBeVisible();
+
+    await dollars.focus();
+    await page.keyboard.press(' ');
+    await expect(dollars).toHaveAttribute('aria-pressed', 'true');
+    await expect(percent).toHaveAttribute('aria-pressed', 'false');
+  });
+}
+
+test('percentage mode survives refetch with selections, colors, and dates intact', async ({ page }) => {
+  let overview = overviewFixture([
+    { id: 'alpha', name: 'Alpha Team', allocationUsd: 100, spendUsd: 50 },
+    { id: 'beta', name: 'Beta Team', allocationUsd: 200, spendUsd: 100 },
+  ], 150);
+  await installChartApi(page, () => overview);
+  await page.goto('/org-insights');
+
+  const chart = page.getByTestId('org-budget-chart');
+  await chart.getByRole('button', { name: 'Alpha Team' }).click();
+  await chart.getByRole('button', { name: 'Beta Team' }).click();
+  await trajectoryUnits(page).getByRole('button', { name: '% of allocation', exact: true }).click();
+  await expectNativeLines(page, 6);
+  const strokesBefore = await lineStrokes(page);
+  const alphaColorBefore = await chart.getByRole('button', { name: 'Alpha Team' })
+    .locator('[style*="border-color"]').getAttribute('style');
+  const betaColorBefore = await chart.getByRole('button', { name: 'Beta Team' })
+    .locator('[style*="border-color"]').getAttribute('style');
+  const datesBefore = await xAxisDates(page);
+  expect(datesBefore.length).toBeGreaterThan(1);
+
+  overview = overviewFixture([
+    { id: 'beta', name: 'Beta Team', allocationUsd: 400, spendUsd: 300 },
+    { id: 'alpha', name: 'Alpha Team', allocationUsd: 250, spendUsd: 100 },
+    { id: 'gamma', name: 'Gamma Team', allocationUsd: 500, spendUsd: 50 },
+  ], 400);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+
+  await expect(trajectoryUnits(page).getByRole('button', { name: '% of allocation', exact: true }))
+    .toHaveAttribute('aria-pressed', 'true');
+  await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(chart.getByRole('button', { name: 'Beta Team' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(chart.getByRole('button', { name: 'Gamma Team' })).toHaveAttribute('aria-pressed', 'false');
+  await expectNativeLines(page, 6);
+  expect([...(await lineStrokes(page))].sort()).toEqual([...strokesBefore].sort());
+  expect(await chart.getByRole('button', { name: 'Alpha Team' })
+    .locator('[style*="border-color"]').getAttribute('style')).toBe(alphaColorBefore);
+  expect(await chart.getByRole('button', { name: 'Beta Team' })
+    .locator('[style*="border-color"]').getAttribute('style')).toBe(betaColorBefore);
+  expect(await xAxisDates(page)).toEqual(datesBefore);
+});
+
+test('normalized tooltip retains percentage, pace, and source dollars', async ({ page }) => {
+  const overview = overviewFixture([
+    { id: 'alpha', name: 'Alpha Team', allocationUsd: 100, spendUsd: 50 },
+  ], 50);
+  await installChartApi(page, () => overview);
+  await page.goto('/org-insights');
+
+  const chart = page.getByTestId('org-budget-chart');
+  await trajectoryUnits(page).getByRole('button', { name: '% of allocation', exact: true }).click();
+  await hoverLineEnd(page);
+
+  const tooltip = chart.locator('.recharts-tooltip-wrapper');
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText('Recorded: 50% ($50.00)');
+  await expect(tooltip).toContainText('Pace:');
+  await expect(tooltip).toContainText('Allocated: $100.00');
+});
+
+test('zero allocation omits normalized lines and restores recorded dollars', async ({ page }) => {
+  const overview = overviewFixture([
+    { id: 'zero', name: 'Zero Allocation', allocationUsd: 0, spendUsd: 25 },
+  ], 25);
+  await installChartApi(page, () => overview);
+  await page.goto('/org-insights');
+
+  const chart = page.getByTestId('org-budget-chart');
+  const total = chart.getByRole('button', { name: /^Total/ });
+  const zero = chart.getByRole('button', { name: 'Zero Allocation' });
+  await total.click();
+  await zero.click();
+  await expectNativeLines(page, 2);
+
+  await trajectoryUnits(page).getByRole('button', { name: '% of allocation', exact: true }).click();
+  await expect(chart.locator('.recharts-line-curve')).toHaveCount(0);
+  await expect(chart.getByText('Normalization unavailable.', { exact: true })).toBeVisible();
+  await expect(chart.getByText(
+    'Switch to Dollars to view recorded spend without a usable allocation.',
+    { exact: true },
+  )).toBeVisible();
+
+  await trajectoryUnits(page).getByRole('button', { name: 'Dollars', exact: true }).click();
+  await expectNativeLines(page, 2);
+  await expect(chart.getByText('Normalization unavailable.', { exact: true })).toHaveCount(0);
 });
 
 test('malformed chart data keeps the report shell available through retry and recovery', async ({ page }, testInfo) => {

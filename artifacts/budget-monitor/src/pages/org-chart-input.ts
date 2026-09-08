@@ -3,6 +3,8 @@ import type { OrgBudgetOverviewResponse } from '@workspace/api-client-react';
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const money = (value: unknown) => value === null || (typeof value === 'number' && Number.isFinite(value));
+// Unusable allocations are a per-series display state, not a malformed report.
+const allocation = (value: unknown) => value == null || typeof value === 'number';
 const date = (value: unknown): value is string =>
   typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
   Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
@@ -17,9 +19,9 @@ export function hasCompatibleOrgChartInput(value: unknown): value is OrgBudgetOv
     (value.asOf === null || (typeof value.asOf === 'string' && date(value.asOf.slice(0, 10)) &&
       Number.isFinite(Date.parse(value.asOf)))) &&
     typeof value.complete === 'boolean' &&
-    money(value.summary.accountSpendUsd) && money(value.summary.teamAllocationUsd) &&
+    money(value.summary.accountSpendUsd) && allocation(value.summary.teamAllocationUsd) &&
     points(value.accountPoints) && value.teams.every(team =>
       record(team) && typeof team.id === 'string' && typeof team.name === 'string' &&
-      money(team.allocationUsd) && money(team.spendUsd) && typeof team.complete === 'boolean' &&
+      allocation(team.allocationUsd) && money(team.spendUsd) && typeof team.complete === 'boolean' &&
       points(team.points));
 }
