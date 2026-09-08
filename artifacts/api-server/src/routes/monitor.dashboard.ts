@@ -30,6 +30,7 @@ import {
 } from "../lib/usage-store";
 import {
   CONTRACT_TERM_END_EXCLUSIVE_ISO,
+  FIXED_TEAM_BUDGET_PERIOD,
   USAGE_DATA_CUTOFF_ISO,
 } from "../lib/usage-window";
 import {
@@ -682,6 +683,11 @@ router.get("/dashboard", async (req, res): Promise<void> => {
       const responseStartedAt = performance.now();
       const responseBody = JSON.stringify(GetDashboardResponse.parse({
       scope: result.scope, period: result.period, cardVariant, cards,
+      contractTerm: {
+        ...FIXED_TEAM_BUDGET_PERIOD,
+        timezone: "UTC",
+        label: "Contract term",
+      },
       trend: { granularity, mode, buckets }, breakdown,
         accounting: result.accounting, metadata: result.metadata, projection,
         staleSpend,

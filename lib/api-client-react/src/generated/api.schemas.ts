@@ -1230,6 +1230,7 @@ export interface DashboardInsights {
 export interface DashboardResponse {
   scope: DashboardScope;
   period: ReportingPeriod;
+  contractTerm?: ReportingPeriod;
   cardVariant: DashboardResponseCardVariant;
   /**
      * @minItems 3

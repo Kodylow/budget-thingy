@@ -1193,6 +1193,12 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
     );
     expect(dashboardResponse.status).toBe(200);
     const dashboard = await dashboardResponse.json() as {
+      contractTerm?: {
+        start: string;
+        endExclusive: string;
+        timezone: string;
+        label: string;
+      };
       staleSpend: {
         spendUsd: number | null;
         projectCount: number | null;
@@ -1200,6 +1206,12 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
         drillThrough: string;
       };
     };
+    expect(dashboard.contractTerm).toEqual({
+      start: "2026-05-20T00:00:00.000Z",
+      endExclusive: "2027-05-21T00:00:00.000Z",
+      timezone: "UTC",
+      label: "Contract term",
+    });
     expect(dashboard.staleSpend).toMatchObject({
       spendUsd: 5,
       projectCount: 1,

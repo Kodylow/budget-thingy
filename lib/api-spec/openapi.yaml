@@ -3781,6 +3781,8 @@ components:
           $ref: "#/components/schemas/DashboardScope"
         period:
           $ref: "#/components/schemas/ReportingPeriod"
+        contractTerm:
+          $ref: "#/components/schemas/ReportingPeriod"
         cardVariant:
           type: string
           enum: [budget_health, usage_analysis, personal_limit, personal_usage]

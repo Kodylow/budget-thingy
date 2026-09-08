@@ -1191,6 +1191,12 @@ export const GetDashboardResponse = zod.object({
   "timezone": zod.literal("UTC"),
   "label": zod.string()
 }),
+  "contractTerm": zod.object({
+  "start": zod.coerce.date(),
+  "endExclusive": zod.coerce.date(),
+  "timezone": zod.literal("UTC"),
+  "label": zod.string()
+}).optional(),
   "cardVariant": zod.enum(['budget_health', 'usage_analysis', 'personal_limit', 'personal_usage']),
   "cards": zod.array(zod.object({
   "key": zod.enum(['eligible_spend', 'allocated_budget', 'allocation_remaining', 'pools_attention', 'spend', 'agent_spend', 'other_services', 'members_with_spend', 'your_agent_spend', 'monthly_agent_limit', 'agent_limit_remaining']),

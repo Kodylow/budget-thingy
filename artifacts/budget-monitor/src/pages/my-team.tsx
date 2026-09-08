@@ -8,6 +8,7 @@ import {
   useGetDashboard,
   useListSpendPeople,
   useListSpendProjects,
+  type ReportingPeriod,
   type SpendTableRow,
 } from '@workspace/api-client-react';
 import { Activity, ArrowUpRight, DollarSign, RefreshCw, Users } from 'lucide-react';
@@ -30,6 +31,12 @@ import { reportingNavigationHref } from '@/lib/reporting-navigation';
 import { dashboardTotalSpend } from '@/lib/spend-presentation';
 import { formatUsd } from '@/pages/home-components/format';
 import { PersonWorkspaceDetails } from '@/components/person-workspace-details';
+import { formatBudgetDate } from '@/lib/budget-meter';
+
+function periodDates(period: ReportingPeriod) {
+  const inclusiveEnd = new Date(Date.parse(period.endExclusive) - 1).toISOString();
+  return `${formatBudgetDate(period.start)}–${formatBudgetDate(inclusiveEnd)}`;
+}
 
 export function resolveMyTeamScope(
   role: ReturnType<typeof useAuthContext>['role'],
@@ -93,7 +100,10 @@ export function resolveLimitStatus(row: SpendTableRow): JourneyStatus | null {
   return 'Within budget';
 }
 
-export function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
+export function PeopleTable({ rows, rangeType }: {
+  rows: SpendTableRow[];
+  rangeType: ReturnType<typeof useRange>['rangeType'];
+}) {
   if (rows.length === 0) {
     return <EmptyState title="No recorded people spend" description="No people with recorded spend were found in this scope and period." />;
   }
@@ -102,12 +112,13 @@ export function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
       caption="Top people by selected-period spend"
       columns={[
         { label: 'Member' },
-        { label: 'Selected spend', className: 'text-right' },
-        { label: 'Billing-cycle Agent', className: 'text-right' },
-        { label: 'Billing-cycle limit', className: 'text-right' },
+        { label: 'Total', className: 'text-right' },
+        { label: 'Projects', className: 'text-right' },
+        { label: 'Agent', className: 'text-right' },
+        { label: 'Agent Limit', className: 'text-right' },
       ]}
       rows={rows.map((row) => {
-        const status = resolveLimitStatus(row);
+        const status = rangeType === 'billing' ? resolveLimitStatus(row) : null;
         return [
           <div className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{initials(row.name)}</span>
@@ -119,7 +130,8 @@ export function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
             </div>
           </div>,
           <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
-          <span className="whitespace-nowrap font-mono text-xs">{formatUsd(row.currentCycleAgentSpendUsd)}</span>,
+          <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.otherServicesUsd)}</span>,
+          <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.agentSpendUsd)}</span>,
           <span className="flex flex-col items-end gap-1">
             <span className="whitespace-nowrap font-mono text-xs">{(row.workspaces?.length ?? 0) > 1 ? 'Per workspace' : row.limitState === 'no_limit' ? 'No limit' : formatUsd(row.allocationUsd)}</span>
             {status && <StatusBadge status={status} />}
@@ -133,7 +145,7 @@ export function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
   );
 }
 
-function ProjectsTable({ rows }: { rows: SpendTableRow[] }) {
+export function ProjectsTable({ rows }: { rows: SpendTableRow[] }) {
   if (rows.length === 0) {
     return <EmptyState title="No recorded project spend" description="No projects with recorded spend were found in this scope and period." />;
   }
@@ -142,9 +154,9 @@ function ProjectsTable({ rows }: { rows: SpendTableRow[] }) {
       caption="Top apps by selected-period spend"
       columns={[
         { label: 'App / project' },
-        { label: 'Selected spend', className: 'text-right' },
+        { label: 'Total', className: 'text-right' },
         { label: 'Agent', className: 'text-right' },
-        { label: 'Other services', className: 'text-right' },
+        { label: 'Cloud Services', className: 'text-right' },
       ]}
       rows={rows.map((row) => [
         <div><span className="block whitespace-nowrap font-medium">{row.name}</span><span className="block whitespace-nowrap text-xs text-muted-foreground">{row.ownerName || 'Owner unavailable'} · {row.workspaceName || 'Workspace unavailable'}</span></div>,
@@ -203,8 +215,14 @@ export default function MyTeam() {
     <div className="flex flex-col gap-4 rounded-md border bg-card p-4 shadow-none lg:flex-row lg:items-end lg:justify-between">
       <div className="w-full lg:w-auto">
         <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Reporting period</span>
-        <RangeFilter selectedLabel={dashboard.data?.period?.label} />
+        <RangeFilter selectedLabel={rangeType === 'full-term' ? 'Full term' : 'Billing period'} />
+        <p className="mt-2 text-xs text-muted-foreground" data-testid="text-reporting-dates">
+          {rangeType === 'full-term'
+            ? dashboard.data?.contractTerm ? periodDates(dashboard.data.contractTerm) : 'Term dates unavailable'
+            : dashboard.data?.period ? periodDates(dashboard.data.period) : 'Billing dates unavailable'}
+        </p>
       </div>
+      <p className="text-xs text-muted-foreground">Recorded actuals to date · No forecasts</p>
     </div>
   );
 
@@ -248,7 +266,7 @@ export default function MyTeam() {
         <p>Limit columns use the current billing cycle. Six-month activity is independent of the selected period; missing months remain gaps.{hasPartialMonth && ' Partial months show known values only.'}</p>
       </AdminDataQualityNote>
       <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-        <TablePanel title="Top People" caption="Selected-period spend and current-cycle limits." viewAllHref={peopleHref}><PeopleTable rows={people.data.rows} /></TablePanel>
+        <TablePanel title="Top People" caption="Selected-period spend · Projects excludes Agent · Agent Limit is per billing cycle." viewAllHref={peopleHref}><PeopleTable rows={people.data.rows} rangeType={rangeType} /></TablePanel>
         <TablePanel title="Top Apps" caption="Projects ranked by selected-period scoped spend." viewAllHref={projectsHref}><ProjectsTable rows={projects.data.rows} /></TablePanel>
       </div>
       <Card className="rounded-md shadow-none">
