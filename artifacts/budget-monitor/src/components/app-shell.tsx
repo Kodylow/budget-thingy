@@ -155,7 +155,7 @@ function getNavSections(
         { path: '/org-insights', label: 'Org Insights', icon: Building2, show: capabilities.canViewAccountUsage === true, testId: 'nav-org-insights' },
         { path: '/my-team', label: 'My Team', icon: Users, show: role !== 'denied' && role !== null, testId: 'nav-my-team' },
         { path: '/spend?tab=projects&viewScope=my', label: 'My Projects', icon: FolderCode, show: true, testId: 'nav-my-projects' },
-        { path: '/spend', label: 'Spend', icon: WalletCards, show: true, testId: 'nav-spend' },
+        { path: '/spend', label: 'Spend', icon: WalletCards, show: isAccountAdminOrManager(role), testId: 'nav-spend' },
       ],
     },
     {

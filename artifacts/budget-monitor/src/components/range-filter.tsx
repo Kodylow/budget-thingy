@@ -6,7 +6,21 @@ import { CalendarIcon } from 'lucide-react';
 import { isValidCustomRange, type RangeSelection } from '@/lib/range-selection';
 import { Button } from '@/components/ui/button';
 
-export function RangeFilter({ selectedLabel }: { selectedLabel?: string }) {
+const rangeOptions: Array<{ value: RangeSelection; label: string }> = [
+  { value: 'full-term', label: 'Full period' },
+  { value: 'billing', label: 'Billing period' },
+  { value: 'mtd', label: 'Month to date' },
+  { value: 'ytd', label: 'Year to date' },
+  { value: 'custom', label: 'Custom range' },
+];
+
+export function RangeFilter({
+  selectedLabel,
+  allowedSelections,
+}: {
+  selectedLabel?: string;
+  allowedSelections?: RangeSelection[];
+}) {
   const {
     rangeSelection,
     setRangeSelection,
@@ -23,11 +37,17 @@ export function RangeFilter({ selectedLabel }: { selectedLabel?: string }) {
   }, [startDate, endDate]);
 
   const validDraft = isValidCustomRange(draftStartDate, draftEndDate);
+  const options = allowedSelections
+    ? rangeOptions.filter(({ value }) => allowedSelections.includes(value))
+    : rangeOptions;
+  const selectedValue = options.some(({ value }) => value === rangeSelection)
+    ? rangeSelection
+    : options[0]?.value;
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0">
       <Select
-        value={rangeSelection}
+        value={selectedValue}
         onValueChange={(val: string) => setRangeSelection(val as RangeSelection)}
       >
         <SelectTrigger
@@ -43,15 +63,11 @@ export function RangeFilter({ selectedLabel }: { selectedLabel?: string }) {
           </div>
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="full-term">Full period</SelectItem>
-          <SelectItem value="billing">Billing period</SelectItem>
-          <SelectItem value="mtd">Month to date</SelectItem>
-          <SelectItem value="ytd">Year to date</SelectItem>
-          <SelectItem value="custom">Custom range</SelectItem>
+          {options.map(({ value, label }) => <SelectItem key={value} value={value}>{allowedSelections && value === 'full-term' ? 'Full term' : label}</SelectItem>)}
         </SelectContent>
       </Select>
 
-      {rangeSelection === 'custom' && (
+      {selectedValue === 'custom' && (
         <form
           className="min-w-0 w-full sm:w-auto"
           aria-label="Custom reporting period"

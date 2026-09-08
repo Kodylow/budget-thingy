@@ -1833,11 +1833,12 @@ test.describe('mobile regression', () => {
     await expectReady(page, '[data-testid="text-dashboard-scope"]');
     const sheet = await openMobileSheet(page);
     await expect(sheet.getByTestId('nav-dashboard')).toBeVisible();
-    await expect(sheet.getByTestId('nav-spend')).toBeVisible();
+    await expect(sheet.getByTestId('nav-spend')).toHaveCount(0);
+    await expect(sheet.getByTestId('nav-my-projects')).toBeVisible();
     await expect(sheet.getByTestId('nav-help')).toBeVisible();
     await expect(sheet.locator('[data-testid="nav-limits"], [data-testid="nav-allocations"], [data-testid="nav-settings"], [data-testid="nav-access"]')).toHaveCount(0);
-    await sheet.getByTestId('nav-spend').click();
-    await expect(page.getByRole('heading', { name: 'My spend', exact: true })).toBeVisible();
+    await sheet.getByTestId('nav-my-projects').click();
+    await expect(page).toHaveURL(/tab=projects/);
     await expectNoDocumentOverflow(page);
     await expectPhoneInputFont(page, 'input[type="search"]');
     expect(observedRequests.some((request) => request.includes('viewScope=all_authorized'))).toBe(false);

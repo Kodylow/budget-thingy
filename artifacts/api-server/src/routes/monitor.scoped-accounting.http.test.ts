@@ -1978,7 +1978,7 @@ describe("authenticated group detail qualification", () => {
       percentUsed: null,
       scopeComplete: true,
       usageComplete: false,
-      benchmarkEligible: false,
+      benchmarkEligible: true,
     });
     expect(value.budgetTracking.qualification).toMatch(/budget-to-date window/i);
     expect(value.budgetTracking.points.at(-1)).toEqual({

@@ -143,6 +143,22 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(sectionsTeamAdmin.find(s => s.label === 'Management')?.items.find(i => i.path === '/alerts')).toBeDefined();
   });
 
+  it('hides the Spend tab for regular members while keeping My Projects', () => {
+    const items = getNavSections(mockCapabilities(), 'member').flatMap(section => section.items);
+    expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
+    expect(items.map(item => item.testId)).toEqual(expect.arrayContaining([
+      'nav-dashboard', 'nav-my-team', 'nav-my-projects',
+    ]));
+  });
+
+  it.each(['account', 'workspace_admin', 'team_admin'] as const)(
+    'keeps the Spend tab for %s',
+    role => {
+      const items = getNavSections(mockCapabilities(), role).flatMap(section => section.items);
+      expect(items.some(item => item.testId === 'nav-spend')).toBe(true);
+    },
+  );
+
   it('keeps spend monitoring primary and planning administration secondary', () => {
     const sections = getNavSections(mockCapabilities({
       canViewAccountUsage: true,

@@ -95,8 +95,11 @@ export function buildFixedTeamBudgetTracking(input: {
     input.comparisonsMatchBudgetWindow ?? true;
   const comparisonsEligible = comparisonsMatchBudgetWindow &&
     usageComplete && comparisonsVerified && input.allocationUsd !== null;
-  const benchmarkEligible =
-    comparisonsEligible && input.allocationUsd! > 0;
+  // The annual pace is a plan, not a claim that historical spend is verified.
+  // Keep exact balances (and monthly Agent comparisons) subject to coverage.
+  const benchmarkEligible = comparisonsMatchBudgetWindow &&
+    input.scopeComplete && input.allocationUsd !== null && input.allocationUsd > 0 &&
+    (input.budgetKind !== "monthly_agent" || comparisonsEligible);
   const spendUsd = input.usageObserved ? input.canonicalSpendUsd : null;
   const qualification = !comparisonsMatchBudgetWindow
     ? !input.scopeComplete

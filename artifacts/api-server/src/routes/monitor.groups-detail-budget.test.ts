@@ -25,7 +25,7 @@ const otherWorkspace = {
 } as any;
 
 describe("fixed team budget tracking", () => {
-  it("enables balances and benchmark only for complete full-team usage", () => {
+  it("enables exact balances for complete full-team usage", () => {
     expect(buildFixedTeamBudgetTracking({
       dailySpend: spend,
       unavailableDays: new Set(),
@@ -90,7 +90,6 @@ describe("fixed team budget tracking", () => {
     expect(result.percentUsed).toBeNull();
     expect(result.benchmarkEligible).toBe(
       scopeComplete &&
-        unavailableDays.size === 0 &&
         allocationUsd !== null &&
         allocationUsd > 0,
     );
@@ -153,7 +152,7 @@ describe("fixed team budget tracking", () => {
     });
   });
 
-  it("withholds annual pacing when known usage coverage is partial", () => {
+  it("preserves the known annual plan when usage coverage is partial", () => {
     expect(buildFixedTeamBudgetTracking({
       dailySpend: spend,
       unavailableDays: new Set(["2026-05-20"]),
@@ -170,7 +169,7 @@ describe("fixed team budget tracking", () => {
       remainingUsd: null,
       percentUsed: null,
       usageComplete: false,
-      benchmarkEligible: false,
+      benchmarkEligible: true,
     });
   });
 
@@ -226,7 +225,7 @@ describe("fixed team budget tracking", () => {
     });
   });
 
-  it("renders current-membership spend without deriving allocation comparisons", () => {
+  it("renders current-membership spend and the annual plan without claiming exact balances", () => {
     const result = buildFixedTeamBudgetTracking({
       dailySpend: spend,
       unavailableDays: new Set(),
@@ -252,8 +251,58 @@ describe("fixed team budget tracking", () => {
     expect(result.spendUsd).toBe(25);
     expect(result.remainingUsd).toBeNull();
     expect(result.percentUsed).toBeNull();
-    expect(result.benchmarkEligible).toBe(false);
+    expect(result.benchmarkEligible).toBe(true);
     expect(result.reporting.valueBasis).toBe("current_membership_qualified");
+  });
+
+  it("retains the full GPO allocation and term even when historical comparisons are qualified", () => {
+    const result = buildFixedTeamBudgetTracking({
+      dailySpend: new Map([["2026-09-08", 2512.05]]),
+      unavailableDays: new Set(["2026-05-20"]),
+      scopeComplete: true,
+      usageObserved: true,
+      allocationUsd: 9368.38,
+      canonicalSpendUsd: 2512.05,
+      now: new Date("2026-09-08T12:00:00Z"),
+      reporting: {
+        acquisitionCoverage: "partial",
+        rosterAttributionBasis: "current_membership",
+        creatorCoverage: "complete",
+        creatorAttributionBasis: "not_applicable",
+        freshness: "fresh",
+        valueBasis: "current_membership_qualified",
+        comparisonsVerified: false,
+      },
+    });
+    expect(result).toMatchObject({
+      allocationUsd: 9368.38,
+      periodStart: "2026-05-20",
+      periodEnd: "2027-05-20",
+      asOf: "2026-09-08",
+      benchmarkEligible: true,
+      remainingUsd: null,
+      percentUsed: null,
+    });
+    expect(result.points.at(-1)).toEqual({ date: "2026-09-08", spendUsd: 2512.05 });
+  });
+
+  it("does not manufacture actual usage when showing a known annual plan", () => {
+    const result = buildFixedTeamBudgetTracking({
+      dailySpend: new Map(),
+      unavailableDays: new Set(["2026-05-20", "2026-05-21"]),
+      scopeComplete: true,
+      usageObserved: false,
+      allocationUsd: 9368.38,
+      canonicalSpendUsd: 0,
+      now,
+    });
+    expect(result).toMatchObject({
+      benchmarkEligible: true,
+      spendUsd: null,
+      remainingUsd: null,
+      percentUsed: null,
+    });
+    expect(result.points.every(point => point.spendUsd === null)).toBe(true);
   });
 
   it("keeps known cumulative values after source gaps and reconciles the final point", () => {

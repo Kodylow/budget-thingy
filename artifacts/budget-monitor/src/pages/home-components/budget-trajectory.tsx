@@ -21,15 +21,19 @@ const axisMoney = (value: number) => value >= 1000 ? `$${Math.round(value / 1000
 
 export function trajectoryChartData(tracking: TeamBudgetTracking) {
   const benchmark = tracking.benchmarkEligible &&
-    tracking.comparisonsMatchBudgetWindow !== false &&
+    tracking.comparisonsMatchBudgetWindow === true &&
     tracking.periodStart &&
     tracking.periodEnd &&
     tracking.allocationUsd != null;
   const startDay = tracking.periodStart ? dayNumber(tracking.periodStart) : null;
   const endDay = tracking.periodEnd ? dayNumber(tracking.periodEnd) : null;
-  const points = tracking.reportingStart && tracking.reportingEnd
+  const reportingPoints = tracking.reportingStart && tracking.reportingEnd
     ? tracking.points.filter((point) => point.date >= tracking.reportingStart! && point.date <= tracking.reportingEnd!)
     : tracking.points;
+  const asOfDate = tracking.asOf?.slice(0, 10);
+  const points = asOfDate
+    ? reportingPoints.filter((point) => point.date <= asOfDate)
+    : reportingPoints;
   const dates = new Set(points.map((point) => point.date));
   if (tracking.reportingStart) dates.add(tracking.reportingStart);
   if (tracking.reportingEnd) dates.add(tracking.reportingEnd);
@@ -71,7 +75,6 @@ export function BudgetTrajectory({
   const benchmarkEligible = Boolean(
     comparisonsMatchBudgetWindow &&
     tracking?.benchmarkEligible &&
-    tracking.reporting?.comparisonsVerified !== false &&
     tracking.periodStart &&
     tracking.periodEnd &&
     tracking.allocationUsd != null,
@@ -92,15 +95,15 @@ export function BudgetTrajectory({
             <TrendingUp className="h-4 w-4" /> Budget trajectory
           </p>
           <h2 id="trajectory-title" className="mt-1 text-lg font-semibold">{teamName || 'Team funding'}</h2>
-          {(tracking?.reportingLabel || tracking?.periodLabel || asOfDate) && <p className="mt-1 text-xs text-muted-foreground">
-            {tracking?.reportingLabel || tracking?.periodLabel}
+          {(tracking?.periodLabel || asOfDate) && <p className="mt-1 text-xs text-muted-foreground">
+            {tracking?.periodLabel}
             {asOfDate ? ` · as of ${dateLabel(asOfDate)}` : ''}
           </p>}
         </div>
       </div>
 
       {tracking && (
-        <div className="grid gap-4 bg-muted/15 px-5 py-4 sm:grid-cols-3">
+        <div className="grid gap-4 bg-muted/15 px-5 py-4 sm:grid-cols-4">
           {tracking.spendUsd != null && <div>
             <span className="text-xs text-muted-foreground">{comparisonsMatchBudgetWindow ? (tracking.usageComplete ? 'Spent to date' : 'Recorded spend to date') : (tracking.usageComplete ? 'Selected-period spend' : 'Recorded selected-period spend')}</span>
             <strong className="mt-1 block font-mono text-xl">{formatUsd(tracking.spendUsd)}</strong>
@@ -109,6 +112,7 @@ export function BudgetTrajectory({
             {tracking.reporting?.valueBasis === 'partial_known' && <small className="mt-1 block text-muted-foreground">Recorded, partial coverage</small>}
           </div>}
           {benchmarkEligible && benchmarkAsOf != null && <div><span className="text-xs text-muted-foreground">Even pace as of reporting date</span><strong className="mt-1 block font-mono text-xl">{formatUsd(benchmarkAsOf)}</strong></div>}
+          {benchmarkEligible && tracking.allocationUsd != null && <div><span className="text-xs text-muted-foreground">{tracking.budgetKind === 'monthly_agent' ? 'Monthly Agent limit' : 'Annual allocation'}</span><strong className="mt-1 block font-mono text-xl">{formatUsd(tracking.allocationUsd)}</strong></div>}
           {comparisonsMatchBudgetWindow && tracking.scopeComplete && tracking.usageComplete && tracking.remainingUsd != null && <div><span className="text-xs text-muted-foreground">Funding not yet spent</span><strong className={`mt-1 block font-mono text-xl ${tracking.remainingUsd < 0 ? 'text-destructive' : ''}`}>{formatUsd(tracking.remainingUsd)}</strong></div>}
         </div>
       )}
@@ -159,6 +163,12 @@ export function BudgetTrajectory({
                 </LineChart>
               </ResponsiveContainer>
             </div>
+            {benchmarkEligible && tracking.periodStart && tracking.periodEnd && (
+              <div className="mt-1 flex justify-between text-[11px] text-muted-foreground" aria-label="Budget term chart endpoints">
+                <span>{dateLabel(tracking.periodStart)}</span>
+                <span>{dateLabel(tracking.periodEnd)}</span>
+              </div>
+            )}
           </>
         ) : null}
       </div>

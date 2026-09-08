@@ -156,7 +156,7 @@ function OverviewHeader({
         </div>
         <div className="space-y-1">
           <span className="block text-xs font-medium text-muted-foreground">Period</span>
-          <RangeFilter selectedLabel={selectedPeriodLabel} />
+          <RangeFilter selectedLabel={selectedPeriodLabel} allowedSelections={['full-term', 'billing']} />
         </div>
       </div>
     </div>
@@ -170,7 +170,10 @@ export default function Home() {
   const searchParams = new URLSearchParams(searchString);
   const requestedWorkspaceId = searchParams.get('workspaceId');
   const { user, authorizationKey, isAccountAdmin, capabilities, preview, availability } = useAuthContext();
-  const { rangeType, startDate, endDate } = useRange();
+  const { rangeType: requestedRangeType, setRangeSelection } = useRange();
+  const rangeType: ReturnType<typeof useRange>['rangeType'] = requestedRangeType === 'billing' ? 'billing' : 'full-term';
+  const startDate = undefined;
+  const endDate = undefined;
   const effectiveUserId = preview?.startsWith('member:')
     ? preview.slice('member:'.length)
     : user?.id ?? null;
@@ -213,6 +216,12 @@ export default function Home() {
     params.delete('page');
     setLocation(`${window.location.pathname}?${params.toString()}`);
   }, [setLocation]);
+
+  useEffect(() => {
+    if (requestedRangeType !== 'billing' && requestedRangeType !== 'full-term') {
+      setRangeSelection('full-term');
+    }
+  }, [requestedRangeType, setRangeSelection]);
 
   useEffect(() => {
     if (availability !== 'authorized' || !effectiveUserId) return;
@@ -279,7 +288,9 @@ export default function Home() {
   });
 
   const myDashboard = myDashboardQuery.data;
-  const selectedPeriodLabel = myDashboard?.period.label ?? 'Selected period';
+  const selectedPeriodLabel = rangeType === 'full-term'
+    ? 'Full term'
+    : myDashboard?.period.label ?? 'Current billing period';
   const personalSpend = myDashboard?.personalSpendByWorkspace?.find((row) => row.workspaceId === workspaceId) ?? null;
   const personalLimit = myDashboard?.personalLimits?.find((limit) => limit.workspaceId === workspaceId) ?? null;
   const selectedBudgetTeamIds = new Set(selectedWorkspace?.budgetTeams.map((team) => team.poolId) ?? []);

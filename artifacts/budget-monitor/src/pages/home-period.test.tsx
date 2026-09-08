@@ -9,7 +9,7 @@ vi.stubGlobal('React', React);
 
 const mocks = vi.hoisted(() => ({
   range: { rangeType: 'custom', startDate: '2026-04-03', endDate: '2026-04-19' } as {
-    rangeType: 'custom' | 'mtd' | 'billing' | 'full-term';
+    rangeType: 'custom' | 'mtd' | 'ytd' | 'billing' | 'full-term';
     startDate?: string;
     endDate?: string;
   },
@@ -43,8 +43,8 @@ vi.mock('@/components/range-context', () => ({
 }));
 
 vi.mock('@/components/range-filter', () => ({
-  RangeFilter: ({ selectedLabel }: { selectedLabel: string }) => (
-    <output aria-label="Selected range">{selectedLabel}</output>
+  RangeFilter: ({ selectedLabel, allowedSelections }: { selectedLabel: string; allowedSelections?: string[] }) => (
+    <output aria-label="Selected range">{selectedLabel} · Full term · {allowedSelections?.join(',')}</output>
   ),
 }));
 
@@ -233,57 +233,47 @@ describe('Home selected-period regressions', () => {
     mocks.teamReport.mockReturnValue(query({ budgetTracking: selectedTracking }));
   });
 
-  it('sends custom and MTD range selections through every selected-period request and query key', () => {
+  it.each(['custom', 'mtd', 'ytd'] as const)('normalizes a legacy Home %s range before issuing requests', (legacyRange) => {
+    mocks.range = legacyRange === 'custom'
+      ? { rangeType: legacyRange, startDate: '2026-04-03', endDate: '2026-04-19' }
+      : { rangeType: legacyRange };
     renderHome();
 
     expect(mocks.dashboard).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        rangeType: 'custom',
-        startDate: '2026-04-03',
-        endDate: '2026-04-19',
+        rangeType: 'full-term',
+        startDate: undefined,
+        endDate: undefined,
       }),
       expect.anything(),
     );
     expect(mocks.comparison.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      rangeType: 'custom',
-      startDate: '2026-04-03',
-      endDate: '2026-04-19',
+      rangeType: 'full-term',
+      startDate: undefined,
+      endDate: undefined,
     }));
     expect(mocks.teamReport.mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({
-      rangeType: 'custom',
-      startDate: '2026-04-03',
-      endDate: '2026-04-19',
+      rangeType: 'full-term',
+      startDate: undefined,
+      endDate: undefined,
       includeBudgetTracking: true,
-      trackingRange: 'selected',
+      trackingRange: 'budget',
     }));
     for (const request of [mocks.dashboard, mocks.comparison, mocks.teamReport]) {
       expect(calledQueryOptions(request).queryKey).toEqual(expect.arrayContaining([
         'authorization-member-1',
       ]));
-      expect(JSON.stringify(calledQueryOptions(request).queryKey)).toContain('2026-04-03');
-      expect(JSON.stringify(calledQueryOptions(request).queryKey)).toContain('2026-04-19');
+      expect(JSON.stringify(calledQueryOptions(request).queryKey)).not.toContain('2026-04-03');
+      expect(JSON.stringify(calledQueryOptions(request).queryKey)).not.toContain('2026-04-19');
     }
+  });
 
-    vi.clearAllMocks();
-    mocks.range = { rangeType: 'mtd' };
-    renderHome();
-
-    expect(mocks.dashboard.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      rangeType: 'mtd',
-      startDate: undefined,
-      endDate: undefined,
-    }));
-    expect(mocks.comparison.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      rangeType: 'mtd',
-      startDate: undefined,
-      endDate: undefined,
-    }));
-    expect(mocks.teamReport.mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({
-      rangeType: 'mtd',
-      startDate: undefined,
-      endDate: undefined,
-      trackingRange: 'selected',
-    }));
+  it('offers only full-term and billing-period choices on Home', () => {
+    const range = renderHome().querySelector('[aria-label="Selected range"]')?.textContent;
+    expect(range).toContain('Full term');
+    expect(range).toContain('full-term,billing');
+    expect(range).not.toContain('mtd');
+    expect(range).not.toContain('custom');
   });
 
   it('requests the canonical annual budget window and keeps its benchmark visible with partial usage', () => {
@@ -294,7 +284,7 @@ describe('Home selected-period regressions', () => {
         periodStart: '2026-05-20',
         periodEnd: '2027-05-20',
         periodLabel: 'May 20, 2026–May 20, 2027',
-        allocationUsd: 10_000,
+        allocationUsd: 9368.38,
         spendUsd: 4321,
         remainingUsd: null,
         percentUsed: null,
@@ -311,7 +301,7 @@ describe('Home selected-period regressions', () => {
       scope: 'own',
       workspaceId: 'workspace-1',
     }));
-    expect(body.querySelector('[aria-label="Team tracked allocation"]')?.textContent).toBe('10000');
+    expect(body.querySelector('[aria-label="Team tracked allocation"]')?.textContent).toBe('9368.38');
     expect(body.querySelector('[aria-label="Platform trajectory"]')).not.toBeNull();
     expect(body.querySelector('[aria-label="Team workspace scope"]')?.textContent).toBe('Full team · 1 workspaces');
   });
@@ -365,7 +355,7 @@ describe('Home selected-period regressions', () => {
       reportingStart: '2026-05-20',
       reportingEnd: '2026-09-08',
       asOf: '2026-09-08',
-      allocationUsd: 10_000,
+       allocationUsd: 9368.38,
       points: [
         { date: '2026-05-20', spendUsd: 10 },
         { date: '2026-09-08', spendUsd: 3000 },
@@ -374,7 +364,7 @@ describe('Home selected-period regressions', () => {
     expect(annual.at(-1)).toEqual(expect.objectContaining({
       date: '2027-05-20',
       actual: null,
-      benchmark: 10_000,
+       benchmark: 9368.38,
     }));
 
     const monthly = trajectoryChartData({
