@@ -1,8 +1,10 @@
 import React from "react";
-import { useParams, useLocation, useSearch } from "wouter";
+import { useParams, useLocation } from "wouter";
+import { useSearch as useRawSearch } from "wouter/use-browser-location";
 import { 
   useGetWorkspaceProject, 
-  getGetWorkspaceProjectQueryKey 
+  getGetWorkspaceProjectQueryKey,
+  type GetWorkspaceProjectParams,
 } from "@workspace/api-client-react";
 import { AlertTriangle, RefreshCw, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,15 +16,17 @@ import { DeploymentChip, DeploymentLink, ProjectDataFreshness, ProjectDate, Stal
 
 export default function ProjectDetail() {
   const { workspaceId, projectId } = useParams();
-  const searchString = useSearch();
+  const rawSearch = useRawSearch();
+  const searchString = rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch;
   const [location, setLocation] = useLocation();
   const { rangeType, startDate, endDate } = useRange();
 
-  const searchParams = new URLSearchParams(searchString);
-  const queryParams: any = {
+  const searchParams = new URLSearchParams(rawSearch);
+  const poolId = searchParams.get("poolId") || undefined;
+  const queryParams: GetWorkspaceProjectParams = {
     rangeType,
-    viewScope: searchParams.get("viewScope") || undefined,
-    workspaceId,
+    viewScope: (searchParams.get("viewScope") || undefined) as GetWorkspaceProjectParams['viewScope'],
+    poolId,
   };
   if (rangeType === 'custom') {
     queryParams.startDate = startDate;
@@ -34,7 +38,7 @@ export default function ProjectDetail() {
   });
 
   const data = query.data;
-  const returnTo = sanitizeSpendReturnTo(searchParams.get("returnTo"));
+  const returnTo = sanitizeSpendReturnTo(searchParams.get("returnTo"), '/my-projects');
   const currentPath = `${location}${searchString ? `?${searchString}` : ""}`;
 
   if (query.isError && !query.data) {
@@ -71,7 +75,7 @@ export default function ProjectDetail() {
               <span className="bg-secondary/10 text-secondary border border-secondary/25 px-2 py-0.5 rounded-full text-xs">
                 {data.project.workspaceName || data.project.workspaceId}
               </span>
-              <span>Owner: {data.project.ownerId ? <a className="text-primary hover:underline" href={spendDetailHref(`/users/${encodeURIComponent(data.project.ownerId)}`, currentPath)}>{data.project.ownerName || data.project.ownerId}</a> : 'Unknown'}</span>
+               <span>Owner: {data.project.ownerId ? <a className="text-primary hover:underline" href={spendDetailHref(`/users/${encodeURIComponent(data.project.ownerId)}`, currentPath)}>{data.project.ownerName || data.project.ownerId}</a> : 'Unknown'}</span>
               <span>Created: <ProjectDate value={data.project.createdAt} /></span>
               <span>Updated: <ProjectDate value={data.project.updatedAt} /></span>
               <DeploymentChip value={data.project.hasDeployment} availability={data.project.deploymentAvailability} />

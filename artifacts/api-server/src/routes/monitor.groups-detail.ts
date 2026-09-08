@@ -18,6 +18,7 @@ import {
   prepareScopedAccounting,
   qualifiedGroupSpendComponents,
   resolveStoredMemberLimit,
+  buildScopedDetailProjectionForGroups,
 } from "../services/scoped-accounting";
 import {
   buildCanonicalAccountDirectory,
@@ -39,6 +40,10 @@ export {
 import { authorizeSpendView } from "./monitor.spend-tables";
 import { buildAuthorization } from "../lib/authz";
 import { buildOwnReportMembershipContext } from "../lib/membership-context";
+import {
+  buildDashboardInsights,
+  dashboardInsightsReadWindow,
+} from "../lib/dashboard-insights";
 
 const router = Router();
 const MAX_REPORTING_GROUP_IDS = 32;
@@ -48,10 +53,12 @@ function reportingQuery(req: Request, teamMode: boolean) {
   if (!teamMode) return GetReportingDetailQueryParams.safeParse(req.query);
   const raw = req.query["includeBudgetTracking"];
   const rawHierarchy = req.query["includeHierarchy"];
+  const rawOverview = req.query["includeOverview"];
   return GetBudgetTeamReportQueryParams.safeParse({
     ...req.query,
     includeBudgetTracking: raw === "true",
     includeHierarchy: rawHierarchy === "true",
+    includeOverview: rawOverview === "true",
   });
 }
 
@@ -205,6 +212,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
   const teamMode = req.params["poolId"] !== undefined;
   const rawBudgetTracking = req.query["includeBudgetTracking"];
   const rawHierarchy = req.query["includeHierarchy"];
+  const rawOverview = req.query["includeOverview"];
   if (
     teamMode &&
     rawBudgetTracking !== undefined &&
@@ -221,6 +229,15 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     rawHierarchy !== "false"
   ) {
     res.status(400).json({ error: "includeHierarchy must be true or false" });
+    return;
+  }
+  if (
+    teamMode &&
+    rawOverview !== undefined &&
+    rawOverview !== "true" &&
+    rawOverview !== "false"
+  ) {
+    res.status(400).json({ error: "includeOverview must be true or false" });
     return;
   }
   const parsed = reportingQuery(req, teamMode);
@@ -241,6 +258,15 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
     if (isOwnRequest && ownQuery.includeHierarchy === true) {
       res.status(403).json({
         error: "Hierarchy is unavailable for an own team report",
+      });
+      return;
+    }
+    if (
+      isOwnRequest &&
+      (parsed.data as { includeOverview?: boolean }).includeOverview === true
+    ) {
+      res.status(403).json({
+        error: "Overview is unavailable for an own team report",
       });
       return;
     }
@@ -351,6 +377,8 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
 
     const includeHierarchy = teamMode &&
       (parsed.data as { includeHierarchy?: boolean }).includeHierarchy === true;
+    const includeOverview = teamMode &&
+      (parsed.data as { includeOverview?: boolean }).includeOverview === true;
     // Keep the long-standing report projection unchanged unless the canonical
     // hierarchy was explicitly requested. Hierarchy callers must reconcile to
     // the same scope as the Spend surface that linked them here.
@@ -1073,11 +1101,104 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
         });
       })()
       : undefined;
+    const overview = includeOverview
+      ? await (async () => {
+        // Preserve the original authorized rollup and its committed overlap
+        // attribution, then slice only this pool's source groups. Rebuilding a
+        // narrower synthetic authorization can reassign a shared member or
+        // project away from another team and overstate this selected team.
+        const teamWorkspaceIds = new Set(
+          groups.map((group) => group.workspaceId),
+        );
+        const teamGroupUserIds = new Map(groups.map((group) => [
+          group.id,
+          scopedMembers.get(group.id) ?? [],
+        ]));
+        // This authorization is only a projection predicate over the original
+        // committed rollup. It is never used to rebuild attribution.
+        const teamProjectionAuthz = buildAuthorization({
+          userId: req.authz!.userId,
+          roles: ["team_admin"],
+          teamNames: [teamRow!.name],
+          groupIds: groups.map((group) => group.id),
+          managedGroupIds: groups.map((group) => group.id),
+          userIds: new Set([
+            req.authz!.userId,
+            ...groups.flatMap((group) => scopedMembers.get(group.id) ?? []),
+          ]),
+          groupUserIds: teamGroupUserIds,
+        });
+        const selectedUsage = {
+          ...accounting.usage,
+          authz: teamProjectionAuthz,
+          groups,
+          workspaceIds: teamWorkspaceIds,
+        };
+        const projectsResult = await buildScopedDetailProjectionForGroups(
+          { ...accounting, authz: teamProjectionAuthz },
+          "projects",
+          groups,
+        );
+        const teamProjectAttributionComplete =
+          reportingSemanticsForGroups(accounting.daily, groups)
+            .creatorCoverage !== "partial";
+        const today = new Date().toISOString().slice(0, 10);
+        const insightsWindow = dashboardInsightsReadWindow(
+          accounting.period.start,
+          new Date(),
+          USAGE_DATA_CUTOFF_ISO,
+        );
+        const expandedUsage = await usageForRequest(
+          accounting.authz,
+          accounting.dir,
+          {
+            rangeType: "custom",
+            startDate: insightsWindow.startDate,
+            endDate: today,
+          },
+          true,
+        );
+        const expandedDaily = await dailyUsageRollups(
+          accounting.dir,
+          expandedUsage,
+        );
+        const expandedTeamGroups = expandedUsage.groups.filter((group) =>
+          groups.some((selected) => selected.id === group.id));
+        const expandedTeamUsage = {
+          ...expandedUsage,
+          authz: teamProjectionAuthz,
+          groups: expandedTeamGroups,
+          workspaceIds: new Set(
+            expandedTeamGroups.map((group) => group.workspaceId),
+          ),
+        };
+        assertStableReportingUsageGeneration(prepared.usageGeneration);
+        const bySpend = (
+          a: { spendUsd: number; id: string },
+          b: { spendUsd: number; id: string },
+        ) => b.spendUsd - a.spendUsd || a.id.localeCompare(b.id);
+        return {
+          insights: buildDashboardInsights({
+            selected: selectedUsage,
+            selectedDaily: accounting.daily,
+            expanded: expandedTeamUsage,
+            expandedDaily,
+            directory: accounting.dir,
+            period: accounting.period,
+            cutoff: USAGE_DATA_CUTOFF_ISO,
+            projectAttributionComplete: teamProjectAttributionComplete,
+          }),
+          projects: [...projectsResult.projectRows].sort(bySpend).slice(0, 10),
+          projectAttributionComplete: teamProjectAttributionComplete,
+        };
+      })()
+      : undefined;
     assertStableReportingUsageGeneration(prepared.usageGeneration);
     const response = GetReportingDetailResponse.parse({
       kind: teamMode ? "team" : groupRows.length === 1 ? "group" : "family",
       ...(teamRow ? { id: teamRow.id, name: teamRow.name } : {}),
       ...(budgetTracking ? { budgetTracking } : {}),
+      ...(overview ? { overview } : {}),
       headline: {
         familyKey: teamMode ? null : families[0]!.familyKey,
         familyName: teamRow?.name ?? families[0]!.familyName,

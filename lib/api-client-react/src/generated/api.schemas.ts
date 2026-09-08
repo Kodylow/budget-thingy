@@ -990,6 +990,219 @@ export type ReportingDetailBudgetTracking = {
   points: BudgetTrackingPoint[];
 };
 
+export interface DashboardInsightCategory {
+  key: string;
+  label: string;
+  /** @nullable */
+  spendUsd: number | null;
+  /** @nullable */
+  activeUsers: number | null;
+}
+
+export interface DashboardInsightMonth {
+  start: string;
+  endExclusive: string;
+  /** @nullable */
+  spendUsd: number | null;
+  /** @nullable */
+  agentSpendUsd: number | null;
+  /** @nullable */
+  otherSpendUsd: number | null;
+  /** @nullable */
+  activeUsers: number | null;
+  isPartial: boolean;
+  isMissing: boolean;
+}
+
+export interface DashboardInsightSpender {
+  id: string;
+  name: string;
+  /** @nullable */
+  spendUsd: number | null;
+}
+
+/**
+ * @nullable
+ */
+export type DashboardInsightsBusiestDay = {
+  date: string;
+  spendUsd: number;
+} | null;
+
+export interface DashboardInsights {
+  /** @nullable */
+  activeUsers: number | null;
+  /** @nullable */
+  avgSpendPerActiveUserUsd: number | null;
+  /** @nullable */
+  activeDays: number | null;
+  /** @nullable */
+  busiestDay: DashboardInsightsBusiestDay;
+  /** @nullable */
+  previousPeriodSpendUsd: number | null;
+  /** @nullable */
+  changePercent: number | null;
+  categories: DashboardInsightCategory[];
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  monthly: DashboardInsightMonth[];
+  /** @maxItems 10 */
+  topSpenders: DashboardInsightSpender[];
+  /** @nullable */
+  projectCount: number | null;
+}
+
+export type SpendTableRowKind = typeof SpendTableRowKind[keyof typeof SpendTableRowKind];
+
+
+export const SpendTableRowKind = {
+  pool: 'pool',
+  group: 'group',
+  person: 'person',
+  project: 'project',
+  unattributed: 'unattributed',
+  reconciliation: 'reconciliation',
+} as const;
+
+export type SpendTableRowLimitState = typeof SpendTableRowLimitState[keyof typeof SpendTableRowLimitState];
+
+
+export const SpendTableRowLimitState = {
+  not_applicable: 'not_applicable',
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+/**
+ * Current durable observation state; last successful values may remain visible during refresh or after failure.
+ */
+export type SpendTableRowLimitObservationStatus = typeof SpendTableRowLimitObservationStatus[keyof typeof SpendTableRowLimitObservationStatus];
+
+
+export const SpendTableRowLimitObservationStatus = {
+  not_applicable: 'not_applicable',
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+  refreshing: 'refreshing',
+} as const;
+
+export type SpendPersonWorkspaceLimitState = typeof SpendPersonWorkspaceLimitState[keyof typeof SpendPersonWorkspaceLimitState];
+
+
+export const SpendPersonWorkspaceLimitState = {
+  not_applicable: 'not_applicable',
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+export type SpendPersonWorkspaceLimitObservationStatus = typeof SpendPersonWorkspaceLimitObservationStatus[keyof typeof SpendPersonWorkspaceLimitObservationStatus];
+
+
+export const SpendPersonWorkspaceLimitObservationStatus = {
+  not_applicable: 'not_applicable',
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+  refreshing: 'refreshing',
+} as const;
+
+export interface SpendPersonWorkspace {
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  /** @nullable */
+  allocationUsd: number | null;
+  /** @nullable */
+  remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  /** @nullable */
+  currentCycleAgentSpendUsd: number | null;
+  /** @nullable */
+  currentCycleRemainingUsd: number | null;
+  /** @nullable */
+  currentCyclePercentUsed: number | null;
+  limitState: SpendPersonWorkspaceLimitState;
+  limitObservationStatus: SpendPersonWorkspaceLimitObservationStatus;
+  usageObserved: boolean;
+}
+
+export interface SpendTableRow {
+  id: string;
+  /** Raw upstream project identity for project rows; distinct from the workspace-qualified row id. */
+  projectId?: string;
+  /** Stable user identity for person rows. */
+  userId?: string;
+  kind: SpendTableRowKind;
+  name: string;
+  /** @nullable */
+  workspaceId: string | null;
+  /** @nullable */
+  workspaceName: string | null;
+  /** False when this row has no valid workspace usage observation in the selected range. Numeric usage accumulators then represent no known facts, not confirmed zero; display them as unknown. */
+  usageObserved?: boolean;
+  /**
+     * Current cached deployment state for personal catalog project rows. Null means publication state has not been observed.
+     * @nullable
+     */
+  isPublished?: boolean | null;
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  /** @nullable */
+  allocationUsd: number | null;
+  /** @nullable */
+  remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  /**
+     * Agent spend in the current billing cycle; populated for People independently of the selected reporting range.
+     * @nullable
+     */
+  currentCycleAgentSpendUsd?: number | null;
+  /**
+     * Current monthly limit minus current-cycle Agent spend; never selected-range spend.
+     * @nullable
+     */
+  currentCycleRemainingUsd?: number | null;
+  /**
+     * Current-cycle Agent spend as a percentage of the current monthly limit.
+     * @nullable
+     */
+  currentCyclePercentUsed?: number | null;
+  status: string;
+  /** @nullable */
+  memberCount: number | null;
+  /** @nullable */
+  ownerName: string | null;
+  limitState: SpendTableRowLimitState;
+  /** Current durable observation state; last successful values may remain visible during refresh or after failure. */
+  limitObservationStatus: SpendTableRowLimitObservationStatus;
+  sharedPool: boolean;
+  /** Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows. */
+  sourceGroupIds?: string[];
+  /** Workspace-qualified spend and limit facts for person rows. */
+  workspaces?: SpendPersonWorkspace[];
+}
+
+export type ReportingDetailOverview = {
+  insights: DashboardInsights;
+  /** @maxItems 10 */
+  projects: SpendTableRow[];
+  /** False when project creator/group evidence is incomplete. Project rows are attributed observations and never a canonical pool residual or a sum forced to the team headline. */
+  projectAttributionComplete: boolean;
+};
+
 export type ReportingDetailSourceGroupsItem = {
   groupId: string;
   workspaceId: string;
@@ -1005,6 +1218,7 @@ export interface ReportingDetail {
   /** Canonical pool name; present when kind is team. */
   name?: string;
   budgetTracking?: ReportingDetailBudgetTracking;
+  overview?: ReportingDetailOverview;
   headline: ReportingDetailHeadline;
   groups: ReportingDetailGroup[];
   /** Deduplicated authorized physical role groups represented by the canonical group rows; contains no financial fields. */
@@ -1446,70 +1660,6 @@ export interface StaleSpendAggregate {
   drillThrough: string | null;
 }
 
-export interface DashboardInsightCategory {
-  key: string;
-  label: string;
-  /** @nullable */
-  spendUsd: number | null;
-  /** @nullable */
-  activeUsers: number | null;
-}
-
-export interface DashboardInsightMonth {
-  start: string;
-  endExclusive: string;
-  /** @nullable */
-  spendUsd: number | null;
-  /** @nullable */
-  agentSpendUsd: number | null;
-  /** @nullable */
-  otherSpendUsd: number | null;
-  /** @nullable */
-  activeUsers: number | null;
-  isPartial: boolean;
-  isMissing: boolean;
-}
-
-export interface DashboardInsightSpender {
-  id: string;
-  name: string;
-  /** @nullable */
-  spendUsd: number | null;
-}
-
-/**
- * @nullable
- */
-export type DashboardInsightsBusiestDay = {
-  date: string;
-  spendUsd: number;
-} | null;
-
-export interface DashboardInsights {
-  /** @nullable */
-  activeUsers: number | null;
-  /** @nullable */
-  avgSpendPerActiveUserUsd: number | null;
-  /** @nullable */
-  activeDays: number | null;
-  /** @nullable */
-  busiestDay: DashboardInsightsBusiestDay;
-  /** @nullable */
-  previousPeriodSpendUsd: number | null;
-  /** @nullable */
-  changePercent: number | null;
-  categories: DashboardInsightCategory[];
-  /**
-     * @minItems 6
-     * @maxItems 6
-     */
-  monthly: DashboardInsightMonth[];
-  /** @maxItems 10 */
-  topSpenders: DashboardInsightSpender[];
-  /** @nullable */
-  projectCount: number | null;
-}
-
 export interface DashboardResponse {
   scope: DashboardScope;
   period: ReportingPeriod;
@@ -1864,145 +2014,6 @@ export interface UserProjectOwner {
 export interface UserOwnedProjectsResponse {
   user: UserProjectOwner;
   projects: SpendProjectsResponse;
-}
-
-export type SpendTableRowKind = typeof SpendTableRowKind[keyof typeof SpendTableRowKind];
-
-
-export const SpendTableRowKind = {
-  pool: 'pool',
-  group: 'group',
-  person: 'person',
-  project: 'project',
-  unattributed: 'unattributed',
-  reconciliation: 'reconciliation',
-} as const;
-
-export type SpendTableRowLimitState = typeof SpendTableRowLimitState[keyof typeof SpendTableRowLimitState];
-
-
-export const SpendTableRowLimitState = {
-  not_applicable: 'not_applicable',
-  explicit: 'explicit',
-  inherited: 'inherited',
-  no_limit: 'no_limit',
-  unavailable: 'unavailable',
-} as const;
-
-/**
- * Current durable observation state; last successful values may remain visible during refresh or after failure.
- */
-export type SpendTableRowLimitObservationStatus = typeof SpendTableRowLimitObservationStatus[keyof typeof SpendTableRowLimitObservationStatus];
-
-
-export const SpendTableRowLimitObservationStatus = {
-  not_applicable: 'not_applicable',
-  complete: 'complete',
-  failed: 'failed',
-  unavailable: 'unavailable',
-  refreshing: 'refreshing',
-} as const;
-
-export type SpendPersonWorkspaceLimitState = typeof SpendPersonWorkspaceLimitState[keyof typeof SpendPersonWorkspaceLimitState];
-
-
-export const SpendPersonWorkspaceLimitState = {
-  not_applicable: 'not_applicable',
-  explicit: 'explicit',
-  inherited: 'inherited',
-  no_limit: 'no_limit',
-  unavailable: 'unavailable',
-} as const;
-
-export type SpendPersonWorkspaceLimitObservationStatus = typeof SpendPersonWorkspaceLimitObservationStatus[keyof typeof SpendPersonWorkspaceLimitObservationStatus];
-
-
-export const SpendPersonWorkspaceLimitObservationStatus = {
-  not_applicable: 'not_applicable',
-  complete: 'complete',
-  failed: 'failed',
-  unavailable: 'unavailable',
-  refreshing: 'refreshing',
-} as const;
-
-export interface SpendPersonWorkspace {
-  workspaceId: string;
-  /** @nullable */
-  workspaceName: string | null;
-  spendUsd: number;
-  agentSpendUsd: number;
-  otherServicesUsd: number;
-  /** @nullable */
-  allocationUsd: number | null;
-  /** @nullable */
-  remainingUsd: number | null;
-  /** @nullable */
-  percentUsed: number | null;
-  /** @nullable */
-  currentCycleAgentSpendUsd: number | null;
-  /** @nullable */
-  currentCycleRemainingUsd: number | null;
-  /** @nullable */
-  currentCyclePercentUsed: number | null;
-  limitState: SpendPersonWorkspaceLimitState;
-  limitObservationStatus: SpendPersonWorkspaceLimitObservationStatus;
-  usageObserved: boolean;
-}
-
-export interface SpendTableRow {
-  id: string;
-  /** Stable user identity for person rows. */
-  userId?: string;
-  kind: SpendTableRowKind;
-  name: string;
-  /** @nullable */
-  workspaceId: string | null;
-  /** @nullable */
-  workspaceName: string | null;
-  /** False when this row has no valid workspace usage observation in the selected range. Numeric usage accumulators then represent no known facts, not confirmed zero; display them as unknown. */
-  usageObserved?: boolean;
-  /**
-     * Current cached deployment state for personal catalog project rows. Null means publication state has not been observed.
-     * @nullable
-     */
-  isPublished?: boolean | null;
-  spendUsd: number;
-  agentSpendUsd: number;
-  otherServicesUsd: number;
-  /** @nullable */
-  allocationUsd: number | null;
-  /** @nullable */
-  remainingUsd: number | null;
-  /** @nullable */
-  percentUsed: number | null;
-  /**
-     * Agent spend in the current billing cycle; populated for People independently of the selected reporting range.
-     * @nullable
-     */
-  currentCycleAgentSpendUsd?: number | null;
-  /**
-     * Current monthly limit minus current-cycle Agent spend; never selected-range spend.
-     * @nullable
-     */
-  currentCycleRemainingUsd?: number | null;
-  /**
-     * Current-cycle Agent spend as a percentage of the current monthly limit.
-     * @nullable
-     */
-  currentCyclePercentUsed?: number | null;
-  status: string;
-  /** @nullable */
-  memberCount: number | null;
-  /** @nullable */
-  ownerName: string | null;
-  limitState: SpendTableRowLimitState;
-  /** Current durable observation state; last successful values may remain visible during refresh or after failure. */
-  limitObservationStatus: SpendTableRowLimitObservationStatus;
-  sharedPool: boolean;
-  /** Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows. */
-  sourceGroupIds?: string[];
-  /** Workspace-qualified spend and limit facts for person rows. */
-  workspaces?: SpendPersonWorkspace[];
 }
 
 export type SpendTableResponseView = typeof SpendTableResponseView[keyof typeof SpendTableResponseView];
@@ -4273,6 +4284,10 @@ includeHierarchy?: boolean;
  */
 includeBudgetTracking?: boolean;
 /**
+ * Include selected-period people and projects plus exact-team six-month insights. Every value is restricted to this canonical team's committed, authorized source-group mappings.
+ */
+includeOverview?: boolean;
+/**
  * Use the fixed allocation period (default), the verified current billing cycle's monthly Agent limit and Agent-only usage, or the selected report period.
  */
 trackingRange?: GetBudgetTeamReportTrackingRange;
@@ -4598,6 +4613,11 @@ endDate?: EndDateParameter;
  * Server-resolved presentation scope; managed excludes unrelated self-only grants.
  */
 viewScope?: ViewScopeParameter;
+/**
+ * Optional authorized canonical team pool restricting project attribution.
+ * @minLength 1
+ */
+poolId?: string;
 };
 
 export type ListUserOwnedProjectsParams = {
@@ -4617,6 +4637,11 @@ endDate?: EndDateParameter;
  * Server-resolved presentation scope; managed excludes unrelated self-only grants.
  */
 viewScope?: ViewScopeParameter;
+/**
+ * Optional authorized canonical team pool restricting owned projects and amounts.
+ * @minLength 1
+ */
+poolId?: string;
 /**
  * @maxLength 200
  */

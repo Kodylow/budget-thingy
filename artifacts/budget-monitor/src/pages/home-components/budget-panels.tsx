@@ -2,11 +2,9 @@ import React, { useState } from 'react';
 import { ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { Link } from 'wouter';
 import type { ReportingDetailBudgetTracking, TeamBudget } from '@workspace/api-client-react';
-import { useAuthContext } from '@/components/auth-context';
-import { getAvailableSpendViews } from '@/pages/spend';
 import { Button } from '@/components/ui/button';
 import { AdminDataQualityNote } from '@/components/admin-data-quality';
-import { reportingNavigationHref } from '@/lib/reporting-navigation';
+import { reportingNavigationHref, teamOverviewHref } from '@/lib/reporting-navigation';
 import { formatUsd } from './format';
 import { personalLimitBudgetRows, type PersonalLimitSummary } from './budget-logic';
 
@@ -126,9 +124,6 @@ export function TeamBudgetPanel({
   comparisonsMatchBudgetWindow: boolean;
   wholeBudgetMode?: boolean;
 }) {
-  const { isAccountAdmin, isWorkspaceAdmin, isTeamAdmin, capabilities } = useAuthContext();
-  const authorizedForPools = getAvailableSpendViews({ isAccountAdmin, isWorkspaceAdmin, isTeamAdmin, canEditAllocations: capabilities.canEditAllocations }).includes('pools');
-
   const [expanded, setExpanded] = useState(false);
   const complete = comparisonsMatchBudgetWindow &&
     tracking?.reporting?.comparisonsVerified !== false &&
@@ -139,9 +134,7 @@ export function TeamBudgetPanel({
     ? tracking.periodLabel
     : selectedPeriodLabel;
   const reportHref = team.poolId
-    ? authorizedForPools
-      ? reportingNavigationHref(`/spend?tab=pools&poolId=${encodeURIComponent(team.poolId)}`, search)
-      : reportingNavigationHref(`/my-team`, search)
+    ? teamOverviewHref(team.poolId, search)
     : null;
 
   return (

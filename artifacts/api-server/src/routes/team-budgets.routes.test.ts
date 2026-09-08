@@ -1366,6 +1366,12 @@ test("regular members can read only their own workspace team Home summary", asyn
   );
   expect(ownHierarchy.status).toBe(403);
   expect(ownHierarchy.json.error).toMatch(/hierarchy/i);
+  const ownOverview = await request(
+    `/reporting/teams/${poolId}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&includeOverview=true&${COMPLETE_RANGE}`,
+    "task158-plain",
+  );
+  expect(ownOverview.status).toBe(403);
+  expect(ownOverview.json.error).toMatch(/overview/i);
   expect((await request(
     `/reporting/teams/${poolId}?includeHierarchy=maybe&${COMPLETE_RANGE}`,
     "task158-account",

@@ -12,6 +12,8 @@ import type { SpendTableRowLimitState } from './spendTableRowLimitState';
 
 export interface SpendTableRow {
   id: string;
+  /** Raw upstream project identity for project rows; distinct from the workspace-qualified row id. */
+  projectId?: string;
   /** Stable user identity for person rows. */
   userId?: string;
   kind: SpendTableRowKind;

@@ -1,5 +1,6 @@
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useMemo, useState, Fragment } from 'react';
 import { Link } from 'wouter';
+import { useLocation } from 'wouter';
 import { useSearch } from 'wouter/use-browser-location';
 import {
   getGetDashboardQueryKey,
@@ -29,6 +30,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Skeleton } from '@/components/ui/skeleton';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
 import { dashboardTotalSpend } from '@/lib/spend-presentation';
+import { spendDetailHref } from '@/lib/spend-exploration';
 import { formatUsd } from '@/pages/home-components/format';
 import { PersonWorkspaceDetails } from '@/components/person-workspace-details';
 import { formatBudgetDate } from '@/lib/budget-meter';
@@ -52,10 +54,11 @@ export function resolveMyTeamScope(
   return { authorized: false, viewScope: 'managed' as const };
 }
 
-function TablePanel({ title, caption, viewAllHref, children }: {
+function TablePanel({ title, caption, isExpanded, onToggleExpand, children }: {
   title: string;
   caption: string;
-  viewAllHref: string;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
   children: ReactNode;
 }) {
   return (
@@ -66,8 +69,8 @@ function TablePanel({ title, caption, viewAllHref, children }: {
             <CardTitle className="text-base">{title}</CardTitle>
             <CardDescription>{caption}</CardDescription>
           </div>
-          <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs text-primary" asChild>
-            <Link href={viewAllHref}>View all <ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Link>
+          <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs text-primary" onClick={onToggleExpand}>
+            {isExpanded ? 'Show less' : 'View all'}
           </Button>
         </div>
       </CardHeader>
@@ -104,6 +107,10 @@ export function PeopleTable({ rows, rangeType }: {
   rows: SpendTableRow[];
   rangeType: ReturnType<typeof useRange>['rangeType'];
 }) {
+  const [location] = useLocation();
+  const search = useSearch();
+  const returnTo = location + search;
+
   if (rows.length === 0) {
     return <EmptyState title="No recorded people spend" description="No people with recorded spend were found in this scope and period." />;
   }
@@ -120,19 +127,23 @@ export function PeopleTable({ rows, rangeType }: {
       rows={rows.map((row) => {
         const status = rangeType === 'billing' ? resolveLimitStatus(row) : null;
         return [
-          <div className="flex items-center gap-2.5">
+          <div key="member" className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{initials(row.name)}</span>
             <div>
-              <span className="block whitespace-nowrap font-medium">{row.name}</span>
+              {row.userId ? (
+                  <Link href={spendDetailHref(`/users/${encodeURIComponent(row.userId)}`, returnTo)} className="block whitespace-nowrap font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm">{row.name}</Link>
+              ) : (
+                  <span className="block whitespace-nowrap font-medium">{row.name}</span>
+              )}
               {(row.workspaces?.length ?? 0) > 1
                 ? <PersonWorkspaceDetails workspaces={row.workspaces!} />
                 : <span className="block whitespace-nowrap text-xs text-muted-foreground">{row.workspaceName || 'Workspace unavailable'}</span>}
             </div>
           </div>,
-          <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
-          <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.otherServicesUsd)}</span>,
-          <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.agentSpendUsd)}</span>,
-          <span className="flex flex-col items-end gap-1">
+          <span key="spend" className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
+          <span key="projects" className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.otherServicesUsd)}</span>,
+          <span key="agent" className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.agentSpendUsd)}</span>,
+          <span key="limit" className="flex flex-col items-end gap-1">
             <span className="whitespace-nowrap font-mono text-xs">{(row.workspaces?.length ?? 0) > 1 ? 'Per workspace' : row.limitState === 'no_limit' ? 'No limit' : formatUsd(row.allocationUsd)}</span>
             {status && <StatusBadge status={status} />}
             {row.limitObservationStatus === 'refreshing' && <span className="text-[10px] text-muted-foreground">Refreshing</span>}
@@ -146,6 +157,10 @@ export function PeopleTable({ rows, rangeType }: {
 }
 
 export function ProjectsTable({ rows }: { rows: SpendTableRow[] }) {
+  const [location] = useLocation();
+  const search = useSearch();
+  const returnTo = location + search;
+
   if (rows.length === 0) {
     return <EmptyState title="No recorded project spend" description="No projects with recorded spend were found in this scope and period." />;
   }
@@ -159,26 +174,98 @@ export function ProjectsTable({ rows }: { rows: SpendTableRow[] }) {
         { label: 'Cloud Services', className: 'text-right' },
       ]}
       rows={rows.map((row) => [
-        <div><span className="block whitespace-nowrap font-medium">{row.name}</span><span className="block whitespace-nowrap text-xs text-muted-foreground">{row.ownerName || 'Owner unavailable'} · {row.workspaceName || 'Workspace unavailable'}</span></div>,
-        <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
-        <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.agentSpendUsd)}</span>,
-        <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.otherServicesUsd)}</span>,
+        <div key="project">
+            <Link href={spendDetailHref(`/workspaces/${encodeURIComponent(row.workspaceId!)}/projects/${encodeURIComponent(row.projectId ?? row.id)}`, returnTo)} className="block whitespace-nowrap font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm">{row.name}</Link>
+            <span className="block whitespace-nowrap text-xs text-muted-foreground">{row.ownerName || 'Owner unavailable'} · {row.workspaceName || 'Workspace unavailable'}</span>
+        </div>,
+        <span key="spend" className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
+        <span key="agent" className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.agentSpendUsd)}</span>,
+        <span key="cloud" className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.otherServicesUsd)}</span>,
       ])}
     />
   );
 }
+
+export function PaginatedPeopleTable({ params, rangeType }: { params: any, rangeType: any }) {
+  const [page, setPage] = useState(1);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const peopleParams = { ...params, page: isExpanded ? page : 1, pageSize: 10, sort: 'spend_desc' as const };
+  const people = useListSpendPeople(peopleParams, { query: { enabled: true, queryKey: getListSpendPeopleQueryKey(peopleParams) } });
+
+  const handleToggleExpand = () => {
+    setIsExpanded(!isExpanded);
+    if (isExpanded) setPage(1);
+  };
+
+  const hasMore = people.data ? people.data.filteredRows > page * 10 : false;
+
+  return (
+    <TablePanel title="Top People" caption="Selected-period spend · Projects excludes Agent · Agent Limit is per billing cycle." isExpanded={isExpanded} onToggleExpand={handleToggleExpand}>
+      {people.isLoading && !people.data ? (
+        <div className="p-4 text-sm text-muted-foreground text-center">Loading...</div>
+      ) : people.data ? (
+        <>
+          <PeopleTable rows={people.data.rows} rangeType={rangeType} />
+          {isExpanded && (
+            <div className="flex items-center justify-center gap-3 border-t p-3">
+              <Button variant="outline" size="sm" disabled={page === 1 || people.isFetching} onClick={() => setPage(p => p - 1)}>Previous people</Button>
+              <span className="text-xs text-muted-foreground">Page {page}</span>
+              <Button variant="outline" size="sm" disabled={!hasMore || people.isFetching} onClick={() => setPage(p => p + 1)}>Next people</Button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="p-4 text-sm text-destructive text-center">Failed to load people</div>
+      )}
+    </TablePanel>
+  );
+}
+
+export function PaginatedProjectsTable({ params }: { params: any }) {
+  const [page, setPage] = useState(1);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const projectsParams = { ...params, page: isExpanded ? page : 1, pageSize: 10, sort: 'spend_desc' as const };
+  const projects = useListSpendProjects(projectsParams, { query: { enabled: true, queryKey: getListSpendProjectsQueryKey(projectsParams) } });
+
+  const handleToggleExpand = () => {
+    setIsExpanded(!isExpanded);
+    if (isExpanded) setPage(1);
+  };
+
+  const hasMore = projects.data ? projects.data.filteredRows > page * 10 : false;
+
+  return (
+    <TablePanel title="Top Apps" caption="Projects ranked by selected-period scoped spend." isExpanded={isExpanded} onToggleExpand={handleToggleExpand}>
+      {projects.isLoading && !projects.data ? (
+        <div className="p-4 text-sm text-muted-foreground text-center">Loading...</div>
+      ) : projects.data ? (
+        <>
+          <ProjectsTable rows={projects.data.rows} />
+          {isExpanded && (
+            <div className="flex items-center justify-center gap-3 border-t p-3">
+              <Button variant="outline" size="sm" disabled={page === 1 || projects.isFetching} onClick={() => setPage(p => p - 1)}>Previous projects</Button>
+              <span className="text-xs text-muted-foreground">Page {page}</span>
+              <Button variant="outline" size="sm" disabled={!hasMore || projects.isFetching} onClick={() => setPage(p => p + 1)}>Next projects</Button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="p-4 text-sm text-destructive text-center">Failed to load projects</div>
+      )}
+    </TablePanel>
+  );
+}
+
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function MyTeam() {
   const search = useSearch();
   const { role, capabilities } = useAuthContext();
   const { rangeType, startDate, endDate } = useRange();
   const { authorized, viewScope } = resolveMyTeamScope(role, capabilities.canViewAccountUsage);
+  const queryClient = useQueryClient();
   const params = { viewScope, rangeType, startDate, endDate };
-  const peopleParams = { ...params, page: 1, pageSize: 10, sort: 'spend_desc' as const };
-  const projectsParams = { ...params, page: 1, pageSize: 10, sort: 'spend_desc' as const };
   const dashboard = useGetDashboard(params, { query: { enabled: authorized, queryKey: getGetDashboardQueryKey(params) } });
-  const people = useListSpendPeople(peopleParams, { query: { enabled: authorized, queryKey: getListSpendPeopleQueryKey(peopleParams) } });
-  const projects = useListSpendProjects(projectsParams, { query: { enabled: authorized, queryKey: getListSpendProjectsQueryKey(projectsParams) } });
 
   const monthly = useMemo(() => (dashboard.data?.insights?.monthly ?? []).slice(-6).map((month) => ({
     month: month.start,
@@ -192,7 +279,11 @@ export default function MyTeam() {
     : isOrganization
       ? 'Organization activity'
       : 'Activity across your teams and workspaces';
-  const refreshAll = () => void Promise.all([dashboard.refetch(), people.refetch(), projects.refetch()]);
+  const refreshAll = () => {
+    void dashboard.refetch();
+    void queryClient.invalidateQueries({ queryKey: getListSpendPeopleQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getListSpendProjectsQueryKey() });
+  };
   const pageHeader = (
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div className="min-w-0 space-y-2">
@@ -202,11 +293,6 @@ export default function MyTeam() {
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={refreshAll}>
           <RefreshCw className="mr-2 h-4 w-4" />Refresh data
-        </Button>
-        <Button size="sm" asChild>
-          <Link href={reportingNavigationHref(`/spend?viewScope=${viewScope}`, search)}>
-            <ArrowUpRight className="mr-2 h-4 w-4" />View spend details
-          </Link>
         </Button>
       </div>
     </header>
@@ -229,27 +315,22 @@ export default function MyTeam() {
   if (!authorized) {
     return <div className="p-8" data-testid="my-team-forbidden"><h1 className="text-2xl font-semibold">403 · Access denied</h1><p className="mt-2 text-sm text-muted-foreground">Your role does not include personal or managed usage access.</p></div>;
   }
-  if (dashboard.isLoading || people.isLoading || projects.isLoading) {
+  if (dashboard.isLoading) {
     return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<div className="grid gap-4 sm:grid-cols-3">{[1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-md" />)}</div><Skeleton className="h-72 rounded-md" /></div>;
   }
-  if (!dashboard.data || !people.data || !projects.data) {
-    return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<EmptyState title="Unable to load activity" description="No values are shown because one or more scoped requests failed." action={<Button variant="outline" onClick={refreshAll}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>} /></div>;
+  if (!dashboard.data) {
+    return <div className="mx-auto max-w-[1280px] space-y-8 p-4 md:p-8">{pageHeader}{rangePanel}<EmptyState title="Unable to load activity" description="No values are shown because the scoped dashboard request failed." action={<Button variant="outline" onClick={refreshAll}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>} /></div>;
   }
 
   const insights = dashboard.data.insights;
   const recordedPeople = insights?.activeUsers ?? null;
   const totalSpend = dashboardTotalSpend(dashboard.data);
   const spendCard = dashboard.data.cards.find(card => card.key === 'eligible_spend' || card.key === 'spend');
-  const peopleHref = reportingNavigationHref(`/spend?tab=people&viewScope=${viewScope}`, search);
-  const projectsHref = reportingNavigationHref(`/spend?tab=projects&viewScope=${viewScope}`, search);
   const qualifications = Array.from(new Set([
     ...dashboard.data.metadata.qualifications,
-    ...people.data.metadata.qualifications,
-    ...projects.data.metadata.qualifications,
     ...(spendCard?.qualification ? [spendCard.qualification] : []),
   ]));
-  const incomplete = [dashboard.data.metadata, people.data.metadata, projects.data.metadata]
-    .some(metadata => metadata.status !== 'complete' || metadata.stale);
+  const incomplete = dashboard.data.metadata.status !== 'complete' || dashboard.data.metadata.stale;
 
   return (
     <div className="mx-auto max-w-[1280px] min-w-0 space-y-8 px-4 py-6 md:px-8 md:py-8">
@@ -266,8 +347,8 @@ export default function MyTeam() {
         <p>Limit columns use the current billing cycle. Six-month activity is independent of the selected period; missing months remain gaps.{hasPartialMonth && ' Partial months show known values only.'}</p>
       </AdminDataQualityNote>
       <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-        <TablePanel title="Top People" caption="Selected-period spend · Projects excludes Agent · Agent Limit is per billing cycle." viewAllHref={peopleHref}><PeopleTable rows={people.data.rows} rangeType={rangeType} /></TablePanel>
-        <TablePanel title="Top Apps" caption="Projects ranked by selected-period scoped spend." viewAllHref={projectsHref}><ProjectsTable rows={projects.data.rows} /></TablePanel>
+        <PaginatedPeopleTable key={`people:${JSON.stringify(params)}`} params={params} rangeType={rangeType} />
+        <PaginatedProjectsTable key={`projects:${JSON.stringify(params)}`} params={params} />
       </div>
       <Card className="rounded-md shadow-none">
         <CardHeader>

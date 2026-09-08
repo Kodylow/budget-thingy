@@ -77,11 +77,11 @@ describe('protected query transition contract', () => {
   });
 
   it('clears before preview publication and remounts component state at auth boundaries', async () => {
-    const [authSource, appSource, dashboardSource, spendSource, fetchSource] = await Promise.all([
+    const [authSource, appSource, dashboardSource, projectsSource, fetchSource] = await Promise.all([
       readFile(new URL('../components/auth-context.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../App.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../pages/dashboard.tsx', import.meta.url), 'utf8'),
-      readFile(new URL('../pages/spend.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../pages/my-projects.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../../../../lib/api-client-react/src/custom-fetch.ts', import.meta.url), 'utf8'),
     ]);
 
@@ -114,7 +114,7 @@ describe('protected query transition contract', () => {
     expect(fetchSource).toContain('response.status === 403');
     expect(fetchSource).toContain('_forbiddenHandler?.()');
     expect(dashboardSource).not.toContain('prevData');
-    expect(spendSource).toContain('status-spend-updating');
+    expect(projectsSource).toContain('Updating projects');
   });
 
   it('preserves bounded refresh and focus behavior', async () => {

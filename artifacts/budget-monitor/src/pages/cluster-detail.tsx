@@ -25,6 +25,7 @@ import { GroupUserExport } from '@/components/group-user-export';
 import { useAuthContext } from '@/components/auth-context';
 import { InternalUserBadge } from '@/components/internal-user-badge';
 import { MetricCard } from '@/components/journey-primitives';
+import { sanitizeSpendReturnTo } from '@/lib/spend-exploration';
 
 function errorStatus(error: unknown) {
   return typeof error === 'object' && error !== null && 'status' in error
@@ -40,7 +41,7 @@ function parseGroupIds(search: string) {
 function BackLink() {
   const search = useSearch();
   const returnTo = new URLSearchParams(search).get('returnTo');
-  const backHref = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/spend';
+  const backHref = sanitizeSpendReturnTo(returnTo, '/my-team');
   return (
     <Link
       href={backHref}

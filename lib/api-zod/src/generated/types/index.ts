@@ -252,6 +252,7 @@ export * from './reportingDetailKind';
 export * from './reportingDetailMember';
 export * from './reportingDetailMemberLimitObservationStatus';
 export * from './reportingDetailMemberLimitState';
+export * from './reportingDetailOverview';
 export * from './reportingDetailSourceGroupsItem';
 export * from './reportingPeriod';
 export * from './reportingSemantics';

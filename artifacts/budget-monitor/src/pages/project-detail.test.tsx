@@ -4,19 +4,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ProjectDetail from './project-detail';
 
 const getProject = vi.fn();
-let search = 'viewScope=managed&workspaceId=workspace-1&returnTo=%2Fspend%3Ftab%3Dprojects';
+const getProjectKey = vi.fn((..._args: unknown[]) => ['project']);
+let search = '?viewScope=managed&workspaceId=workspace-1&poolId=pool%3Ateam%3AR%252FD&returnTo=%2Fteams%2Fpool%253Ateam%253AR%25252FD';
 
 vi.mock('wouter', () => ({
   useParams: () => ({ workspaceId: 'workspace-1', projectId: 'project-1' }),
-  useSearch: () => search,
   useLocation: () => ['/workspaces/workspace-1/projects/project-1', vi.fn()],
+}));
+vi.mock('wouter/use-browser-location', () => ({
+  useSearch: () => search,
 }));
 vi.mock('@/components/range-context', () => ({
   useRange: () => ({ rangeType: 'mtd', startDate: '', endDate: '' }),
 }));
 vi.mock('@workspace/api-client-react', () => ({
   useGetWorkspaceProject: (...args: unknown[]) => getProject(...args),
-  getGetWorkspaceProjectQueryKey: vi.fn(() => ['project']),
+  getGetWorkspaceProjectQueryKey: (...args: unknown[]) => getProjectKey(args[0], args[1], args[2]),
 }));
 
 const response = {
@@ -37,15 +40,23 @@ const response = {
 describe('ProjectDetail correctness states', () => {
   beforeEach(() => {
     getProject.mockReset();
+    getProjectKey.mockClear();
     getProject.mockReturnValue({ data: response, isError: false });
-    search = 'viewScope=managed&workspaceId=workspace-1&returnTo=%2Fspend%3Ftab%3Dprojects';
+    search = '?viewScope=managed&workspaceId=workspace-1&poolId=pool%3Ateam%3AR%252FD&returnTo=%2Fteams%2Fpool%253Ateam%253AR%25252FD';
   });
 
   it('scopes the query, links the actual owner, and never links an unsafe deployment URL', () => {
     const html = renderToStaticMarkup(<ProjectDetail />);
-    expect(getProject.mock.calls[0][2]).toMatchObject({ viewScope: 'managed', workspaceId: 'workspace-1' });
+    expect(getProject.mock.calls[0][2]).toMatchObject({
+      viewScope: 'managed',
+      poolId: 'pool:team:R%2FD',
+    });
+    expect(getProjectKey.mock.calls[0][2]).toMatchObject({
+      poolId: 'pool:team:R%2FD',
+    });
     expect(html).toContain('Actual Owner');
     expect(html).toContain('/users/owner%2Fone');
+    expect(html).toContain('poolId=pool%3Ateam%3AR%252FD');
     expect(html).toContain('javascript:alert(1)');
     expect(html).not.toContain('href="javascript:');
     expect(html).toContain('Created:');
@@ -69,13 +80,24 @@ describe('ProjectDetail correctness states', () => {
   });
 
   it('uses the qualified route workspace over a conflicting query facet', () => {
-    search = 'viewScope=my&workspaceId=other-workspace';
+    search = '?viewScope=my&workspaceId=other-workspace';
     renderToStaticMarkup(<ProjectDetail />);
-    expect(getProject.mock.calls[0][2]).toMatchObject({ viewScope: 'my', workspaceId: 'workspace-1' });
+    expect(getProject.mock.calls[0][2]).toMatchObject({ viewScope: 'my' });
+    expect(getProject.mock.calls[0][0]).toBe('workspace-1');
+  });
+
+  it('keeps fixed personal scope in the generated request and nested owner link', () => {
+    search = '?viewScope=my&returnTo=%2Fmy-projects%3Fsearch%3DAlpha';
+    const html = renderToStaticMarkup(<ProjectDetail />);
+    expect(getProject.mock.calls.at(-1)?.[2]).toMatchObject({ viewScope: 'my' });
+    expect(getProjectKey.mock.calls.at(-1)?.[2]).toMatchObject({ viewScope: 'my' });
+    expect(html).toContain('/users/owner%2Fone');
+    expect(html).toContain('viewScope=my');
+    expect(html).toContain('returnTo=%2Fworkspaces%2Fworkspace-1%2Fprojects%2Fproject-1');
   });
 
   it('sanitizes an external return destination', () => {
-    search = 'returnTo=https%3A%2F%2Fevil.example';
+    search = '?returnTo=https%3A%2F%2Fevil.example';
     expect(renderToStaticMarkup(<ProjectDetail />)).toContain('Back');
   });
 });

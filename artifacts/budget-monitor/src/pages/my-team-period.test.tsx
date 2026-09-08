@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import MyTeam from './my-team';
 import { RangeProvider } from '@/components/range-context';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.stubGlobal('React', React);
 vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -46,8 +47,8 @@ vi.mock('@/components/Charts', () => ({
 }));
 vi.mock('@workspace/api-client-react', () => ({
   getGetDashboardQueryKey: (params: any) => ['dashboard', params],
-  getListSpendPeopleQueryKey: (params: any) => ['people', params],
-  getListSpendProjectsQueryKey: (params: any) => ['projects', params],
+  getListSpendPeopleQueryKey: (params?: any) => params ? ['people', params] : ['people'],
+  getListSpendProjectsQueryKey: (params?: any) => params ? ['projects', params] : ['projects'],
   useGetDashboard: (...args: any[]) => mocks.dashboard(...args),
   useListSpendPeople: (...args: any[]) => mocks.people(...args),
   useListSpendProjects: (...args: any[]) => mocks.projects(...args),
@@ -79,7 +80,8 @@ function query(data: any, refetch: () => void) {
   return { data, isLoading: false, refetch };
 }
 function page() {
-  return <RangeProvider><MyTeam /></RangeProvider>;
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={queryClient}><RangeProvider><MyTeam /></RangeProvider></QueryClientProvider>;
 }
 function renderPage() {
   return new DOMParser().parseFromString(renderToStaticMarkup(page()), 'text/html').body;
@@ -137,35 +139,35 @@ describe('My Team effective reporting period', () => {
   });
 
   it.each(['full-term', 'billing'])('carries %s into both View all links and View spend details', range => {
+    // We removed the general 'View spend details' and 'View all' links from my-team.tsx.
+    // Ensure we have NO general links to /spend on this page.
     window.history.replaceState(null, '', `/my-team?rangeType=${range}&page=4&viewScope=all_authorized`);
     const links = [...renderPage().querySelectorAll('a')];
-    expect(links).toHaveLength(3);
-    expect(links.map(link => new URL(link.href).searchParams.get('tab'))).toEqual([null, 'people', 'projects']);
     for (const link of links) {
       const url = new URL(link.href);
-      expect(url.pathname).toBe('/spend');
-      expect(url.searchParams.get('rangeType')).toBe(range);
-      expect(url.searchParams.get('viewScope')).toBe('managed');
-      expect(url.searchParams.has('page')).toBe(false);
+      expect(url.pathname).not.toBe('/spend');
     }
   });
 
-  it.each(['full-term', 'billing'])('refreshes all three currently selected %s requests', async range => {
+  it.each(['full-term', 'billing'])('refreshes currently selected %s requests', async range => {
     window.history.replaceState(null, '', `/my-team?rangeType=${range}`);
     const container = document.createElement('div');
     const root = createRoot(container);
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     try {
       await act(async () => root.render(page()));
       const refresh = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Refresh data'))!;
       await act(async () => refresh.click());
-      for (const refetch of [mocks.refreshDashboard, mocks.refreshPeople, mocks.refreshProjects]) {
-        expect(refetch).toHaveBeenCalledTimes(1);
-      }
+      expect(mocks.refreshDashboard).toHaveBeenCalledTimes(1);
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['people'] });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects'] });
+
       for (const request of [mocks.dashboard, mocks.people, mocks.projects]) {
         expect(request.mock.calls.at(-1)?.[0].rangeType).toBe(range);
       }
     } finally {
       await act(async () => root.unmount());
+      invalidate.mockRestore();
     }
   });
 

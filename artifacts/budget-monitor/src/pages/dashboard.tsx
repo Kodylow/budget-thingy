@@ -16,7 +16,7 @@ import { AlertTriangle, RefreshCw, Target, CheckCircle2, Info, DollarSign, Trend
 import { reportDashboardMilestonePainted, markDashboardMilestone, DashboardPerformanceContext } from "@/lib/client-performance";
 import {
   dashboardRequestParams,
-  dashboardSpendHref,
+  dashboardReportingHref,
 } from "@/lib/dashboard-request";
 import {
   resolveSpendViewScope,
@@ -221,8 +221,11 @@ export default function Dashboard() {
     .slice(0, 3);
   const isPartial = metadata.status === 'partial';
 
-  const navigateToSpend = (filter?: Record<string, string>) => {
-    setLocation(dashboardSpendHref(searchString, { viewScope: scope.viewScope, ...filter }));
+  const navigateToReport = () => {
+    setLocation(dashboardReportingHref(
+      capabilities.canViewAccountUsage ? '/org-insights' : '/my-team',
+      searchString,
+    ));
   };
 
   const updateUrlParam = (key: string, value: string | undefined) => {
@@ -312,8 +315,8 @@ export default function Dashboard() {
              card={headline}
              title="Spend"
              icon={DollarSign}
-             onClick={() => navigateToSpend()}
-             aria-label="Explore spend in Spend"
+             onClick={navigateToReport}
+             aria-label="Open reporting overview"
           />
         ) : (
           <div className="bg-card border border-border shadow-sm rounded-xl p-5 min-w-0 flex flex-col justify-between">
@@ -350,7 +353,7 @@ export default function Dashboard() {
           </div>
           <div className="p-5 h-[320px]">
             <Suspense fallback={<div className="flex h-full w-full items-center justify-center"><Skeleton className="h-[90%] w-[95%]" /></div>}>
-              <TrendChart trend={trend} onClick={() => navigateToSpend()} />
+              <TrendChart trend={trend} onClick={navigateToReport} />
             </Suspense>
           </div>
         </section>

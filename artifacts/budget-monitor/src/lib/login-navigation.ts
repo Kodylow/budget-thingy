@@ -6,6 +6,7 @@ const LOGIN_RETURN_ROUTES = new Set([
   '/org-insights',
   '/spend',
   '/my-team',
+  '/my-projects',
   '/reports',
   '/limits',
   '/allocations',
@@ -39,6 +40,7 @@ export function safeLoginReturnTarget(search: string): string {
     const target = new URL(candidate, window.location.origin);
     if (target.origin !== window.location.origin || target.username || target.password) return '/';
     const isKnownRoute = LOGIN_RETURN_ROUTES.has(target.pathname)
+      || /^\/teams\/[^/]+$/.test(target.pathname)
       || /^\/groups\/[^/]+$/.test(target.pathname)
       || /^\/users\/[^/]+$/.test(target.pathname)
       || /^\/workspaces\/[^/]+\/projects\/[^/]+$/.test(target.pathname);

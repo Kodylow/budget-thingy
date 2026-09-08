@@ -1535,6 +1535,16 @@ function qualifiedProjectComponents(
   return groupQualified ? { agent, other } : null;
 }
 
+export function projectSpendRowIdentity(
+  workspaceId: string,
+  projectId: string,
+): Pick<SpendRow, "id" | "projectId"> {
+  return {
+    id: `project:${workspaceId}:${projectId}`,
+    projectId,
+  };
+}
+
 function qualifyFailedAccountingRefresh(
   result: Awaited<ReturnType<typeof computeScopedAccounting>>,
 ) {
@@ -1572,8 +1582,13 @@ function qualifyStaleAccountingResult(
 async function buildDetailProjection(
   base: Awaited<ReturnType<typeof computeScopedAccounting>>,
   detailView: "people" | "projects",
+  explicitGroups?: readonly { id: string; workspaceId: string }[],
 ) {
   const { daily, authz: effectiveAuth, usage, dir } = base;
+  const projectionGroups = explicitGroups ?? usage.groups;
+  const projectionWorkspaceIds = explicitGroups
+    ? new Set(explicitGroups.map((group) => group.workspaceId))
+    : usage.workspaceIds;
   const peopleRows: SpendRow[] = [];
   if (detailView === "people") {
     const observedWorkspaces = observedWorkspaceIds(usage.snapshot);
@@ -1656,7 +1671,7 @@ async function buildDetailProjection(
   const projectRows: SpendRow[] = [];
   if (detailView === "projects") {
     const observedWorkspaces = observedWorkspaceIds(usage.snapshot);
-    const catalog = personalProjectCatalog(
+    const catalog = explicitGroups ? null : personalProjectCatalog(
       usage.projectMetadata, usage.workspaceIds, effectiveAuth);
     if (catalog) {
       const totalsByKey = new Map<string, { agent: number; other: number }>();
@@ -1672,7 +1687,7 @@ async function buildDetailProjection(
             rollup.projectAttribution.creatorByProject.get(key) ?? null;
           const qualified = qualifiedProjectComponents(
             effectiveAuth,
-            usage.groups,
+            projectionGroups,
             workspaceId,
             creatorId,
             rollup.projectAttribution.projectToGroup.get(key),
@@ -1691,7 +1706,7 @@ async function buildDetailProjection(
           `${project.workspaceId}\u0000${project.projectId}`,
         ) ?? { agent: 0, other: 0 };
         projectRows.push({
-          id: `project:${project.workspaceId}:${project.projectId}`,
+          ...projectSpendRowIdentity(project.workspaceId, project.projectId),
           kind: "project",
           name: project.title ?? project.projectId,
           workspaceId: project.workspaceId,
@@ -1717,7 +1732,7 @@ async function buildDetailProjection(
       }
       return freezeAccountingResult({ ...base, peopleRows, projectRows });
     }
-    for (const workspaceId of usage.workspaceIds) {
+    for (const workspaceId of projectionWorkspaceIds) {
       const projectTotals = new Map<string, { agent: number; other: number }>();
       for (const rollup of daily.values()) {
         const projectKeys = new Set([
@@ -1731,7 +1746,7 @@ async function buildDetailProjection(
             rollup.projectAttribution.creatorByProject.get(key) ?? null;
           const qualified = qualifiedProjectComponents(
             effectiveAuth,
-            usage.groups,
+            projectionGroups,
             workspaceId,
             creatorId,
             rollup.projectAttribution.projectToGroup.get(key),
@@ -1755,7 +1770,7 @@ async function buildDetailProjection(
         const owner = creatorId ? dir.members.get(creatorId) : undefined;
         const usageObserved = observedWorkspaces.has(workspaceId);
         projectRows.push({
-          id: `project:${workspaceId}:${projectId}`,
+          ...projectSpendRowIdentity(workspaceId, projectId),
           kind: "project",
           name: metadata?.title ?? projectId,
           workspaceId,
@@ -1781,6 +1796,21 @@ async function buildDetailProjection(
 }
 
 type AccountingResult = Awaited<ReturnType<typeof buildScopedAccounting>>;
+
+/**
+ * Demand-build a detail projection for explicit committed groups while
+ * preserving the caller's original attribution context. This intentionally
+ * bypasses the shared detail cache: the base result remains authorization-
+ * isolated, and an arbitrary selected-team slice must not borrow another
+ * team's cached projection.
+ */
+export async function buildScopedDetailProjectionForGroups(
+  result: AccountingResult,
+  detailView: "people" | "projects",
+  groups: readonly { id: string; workspaceId: string }[],
+) {
+  return buildDetailProjection(result, detailView, groups);
+}
 
 type ProjectObservation = {
   creatorId: string | null;
@@ -2040,7 +2070,7 @@ function enrichedProjectRows(
   return rows;
 }
 
-function projectSpendRowsForUsage(
+export function projectSpendRowsForUsage(
   selected: AccountingResult,
   usage: AccountingResult["usage"],
   daily: AccountingResult["daily"],
@@ -2154,13 +2184,54 @@ export async function buildProjectIntelligenceFromResult(
       selected.usage.selection.window.end !== monthWindow.end) {
     const usage = await usageForRequest(
       context.effectiveAuth, context.dir, monthQuery, true);
+    // Build committed attribution under the original authorization first.
+    // Narrowing the usage context before rollup construction can reassign an
+    // overlapping member/project after another team's groups disappear.
     const daily = await dailyUsageRollups(context.dir, usage);
+    const selectedWorkspaceIds = selected.usage.workspaceIds;
+    const missingWorkspaceDays = usage.snapshot.coverage.missingWorkspaceDays
+      .filter((item) => selectedWorkspaceIds.has(item.workspaceId));
+    const failedWorkspaceDays = usage.snapshot.coverage.failedWorkspaceDays
+      .filter((item) => selectedWorkspaceIds.has(item.workspaceId));
+    const requestedWorkspaceDays =
+      selectedWorkspaceIds.size * usage.snapshot.coverage.requestedDays;
+    const presentWorkspaceDays = Math.max(
+      0,
+      requestedWorkspaceDays -
+        missingWorkspaceDays.length -
+        failedWorkspaceDays.length,
+    );
+    const scopedUsage = {
+      ...usage,
+      authz: selected.authz,
+      groups: selected.usage.groups,
+      workspaceIds: selectedWorkspaceIds,
+      snapshot: {
+        ...usage.snapshot,
+        includesAccountAnchor: selected.authz.roles.includes("account") &&
+          usage.snapshot.includesAccountAnchor,
+        coverage: {
+          ...usage.snapshot.coverage,
+          requestedWorkspaceDays,
+          presentWorkspaceDays,
+          failedWorkspaceDays,
+          missingWorkspaceDays,
+          presentAccountDays: selected.authz.roles.includes("account")
+            ? usage.snapshot.coverage.presentAccountDays : 0,
+          missingAccountDays: selected.authz.roles.includes("account")
+            ? usage.snapshot.coverage.missingAccountDays : [],
+          ratio: requestedWorkspaceDays === 0
+            ? 1
+            : presentWorkspaceDays / requestedWorkspaceDays,
+        },
+      },
+    };
     currentMonth = {
       ...selected,
-      usage,
+      usage: scopedUsage,
       daily,
       projectRows: projectSpendRowsForUsage(
-        selected, usage, daily, globalIdentities),
+        selected, scopedUsage, daily, globalIdentities),
     };
   }
   const staleEvaluation = staleSpendEvaluation(

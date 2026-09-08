@@ -24,13 +24,13 @@ describe('Spend exploration URLs', () => {
   });
 
   it('carries reporting and authorization context into details and restores the exact results URL', () => {
-    const returnTo = '/spend?tab=groups&search=R%26D&page=2&rangeType=custom&startDate=2026-08-01&endDate=2026-08-31&sort=name_desc&viewScope=my&workspaceId=w1';
+    const returnTo = '/my-projects?search=R%26D&page=2&rangeType=custom&startDate=2026-08-01&endDate=2026-08-31&sort=name_desc&workspaceId=w1';
     const params = new URLSearchParams(spendDetailHref('/groups/group-1', returnTo).split('?')[1]);
     expect(params.get('returnTo')).toBe(returnTo);
     expect(params.get('rangeType')).toBe('custom');
     expect(params.get('startDate')).toBe('2026-08-01');
     expect(params.get('endDate')).toBe('2026-08-31');
-    expect(params.get('viewScope')).toBe('my');
+    expect(params.has('viewScope')).toBe(false);
     expect(params.get('workspaceId')).toBe('w1');
     expect(params.has('search')).toBe(false);
     expect(params.has('tab')).toBe(false);
@@ -44,6 +44,19 @@ describe('Spend exploration URLs', () => {
     expect(ownerParams.get('rangeType')).toBe('mtd');
   });
 
+  it('preserves a literal escaped canonical pool ID through nested detail links', () => {
+    const canonicalPoolId = 'pool:team:R%2FD';
+    const teamReturn = `/teams/${encodeURIComponent(canonicalPoolId)}`;
+    const personHref = spendDetailHref(
+      '/users/u1',
+      `${teamReturn}?poolId=${encodeURIComponent(canonicalPoolId)}`,
+    );
+    const projectHref = spendDetailHref('/workspaces/w1/projects/p1', personHref);
+    const params = new URLSearchParams(projectHref.split('?')[1]);
+    expect(params.get('poolId')).toBe(canonicalPoolId);
+    expect(params.get('returnTo')).toContain('poolId=pool%3Ateam%3AR%252FD');
+  });
+
   it('always retains identity and total, rejects unavailable and duplicate columns', () => {
     const all = ['name', 'spendUsd', 'agentSpendUsd'];
     expect(spendColumns(all, all, 'agentSpendUsd,agentSpendUsd,invented')).toEqual(all);
@@ -52,8 +65,9 @@ describe('Spend exploration URLs', () => {
   });
 
   it('rejects external and protocol-relative return destinations', () => {
-    expect(sanitizeSpendReturnTo('https://evil.example')).toBe('/spend');
-    expect(sanitizeSpendReturnTo('//evil.example')).toBe('/spend');
-    expect(sanitizeSpendReturnTo('/spend?tab=projects&page=2')).toBe('/spend?tab=projects&page=2');
+    expect(sanitizeSpendReturnTo('https://evil.example')).toBe('/my-projects');
+    expect(sanitizeSpendReturnTo('//evil.example')).toBe('/my-projects');
+    expect(sanitizeSpendReturnTo('/spend?tab=projects&viewScope=my&page=2')).toBe('/my-projects?page=2');
+    expect(sanitizeSpendReturnTo('/spend?tab=groups', '/my-team')).toBe('/my-team');
   });
 });

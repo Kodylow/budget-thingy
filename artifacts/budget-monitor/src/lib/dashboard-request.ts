@@ -31,13 +31,11 @@ export function dashboardRequestParams(input: {
   return params;
 }
 
-export function dashboardSpendHref(
+export function dashboardReportingHref(
+  destination: '/org-insights' | '/my-team',
   searchString: string,
-  filter?: Record<string, string>,
 ): string {
   const params = new URLSearchParams(searchString);
-  for (const [key, value] of Object.entries(filter ?? {})) {
-    params.set(key, value);
-  }
-  return `/spend?${params.toString()}`;
+  for (const key of ['viewScope', 'workspaceId']) params.delete(key);
+  return `${destination}${params.size ? `?${params}` : ''}`;
 }

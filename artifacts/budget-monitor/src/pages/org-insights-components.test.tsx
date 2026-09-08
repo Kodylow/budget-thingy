@@ -9,6 +9,10 @@ vi.mock("wouter", () => ({
   useSearch: () => "",
 }));
 
+vi.mock("wouter/use-browser-location", () => ({
+  useSearch: () => "",
+}));
+
 const mockData: OrgBudgetOverviewResponse = {
   periodStart: "2026-05-20",
   periodEnd: "2027-05-20",

@@ -11,6 +11,7 @@ import type { ReportingDetailGroup } from './reportingDetailGroup';
 import type { ReportingDetailHeadline } from './reportingDetailHeadline';
 import type { ReportingDetailKind } from './reportingDetailKind';
 import type { ReportingDetailMember } from './reportingDetailMember';
+import type { ReportingDetailOverview } from './reportingDetailOverview';
 import type { ReportingDetailSourceGroupsItem } from './reportingDetailSourceGroupsItem';
 import type { ReportingPeriod } from './reportingPeriod';
 import type { ReportingTeamHierarchyWorkspace } from './reportingTeamHierarchyWorkspace';
@@ -22,6 +23,7 @@ export interface ReportingDetail {
   /** Canonical pool name; present when kind is team. */
   name?: string;
   budgetTracking?: ReportingDetailBudgetTracking;
+  overview?: ReportingDetailOverview;
   headline: ReportingDetailHeadline;
   groups: ReportingDetailGroup[];
   /** Deduplicated authorized physical role groups represented by the canonical group rows; contains no financial fields. */

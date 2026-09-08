@@ -3,7 +3,9 @@ import { formatUsd } from "@/pages/home-components/format";
 import { MetricCard } from "@/components/journey-primitives";
 import { OrgBudgetOverviewResponse } from "@workspace/api-client-react";
 import { Link } from "wouter";
+import { useSearch } from "wouter/use-browser-location";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
+import { teamOverviewHref } from "@/lib/reporting-navigation";
 
 export function InsightCard({
   title,
@@ -58,6 +60,8 @@ const basisLabel = (basis: OrgBudgetOverviewResponse["teams"][number]["reporting
 export { OrgBudgetChart } from "./org-budget-chart";
 
 export function OrgTeamsTable({ teams }: { teams: OrgBudgetOverviewResponse['teams'] }) {
+  const search = useSearch();
+
   if (!teams || teams.length === 0) {
     return <div className="text-sm text-muted-foreground p-6 text-center border rounded bg-card">No teams found.</div>;
   }
@@ -87,7 +91,7 @@ export function OrgTeamsTable({ teams }: { teams: OrgBudgetOverviewResponse['tea
               <tr key={team.id} className="hover:bg-muted/30 transition-colors">
                 <td className="p-3">
                   <div className="flex flex-col">
-                    <Link href={`/groups/${team.id}`} className="font-semibold text-foreground hover:underline hover:text-primary transition-colors inline-block">
+                    <Link href={teamOverviewHref(team.id, search)} className="font-semibold text-foreground hover:underline hover:text-primary transition-colors inline-block">
                       {team.name}
                     </Link>
                   </div>

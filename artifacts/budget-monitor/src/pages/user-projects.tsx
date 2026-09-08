@@ -1,12 +1,13 @@
 import React from "react";
 import { useParams, useLocation } from "wouter";
+import { useSearch as useRawSearch } from "wouter/use-browser-location";
 import { 
   useListUserOwnedProjects, 
-  getListUserOwnedProjectsQueryKey 
+  getListUserOwnedProjectsQueryKey,
+  type ListUserOwnedProjectsParams,
 } from "@workspace/api-client-react";
 import { AlertTriangle, RefreshCw, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useSearch } from "wouter";
 import { sanitizeSpendReturnTo, spendDetailHref, updateSpendParams } from "@/lib/spend-exploration";
 import { useRange } from "@/components/range-context";
 import { AdminDataQualityNote } from "@/components/admin-data-quality";
@@ -15,19 +16,21 @@ import { DeploymentChip, ProjectDataFreshness, ProjectDate, StaleSpendingChip } 
 
 export default function UserProjects() {
   const { userId } = useParams();
-  const searchString = useSearch();
+  const rawSearch = useRawSearch();
+  const searchString = rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch;
   const [location, setLocation] = useLocation();
   const { rangeType, startDate, endDate } = useRange();
 
-  const searchParams = new URLSearchParams(searchString);
+  const searchParams = new URLSearchParams(rawSearch);
   const page = parseInt(searchParams.get('page') || '1', 10);
   const pageSize = 25;
-  const sort = searchParams.get('sort') || 'spend_desc';
+  const sort = (searchParams.get('sort') || 'spend_desc') as ListUserOwnedProjectsParams['sort'];
 
-  const queryParams: any = { 
+  const queryParams: ListUserOwnedProjectsParams = {
     rangeType,
-    viewScope: searchParams.get("viewScope") || undefined,
+    viewScope: (searchParams.get("viewScope") || undefined) as ListUserOwnedProjectsParams['viewScope'],
     workspaceId: searchParams.get("workspaceId") || undefined,
+    poolId: searchParams.get("poolId") || undefined,
     page, 
     pageSize, 
     sort 
@@ -43,7 +46,7 @@ export default function UserProjects() {
 
   const data = query.data;
 
-  const returnTo = sanitizeSpendReturnTo(searchParams.get("returnTo"));
+  const returnTo = sanitizeSpendReturnTo(searchParams.get("returnTo"), '/my-team');
   const currentPath = `${location}${searchString ? `?${searchString}` : ""}`;
   const setPage = (nextPage: number) => {
     const next = updateSpendParams(searchString, { page: String(nextPage) });

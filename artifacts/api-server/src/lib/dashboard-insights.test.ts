@@ -53,6 +53,95 @@ function usage(
 }
 
 describe("dashboard insights", () => {
+  test("slices committed group attribution for a member overlapping teams", () => {
+    const authz = {
+      userId: "admin",
+      roles: ["account"],
+      workspaceIds: [],
+      groupUserIds: {},
+    } as unknown as DashboardInsightsUsage["authz"];
+    const committed = rollup(10, { shared: 10 });
+    committed.aiSpendByGroup = new Map([
+      ["selected-team-group", new Map([["shared", 4]])],
+      ["other-team-group", new Map([["shared", 6]])],
+    ]);
+    committed.nonAiSpendByGroup = new Map([
+      ["selected-team-group", new Map()],
+      ["other-team-group", new Map()],
+    ]);
+    const daily = new Map([["2026-06-11", committed]]);
+    const selected = {
+      ...usage(authz, daily),
+      authz: {
+        ...authz,
+        roles: ["team_admin"],
+        groupIds: ["selected-team-group"],
+        managedGroupIds: ["selected-team-group"],
+        userIds: ["shared"],
+        groupUserIds: { "selected-team-group": ["shared"] },
+      } as DashboardInsightsUsage["authz"],
+      groups: [{ id: "selected-team-group", workspaceId: "w1" }],
+    };
+    const insights = buildDashboardInsights({
+      selected,
+      selectedDaily: daily,
+      expanded: selected,
+      expandedDaily: daily,
+      directory: { members: new Map([["shared", { name: "Shared" }]]) },
+      period: {
+        start: "2026-06-11T00:00:00.000Z",
+        endExclusive: "2026-06-12T00:00:00.000Z",
+      },
+      now: new Date("2026-06-11T12:00:00.000Z"),
+      cutoff: "2026-05-20T00:00:00.000Z",
+      projectAttributionComplete: true,
+    });
+
+    expect(insights.activeUsers).toBe(1);
+    expect(insights.avgSpendPerActiveUserUsd).toBe(4);
+    expect(insights.monthly.at(-1)?.spendUsd).toBe(4);
+  });
+
+  test("unrelated workspace and account gaps do not hide a known team month", () => {
+    const authz = {
+      userId: "admin",
+      roles: ["team_admin"],
+      workspaceIds: [],
+      groupUserIds: { g1: ["member"] },
+    } as unknown as DashboardInsightsUsage["authz"];
+    const daily = new Map(Array.from({ length: 11 }, (_, index) => {
+      const day = `2026-06-${String(index + 1).padStart(2, "0")}`;
+      return [
+        day,
+        index === 10 ? rollup(4, { member: 4 }) : rollup(0, {}),
+      ] as const;
+    }));
+    const selected = usage(authz, daily);
+    selected.snapshot.coverage.missingWorkspaceDays = [
+      { workspaceId: "other-workspace", usageDate: "2026-06-11" },
+    ] as never;
+    selected.snapshot.coverage.missingAccountDays = ["2026-06-11"];
+    selected.snapshot.includesAccountAnchor = true;
+    const insights = buildDashboardInsights({
+      selected,
+      selectedDaily: daily,
+      expanded: selected,
+      expandedDaily: daily,
+      directory: { members: new Map() },
+      period: {
+        start: "2026-06-11T00:00:00.000Z",
+        endExclusive: "2026-06-12T00:00:00.000Z",
+      },
+      now: new Date("2026-06-11T12:00:00.000Z"),
+      cutoff: "2026-05-20T00:00:00.000Z",
+      projectAttributionComplete: true,
+    });
+    expect(insights.monthly.at(-1)).toMatchObject({
+      spendUsd: 4,
+      isMissing: false,
+    });
+  });
+
   test("derives scoped selected metrics and equal-window comparison", () => {
     const authz = {
       userId: "admin",

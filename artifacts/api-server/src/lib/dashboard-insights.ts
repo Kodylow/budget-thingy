@@ -36,12 +36,17 @@ function dayRange(start: string, endExclusive: string): string[] {
   );
 }
 
-function coverageForDay(snapshot: UsageSnapshot, day: string): boolean {
+function coverageForDay(
+  usage: DashboardInsightsUsage,
+  day: string,
+): boolean {
+  const { snapshot } = usage;
   if (snapshot.coverage.missingWorkspaceDays.some((item) =>
-    item.usageDate === day)) return false;
+    item.usageDate === day && usage.workspaceIds.has(item.workspaceId))) return false;
   if (snapshot.coverage.failedWorkspaceDays.some((item) =>
-    item.usageDate === day)) return false;
-  return !snapshot.includesAccountAnchor ||
+    item.usageDate === day && usage.workspaceIds.has(item.workspaceId))) return false;
+  return !usage.authz.roles.includes("account") ||
+    !snapshot.includesAccountAnchor ||
     !snapshot.coverage.missingAccountDays.includes(day);
 }
 
@@ -66,7 +71,7 @@ function totalsForWindow(
     days,
     known,
     complete: days.length > 0 && days.every((day) =>
-      coverageForDay(usage.snapshot, day) && hasKnownDay(daily, day)),
+      coverageForDay(usage, day) && hasKnownDay(daily, day)),
     spendUsd: totals.length === 0 ? null : round(totals.reduce(
       (sum, item) => sum + item.reportedSpendUsd, 0)),
     agentSpendUsd: totals.length === 0 ? null : round(totals.reduce(

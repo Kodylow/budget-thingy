@@ -53,6 +53,7 @@ const SHARED_2 = `${PREFIX}-shared-2`;
 const FAMILY_A = `${PREFIX}-family-a`;
 const FAMILY_B = `${PREFIX}-family-b`;
 const SHARED_TEAM = `${PREFIX}-canonical-team`;
+const TEAM_PROJECT_ID = "8af7619e-48e1-4f55-8f1d-8d37c6a7f234";
 const ZERO_SPEND_TEAM = `${PREFIX}-configured-zero-spend-team`;
 const LARGE_TEAM = `${PREFIX}-large-team`;
 const LARGE_TEAM_GROUPS = Array.from({ length: 33 }, (_, index) => ({
@@ -461,6 +462,19 @@ beforeAll(async () => {
   });
   await db.insert(usageProjectDayTable).values([
     {
+      workspaceId: W1,
+      usageDate: TODAY,
+      projectId: TEAM_PROJECT_ID,
+      totalCostUsd: 2,
+      metricsJson: [{
+        id: "ai_agent",
+        name: "Agent",
+        category: "ai",
+        costUsd: 2,
+      }],
+      fetchedAt: new Date(),
+    },
+    {
       workspaceId: W3,
       usageDate: TODAY,
       projectId: `${PREFIX}-group-coworker-project`,
@@ -485,6 +499,13 @@ beforeAll(async () => {
   const olderProjectMetadataObservedAt =
     new Date(projectMetadataObservedAt.getTime() - 1_000);
   await db.insert(apiProjectMetadataTable).values([
+    {
+      workspaceId: W1,
+      projectId: TEAM_PROJECT_ID,
+      title: "Canonical team project",
+      creatorId: SHARED_ADMIN,
+      fetchedAt: projectMetadataObservedAt,
+    },
     {
       workspaceId: W5,
       projectId: `${PREFIX}-self-project`,
@@ -545,7 +566,7 @@ beforeAll(async () => {
     { workspaceId: W7, projectId: `${PREFIX}-transferred-project`, title: "Transferred old project", creatorId: INTERNAL_SELF, fetchedAt: olderProjectMetadataObservedAt },
     { workspaceId: W8, projectId: `${PREFIX}-transferred-project`, title: "Transferred current project", creatorId: INTERNAL_PEER, fetchedAt: projectMetadataObservedAt },
   ]);
-  await db.insert(apiProjectMetadataStateTable).values([W3, W5, W7, W8].map(
+  await db.insert(apiProjectMetadataStateTable).values([W1, W3, W5, W7, W8].map(
     (workspaceId) => ({
       workspaceId,
       status: "success" as const,
@@ -1105,6 +1126,55 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
       `/users/${DETAIL_MEMBER}/projects?workspaceId=${W6}&${RANGE}`,
       DETAIL_ACCOUNT_ADMIN,
     )).status).toBe(404);
+  });
+
+  test("account administrators retain personal scope on project drilldowns", async () => {
+    const authz = authorizations[INTERNAL_SELF]!;
+    const original = {
+      role: authz.role,
+      roles: authz.roles,
+      isTrueAccountAdmin: authz.isTrueAccountAdmin,
+    };
+    authz.role = "account";
+    authz.roles = ["account"];
+    authz.isTrueAccountAdmin = true;
+    try {
+      const ownProject = `${PREFIX}-internal-self-service-project`;
+      const detail = await get(
+        `/workspaces/${W7}/projects/${ownProject}?viewScope=my&${RANGE}`,
+        INTERNAL_SELF,
+      );
+      expect(detail.status).toBe(200);
+      expect(await detail.json()).toMatchObject({
+        project: {
+          projectId: ownProject,
+          ownerId: INTERNAL_SELF,
+          spendUsd: 3,
+        },
+      });
+      const owned = await get(
+        `/users/${INTERNAL_SELF}/projects?viewScope=my&${RANGE}`,
+        INTERNAL_SELF,
+      );
+      expect(owned.status).toBe(200);
+      const ownedValue = await owned.json() as {
+        projects: { rows: Array<{ ownerId?: string }> };
+      };
+      expect(ownedValue.projects.rows.every((row) =>
+        row.ownerId === INTERNAL_SELF)).toBe(true);
+      expect((await get(
+        `/users/${INTERNAL_PEER}/projects?viewScope=my&${RANGE}`,
+        INTERNAL_SELF,
+      )).status).toBe(404);
+      expect((await get(
+        `/workspaces/${W7}/projects/${PREFIX}-internal-peer-project?viewScope=my&${RANGE}`,
+        INTERNAL_SELF,
+      )).status).toBe(404);
+    } finally {
+      authz.role = original.role;
+      authz.roles = original.roles;
+      authz.isTrueAccountAdmin = original.isTrueAccountAdmin;
+    }
   });
 
   test("owned projects retain zero spend and one current transfer identity", async () => {
@@ -1991,7 +2061,7 @@ describe("authenticated group detail qualification", () => {
   test("budget team report uses budget-to-date accounting despite a one-day selected range", async () => {
     const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
     const response = await get(
-      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true`,
+      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true&includeOverview=true`,
       DETAIL_ACCOUNT_ADMIN,
     );
     expect(response.status).toBe(200);
@@ -2022,6 +2092,17 @@ describe("authenticated group detail qualification", () => {
         benchmarkEligible: boolean;
         qualification: string | null;
         points: Array<{ date: string; spendUsd: number | null }>;
+      };
+      overview: {
+        insights: {
+          activeUsers: number | null;
+          monthly: Array<{
+            spendUsd: number | null;
+            activeUsers: number | null;
+          }>;
+        };
+        projects: Array<{ workspaceId: string; spendUsd: number }>;
+        projectAttributionComplete: boolean;
       };
     };
     expect(value).toMatchObject({
@@ -2062,6 +2143,48 @@ describe("authenticated group detail qualification", () => {
       date: TODAY,
       spendUsd: 505,
     });
+    expect(value.overview.insights.activeUsers).toBe(2);
+    expect(value.overview.insights.monthly).toHaveLength(6);
+    expect(value.overview.projects.every((row) =>
+      row.workspaceId === W1 || row.workspaceId === W2)).toBe(true);
+    expect(value.overview.projects).toContainEqual(expect.objectContaining({
+      id: `project:${W1}:${TEAM_PROJECT_ID}`,
+      projectId: TEAM_PROJECT_ID,
+    }));
+  });
+
+  test("canonical team project drilldowns exclude a member's other-team projects", async () => {
+    const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
+    const owned = await get(
+      `/users/${COWORKER}/projects?${RANGE}&poolId=${encodeURIComponent(poolId)}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(owned.status).toBe(200);
+    const ownedText = await owned.text();
+    const ownedValue = JSON.parse(ownedText) as {
+      projects: { rows: Array<{ workspaceId: string; spendUsd: number }> };
+    };
+    expect(ownedValue.projects.rows.every((row) =>
+      row.workspaceId === W1 || row.workspaceId === W2)).toBe(true);
+    expect(ownedText).not.toContain(`${PREFIX}-group-coworker-project`);
+    expect(ownedText).not.toContain(W3);
+
+    const otherTeamDetail = await get(
+      `/workspaces/${W3}/projects/${PREFIX}-group-coworker-project?${RANGE}&poolId=${encodeURIComponent(poolId)}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(otherTeamDetail.status).toBe(404);
+
+    const unknown = await get(
+      `/users/${COWORKER}/projects?${RANGE}&poolId=${encodeURIComponent("pool:team:missing")}`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(unknown.status).toBe(404);
+    const forbidden = await get(
+      `/users/${COWORKER}/projects?${RANGE}&poolId=${encodeURIComponent(poolId)}`,
+      DETAIL_OUTSIDER,
+    );
+    expect(forbidden.status).toBe(403);
   });
 
   test("budget team report rejects intermediate ingest units and recovers on the published generation", async () => {
@@ -2177,7 +2300,7 @@ describe("authenticated group detail qualification", () => {
     expect(JSON.stringify(pools)).not.toContain(SHARED_2);
 
     const response = await get(
-      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true`,
+      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}&includeBudgetTracking=true&includeOverview=true`,
       SHARED_ADMIN,
     );
     expect(response.status).toBe(200);
@@ -2191,6 +2314,10 @@ describe("authenticated group detail qualification", () => {
         scopeComplete: boolean;
         benchmarkEligible: boolean;
       };
+      overview: {
+        insights: { activeUsers: number | null };
+        projects: Array<{ workspaceId: string }>;
+      };
     };
     expect(value.headline).toMatchObject({ spendUsd: 5, allocationUsd: null });
     expect(value.sourceGroups.map((group) => group.groupId)).toEqual([SHARED_1]);
@@ -2200,6 +2327,8 @@ describe("authenticated group detail qualification", () => {
       scopeComplete: false,
       benchmarkEligible: false,
     });
+    expect(value.overview.insights.activeUsers).toBe(1);
+    expect(value.overview.projects.every((row) => row.workspaceId === W1)).toBe(true);
     expect(text).not.toContain(SHARED_2);
   });
 
@@ -2237,6 +2366,14 @@ describe("authenticated group detail qualification", () => {
       DETAIL_ACCOUNT_ADMIN,
     );
     expect(unbudgeted.status).toBe(404);
+    const invalidOverview = await get(
+      `/reporting/teams/${encodeURIComponent(emptyPoolId)}?${RANGE}&includeOverview=maybe`,
+      DETAIL_ACCOUNT_ADMIN,
+    );
+    expect(invalidOverview.status).toBe(400);
+    expect(await invalidOverview.json()).toEqual({
+      error: "includeOverview must be true or false",
+    });
   });
 
   test("budget team reports allow more than 32 mapped canonical groups", async () => {
@@ -2270,6 +2407,10 @@ describe("authenticated group detail qualification", () => {
       inArray(usageMemberDayTable.workspaceId, [W1, W2]),
       eq(usageMemberDayTable.usageDate, TODAY),
     ));
+    await db.delete(usageProjectDayTable).where(and(
+      inArray(usageProjectDayTable.workspaceId, [W1, W2]),
+      eq(usageProjectDayTable.usageDate, TODAY),
+    ));
     invalidateUsageSnapshotMemo();
     try {
       const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
@@ -2302,6 +2443,19 @@ describe("authenticated group detail qualification", () => {
         { workspaceId: W1, usageDate: TODAY, userId: SHARED_ADMIN, totalCostUsd: 5, aiCostUsd: 5, metricsJson: [], fetchedAt: new Date() },
         { workspaceId: W2, usageDate: TODAY, userId: COWORKER, totalCostUsd: 500, aiCostUsd: 500, metricsJson: [], fetchedAt: new Date() },
       ]);
+      await db.insert(usageProjectDayTable).values({
+        workspaceId: W1,
+        usageDate: TODAY,
+        projectId: TEAM_PROJECT_ID,
+        totalCostUsd: 2,
+        metricsJson: [{
+          id: "ai_agent",
+          name: "Agent",
+          category: "ai",
+          costUsd: 2,
+        }],
+        fetchedAt: new Date(),
+      });
       invalidateUsageSnapshotMemo();
     }
   });

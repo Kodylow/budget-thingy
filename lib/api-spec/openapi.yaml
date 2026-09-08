@@ -340,6 +340,15 @@ paths:
             type: boolean
             default: false
           description: Include allocation-period spend tracking and cumulative daily points.
+        - name: includeOverview
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: >
+            Include selected-period people and projects plus exact-team
+            six-month insights. Every value is restricted to this canonical
+            team's committed, authorized source-group mappings.
         - name: trackingRange
           in: query
           schema:
@@ -796,6 +805,10 @@ paths:
         - $ref: "#/components/parameters/StartDate"
         - $ref: "#/components/parameters/EndDate"
         - $ref: "#/components/parameters/ViewScope"
+        - name: poolId
+          in: query
+          schema: { type: string, minLength: 1 }
+          description: Optional authorized canonical team pool restricting project attribution.
       responses:
         "200":
           description: Authorized project detail
@@ -842,6 +855,10 @@ paths:
         - $ref: "#/components/parameters/StartDate"
         - $ref: "#/components/parameters/EndDate"
         - $ref: "#/components/parameters/ViewScope"
+        - name: poolId
+          in: query
+          schema: { type: string, minLength: 1 }
+          description: Optional authorized canonical team pool restricting owned projects and amounts.
         - $ref: "#/components/parameters/SpendSearch"
         - $ref: "#/components/parameters/SpendWorkspace"
         - $ref: "#/components/parameters/ProjectDeployedOnly"
@@ -3935,6 +3952,23 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/BudgetTrackingPoint"
+        overview:
+          type: object
+          required: [insights, projects, projectAttributionComplete]
+          properties:
+            insights:
+              $ref: "#/components/schemas/DashboardInsights"
+            projects:
+              type: array
+              maxItems: 10
+              items:
+                $ref: "#/components/schemas/SpendTableRow"
+            projectAttributionComplete:
+              type: boolean
+              description: >
+                False when project creator/group evidence is incomplete.
+                Project rows are attributed observations and never a canonical
+                pool residual or a sum forced to the team headline.
         headline:
           $ref: "#/components/schemas/ReportingDetailHeadline"
         groups:
@@ -4679,6 +4713,9 @@ components:
       required: [id, kind, name, workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, status, memberCount, ownerName, limitState, limitObservationStatus, sharedPool]
       properties:
         id: { type: string }
+        projectId:
+          type: string
+          description: Raw upstream project identity for project rows; distinct from the workspace-qualified row id.
         userId:
           type: string
           description: Stable user identity for person rows.

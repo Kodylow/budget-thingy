@@ -178,10 +178,11 @@ export async function buildSpendTablePayload(
   query: Record<string, unknown>,
   prepared?: Awaited<ReturnType<typeof prepareScopedAccounting>>,
   ownerId?: string,
+  suppliedIntelligence?: Awaited<ReturnType<typeof buildProjectIntelligence>>,
 ) {
-  const intelligence = view === "projects"
+  const intelligence = suppliedIntelligence ?? (view === "projects"
     ? await buildProjectIntelligence(authz, query, prepared)
-    : null;
+    : null);
   const result = intelligence?.result ??
     await buildScopedAccounting(authz, query, view, prepared);
   const allRows = rowsForView(result, view).filter((row) =>

@@ -44,6 +44,10 @@ includeHierarchy?: boolean;
  */
 includeBudgetTracking?: boolean;
 /**
+ * Include selected-period people and projects plus exact-team six-month insights. Every value is restricted to this canonical team's committed, authorized source-group mappings.
+ */
+includeOverview?: boolean;
+/**
  * Use the fixed allocation period (default), the verified current billing cycle's monthly Agent limit and Agent-only usage, or the selected report period.
  */
 trackingRange?: GetBudgetTeamReportTrackingRange;

@@ -4,7 +4,7 @@ import { getNavSections } from '../components/app-shell';
 import type { AuthCapabilities } from '@workspace/replit-auth-web';
 import {
   dashboardRequestParams,
-  dashboardSpendHref,
+  dashboardReportingHref,
 } from '../lib/dashboard-request';
 
 const mockCapabilities = (overrides: Partial<AuthCapabilities> = {}): AuthCapabilities => ({
@@ -21,7 +21,7 @@ const mockCapabilities = (overrides: Partial<AuthCapabilities> = {}): AuthCapabi
   ...overrides
 });
 
-describe('Dashboard and Spend Spec Behaviors', () => {
+describe('Dashboard reporting behaviors', () => {
   it('sends one generated dashboard request with URL-owned reporting controls', () => {
     expect(dashboardRequestParams({
       rangeType: 'billing',
@@ -43,26 +43,24 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(source).not.toMatch(/useGetSummary|useGetTrends|useListGroups/);
   });
 
-  it('preserves dashboard range, trend, and scope when opening Spend', () => {
-    const href = dashboardSpendHref(
+  it('preserves reporting controls without carrying obsolete scope filters', () => {
+    const href = dashboardReportingHref(
+      '/my-team',
       '?rangeType=billing&viewScope=managed&granularity=week&trendMode=period',
-      { view: 'groups', search: 'Platform' },
     );
     const url = new URL(href, 'https://example.test');
     expect(Object.fromEntries(url.searchParams)).toMatchObject({
       rangeType: 'billing',
-      viewScope: 'managed',
       granularity: 'week',
       trendMode: 'period',
-      view: 'groups',
-      search: 'Platform',
     });
+    expect(url.searchParams.has('viewScope')).toBe(false);
   });
 
   it('removes the dashboard breakdown and keeps the headline Spend navigation', () => {
     const source = readFileSync(new URL('./dashboard.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('onClick={() => navigateToSpend()}');
-    expect(source).toContain('aria-label="Explore spend in Spend"');
+    expect(source).toContain('onClick={navigateToReport}');
+    expect(source).toContain('aria-label="Open reporting overview"');
     expect(source).not.toContain("navigateToSpend({ view: 'groups', search: item.label })");
     expect(source).not.toContain('Top budget groups by spend');
   });
@@ -190,7 +188,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(sections[0].items.map(item => [item.path, item.label])).toEqual([
       ['/org-insights', 'Org Insights'],
       ['/my-team', 'My Team'],
-      ['/spend?tab=projects&viewScope=my', 'My Projects'],
+      ['/my-projects', 'My Projects'],
       ['/allocations', 'Budget allocations'],
       ['/limits', 'Limits'],
     ]);
@@ -241,14 +239,14 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(source).not.toContain('all_authorized');
   });
 
-  it('consumes validated same-origin returnTo from URL search for back links', () => {
+  it('uses surviving role-safe return destinations for detail back links', () => {
     const getBackHref = (returnTo: string | null) => {
-      return (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')) ? returnTo : '/spend';
+      return (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')) ? returnTo : '/my-team';
     };
 
-    expect(getBackHref('/spend?tab=groups')).toBe('/spend?tab=groups');
-    expect(getBackHref('https://malicious.com')).toBe('/spend');
-    expect(getBackHref('//malicious.com')).toBe('/spend');
-    expect(getBackHref(null)).toBe('/spend');
+    expect(getBackHref('/teams/team-1')).toBe('/teams/team-1');
+    expect(getBackHref('https://malicious.com')).toBe('/my-team');
+    expect(getBackHref('//malicious.com')).toBe('/my-team');
+    expect(getBackHref(null)).toBe('/my-team');
   });
 });

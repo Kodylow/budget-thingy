@@ -22,12 +22,14 @@ import { createForbiddenRevalidator } from '@/lib/auth-transition';
 import { resolvedRootDestination, safeLoginReturnTarget } from '@/lib/login-navigation';
 import { UnavailableObserver } from '@/components/unavailable-observer';
 import { reportRenderFailure } from '@/lib/render-diagnostics';
+import { legacyReportingDestination } from '@/lib/reporting-navigation';
 
 const Dashboard = lazy(() => import('@/pages/dashboard'));
 const Home = lazy(() => import('@/pages/home'));
 const OrgInsights = lazy(() => import('@/pages/org-insights'));
-const Spend = lazy(() => import('@/pages/spend'));
+const MyProjects = lazy(() => import('@/pages/my-projects'));
 const MyTeam = lazy(() => import('@/pages/my-team'));
+const TeamOverview = lazy(() => import('@/pages/team-overview'));
 const Allocations = lazy(() => import('@/pages/team-budgets'));
 const Alerts = lazy(() => import('@/pages/alerts'));
 const Access = lazy(() => import('@/pages/access'));
@@ -232,6 +234,19 @@ function PreserveQueryRedirect({ to, tab }: { to: string; tab?: string }) {
   return null;
 }
 
+function LegacyReportingRedirect() {
+  const { capabilities } = useAuthContext();
+  const rawSearch = useRawSearch();
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation(
+      legacyReportingDestination(rawSearch, capabilities.canViewAccountUsage === true),
+      { replace: true },
+    );
+  }, [rawSearch, capabilities.canViewAccountUsage, setLocation]);
+  return <RouteLoading />;
+}
+
 function AuthenticatedLoginRoute() {
   const search = useSearch();
   const [, setLocation] = useLocation();
@@ -266,7 +281,7 @@ function Router() {
   useEffect(() => {
     const titles: Record<string, string> = {
       '/': 'Overview',
-      '/spend': 'Spend',
+      '/my-projects': 'My Projects',
       '/my-team': 'My Team',
       '/org-insights': 'Org Insights',
       '/limits': 'Usage Limits',
@@ -274,11 +289,16 @@ function Router() {
       '/alerts': 'Email activity',
       '/access': 'Access',
       '/settings': 'Settings',
-      '/reports': 'Spend',
       '/help': 'Help',
       '/clusters': 'Planning pool detail',
     };
-    const title = titles[location] ?? (location.startsWith('/groups/') ? 'Group detail' : 'Page not found');
+    const title = titles[location] ?? (
+      location.startsWith('/teams/') ? 'Team overview' :
+      location.startsWith('/groups/') ? 'Group detail' :
+      location.startsWith('/workspaces/') ? 'Project detail' :
+      location.startsWith('/users/') ? 'Person projects' :
+      'Page not found'
+    );
     document.title = `${title} · Budget Monitor`;
   }, [location]);
   return (
@@ -288,8 +308,12 @@ function Router() {
           <Route path="/" component={RootRoute} />
           <Route path="/overview" component={Dashboard} />
           <Route path="/org-insights" component={OrgInsights} />
-          <Route path="/spend" component={Spend} />
+          <Route path="/spend" component={LegacyReportingRedirect} />
+          <Route path="/reports" component={LegacyReportingRedirect} />
+          <Route path="/workspace-directory" component={LegacyReportingRedirect} />
+          <Route path="/my-projects" component={MyProjects} />
           <Route path="/my-team" component={MyTeam} />
+          <Route path="/teams/:poolId" component={TeamOverview} />
           <Route path="/limits" component={LimitsRoute} />
           <Route path="/allocations" component={AllocationsRoute} />
           <Route path="/alerts" component={AlertsRoute} />
@@ -301,9 +325,7 @@ function Router() {
           <Route path="/trends" component={() => <PreserveQueryRedirect to="/" />} />
           <Route path="/team-budgets" component={() => <PreserveQueryRedirect to="/allocations" />} />
           <Route path="/workspace-admins" component={() => <PreserveQueryRedirect to="/access" />} />
-          <Route path="/workspace-directory" component={() => <PreserveQueryRedirect to="/spend" />} />
           <Route path="/user-guide" component={() => <PreserveQueryRedirect to="/help" />} />
-          <Route path="/reports" component={() => <PreserveQueryRedirect to="/spend" tab="pools" />} />
 
           <Route path="/groups/:groupId" component={GroupDetail} />
           <Route path="/workspaces/:workspaceId/projects/:projectId" component={ProjectDetail} />

@@ -157,7 +157,7 @@ function getNavSections(
           ? { path: '/org-insights', label: 'Org Insights', icon: Building2, show: true, testId: 'nav-org-insights' }
           : { path: '/', label: 'Home', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
         { path: '/my-team', label: 'My Team', icon: Users, show: role !== 'denied' && role !== null, testId: 'nav-my-team' },
-        { path: '/spend?tab=projects&viewScope=my', label: 'My Projects', icon: FolderCode, show: true, testId: 'nav-my-projects' },
+        { path: '/my-projects', label: 'My Projects', icon: FolderCode, show: true, testId: 'nav-my-projects' },
         { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canViewAccountUsage, testId: 'nav-allocations' },
         { path: '/limits', label: 'Limits', icon: ShieldCheck, show: capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
       ],

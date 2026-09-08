@@ -27,4 +27,9 @@ endDate?: EndDateParameter;
  * Server-resolved presentation scope; managed excludes unrelated self-only grants.
  */
 viewScope?: ViewScopeParameter;
+/**
+ * Optional authorized canonical team pool restricting project attribution.
+ * @minLength 1
+ */
+poolId?: string;
 };

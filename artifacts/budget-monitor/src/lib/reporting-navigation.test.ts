@@ -1,62 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { reportingNavigationHref, reportingNavigationKey } from './reporting-navigation';
+import {
+  legacyReportingDestination,
+  reportingNavigationHref,
+  reportingNavigationKey,
+  teamOverviewHref,
+} from './reporting-navigation';
 
 describe('reporting navigation', () => {
-  it('keeps selected dates when opening forecast details', () => {
-    for (const path of ['/overview']) {
-    const href = reportingNavigationHref('/my-team?viewScope=managed', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&projectionHorizon=term_end&page=2');
-      const url = new URL(href, 'https://example.test');
-      expect(url.pathname).toBe(path);
-      expect(url.searchParams.get('rangeType')).toBe('custom');
-      expect(url.searchParams.get('startDate')).toBe('2026-09-01');
-      expect(url.searchParams.get('endDate')).toBe('2026-09-04');
-      expect(url.searchParams.get('viewScope')).toBe('all_authorized');
-      expect(url.searchParams.has('page')).toBe(false);
-    }
-  });
-  it('opens account-wide organization insights without inherited Home filters', () => {
-    expect(reportingNavigationHref(
-      '/org-insights',
-      'workspaceId=workspace-1&rangeType=custom&startDate=2026-09-01&endDate=2026-09-04&viewScope=my',
-    )).toBe('/org-insights');
-  });
-  it('keeps the period while the destination deliberately selects personal projects', () => {
-    const href = reportingNavigationHref('/my-team?viewScope=managed', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&projectionHorizon=term_end&page=2');
-    const query = new URL(href, 'https://example.test').searchParams;
-    expect(query.get('rangeType')).toBe('custom');
-    expect(query.get('startDate')).toBe('2026-05-20');
-    expect(query.get('endDate')).toBe('2026-09-06');
-    expect(query.get('workspaceId')).toBe('workspace-1');
-    expect(query.has('page')).toBe(false);
+  it('carries reporting context but not ledger scope, filters, or pagination', () => {
+    const href = reportingNavigationHref(
+      '/my-team',
+      'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&projectionHorizon=term_end&viewScope=managed&workspaceId=w1&page=2',
+    );
+    expect(href).toBe('/my-team?rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&projectionHorizon=term_end');
   });
 
-  it('preserves dates and horizon when opening My Team', () => {
-    const href = reportingNavigationHref('/my-team?viewScope=managed', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&projectionHorizon=term_end&page=2');
-    const query = new URL(href, 'https://example.test').searchParams;
-    expect(query.get('rangeType')).toBe('custom');
-    expect(query.get('startDate')).toBe('2026-05-20');
-    expect(query.get('endDate')).toBe('2026-09-06');
-    expect(query.get('workspaceId')).toBe('workspace-1');
-    expect(query.has('page')).toBe(false);
+  it('keeps Org Insights account-wide and free from inherited filters', () => {
+    expect(reportingNavigationHref('/org-insights', 'rangeType=month&workspaceId=w1'))
+      .toBe('/org-insights');
   });
 
-  it('preserves dates and horizon when opening My Team', () => {
-    const href = reportingNavigationHref('/my-team?viewScope=managed', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&projectionHorizon=term_end&page=2');
-    const query = new URL(href, 'https://example.test').searchParams;
-    expect(query.get('rangeType')).toBe('custom');
-    expect(query.get('startDate')).toBe('2026-05-20');
-    expect(query.get('endDate')).toBe('2026-09-06');
-    expect(query.get('workspaceId')).toBe('workspace-1');
-    expect(query.has('page')).toBe(false);
+  it('builds canonical team paths by encoding the raw ID exactly once', () => {
+    expect(teamOverviewHref('pool:team:R%2FD', 'rangeType=full-term&viewScope=managed'))
+      .toBe('/teams/pool%3Ateam%3AR%252FD?rangeType=full-term');
   });
 
-  it('preserves dates and horizon when opening My Team', () => {
-    const href = reportingNavigationHref('/my-team?viewScope=managed', 'rangeType=custom&startDate=2026-05-20&endDate=2026-09-06&projectionHorizon=term_end&page=2');
-    const query = new URL(href, 'https://example.test').searchParams;
-    expect(query.get('viewScope')).toBe('managed');
-    expect(query.get('startDate')).toBe('2026-05-20');
-    expect(query.get('endDate')).toBe('2026-09-06');
-    expect(query.get('projectionHorizon')).toBe('term_end');
-    expect(query.has('page')).toBe(false);
+  it('gives standalone destinations their own active navigation key', () => {
+    expect(reportingNavigationKey('/my-projects', 'page=2')).toBe('/my-projects');
+    expect(reportingNavigationKey('/my-team', 'rangeType=month')).toBe('/my-team');
+  });
+
+  it('maps legacy personal, selected-team, and generic reporting URLs safely', () => {
+    expect(legacyReportingDestination('view=projects&viewScope=my&page=2', false))
+      .toBe('/my-projects?page=2');
+    expect(legacyReportingDestination('poolId=pool%3Ateam%3AA%252FB', true))
+      .toBe('/teams/pool%3Ateam%3AA%252FB');
+    expect(legacyReportingDestination('rangeType=month', true)).toBe('/org-insights');
+    expect(legacyReportingDestination('rangeType=month', false)).toBe('/my-team?rangeType=month');
   });
 });

@@ -22,6 +22,7 @@ import { VirtualizedTableRows } from '@/components/virtualized-table-rows';
 import { InternalSpendExplanation, InternalUserBadge } from '@/components/internal-user-badge';
 import { BudgetMeter, StatusBadge, type JourneyStatus } from '@/components/journey-primitives';
 import { isUnknownSpendTotal } from '@/lib/spend-presentation';
+import { sanitizeSpendReturnTo } from '@/lib/spend-exploration';
 
 function errorStatus(error: unknown) {
   return typeof error === 'object' && error !== null && 'status' in error
@@ -32,7 +33,7 @@ function errorStatus(error: unknown) {
 function BackLink() {
   const search = useSearch();
   const returnTo = new URLSearchParams(search).get('returnTo');
-  const backHref = returnTo?.startsWith('/') && !returnTo.startsWith('//') && !returnTo.includes('\\') ? returnTo : '/spend';
+  const backHref = sanitizeSpendReturnTo(returnTo, '/my-team');
 
   return (
     <Link

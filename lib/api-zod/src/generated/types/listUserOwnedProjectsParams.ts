@@ -35,6 +35,11 @@ endDate?: EndDateParameter;
  */
 viewScope?: ViewScopeParameter;
 /**
+ * Optional authorized canonical team pool restricting owned projects and amounts.
+ * @minLength 1
+ */
+poolId?: string;
+/**
  * @maxLength 200
  */
 search?: SpendSearchParameter;
