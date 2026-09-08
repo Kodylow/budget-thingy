@@ -105,6 +105,36 @@ describe("OrgBudgetChart", () => {
 });
 
 describe("OrgTeamsTable", () => {
+  it.each([
+    ["qualified recorded spend", 13115.74, 1609.81, 11505.93, 12.273897927, "$11,505.93", "12.3%"],
+    ["known zero spend", 100, 0, 100, 0, "$100.00", "0.0%"],
+    ["zero allocation", 0, 500, -500, null, "-$500.00", "Not applicable"],
+    ["zero allocation and spend", 0, 0, 0, null, "$0.00", "Not applicable"],
+    ["overspend", 100, 150, -50, 150, "-$50.00", "150.0%"],
+    ["missing spend", 100, null, null, null, "Unavailable", "Unavailable"],
+    ["missing allocation", null, 50, null, null, "Unavailable", "Unavailable"],
+    ["zero allocation with missing spend", 0, null, null, null, "Unavailable", "Unavailable"],
+  ])("renders %s without client-side accounting", (_name, allocationUsd, spendUsd, remainingUsd, percentUsed, remaining, utilization) => {
+    const team = {
+      ...mockData.teams[1], allocationUsd, spendUsd, remainingUsd, percentUsed,
+    } as OrgBudgetOverviewResponse["teams"][number];
+    const html = renderToStaticMarkup(<OrgTeamsTable teams={[team]} />);
+    expect(html).toContain(remaining);
+    expect(html).toContain(utilization);
+    expect(html).not.toContain("Partial data");
+    expect(html).not.toContain("Current-membership qualified");
+    expect(html).not.toContain("Infinity");
+    if (spendUsd === null) expect(html).not.toContain("Not applicable");
+    if (allocationUsd === null) expect(html).toContain("Not set");
+  });
+
+  it("does not compute a fallback when the API withholds a value", () => {
+    const html = renderToStaticMarkup(<OrgTeamsTable teams={[{
+      ...mockData.teams[1], remainingUsd: null, percentUsed: null,
+    }]} />);
+    expect(html.match(/Unavailable/g)).toHaveLength(2);
+  });
+
   it("renders all teams including zero budget teams", () => {
     const html = renderToStaticMarkup(<OrgTeamsTable teams={mockData.teams} />);
 

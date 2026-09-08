@@ -38,6 +38,40 @@ function round(value: number): number {
   return Math.round((value + Number.EPSILON) * 1e8) / 1e8;
 }
 
+export function budgetAvailability(
+  allocationUsd: number | null,
+  spendUsd: number | null,
+): { remainingUsd: number | null; percentUsed: number | null } {
+  if (allocationUsd === null || spendUsd === null) {
+    return { remainingUsd: null, percentUsed: null };
+  }
+  return {
+    remainingUsd: round(allocationUsd - spendUsd),
+    percentUsed: allocationUsd > 0
+      ? round(spendUsd / allocationUsd * 100)
+      : null,
+  };
+}
+
+export function fundedBudgetAvailability(
+  teams: ReadonlyArray<{
+    allocationUsd: number | null;
+    remainingUsd: number | null;
+  }>,
+): { remainingUsd: number | null; teamsOverBudget: number | null } {
+  const fundedTeams = teams.filter((team) => team.allocationUsd !== null);
+  if (fundedTeams.length === 0 ||
+      fundedTeams.some((team) => team.remainingUsd === null)) {
+    return { remainingUsd: null, teamsOverBudget: null };
+  }
+  return {
+    remainingUsd: round(fundedTeams.reduce(
+      (sum, team) => sum + team.remainingUsd!, 0)),
+    teamsOverBudget: fundedTeams.filter(
+      (team) => team.remainingUsd! < 0).length,
+  };
+}
+
 export function projectCoverageGaps(input: {
   dailyProjects: ReadonlyMap<
     string,
@@ -173,18 +207,13 @@ router.get("/org-insights", async (req, res): Promise<void> => {
       const spendUsd = period.asOf !== null && hasUsageScope
         ? row.spendUsd
         : null;
+      const availability = budgetAvailability(row.allocationUsd, spendUsd);
       return {
         id: row.id,
         name: row.name,
         allocationUsd: row.allocationUsd,
         spendUsd,
-        remainingUsd: complete && row.allocationUsd !== null
-          ? round(row.allocationUsd - row.spendUsd)
-          : null,
-        percentUsed: complete && row.allocationUsd !== null &&
-            row.allocationUsd > 0
-          ? round(row.spendUsd / row.allocationUsd * 100)
-          : null,
+        ...availability,
         complete,
         reporting,
         points: period.asOf === null
@@ -210,8 +239,7 @@ router.get("/org-insights", async (req, res): Promise<void> => {
     const knownTeamSpend = teams.reduce(
       (sum, team) => sum + (team.spendUsd ?? 0), 0);
     const fundedTeams = teams.filter((team) => team.allocationUsd !== null);
-    const fundedComplete = fundedTeams.length > 0 &&
-      fundedTeams.every((team) => team.complete);
+    const fundedAvailability = fundedBudgetAvailability(teams);
     const complete = teams.length > 0 &&
       result.metadata.status === "complete" &&
       teams.every((team) => team.complete);
@@ -260,13 +288,7 @@ router.get("/org-insights", async (req, res): Promise<void> => {
           ? round(fundedTeams.reduce(
               (sum, team) => sum + team.allocationUsd!, 0))
           : null,
-        remainingUsd: fundedComplete
-          ? round(fundedTeams.reduce(
-              (sum, team) => sum + team.remainingUsd!, 0))
-          : null,
-        teamsOverBudget: fundedComplete
-          ? fundedTeams.filter((team) => team.remainingUsd! < 0).length
-          : null,
+        ...fundedAvailability,
         unassignedSpendUsd,
       },
       teams,

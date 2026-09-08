@@ -11,9 +11,15 @@ export type OrgBudgetOverviewResponseSummary = {
   accountSpendUsd: number | null;
   /** @nullable */
   teamAllocationUsd: number | null;
-  /** @nullable */
+  /**
+     * Sum of every funded team's available remaining amount. Null when there are no funded teams or any funded team's spend is unavailable; independent of complete/reporting verification.
+     * @nullable
+     */
   remainingUsd: number | null;
-  /** @nullable */
+  /**
+     * Count of funded teams with negative available remaining amounts. Null under the same availability rule as remainingUsd.
+     * @nullable
+     */
   teamsOverBudget: number | null;
   /** @nullable */
   unassignedSpendUsd: number | null;

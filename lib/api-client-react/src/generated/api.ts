@@ -1586,7 +1586,7 @@ export const getGetOrgBudgetOverviewUrl = () => {
 }
 
 /**
- * Returns one committed local accounting generation for the confirmed May 20, 2026 through May 20, 2027 team-allocation term. The scope and period are fixed; query filters are rejected. Requires account-wide canViewAccountUsage access. Read-only previews are allowed only when they retain that capability and a genuinely account-wide scope.
+ * Returns one committed local accounting generation for the confirmed May 20, 2026 through May 20, 2027 team-allocation term. The scope and period are fixed; query filters are rejected. Requires account-wide canViewAccountUsage access. Read-only previews are allowed only when they retain that capability and a genuinely account-wide scope. A funded team's remaining amount and utilization are returned whenever its spend was observed, independently of historical verification; complete and reporting continue to describe that verification.
  * @summary Account-wide organization budget overview
  */
 export const getOrgBudgetOverview = async ( options?: RequestInit): Promise<OrgBudgetOverviewResponse> => {

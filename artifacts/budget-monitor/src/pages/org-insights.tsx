@@ -1,5 +1,4 @@
 import React from "react";
-import { Link } from "wouter";
 import { useAuthContext } from "@/components/auth-context";
 import { useGetOrgBudgetOverview } from "@workspace/api-client-react";
 import { Badge } from "@/components/ui/badge";
@@ -75,13 +74,13 @@ function OrgInsightsView() {
                   <RefreshCw className="h-3 w-3 mr-1.5 animate-spin opacity-70" /> Updating
                 </Badge>
               )}
-              {isPartial && (
-                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[11px] font-medium text-amber-700">
-                  Partial data
-                </Badge>
-              )}
             </div>
           </div>
+          {displayData.teams.some((team) => !team.complete && team.remainingUsd != null) && (
+            <p className="text-sm text-muted-foreground" data-testid="org-balance-basis">
+              Balances based on recorded spend
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2">
@@ -96,7 +95,7 @@ function OrgInsightsView() {
 
       {(isPartial || qualification) && (
         <AdminDataQualityNote title="Budget overview data quality">
-          {isPartial && <p>Partial coverage.</p>}
+          {isPartial && <p>Balances use available recorded spend, not verified complete usage. Missing inputs remain unavailable.</p>}
           {qualification && <p>{qualification}</p>}
         </AdminDataQualityNote>
       )}

@@ -18,7 +18,7 @@ vi.mock('@workspace/api-client-react', () => ({
 }));
 
 vi.mock('./org-insights-components', () => ({
-  InsightCard: () => <div data-testid="insight-card" />,
+  InsightCard: ({ title, value, testId }: any) => <div data-testid="insight-card"><span data-testid={testId}>{title}: {value}</span></div>,
   OrgBudgetChart: () => <div data-testid="org-budget-chart" />,
   OrgTeamsTable: () => <div data-testid="org-teams-table" />,
 }));
@@ -107,7 +107,7 @@ describe('OrgInsights', () => {
     expect(html).toContain('data-testid="org-teams-table"');
   });
 
-  it('shows partial data badge and note when complete is false', () => {
+  it('keeps missing summaries unavailable and coverage explanations in Data quality', () => {
     (useAuthContext as any).mockReturnValue({
       capabilities: { canViewAccountUsage: true },
       role: 'account',
@@ -132,19 +132,35 @@ describe('OrgInsights', () => {
     });
 
     const html = renderToStaticMarkup(<OrgInsights />);
-    expect(html).toContain('Partial data');
-    // Note is not rendered when no qualifications and not explicitly handled in AdminDataQualityNote,
-    // actually, let's fix the test to expect what's actually rendered or fix the code.
-    // The code says `{(isPartial || qualification) && <AdminDataQualityNote ...`
-    // but the actual generated code for AdminDataQualityNote depends on its internal state.
-    // If the AdminDataQualityNote logic doesn't render unless expanded, we just check the badge.
-    // Let's check what's in the DOM.
-    if (html.includes('Coverage is partial.')) {
-        expect(html).toContain('Coverage is partial.');
-    }
-    // But AdminDataQualityNote is a collapisble that renders title "Budget overview data quality"
+    expect(html).not.toContain('Partial data');
+    expect(html).not.toContain('org-balance-basis');
+    expect(html).toContain('Remaining Team Budgets: Unavailable');
+    expect(html).toContain('Teams Over Budget: Unavailable');
     expect(html).toContain('Budget overview data quality');
     expect(html).toContain('Data is delayed due to upstream sync.');
+  });
+
+  it('shows recorded numeric summaries with one shared basis label, without requiring verification', () => {
+    (useAuthContext as any).mockReturnValue({
+      capabilities: { canViewAccountUsage: true }, role: 'account',
+    });
+    (useGetOrgBudgetOverview as any).mockReturnValue({
+      isLoading: false,
+      data: {
+        periodStart: '2026-05-20', periodEnd: '2027-05-20', complete: false,
+        qualification: 'Missing historical rosters use current membership.',
+        summary: {
+          accountSpendUsd: 1609.81, teamAllocationUsd: 13115.74,
+          remainingUsd: 11505.93, teamsOverBudget: 0, unassignedSpendUsd: 0,
+        },
+        teams: [{ complete: false, remainingUsd: 11505.93 }],
+      },
+    });
+    const html = renderToStaticMarkup(<OrgInsights />);
+    expect(html).toContain('Remaining Team Budgets: $11,505.93');
+    expect(html).toContain('Teams Over Budget: 0');
+    expect(html.match(/Balances based on recorded spend/g)).toHaveLength(1);
+    expect(html).not.toContain('Partial data');
   });
 
   it('shows unassigned spend once when unassigned is positive', () => {

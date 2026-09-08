@@ -1398,7 +1398,7 @@ export const GetDashboardResponse = zod.object({
 
 
 /**
- * Returns one committed local accounting generation for the confirmed May 20, 2026 through May 20, 2027 team-allocation term. The scope and period are fixed; query filters are rejected. Requires account-wide canViewAccountUsage access. Read-only previews are allowed only when they retain that capability and a genuinely account-wide scope.
+ * Returns one committed local accounting generation for the confirmed May 20, 2026 through May 20, 2027 team-allocation term. The scope and period are fixed; query filters are rejected. Requires account-wide canViewAccountUsage access. Read-only previews are allowed only when they retain that capability and a genuinely account-wide scope. A funded team's remaining amount and utilization are returned whenever its spend was observed, independently of historical verification; complete and reporting continue to describe that verification.
  * @summary Account-wide organization budget overview
  */
 export const getOrgBudgetOverviewHeaderXPreviewAsRegExp = new RegExp('^(workspace_admin|team_admin|member):.+$');
@@ -1436,17 +1436,17 @@ export const GetOrgBudgetOverviewResponse = zod.object({
   "summary": zod.object({
   "accountSpendUsd": zod.number().nullable(),
   "teamAllocationUsd": zod.number().nullable(),
-  "remainingUsd": zod.number().nullable(),
-  "teamsOverBudget": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable().describe('Sum of every funded team\'s available remaining amount. Null when there are no funded teams or any funded team\'s spend is unavailable; independent of complete\/reporting verification.\n'),
+  "teamsOverBudget": zod.number().nullable().describe('Count of funded teams with negative available remaining amounts. Null under the same availability rule as remainingUsd.\n'),
   "unassignedSpendUsd": zod.number().nullable()
 }),
   "teams": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "allocationUsd": zod.number().nullable(),
-  "spendUsd": zod.number().nullable(),
-  "remainingUsd": zod.number().nullable(),
-  "percentUsed": zod.number().nullable(),
+  "spendUsd": zod.number().nullable().describe('Observed allocation-eligible spend for the fixed term; null before the term or when this team has no observed usage scope.\n'),
+  "remainingUsd": zod.number().nullable().describe('Allocation minus observed spend when both are available, independent of complete\/reporting verification.\n'),
+  "percentUsed": zod.number().nullable().describe('Observed spend as a percentage of a positive allocation. Null for unavailable spend\/allocation or a zero allocation.\n'),
   "complete": zod.boolean(),
   "reporting": zod.object({
   "acquisitionCoverage": zod.enum(['complete', 'partial', 'unavailable']),

@@ -13,11 +13,20 @@ export type OrgBudgetOverviewResponseTeamsItem = {
   name: string;
   /** @nullable */
   allocationUsd: number | null;
-  /** @nullable */
+  /**
+     * Observed allocation-eligible spend for the fixed term; null before the term or when this team has no observed usage scope.
+     * @nullable
+     */
   spendUsd: number | null;
-  /** @nullable */
+  /**
+     * Allocation minus observed spend when both are available, independent of complete/reporting verification.
+     * @nullable
+     */
   remainingUsd: number | null;
-  /** @nullable */
+  /**
+     * Observed spend as a percentage of a positive allocation. Null for unavailable spend/allocation or a zero allocation.
+     * @nullable
+     */
   percentUsed: number | null;
   complete: boolean;
   reporting: ReportingSemantics;

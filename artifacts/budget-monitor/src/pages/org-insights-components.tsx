@@ -3,6 +3,7 @@ import { formatUsd } from "@/pages/home-components/format";
 import { MetricCard } from "@/components/journey-primitives";
 import { OrgBudgetOverviewResponse } from "@workspace/api-client-react";
 import { Link } from "wouter";
+import { AdminDataQualityNote } from "@/components/admin-data-quality";
 
 export function InsightCard({
   title,
@@ -62,6 +63,13 @@ export function OrgTeamsTable({ teams }: { teams: OrgBudgetOverviewResponse['tea
 
   return (
     <div className="border rounded bg-card overflow-hidden text-sm">
+      <AdminDataQualityNote title="Team balance data quality">
+        <ul>
+          {teams.map((team) => (
+            <li key={team.id}>{team.name}: {basisLabel(team.reporting.valueBasis)}{!team.complete && "; balance not verified complete"}.</li>
+          ))}
+        </ul>
+      </AdminDataQualityNote>
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
@@ -81,8 +89,6 @@ export function OrgTeamsTable({ teams }: { teams: OrgBudgetOverviewResponse['tea
                     <Link href={`/groups/${team.id}`} className="font-semibold text-foreground hover:underline hover:text-primary transition-colors inline-block">
                       {team.name}
                     </Link>
-                    {!team.complete && <span className="text-[10px] text-amber-600 dark:text-amber-500">Partial data</span>}
-                    <span className="text-[10px] text-muted-foreground">{basisLabel(team.reporting.valueBasis)}</span>
                   </div>
                 </td>
                 <td className="p-3 text-right font-mono text-muted-foreground">
@@ -111,7 +117,9 @@ export function OrgTeamsTable({ teams }: { teams: OrgBudgetOverviewResponse['tea
                         />
                       </div>
                     </div>
-                  ) : <span className="text-muted-foreground">Unavailable</span>}
+                  ) : <span className="text-muted-foreground">
+                    {team.allocationUsd === 0 && team.spendUsd != null ? "Not applicable" : "Unavailable"}
+                  </span>}
                 </td>
               </tr>
             ))}

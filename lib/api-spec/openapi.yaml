@@ -591,7 +591,10 @@ paths:
         May 20, 2026 through May 20, 2027 team-allocation term. The scope and
         period are fixed; query filters are rejected. Requires account-wide
         canViewAccountUsage access. Read-only previews are allowed only when
-        they retain that capability and a genuinely account-wide scope.
+        they retain that capability and a genuinely account-wide scope. A
+        funded team's remaining amount and utilization are returned whenever
+        its spend was observed, independently of historical verification;
+        complete and reporting continue to describe that verification.
       responses:
         "200":
           description: Organization budget overview
@@ -3073,8 +3076,15 @@ components:
               type: ["number", "null"]
             remainingUsd:
               type: ["number", "null"]
+              description: >
+                Sum of every funded team's available remaining amount. Null
+                when there are no funded teams or any funded team's spend is
+                unavailable; independent of complete/reporting verification.
             teamsOverBudget:
               type: ["integer", "null"]
+              description: >
+                Count of funded teams with negative available remaining
+                amounts. Null under the same availability rule as remainingUsd.
             unassignedSpendUsd:
               type: ["number", "null"]
         teams:
@@ -3092,10 +3102,19 @@ components:
                 type: ["number", "null"]
               spendUsd:
                 type: ["number", "null"]
+                description: >
+                  Observed allocation-eligible spend for the fixed term; null
+                  before the term or when this team has no observed usage scope.
               remainingUsd:
                 type: ["number", "null"]
+                description: >
+                  Allocation minus observed spend when both are available,
+                  independent of complete/reporting verification.
               percentUsed:
                 type: ["number", "null"]
+                description: >
+                  Observed spend as a percentage of a positive allocation.
+                  Null for unavailable spend/allocation or a zero allocation.
               complete:
                 type: boolean
               reporting:

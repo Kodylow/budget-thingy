@@ -37,9 +37,15 @@ export type OrgBudgetOverviewResponseSummary = {
   accountSpendUsd: number | null;
   /** @nullable */
   teamAllocationUsd: number | null;
-  /** @nullable */
+  /**
+     * Sum of every funded team's available remaining amount. Null when there are no funded teams or any funded team's spend is unavailable; independent of complete/reporting verification.
+     * @nullable
+     */
   remainingUsd: number | null;
-  /** @nullable */
+  /**
+     * Count of funded teams with negative available remaining amounts. Null under the same availability rule as remainingUsd.
+     * @nullable
+     */
   teamsOverBudget: number | null;
   /** @nullable */
   unassignedSpendUsd: number | null;
@@ -128,11 +134,20 @@ export type OrgBudgetOverviewResponseTeamsItem = {
   name: string;
   /** @nullable */
   allocationUsd: number | null;
-  /** @nullable */
+  /**
+     * Observed allocation-eligible spend for the fixed term; null before the term or when this team has no observed usage scope.
+     * @nullable
+     */
   spendUsd: number | null;
-  /** @nullable */
+  /**
+     * Allocation minus observed spend when both are available, independent of complete/reporting verification.
+     * @nullable
+     */
   remainingUsd: number | null;
-  /** @nullable */
+  /**
+     * Observed spend as a percentage of a positive allocation. Null for unavailable spend/allocation or a zero allocation.
+     * @nullable
+     */
   percentUsed: number | null;
   complete: boolean;
   reporting: ReportingSemantics;

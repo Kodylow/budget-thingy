@@ -25,6 +25,7 @@ import {
   beginUsageGenerationUpdate,
   invalidateUsageSnapshotMemo,
 } from "../lib/usage-store";
+import { resetConfigurationSnapshotForTests } from "../lib/configuration-snapshot";
 import { setReplitBudgetTransportForTests } from "../lib/replit-budgets";
 import { setSendEmailOverrideForTests } from "../lib/email";
 import { setAuthorizationResolver } from "../middlewares/requireAuth";
@@ -38,6 +39,8 @@ import {
 import monitorRouter, { canSeeAlertEntity } from "./monitor";
 import {
   __setOrgInsightsNowForTests,
+  budgetAvailability,
+  fundedBudgetAvailability,
   projectCoverageGaps,
 } from "./monitor.org-insights";
 import { __getScopedAccountingCacheSizeForTests } from "../services/scoped-accounting";
@@ -1306,6 +1309,54 @@ function dirMemberIdsForWorkspace(workspaceId: string): string[] {
 }
 
 describe("organization budget overview", () => {
+  it("computes availability from observed spend without a verification gate", () => {
+    expect(budgetAvailability(13115.74, 1609.81)).toEqual({
+      remainingUsd: 11505.93,
+      percentUsed: 12.27387856,
+    });
+    expect(budgetAvailability(0, 25)).toEqual({
+      remainingUsd: -25,
+      percentUsed: null,
+    });
+    expect(budgetAvailability(25, 0)).toEqual({
+      remainingUsd: 25,
+      percentUsed: 0,
+    });
+    expect(budgetAvailability(0, 0)).toEqual({
+      remainingUsd: 0,
+      percentUsed: null,
+    });
+    expect(budgetAvailability(10, 12)).toEqual({
+      remainingUsd: -2,
+      percentUsed: 120,
+    });
+    expect(budgetAvailability(null, 5)).toEqual({
+      remainingUsd: null,
+      percentUsed: null,
+    });
+    // Partial-but-observed routes pass a number; wholly missing, unmapped,
+    // and preterm routes all honestly pass null.
+    expect(budgetAvailability(10, null)).toEqual({
+      remainingUsd: null,
+      percentUsed: null,
+    });
+  });
+
+  it("summarizes availability only when every funded row has it", () => {
+    expect(fundedBudgetAvailability([
+      { allocationUsd: 13115.74, remainingUsd: 11505.93 },
+      { allocationUsd: 0, remainingUsd: -25 },
+      { allocationUsd: null, remainingUsd: null },
+    ])).toEqual({ remainingUsd: 11480.93, teamsOverBudget: 1 });
+    expect(fundedBudgetAvailability([
+      { allocationUsd: 10, remainingUsd: 5 },
+      { allocationUsd: 20, remainingUsd: null },
+    ])).toEqual({ remainingUsd: null, teamsOverBudget: null });
+    expect(fundedBudgetAvailability([
+      { allocationUsd: null, remainingUsd: null },
+    ])).toEqual({ remainingUsd: null, teamsOverBudget: null });
+  });
+
   const projectMetadata = (projects) => ({
     byWorkspace: new Map([["shared", new Map(projects)]]),
     observedWorkspaceIds: new Set(["shared"]),
@@ -1405,6 +1456,63 @@ describe("organization budget overview", () => {
     }
   });
 
+  it("keeps wholly missing and preterm team availability unknown", async () => {
+    try {
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-16T12:00:00.000Z"));
+      const missing = await (await request(
+        "/org-insights", fixtures[0])).json();
+      expect(missing.teams.find((team) => team.name === TEAM)).toMatchObject({
+        spendUsd: null,
+        remainingUsd: null,
+        percentUsed: null,
+      });
+
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-05-19T12:00:00.000Z"));
+      const preterm = await (await request(
+        "/org-insights", fixtures[0])).json();
+      expect(preterm.asOf).toBeNull();
+      expect(preterm.teams.every((team) =>
+        team.spendUsd === null &&
+        team.remainingUsd === null &&
+        team.percentUsed === null)).toBe(true);
+    } finally {
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
+  it("aggregates a route response when every funded team is available", async () => {
+    const visibility = await db.select({
+      teamName: teamBudgetsTable.teamName,
+      isHidden: teamBudgetsTable.isHidden,
+    }).from(teamBudgetsTable);
+    try {
+      await db.update(teamBudgetsTable).set({ isHidden: true });
+      await db.update(teamBudgetsTable)
+        .set({ isHidden: false })
+        .where(eq(teamBudgetsTable.teamName, TEAM));
+      resetConfigurationSnapshotForTests();
+      __setOrgInsightsNowForTests(
+        () => new Date("2026-06-17T12:00:00.000Z"));
+
+      const body = await (await request("/org-insights", fixtures[0])).json();
+      const funded = body.teams.filter((team) => team.allocationUsd !== null);
+      expect(funded).toHaveLength(1);
+      expect(body.summary.remainingUsd).toBe(funded[0].remainingUsd);
+      expect(body.summary.teamsOverBudget)
+        .toBe(funded[0].remainingUsd < 0 ? 1 : 0);
+    } finally {
+      for (const team of visibility) {
+        await db.update(teamBudgetsTable)
+          .set({ isHidden: team.isHidden })
+          .where(eq(teamBudgetsTable.teamName, team.teamName));
+      }
+      resetConfigurationSnapshotForTests();
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
   it("reconciles one account-wide committed report without fabricating gaps", async () => {
     __setOrgInsightsNowForTests(
       () => new Date("2026-06-17T12:00:00.000Z"));
@@ -1430,8 +1538,31 @@ describe("organization budget overview", () => {
         8,
       );
       expect(body.complete).toBe(false);
+      // Other funded teams have no mapped/observed spend, so the aggregate
+      // remains unknown even though this observed team's balance is useful.
       expect(body.summary.remainingUsd).toBeNull();
       expect(body.summary.teamsOverBudget).toBeNull();
+      const observedTeam = body.teams.find((team) => team.name === TEAM);
+      expect(observedTeam).toMatchObject({
+        spendUsd: expect.any(Number),
+        remainingUsd: expect.any(Number),
+        percentUsed: expect.any(Number),
+        complete: false,
+        reporting: expect.objectContaining({
+          comparisonsVerified: false,
+          acquisitionCoverage: "partial",
+        }),
+      });
+      expect(observedTeam.remainingUsd).toBe(1200 - observedTeam.spendUsd);
+      expect(observedTeam.percentUsed)
+        .toBe(observedTeam.spendUsd / 1200 * 100);
+      expect(body.teams.find((team) =>
+        team.name === "Comcast Advertising")).toMatchObject({
+          allocationUsd: 13115.74,
+          spendUsd: null,
+          remainingUsd: null,
+          percentUsed: null,
+        });
       expect(body.teams[0].points.some((point) => point.spendUsd === null))
         .toBe(true);
     } finally {

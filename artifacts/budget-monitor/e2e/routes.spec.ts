@@ -2288,6 +2288,82 @@ test.describe('funding assignment mocked browser coverage', () => {
   });
 });
 
+test.describe('org recorded balances focused mocked browser pass', () => {
+  test('shows qualified balances, zero and overspend, while missing funded inputs keep summaries unavailable', async ({ page }) => {
+    await mockApi(page, 'account');
+    const reporting = {
+      acquisitionCoverage: 'partial',
+      rosterAttributionBasis: 'current_membership',
+      creatorCoverage: 'not_applicable',
+      creatorAttributionBasis: 'not_applicable',
+      freshness: 'fresh',
+      valueBasis: 'partial_known',
+      comparisonsVerified: false,
+    };
+    const team = (id: string, allocationUsd: number | null, spendUsd: number | null, remainingUsd: number | null, percentUsed: number | null) => ({
+      id, name: `Sample ${id}`, allocationUsd, spendUsd, remainingUsd, percentUsed,
+      complete: false, reporting,
+      points: [{ date: '2026-06-01', spendUsd: null }, { date: '2026-09-08', spendUsd }],
+    });
+    let missing = false;
+    const requests: string[] = [];
+    await page.route('**/api/org-insights', route => {
+      requests.push(route.request().url());
+      return json(route, {
+        periodStart: '2026-05-20', periodEnd: '2027-05-20', asOf: '2026-09-08',
+        complete: false, reporting,
+        qualification: 'Missing historical rosters use current membership. Usage coverage is partial; missing facts are not zero.',
+        summary: {
+          accountSpendUsd: 1804.81,
+          teamAllocationUsd: missing ? 13415.74 : 13315.74,
+          remainingUsd: missing ? null : 11530.93,
+          teamsOverBudget: missing ? null : 2,
+          unassignedSpendUsd: 0,
+        },
+        teams: [
+          team('Recorded Team', 13115.74, 1609.81, 11505.93, 12.273897927),
+          team('Zero Spend', 100, 0, 100, 0),
+          team('Overspent', 100, 150, -50, 150),
+          team('Zero Allocation', 0, 25, -25, null),
+          team('Unfunded', null, 20, null, null),
+          ...(missing ? [team('Missing Usage', 100, null, null, null)] : []),
+        ],
+      });
+    });
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.goto('/org-insights?rangeType=custom&startDate=2026-09-01&endDate=2026-09-08');
+    const row = (name: string) => page.getByRole('row').filter({ hasText: `Sample ${name}` });
+    await expect(row('Recorded Team')).toContainText('$13,115.74');
+    await expect(row('Recorded Team')).toContainText('$1,609.81');
+    await expect(row('Recorded Team')).toContainText('$11,505.93');
+    await expect(row('Recorded Team')).toContainText('12.3%');
+    await expect(row('Zero Spend')).toContainText('0.0%');
+    await expect(row('Overspent')).toContainText('-$50.00');
+    await expect(row('Overspent')).toContainText('150.0%');
+    await expect(row('Zero Allocation')).toContainText('-$25.00');
+    await expect(row('Zero Allocation')).toContainText('Not applicable');
+    await expect(row('Unfunded')).toContainText('Not set');
+    await expect(page.getByTestId('org-card-remaining')).toContainText('$11,530.93');
+    await expect(page.getByTestId('org-card-over-budget')).toContainText('2');
+    await expect(page.getByTestId('org-balance-basis')).toHaveText('Balances based on recorded spend');
+    await expect(page.getByText('Partial data', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Recorded, partial coverage', { exact: false })).toHaveCount(0);
+    expect(requests.every((url) => new URL(url).search === '')).toBe(true);
+    await page.screenshot({ path: 'e2e/evidence/org-recorded-balances.png' });
+    await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+    await page.getByTestId('button-data-quality').click();
+    await expect(page.getByTestId('dialog-data-quality')).toContainText('Missing historical rosters use current membership.');
+    await expect(page.getByTestId('dialog-data-quality')).toContainText('Sample Recorded Team: Recorded, partial coverage');
+    await page.keyboard.press('Escape');
+    missing = true;
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await expect(row('Missing Usage')).toContainText('Unavailable');
+    await expect(page.getByTestId('org-card-remaining')).toContainText('Unavailable');
+    await expect(page.getByTestId('org-card-over-budget')).toContainText('Unavailable');
+    await expect(row('Recorded Team')).toContainText('$11,505.93');
+  });
+});
+
 test.describe('org budget chart focused mocked browser pass', () => {
   test('renders native chart series and keeps team controls functional on desktop and mobile', async ({ page }) => {
     await mockApi(page, 'account');
