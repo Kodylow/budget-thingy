@@ -300,6 +300,12 @@ function orgBudgetOverviewFixture() {
       teamsOverBudget: 0,
       unassignedSpendUsd: 0,
     },
+    accountPoints: [
+      { date: '2026-06-01', spendUsd: 2 },
+      { date: '2026-07-01', spendUsd: 5 },
+      { date: '2026-08-01', spendUsd: 8 },
+      { date: '2026-09-01', spendUsd: 10 },
+    ],
     teams: [{
       id: 'smoke-team',
       name: 'Smoke Team',
@@ -2374,6 +2380,7 @@ test.describe('org recorded balances focused mocked browser pass', () => {
           teamsOverBudget: missing ? null : 2,
           unassignedSpendUsd: 0,
         },
+        accountPoints: [{ date: '2026-06-01', spendUsd: null }, { date: '2026-09-08', spendUsd: 1804.81 }],
         teams: [
           team('Recorded Team', 13115.74, 1609.81, 11505.93, 12.273897927),
           team('Zero Spend', 100, 0, 100, 0),
@@ -2453,8 +2460,9 @@ test.describe('org budget chart focused mocked browser pass', () => {
         teamAllocationUsd: 500,
         remainingUsd: 200,
         teamsOverBudget: 0,
-        unassignedSpendUsd: 10,
+        unassignedSpendUsd: 55,
       },
+      accountPoints: points([75, 165, 240, 300]),
       teams: [
         team('alpha', 'Alpha Team', 100, 90),
         team('beta', 'Beta Team', 150, 70),
@@ -2468,35 +2476,44 @@ test.describe('org budget chart focused mocked browser pass', () => {
     await page.goto('/org-insights');
     const chart = page.getByTestId('org-budget-chart');
     await expect(chart).toBeVisible();
-    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(chart.getByRole('button', { name: 'Beta Team' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(chart.getByRole('button', { name: 'Gamma Team' })).toHaveAttribute('aria-pressed', 'true');
+    const total = chart.getByRole('button', { name: /^Total/ });
+    const lines = chart.locator('.recharts-line-curve');
+    await expect(total).toHaveAttribute('aria-pressed', 'true');
+    await expect(total).toContainText('$300.00');
+    await expect(total).toContainText('$500.00');
+    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveAttribute('aria-pressed', 'false');
+    await expect(chart.getByRole('button', { name: 'Beta Team' })).toHaveAttribute('aria-pressed', 'false');
+    await expect(chart.getByRole('button', { name: 'Gamma Team' })).toHaveAttribute('aria-pressed', 'false');
     await expect(chart.getByRole('button', { name: 'Delta Team' })).toHaveAttribute('aria-pressed', 'false');
     await expect(chart.locator('svg').first()).toBeVisible();
-    await expect.poll(() => chart.locator('svg path').count()).toBeGreaterThan(4);
-    const initialPaths = await chart.locator('svg path').count();
+    await expect(lines).toHaveCount(2);
+    const totalPath = await lines.first().getAttribute('d');
+    expect(totalPath).toMatch(/^M/);
     await chart.getByRole('button', { name: 'Alpha Team' }).click();
-    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveAttribute('aria-pressed', 'false');
-    await expect.poll(() => chart.locator('svg path').count()).toBeLessThan(initialPaths);
-    await chart.getByRole('button', { name: 'All' }).click();
-    await expect(chart.getByRole('button', { name: 'Delta Team' })).toHaveAttribute('aria-pressed', 'true');
-    await chart.getByRole('button', { name: 'Clear' }).click();
-    await expect(chart.getByText('No teams selected.')).toBeVisible();
-    await expect(chart.getByPlaceholder('Search teams...')).toBeVisible();
-    await chart.getByRole('button', { name: 'All' }).click();
-    await chart.getByPlaceholder('Search teams...').fill('Gamma');
-    await expect(chart.getByRole('button', { name: 'Gamma Team' })).toBeVisible();
-    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveCount(0);
+    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(lines).toHaveCount(4);
+    await expect(lines.first()).toHaveAttribute('d', totalPath!);
+    await total.focus();
+    await page.keyboard.press('Space');
+    await expect(total).toHaveAttribute('aria-pressed', 'false');
+    await expect(lines).toHaveCount(2);
+    await chart.getByRole('button', { name: 'Alpha Team' }).click();
+    await expect(chart.getByText('No series selected.')).toBeVisible();
+    await total.click();
+    await expect(lines).toHaveCount(2);
+    await expect(chart.getByRole('textbox')).toHaveCount(0);
+    await expect(chart.getByRole('button', { name: /^(All|Clear)$/ })).toHaveCount(0);
+    await expect(chart.getByText('Budgeted teams', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
     await page.screenshot({ path: 'e2e/evidence/org-budget-chart-desktop.png', fullPage: true });
 
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    await expect(chart.getByText('Teams Budget Trajectory')).toBeVisible();
+    await expect(chart.getByText('Budget Trajectory', { exact: true })).toBeVisible();
     await page.screenshot({ path: 'e2e/evidence/org-budget-chart-mobile.png', fullPage: true });
-    expect(page.getByRole('button', { name: 'All' })).toBeVisible();
-    expect(page.getByRole('button', { name: 'Clear' })).toBeVisible();
-    expect(await page.locator('svg path').count()).toBeGreaterThan(0);
+    await expect(total).toBeVisible();
+    await chart.getByRole('button', { name: 'Beta Team' }).click();
+    await expect(lines).toHaveCount(4);
   });
 });
 

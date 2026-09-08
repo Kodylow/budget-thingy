@@ -32,6 +32,13 @@ export interface MyMembershipContext {
   qualification: string | null;
 }
 
+export interface BudgetTrackingPoint {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  date: string;
+  /** @nullable */
+  spendUsd: number | null;
+}
+
 export type OrgBudgetOverviewResponseSummary = {
   /** @nullable */
   accountSpendUsd: number | null;
@@ -49,13 +56,6 @@ export type OrgBudgetOverviewResponseSummary = {
   teamsOverBudget: number | null;
   /** @nullable */
   unassignedSpendUsd: number | null;
-};
-
-export type OrgBudgetOverviewResponseTeamsItemPointsItem = {
-  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
-  date: string;
-  /** @nullable */
-  spendUsd: number | null;
 };
 
 export type ReportingSemanticsAcquisitionCoverage = typeof ReportingSemanticsAcquisitionCoverage[keyof typeof ReportingSemanticsAcquisitionCoverage];
@@ -152,7 +152,7 @@ export type OrgBudgetOverviewResponseTeamsItem = {
   complete: boolean;
   reporting: ReportingSemantics;
   /** @maxItems 367 */
-  points: OrgBudgetOverviewResponseTeamsItemPointsItem[];
+  points: BudgetTrackingPoint[];
 };
 
 export interface OrgBudgetOverviewResponse {
@@ -170,6 +170,11 @@ export interface OrgBudgetOverviewResponse {
   /** @nullable */
   qualification: string | null;
   summary: OrgBudgetOverviewResponseSummary;
+  /**
+     * Cumulative allocation-eligible account spend from the same committed accounting snapshot as summary.accountSpendUsd.
+     * @maxItems 367
+     */
+  accountPoints: BudgetTrackingPoint[];
   /** @maxItems 1000 */
   teams: OrgBudgetOverviewResponseTeamsItem[];
 }
@@ -659,13 +664,6 @@ export const ReportingDetailBudgetTrackingBudgetKind = {
   monthly_agent: 'monthly_agent',
 } as const;
 
-export type ReportingDetailBudgetTrackingPointsItem = {
-  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
-  date: string;
-  /** @nullable */
-  spendUsd: number | null;
-};
-
 export type ReportingDetailBudgetTracking = {
   budgetKind: ReportingDetailBudgetTrackingBudgetKind;
   /**
@@ -719,7 +717,7 @@ export type ReportingDetailBudgetTracking = {
   /** @nullable */
   qualification: string | null;
   reporting: ReportingSemantics;
-  points: ReportingDetailBudgetTrackingPointsItem[];
+  points: BudgetTrackingPoint[];
 };
 
 export type ReportingDetailSourceGroupsItem = {

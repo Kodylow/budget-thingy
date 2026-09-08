@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { OrgBudgetOverviewResponse } from '@workspace/api-client-react';
-import { buildOrgBudgetChartData, getFundedTeams } from './org-budget-chart-data';
+import {
+  buildOrgBudgetChartData,
+  getFundedTeams,
+  TOTAL_SERIES_ID,
+  type OrgChartSeries,
+} from './org-budget-chart-data';
 
 const reporting = {
   acquisitionCoverage: 'complete',
@@ -46,8 +51,18 @@ const overview = (
     teamsOverBudget: null,
     unassignedSpendUsd: null,
   },
+  accountPoints: [],
   teams,
   ...overrides,
+});
+
+const totalSeries = (data: OrgBudgetOverviewResponse): OrgChartSeries => ({
+  id: TOTAL_SERIES_ID,
+  name: 'Total',
+  allocationUsd: data.summary.teamAllocationUsd,
+  spendUsd: data.summary.accountSpendUsd,
+  complete: data.complete,
+  points: data.accountPoints,
 });
 
 describe('organization budget chart data', () => {
@@ -91,6 +106,66 @@ describe('organization budget chart data', () => {
       alpha: { actual: null },
       beta: { actual: 34 },
     });
+  });
+
+  it('uses account observations unchanged for Total, including unassigned spend', () => {
+    const data = overview(
+      [team('assigned', 200, [{ date: '2026-06-01', spendUsd: 40 }])],
+      {
+        summary: {
+          accountSpendUsd: 65,
+          teamAllocationUsd: 366,
+          remainingUsd: 301,
+          teamsOverBudget: 0,
+          unassignedSpendUsd: 25,
+        },
+        accountPoints: [
+          { date: '2026-05-20', spendUsd: 0 },
+          { date: '2026-06-01', spendUsd: 65 },
+        ],
+      },
+    );
+    const rows = buildOrgBudgetChartData(data, [totalSeries(data)]);
+
+    expect(rows.find(row => row.date === '2026-05-20')?.values[TOTAL_SERIES_ID]).toEqual({
+      actual: 0,
+      benchmark: 1,
+    });
+    expect(rows.find(row => row.date === '2026-06-01')?.values[TOTAL_SERIES_ID].actual).toBe(65);
+    expect(rows.at(-1)?.values[TOTAL_SERIES_ID]).toEqual({
+      actual: null,
+      benchmark: 366,
+    });
+  });
+
+  it('preserves Total nulls and zeroes and clips partial account history at as-of', () => {
+    const data = overview([], {
+      complete: false,
+      asOf: '2026-05-21',
+      summary: {
+        accountSpendUsd: null,
+        teamAllocationUsd: null,
+        remainingUsd: null,
+        teamsOverBudget: null,
+        unassignedSpendUsd: null,
+      },
+      accountPoints: [
+        { date: '2026-05-20', spendUsd: 0 },
+        { date: '2026-05-21', spendUsd: null },
+        { date: '2026-05-22', spendUsd: 20 },
+      ],
+    });
+    const rows = buildOrgBudgetChartData(data, [totalSeries(data)]);
+
+    expect(rows.find(row => row.date === '2026-05-20')?.values[TOTAL_SERIES_ID]).toEqual({
+      actual: 0,
+      benchmark: null,
+    });
+    expect(rows.find(row => row.date === '2026-05-21')?.values[TOTAL_SERIES_ID]).toEqual({
+      actual: null,
+      benchmark: null,
+    });
+    expect(rows.find(row => row.date === '2026-05-22')).toBeUndefined();
   });
 
   it('keeps a known allocation benchmark despite incomplete usage', () => {

@@ -1411,6 +1411,9 @@ export const GetOrgBudgetOverviewHeader = zod.object({
 export const getOrgBudgetOverviewResponsePeriodStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponsePeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponseAsOfRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getOrgBudgetOverviewResponseAccountPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getOrgBudgetOverviewResponseAccountPointsMax = 367;
+
 export const getOrgBudgetOverviewResponseTeamsItemPointsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getOrgBudgetOverviewResponseTeamsItemPointsMax = 367;
 
@@ -1440,6 +1443,10 @@ export const GetOrgBudgetOverviewResponse = zod.object({
   "teamsOverBudget": zod.number().nullable().describe('Count of funded teams with negative available remaining amounts. Null under the same availability rule as remainingUsd.\n'),
   "unassignedSpendUsd": zod.number().nullable()
 }),
+  "accountPoints": zod.array(zod.object({
+  "date": zod.string().regex(getOrgBudgetOverviewResponseAccountPointsItemDateRegExp),
+  "spendUsd": zod.number().nullable()
+})).max(getOrgBudgetOverviewResponseAccountPointsMax).describe('Cumulative allocation-eligible account spend from the same committed accounting snapshot as summary.accountSpendUsd.\n'),
   "teams": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),

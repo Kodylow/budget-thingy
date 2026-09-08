@@ -3,16 +3,17 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, CartesianGrid, ReferenceLine
 } from 'recharts';
-import { Search } from 'lucide-react';
 import { OrgBudgetOverviewResponse } from '@workspace/api-client-react';
 import { formatUsd } from '@/pages/home-components/format';
-import { Input } from '@/components/ui/input';
 
 import {
   getFundedTeams,
   buildOrgBudgetChartData,
   orgChartDay,
-  orgChartDateLabel
+  orgChartDateLabel,
+  TOTAL_SERIES_ID,
+  type OrgChartSeries,
+  type OrgBudgetChartRow,
 } from './org-budget-chart-data';
 
 const CHART_COLORS = [
@@ -24,16 +25,23 @@ const CHART_COLORS = [
 export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
   const fundedTeams = useMemo(() => getFundedTeams(data.teams), [data.teams]);
   
-  const [selectedTeamIds, setSelectedTeamIds] = useState<Set<string>>(() => {
-    const initialTeams = getFundedTeams(data.teams);
-    const sorted = [...initialTeams].sort((a, b) => (b.spendUsd || 0) - (a.spendUsd || 0));
-    return new Set(sorted.slice(0, 3).map(t => t.id));
-  });
-
-  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTeamIds, setSelectedTeamIds] = useState<Set<string>>(() => new Set());
+  const [showTotal, setShowTotal] = useState(true);
+  const availableSelection = new Set([...selectedTeamIds].filter(id => fundedTeams.some(team => team.id === id)));
+  if (availableSelection.size !== selectedTeamIds.size) {
+    setSelectedTeamIds(availableSelection);
+  }
+  const total: OrgChartSeries = {
+    id: TOTAL_SERIES_ID,
+    name: 'Total',
+    allocationUsd: data.summary.teamAllocationUsd,
+    spendUsd: data.summary.accountSpendUsd,
+    complete: data.complete,
+    points: data.accountPoints,
+  };
 
   const teamColors = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, string>([[TOTAL_SERIES_ID, '#0D62FF']]);
     fundedTeams.forEach(t => {
       const hash = Array.from(t.id).reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 0);
       map.set(t.id, CHART_COLORS[hash % CHART_COLORS.length]);
@@ -41,17 +49,10 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
     return map;
   }, [fundedTeams]);
 
-  const filteredTeams = useMemo(() => {
-    if (!searchQuery.trim()) return fundedTeams;
-    const q = searchQuery.trim().toLowerCase();
-    return fundedTeams.filter(t => t.name.toLowerCase().includes(q));
-  }, [fundedTeams, searchQuery]);
-
   const selectedTeams = useMemo(() => fundedTeams.filter(t => selectedTeamIds.has(t.id)), [fundedTeams, selectedTeamIds]);
-  const chartData = useMemo(() => buildOrgBudgetChartData(data, selectedTeams), [data, selectedTeams]);
-
-  const handleSelectAll = () => setSelectedTeamIds(new Set(fundedTeams.map(t => t.id)));
-  const handleClear = () => setSelectedTeamIds(new Set());
+  const selectedSeries = [...(showTotal ? [total] : []), ...selectedTeams];
+  const chartData = buildOrgBudgetChartData(data, selectedSeries);
+  const hasChartValues = chartData.some(row => Object.values(row.values).some(value => value.actual !== null || value.benchmark !== null));
   
   const toggleTeam = (id: string) => {
     const next = new Set(selectedTeamIds);
@@ -60,20 +61,12 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
     setSelectedTeamIds(next);
   };
 
-  if (fundedTeams.length === 0) {
-    return (
-      <div className="h-[400px] flex items-center justify-center text-muted-foreground border rounded bg-card" data-testid="org-budget-chart-empty">
-        No teams with funded budgets found.
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col lg:flex-row gap-0 border rounded bg-card overflow-hidden lg:h-[520px]" data-testid="org-budget-chart">
       <div className="flex-1 min-w-0 min-h-0 flex flex-col p-5">
         <div className="mb-4">
-          <h2 className="text-base font-semibold">Teams Budget Trajectory</h2>
-          <p className="text-xs text-muted-foreground mt-1">Spend to date against each team’s allocated budget. Dashed lines show an even pace, not a forecast.</p>
+          <h2 className="text-base font-semibold">Budget Trajectory</h2>
+          <p className="text-xs text-muted-foreground mt-1">Total eligible account spend against allocated team funding, or individual teams. Dashed lines show an even pace, not a forecast.</p>
         </div>
         
         <div className="flex gap-6 items-center text-xs text-muted-foreground mb-4">
@@ -82,10 +75,10 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
         </div>
 
         <div className="w-full h-[320px] lg:h-auto lg:flex-1 min-h-[280px]">
-          {selectedTeams.length === 0 ? (
+          {selectedSeries.length === 0 || !hasChartValues ? (
             <div className="w-full h-full flex flex-col items-center justify-center text-sm text-muted-foreground border-2 border-dashed rounded bg-muted/20 p-6 text-center">
-              <p>No teams selected.</p>
-              <p className="mt-1 text-xs opacity-75">Select teams from the panel to view their trajectories.</p>
+              <p>{selectedSeries.length === 0 ? 'No series selected.' : 'Spend and budget data unavailable.'}</p>
+              <p className="mt-1 text-xs opacity-75">{selectedSeries.length === 0 ? 'Turn on Total or a team to view its trajectory.' : 'Selected series have no recorded spend or allocated budget yet.'}</p>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -130,11 +123,10 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                       <div className="bg-popover border text-popover-foreground p-3 rounded-md shadow-md text-xs z-50 min-w-64 max-h-[350px] overflow-y-auto">
                         <div className="font-bold mb-3 pb-2 border-b">{orgChartDateLabel(Number(label))}</div>
                         <div className="flex flex-col gap-3">
-                          {Array.from(selectedTeamIds).map(id => {
+                          {selectedSeries.map(team => {
+                            const id = team.id;
                             const vals = row.values[id];
                             if (!vals || (vals.actual == null && vals.benchmark == null)) return null;
-                            const team = fundedTeams.find(t => t.id === id);
-                            if (!team) return null;
                             
                             return (
                               <div key={id} className="flex gap-4 justify-between items-start">
@@ -148,7 +140,7 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                                 <div className="flex flex-col items-end text-right shrink-0">
                                   {vals.actual != null && <span className="font-mono font-medium">{formatUsd(vals.actual)}</span>}
                                   {vals.benchmark != null && <span className="text-[10px] font-mono text-muted-foreground">Pace: {formatUsd(vals.benchmark)}</span>}
-                                  <span className="text-[10px] font-mono text-muted-foreground opacity-80">Funded: {formatUsd(team.allocationUsd!)}</span>
+                                  <span className="text-[10px] font-mono text-muted-foreground opacity-80">Allocated: {team.allocationUsd == null ? 'Unavailable' : formatUsd(team.allocationUsd)}</span>
                                 </div>
                               </div>
                             );
@@ -159,14 +151,14 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                   }}
                 />
 
-                {selectedTeams.flatMap(team => {
+                {selectedSeries.flatMap(team => {
                   const id = team.id;
                   const color = teamColors.get(id);
                   return [
                       <Line
                         key={`${id}:actual`}
                         type="monotone"
-                        dataKey={(row: any) => row.values[id]?.actual}
+                        dataKey={(row: OrgBudgetChartRow) => row.values[id]?.actual}
                         name={`${team.name} Actual`}
                         stroke={color}
                         strokeWidth={3}
@@ -178,7 +170,7 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                       <Line
                         key={`${id}:benchmark`}
                         type="linear"
-                        dataKey={(row: any) => row.values[id]?.benchmark}
+                        dataKey={(row: OrgBudgetChartRow) => row.values[id]?.benchmark}
                         name={`${team.name} Budget`}
                         stroke={color}
                         strokeWidth={2}
@@ -198,39 +190,18 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
       </div>
       
       <div className="w-full lg:w-[320px] shrink-0 min-h-0 flex flex-col border-t lg:border-t-0 lg:border-l bg-muted/10 lg:h-full h-[400px]">
-        <div className="p-4 border-b flex flex-col gap-3 bg-card">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium">Budgeted teams <span className="text-xs text-muted-foreground">({selectedTeams.length}/{fundedTeams.length})</span></h3>
-            <div className="flex gap-2 text-xs">
-              <button onClick={handleSelectAll} className="text-primary hover:underline">All</button>
-              <span className="text-muted-foreground">|</span>
-              <button onClick={handleClear} className="text-primary hover:underline">Clear</button>
-            </div>
-          </div>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input 
-              placeholder="Search teams..." 
-              aria-label="Search budgeted teams"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 pl-8 text-xs bg-background"
-            />
-          </div>
-          {selectedTeams.length > 5 && <p className="text-xs text-muted-foreground">Select fewer teams for a clearer comparison.</p>}
-          <div className="flex justify-between pl-6 text-[10px] text-muted-foreground"><span>Recorded spend</span><span>Allocation</span></div>
-        </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-3">
+          <div className="flex justify-between px-3 pl-9 pb-2 text-[10px] text-muted-foreground"><span>Recorded spend</span><span>Allocation</span></div>
           <div className="flex flex-col gap-2 pb-4">
-             {filteredTeams.map(team => {
-               const isSelected = selectedTeamIds.has(team.id);
+             {[total, ...fundedTeams].map(team => {
+               const isSelected = team.id === TOTAL_SERIES_ID ? showTotal : selectedTeamIds.has(team.id);
                const color = teamColors.get(team.id);
                return (
                  <button
                    key={team.id}
                    type="button"
                    aria-pressed={isSelected}
-                   onClick={() => toggleTeam(team.id)}
+                   onClick={() => team.id === TOTAL_SERIES_ID ? setShowTotal(value => !value) : toggleTeam(team.id)}
                     className={`text-left px-3 py-2.5 rounded-2xl border transition-colors flex flex-col gap-1.5 w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
                       ${isSelected ? 'bg-background border-primary/50' : 'bg-transparent border-border/50 hover:bg-muted/50'}`}
                  >
@@ -256,14 +227,11 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                          </>
                         ) : 'No spend data'}
                      </span>
-                     <span className="opacity-70">{formatUsd(team.allocationUsd!)}</span>
+                     <span className="opacity-70">{team.allocationUsd == null ? 'Unavailable' : formatUsd(team.allocationUsd)}</span>
                    </div>
                  </button>
                );
              })}
-             {filteredTeams.length === 0 && (
-               <p className="text-center text-xs text-muted-foreground py-6">No matching teams.</p>
-             )}
           </div>
         </div>
       </div>

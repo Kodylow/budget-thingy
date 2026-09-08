@@ -95,6 +95,7 @@ describe('OrgInsights', () => {
           teamsOverBudget: 1,
           unassignedSpendUsd: 0,
         },
+        accountPoints: [],
         teams: [],
       },
     });
@@ -127,6 +128,7 @@ describe('OrgInsights', () => {
           teamsOverBudget: null,
           unassignedSpendUsd: null,
         },
+        accountPoints: [],
         teams: [],
       },
     });
@@ -153,6 +155,7 @@ describe('OrgInsights', () => {
           accountSpendUsd: 1609.81, teamAllocationUsd: 13115.74,
           remainingUsd: 11505.93, teamsOverBudget: 0, unassignedSpendUsd: 0,
         },
+        accountPoints: [],
         teams: [{ complete: false, remainingUsd: 11505.93 }],
       },
     });
@@ -181,6 +184,7 @@ describe('OrgInsights', () => {
           teamsOverBudget: 0,
           unassignedSpendUsd: 5000,
         },
+        accountPoints: [],
         teams: [],
       },
     });

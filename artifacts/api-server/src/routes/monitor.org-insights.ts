@@ -6,6 +6,7 @@ import {
   buildScopedAccounting,
   prepareScopedAccounting,
   qualifiedGroupSpendComponents,
+  qualifiedRollupTotals,
   reportingSemanticsForGroups,
 } from "../services/scoped-accounting";
 import {
@@ -237,6 +238,32 @@ router.get("/org-insights", async (req, res): Promise<void> => {
     const usageObserved = period.asOf !== null &&
       result.usage.snapshot.accountDays.size > 0;
     const accountSpendUsd = usageObserved ? result.accounting.eligibleSpendUsd : null;
+    const accountDailySpend = new Map<string, number>();
+    const accountUnavailableDays = new Set<string>();
+    for (const [date, rollup] of result.daily) {
+      const unavailableWorkspaceCount = [...result.usage.workspaceIds].filter(
+        (workspaceId) =>
+          workspaceUnavailable.has(`${workspaceId}\0${date}`),
+      ).length;
+      if (!usageObserved || result.usage.workspaceIds.size === 0 ||
+          unavailableWorkspaceCount === result.usage.workspaceIds.size) {
+        accountUnavailableDays.add(date);
+      } else {
+        accountDailySpend.set(
+          date,
+          qualifiedRollupTotals(rollup, authz, result.usage.groups)
+            .eligibleSpendUsd,
+        );
+      }
+    }
+    const accountPoints = period.asOf === null
+      ? []
+      : buildBudgetTrackingPoints(
+          result.period.start,
+          result.period.endExclusive,
+          accountDailySpend,
+          accountUnavailableDays,
+        );
     const knownTeamSpend = teams.reduce(
       (sum, team) => sum + (team.spendUsd ?? 0), 0);
     const fundedTeams = teams.filter((team) => team.allocationUsd !== null);
@@ -292,6 +319,7 @@ router.get("/org-insights", async (req, res): Promise<void> => {
         ...fundedAvailability,
         unassignedSpendUsd,
       },
+      accountPoints,
       teams,
     };
     res.json(GetOrgBudgetOverviewResponse.parse(response));

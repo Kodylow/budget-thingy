@@ -31,6 +31,10 @@ const mockData: OrgBudgetOverviewResponse = {
     teamsOverBudget: 1,
     unassignedSpendUsd: 0,
   },
+  accountPoints: [
+    { date: "2026-05-20", spendUsd: 0 },
+    { date: "2026-06-10", spendUsd: 15000 },
+  ],
   teams: [
     {
       id: "team.A.[special]", // tests safe keys
@@ -93,14 +97,16 @@ const mockData: OrgBudgetOverviewResponse = {
 describe("OrgBudgetChart", () => {
   it("renders the chart shell without crashing (including >100% domains and null gaps)", () => {
     const html = renderToStaticMarkup(<OrgBudgetChart data={mockData} />);
-    expect(html).toContain("Teams Budget Trajectory");
+    expect(html).toContain("Budget Trajectory");
+    expect(html).toContain("Total eligible account spend");
     expect(html).not.toContain("historical rosters were not observed");
   });
 
-  it("shows empty state when no teams are eligible", () => {
+  it("keeps the Total selector when no teams are eligible", () => {
     const emptyData = { ...mockData, teams: [mockData.teams[2]] }; // Only zero budget team
     const html = renderToStaticMarkup(<OrgBudgetChart data={emptyData} />);
-    expect(html).toContain("No teams with funded budgets found");
+    expect(html).toContain(">Total</span>");
+    expect(html).not.toContain(">Zero Budget Team</span>");
   });
 });
 

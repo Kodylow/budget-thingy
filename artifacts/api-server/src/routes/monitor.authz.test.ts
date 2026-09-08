@@ -1478,6 +1478,7 @@ describe("organization budget overview", () => {
       const preterm = await (await request(
         "/org-insights", fixtures[0])).json();
       expect(preterm.asOf).toBeNull();
+      expect(preterm.accountPoints).toEqual([]);
       expect(preterm.teams.every((team) =>
         team.spendUsd === null &&
         team.remainingUsd === null &&
@@ -1560,6 +1561,10 @@ describe("organization budget overview", () => {
           body.summary.unassignedSpendUsd,
         8,
       );
+      expect(body.summary.unassignedSpendUsd).toBeGreaterThan(0);
+      expect(body.accountPoints[0].spendUsd).toBeNull();
+      expect(body.accountPoints.at(-1).spendUsd)
+        .toBeCloseTo(body.summary.accountSpendUsd, 8);
       expect(body.complete).toBe(false);
       // Other funded teams have no mapped/observed spend, so the aggregate
       // remains unknown even though this observed team's balance is useful.
@@ -1589,6 +1594,51 @@ describe("organization budget overview", () => {
       expect(body.teams[0].points.some((point) => point.spendUsd === null))
         .toBe(true);
     } finally {
+      __setOrgInsightsNowForTests(null);
+    }
+  });
+
+  it("excludes internal usage from account points while preserving coverage gaps", async () => {
+    __setOrgInsightsNowForTests(
+      () => new Date("2026-06-17T12:00:00.000Z"));
+    const baseline = await (await request("/org-insights", fixtures[0])).json();
+    try {
+      await db.insert(usageMemberDayTable).values({
+        workspaceId: GROWTH,
+        usageDate: TODAY,
+        userId: INTERNAL_USER,
+        totalCostUsd: 7,
+        aiCostUsd: 7,
+        metricsJson: [],
+        fetchedAt: new Date(),
+      });
+      await db.update(usageWorkspaceDayTable)
+        .set({ totalCostUsd: 27, memberAttributableUsd: 27 })
+        .where(eq(usageWorkspaceDayTable.workspaceId, GROWTH));
+      await db.update(usageAccountDayTable)
+        .set({ totalCostUsd: 52 })
+        .where(eq(usageAccountDayTable.usageDate, TODAY));
+      invalidateUsageSnapshotMemo();
+
+      const body = await (await request("/org-insights", fixtures[0])).json();
+      expect(body.summary.accountSpendUsd)
+        .toBeCloseTo(baseline.summary.accountSpendUsd, 8);
+      expect(body.accountPoints[0].spendUsd).toBeNull();
+      expect(body.accountPoints.at(-1).spendUsd)
+        .toBeCloseTo(body.summary.accountSpendUsd, 8);
+      expect(body.accountPoints.at(-1).spendUsd).not.toBeNull();
+    } finally {
+      await db.delete(usageMemberDayTable).where(eq(
+        usageMemberDayTable.userId,
+        INTERNAL_USER,
+      ));
+      await db.update(usageWorkspaceDayTable)
+        .set({ totalCostUsd: 20, memberAttributableUsd: 20 })
+        .where(eq(usageWorkspaceDayTable.workspaceId, GROWTH));
+      await db.update(usageAccountDayTable)
+        .set({ totalCostUsd: 45 })
+        .where(eq(usageAccountDayTable.usageDate, TODAY));
+      invalidateUsageSnapshotMemo();
       __setOrgInsightsNowForTests(null);
     }
   });

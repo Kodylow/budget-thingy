@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { OrgBudgetOverviewResponseTeamsItemPointsItem } from './orgBudgetOverviewResponseTeamsItemPointsItem';
+import type { BudgetTrackingPoint } from './budgetTrackingPoint';
 import type { ReportingSemantics } from './reportingSemantics';
 
 export type OrgBudgetOverviewResponseTeamsItem = {
@@ -31,5 +31,5 @@ export type OrgBudgetOverviewResponseTeamsItem = {
   complete: boolean;
   reporting: ReportingSemantics;
   /** @maxItems 367 */
-  points: OrgBudgetOverviewResponseTeamsItemPointsItem[];
+  points: BudgetTrackingPoint[];
 };

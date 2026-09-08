@@ -6,9 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type ReportingDetailBudgetTrackingPointsItem = {
+export interface BudgetTrackingPoint {
   /** @pattern ^\d{4}-\d{2}-\d{2}$ */
   date: string;
   /** @nullable */
   spendUsd: number | null;
-};
+}

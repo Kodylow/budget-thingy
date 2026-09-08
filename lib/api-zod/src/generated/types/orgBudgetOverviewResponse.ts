@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { BudgetTrackingPoint } from './budgetTrackingPoint';
 import type { OrgBudgetOverviewResponseSummary } from './orgBudgetOverviewResponseSummary';
 import type { OrgBudgetOverviewResponseTeamsItem } from './orgBudgetOverviewResponseTeamsItem';
 import type { ReportingSemantics } from './reportingSemantics';
@@ -24,6 +25,11 @@ export interface OrgBudgetOverviewResponse {
   /** @nullable */
   qualification: string | null;
   summary: OrgBudgetOverviewResponseSummary;
+  /**
+     * Cumulative allocation-eligible account spend from the same committed accounting snapshot as summary.accountSpendUsd.
+     * @maxItems 367
+     */
+  accountPoints: BudgetTrackingPoint[];
   /** @maxItems 1000 */
   teams: OrgBudgetOverviewResponseTeamsItem[];
 }

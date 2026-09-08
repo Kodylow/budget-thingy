@@ -5,8 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { BudgetTrackingPoint } from './budgetTrackingPoint';
 import type { ReportingDetailBudgetTrackingBudgetKind } from './reportingDetailBudgetTrackingBudgetKind';
-import type { ReportingDetailBudgetTrackingPointsItem } from './reportingDetailBudgetTrackingPointsItem';
 import type { ReportingSemantics } from './reportingSemantics';
 
 export type ReportingDetailBudgetTracking = {
@@ -62,5 +62,5 @@ export type ReportingDetailBudgetTracking = {
   /** @nullable */
   qualification: string | null;
   reporting: ReportingSemantics;
-  points: ReportingDetailBudgetTrackingPointsItem[];
+  points: BudgetTrackingPoint[];
 };

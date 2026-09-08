@@ -60,7 +60,10 @@ const makeTeam = (id: string, name: string, allocationUsd: number | null, spendU
   points: spendUsd == null ? [] : [{ date: '2026-06-01', spendUsd }],
 });
 
-const makeData = (teams: OrgBudgetOverviewResponse['teams']): OrgBudgetOverviewResponse => ({
+const makeData = (
+  teams: OrgBudgetOverviewResponse['teams'],
+  overrides: Partial<OrgBudgetOverviewResponse> = {},
+): OrgBudgetOverviewResponse => ({
   periodStart: '2026-05-20',
   periodEnd: '2027-05-20',
   asOf: '2026-09-08',
@@ -68,26 +71,33 @@ const makeData = (teams: OrgBudgetOverviewResponse['teams']): OrgBudgetOverviewR
   reporting,
   qualification: null,
   summary: {
-    accountSpendUsd: null,
-    teamAllocationUsd: null,
-    remainingUsd: null,
-    teamsOverBudget: null,
-    unassignedSpendUsd: null,
+    accountSpendUsd: 75,
+    teamAllocationUsd: 400,
+    remainingUsd: 325,
+    teamsOverBudget: 0,
+    unassignedSpendUsd: 25,
   },
+  accountPoints: [
+    { date: '2026-05-20', spendUsd: 0 },
+    { date: '2026-06-01', spendUsd: 75 },
+  ],
   teams,
+  ...overrides,
 });
 
 const teams = [
-  makeTeam('low', 'Low team', 100, 10),
-  makeTeam('highest', 'Highest team', 100, 50),
-  makeTeam('middle', 'Middle team', 100, 30),
-  makeTeam('second', 'Second team', 100, 40),
+  makeTeam('alpha', 'Alpha team', 100, 50),
+  makeTeam('beta', 'Beta team', 100, 20),
 ];
 
 let container: HTMLDivElement;
 let root: Root;
 const buttonFor = (name: string) =>
-  [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes(name))!;
+  [...container.querySelectorAll<HTMLButtonElement>('button')]
+    .find(button => button.textContent?.includes(name))!;
+const render = async (data = makeData(teams)) => {
+  await act(async () => root.render(<OrgBudgetChart data={data} />));
+};
 
 beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -106,120 +116,132 @@ afterEach(async () => {
 });
 
 describe('organization budget chart controls', () => {
-  it('selects the three highest-spend funded teams by default', async () => {
-    await act(async () => root.render(<OrgBudgetChart data={makeData(teams)} />));
+  it('defaults to only Total using account actuals and allocated-team pace', async () => {
+    await render();
 
-    expect(buttonFor('Highest team').getAttribute('aria-pressed')).toBe('true');
-    expect(buttonFor('Second team').getAttribute('aria-pressed')).toBe('true');
-    expect(buttonFor('Middle team').getAttribute('aria-pressed')).toBe('true');
-    expect(buttonFor('Low team').getAttribute('aria-pressed')).toBe('false');
-    expect(observed.lines.size).toBe(6);
-  });
-
-  it('toggles both actual and budget lines with an aria-pressed team control', async () => {
-    await act(async () => root.render(<OrgBudgetChart data={makeData(teams)} />));
-    await act(async () => buttonFor('Highest team').click());
-
-    expect(buttonFor('Highest team').getAttribute('aria-pressed')).toBe('false');
-    expect(observed.lines.has('Highest team Actual')).toBe(false);
-    expect(observed.lines.has('Highest team Budget')).toBe(false);
-
-    await act(async () => buttonFor('Highest team').click());
-    expect(buttonFor('Highest team').getAttribute('aria-pressed')).toBe('true');
-    expect(observed.lines.has('Highest team Actual')).toBe(true);
-    expect(observed.lines.has('Highest team Budget')).toBe(true);
-  });
-
-  it('supports Clear and All while retaining controls for an empty selection', async () => {
-    await act(async () => root.render(<OrgBudgetChart data={makeData(teams)} />));
-    await act(async () => buttonFor('Clear').click());
-
-    expect(container.textContent).toContain('No teams selected.');
-    expect(buttonFor('All')).toBeTruthy();
-    expect(buttonFor('Highest team').getAttribute('aria-pressed')).toBe('false');
-
-    await act(async () => buttonFor('All').click());
-    expect(container.textContent).not.toContain('No teams selected.');
-    expect(teams.every(team => buttonFor(team.name).getAttribute('aria-pressed') === 'true')).toBe(true);
-    expect(observed.lines.size).toBe(8);
-  });
-
-  it('keys duplicate names by stable IDs and preserves selection across reorder', async () => {
-    const duplicates = [
-      makeTeam('first-id', 'Same team', 100, 20),
-      makeTeam('second-id', 'Same team', 200, 10),
-    ];
-    await act(async () => root.render(<OrgBudgetChart data={makeData(duplicates)} />));
-    const duplicateButtons = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .filter(button => button.textContent?.includes('Same team'));
-    const colorBeforeReorder = observed.lines.get('Same team Actual').stroke;
-    await act(async () => duplicateButtons[0].click());
-    await act(async () => root.render(<OrgBudgetChart data={makeData([...duplicates].reverse())} />));
-
-    const reordered = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .filter(button => button.textContent?.includes('Same team'));
-    expect(reordered.map(button => button.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
-    expect(observed.lines.size).toBe(2);
+    expect(buttonFor('Total').getAttribute('aria-pressed')).toBe('true');
+    expect(buttonFor('Alpha team').getAttribute('aria-pressed')).toBe('false');
+    expect(buttonFor('Beta team').getAttribute('aria-pressed')).toBe('false');
+    expect([...observed.lines.keys()]).toEqual(['Total Actual', 'Total Budget']);
     const row = observed.data.find(item => item.date === '2026-06-01');
-    const actual = [...observed.lines.values()].find(line => line.name.endsWith('Actual'));
-    expect(actual.dataKey(row)).toBe(10);
-    expect(actual.stroke).toBe(colorBeforeReorder);
+    expect(observed.lines.get('Total Actual').dataKey(row)).toBe(75);
+    expect(observed.lines.get('Total Budget').dataKey(row)).toBeGreaterThan(0);
   });
 
-  it('searches long team names without changing their selection', async () => {
-    const longName = 'Customer Experience and International Operations Team';
-    await act(async () => root.render(
-      <OrgBudgetChart data={makeData([...teams, makeTeam('long', longName, 100, 1)])} />,
-    ));
-    const input = container.querySelector<HTMLInputElement>('input[placeholder="Search teams..."]')!;
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    await act(async () => {
-      setValue.call(input, 'international operations');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+  it('toggles Total independently and toggles both line pairs for a team', async () => {
+    await render();
+    await act(async () => buttonFor('Alpha team').click());
 
-    expect(buttonFor(longName)).toBeTruthy();
-    expect(container.textContent).not.toContain('Highest team');
-    expect(buttonFor(longName).getAttribute('aria-pressed')).toBe('false');
+    expect([...observed.lines.keys()]).toEqual([
+      'Total Actual', 'Total Budget', 'Alpha team Actual', 'Alpha team Budget',
+    ]);
+    await act(async () => buttonFor('Total').click());
+    expect(buttonFor('Total').getAttribute('aria-pressed')).toBe('false');
+    expect([...observed.lines.keys()]).toEqual(['Alpha team Actual', 'Alpha team Budget']);
+    await act(async () => buttonFor('Alpha team').click());
+    expect(container.textContent).toContain('No series selected.');
+    expect(container.querySelector('[data-testid="mock-line-chart"]')).toBeNull();
   });
 
-  it('exposes functional line keys and a tooltip with actual, pace, and funded values', async () => {
-    await act(async () => root.render(<OrgBudgetChart data={makeData(teams)} />));
+  it('does not render selector headers, search, All, Clear, or any inputs', async () => {
+    await render();
+
+    expect(container.querySelector('input')).toBeNull();
+    expect(container.textContent).not.toContain('Search teams');
+    expect([...container.querySelectorAll('button')].some(button => button.textContent === 'All')).toBe(false);
+    expect([...container.querySelectorAll('button')].some(button => button.textContent === 'Clear')).toBe(false);
+  });
+
+  it('renders tooltip Actual, Pace, and Allocated values, including unavailable allocation', async () => {
+    await render();
     const row = observed.data.find(item => item.date === '2026-06-01');
-    const actual = observed.lines.get('Highest team Actual');
-    const budget = observed.lines.get('Highest team Budget');
-
-    expect(actual.dataKey(row)).toBe(50);
-    expect(budget.dataKey(row)).toBeGreaterThan(0);
-    expect(actual.connectNulls).toBe(false);
-    expect(budget.connectNulls).toBe(false);
-    const tooltip = renderToStaticMarkup(<>{observed.tooltip?.({
+    let tooltip = renderToStaticMarkup(<>{observed.tooltip?.({
       active: true,
       label: row.day,
       payload: [{ payload: row }],
     })}</>);
-    expect(tooltip).toContain('Highest team');
-    expect(tooltip).toContain('$50.00');
+    expect(tooltip).toContain('Total');
+    expect(tooltip).toContain('$75.00');
     expect(tooltip).toContain('Pace:');
-    expect(tooltip).toContain('Funded:');
-  });
+    expect(tooltip).toContain('Allocated: $400.00');
 
-  it('places the as-of marker on the date portion of an ISO timestamp', async () => {
-    const data = { ...makeData(teams), asOf: '2026-09-08T23:59:59Z' };
-    await act(async () => root.render(<OrgBudgetChart data={data} />));
-
-    expect(observed.referenceLines).toContainEqual(expect.objectContaining({
-      x: Math.floor(Date.parse('2026-09-08T00:00:00Z') / 86_400_000),
+    await render(makeData(teams, {
+      summary: {
+        accountSpendUsd: 75,
+        teamAllocationUsd: null,
+        remainingUsd: null,
+        teamsOverBudget: null,
+        unassignedSpendUsd: 25,
+      },
     }));
+    const nullableRow = observed.data.find(item => item.date === '2026-06-01');
+    tooltip = renderToStaticMarkup(<>{observed.tooltip?.({
+      active: true,
+      label: nullableRow.day,
+      payload: [{ payload: nullableRow }],
+    })}</>);
+    expect(tooltip).toContain('$75.00');
+    expect(tooltip).not.toContain('Pace:');
+    expect(tooltip).toContain('Allocated: Unavailable');
   });
 
-  it('shows the funded-team empty state without chart controls', async () => {
-    await act(async () => root.render(
-      <OrgBudgetChart data={makeData([makeTeam('zero', 'Zero', 0, 1), makeTeam('none', 'None', null, 2)])} />,
-    ));
+  it('keeps Total usable when there are no funded teams', async () => {
+    await render(makeData([
+      makeTeam('zero', 'Zero', 0, 10),
+      makeTeam('none', 'None', null, 20),
+    ]));
 
-    expect(container.textContent).toContain('No teams with funded budgets found.');
-    expect(container.querySelector('[data-testid="mock-line-chart"]')).toBeNull();
-    expect(container.querySelector('button')).toBeNull();
+    expect(buttonFor('Total').getAttribute('aria-pressed')).toBe('true');
+    expect([...observed.lines.keys()]).toEqual(['Total Actual', 'Total Budget']);
+    expect(buttonFor('Zero')).toBeUndefined();
+    expect(buttonFor('None')).toBeUndefined();
+  });
+
+  it('shows unavailable when selected series has no spend or budget values', async () => {
+    await render(makeData([], {
+      asOf: null,
+      summary: {
+        accountSpendUsd: null,
+        teamAllocationUsd: null,
+        remainingUsd: null,
+        teamsOverBudget: null,
+        unassignedSpendUsd: null,
+      },
+      accountPoints: [],
+    }));
+
+    expect(container.textContent).toContain('Spend and budget data unavailable.');
+    expect(container.textContent).toContain('No spend data');
+    expect(container.textContent).toContain('Unavailable');
+    expect(container.querySelector('input')).toBeNull();
+  });
+
+  it('preserves selections across refetch and reorder, then prunes removed IDs permanently', async () => {
+    await render();
+    await act(async () => buttonFor('Alpha team').click());
+    await render(makeData([...teams].reverse()));
+    expect(buttonFor('Alpha team').getAttribute('aria-pressed')).toBe('true');
+
+    await render(makeData([teams[1]]));
+    expect(observed.lines.has('Alpha team Actual')).toBe(false);
+    await render(makeData([...teams].reverse()));
+    expect(buttonFor('Alpha team').getAttribute('aria-pressed')).toBe('false');
+    expect(buttonFor('Beta team').getAttribute('aria-pressed')).toBe('false');
+    expect([...observed.lines.keys()]).toEqual(['Total Actual', 'Total Budget']);
+  });
+
+  it('clips account nulls, zeroes, and future points at as-of without substituting teams', async () => {
+    await render(makeData([makeTeam('alpha', 'Alpha team', 100, 999)], {
+      asOf: '2026-05-21',
+      accountPoints: [
+        { date: '2026-05-20', spendUsd: 0 },
+        { date: '2026-05-21', spendUsd: null },
+        { date: '2026-05-22', spendUsd: 999 },
+      ],
+    }));
+
+    expect(observed.data.find(row => row.date === '2026-05-20').values['account-total'].actual).toBe(0);
+    expect(observed.data.find(row => row.date === '2026-05-21').values['account-total'].actual).toBeNull();
+    expect(observed.data.find(row => row.date === '2026-05-22')).toBeUndefined();
   });
 });

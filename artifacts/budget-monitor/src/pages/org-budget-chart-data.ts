@@ -2,6 +2,8 @@ import type { OrgBudgetOverviewResponse } from '@workspace/api-client-react';
 import { trajectoryChartData } from './home-components/budget-trajectory';
 
 export type OrgChartTeam = OrgBudgetOverviewResponse['teams'][number];
+export type OrgChartSeries = Pick<OrgChartTeam, 'id' | 'name' | 'allocationUsd' | 'spendUsd' | 'complete' | 'points'>;
+export const TOTAL_SERIES_ID = 'account-total';
 export type OrgBudgetChartRow = {
   date: string;
   day: number;
@@ -23,7 +25,7 @@ export function getFundedTeams(teams: OrgChartTeam[]): OrgChartTeam[] {
 
 export function buildOrgBudgetChartData(
   data: OrgBudgetOverviewResponse,
-  teams: OrgChartTeam[],
+  teams: OrgChartSeries[],
 ): OrgBudgetChartRow[] {
   const startDay = orgChartDay(data.periodStart);
   const endDay = orgChartDay(data.periodEnd);
@@ -37,7 +39,7 @@ export function buildOrgBudgetChartData(
     // The endpoint is account-wide and uses one canonical funding term.
     // A known allocation's plan does not depend on complete usage history.
     const points = trajectoryChartData({
-      benchmarkEligible: validTerm && Number.isFinite(team.allocationUsd) && team.allocationUsd! > 0,
+      benchmarkEligible: validTerm && Number.isFinite(team.allocationUsd) && team.allocationUsd! >= 0,
       comparisonsMatchBudgetWindow: validTerm,
       periodStart: validTerm ? data.periodStart : null,
       periodEnd: validTerm ? data.periodEnd : null,
