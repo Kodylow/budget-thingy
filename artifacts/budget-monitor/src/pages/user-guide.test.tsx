@@ -15,6 +15,17 @@ vi.mock('@/components/auth-context', () => ({
 }));
 
 describe('Help walkthrough', () => {
+  it('explains navigation and routes questions to the responsible administrators', () => {
+    const html = renderToStaticMarkup(<Help />);
+    expect(html).toContain('Who to contact');
+    expect(html).toContain('Access or missing workspaces');
+    expect(html).toContain('Funding or allocation changes');
+    expect(html).toContain('Agent limits or blocked usage');
+    expect(html).toContain('Incorrect totals, stale data, or app errors');
+    expect(html).toContain('My Team');
+    expect(html).toContain('Org Insights');
+    expect(html).not.toContain('Open <strong class="text-foreground">Spend</strong>');
+  });
   it('renders the approved guide layout and links to the portable PDF securely', () => {
     const html = renderToStaticMarkup(<Help />);
 

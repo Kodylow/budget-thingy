@@ -10,7 +10,7 @@ import {
   X,
   Users,
   WalletCards,
-  BookOpen,
+  CircleHelp,
   Check,
   ChevronsUpDown,
   CircleUser,
@@ -166,7 +166,6 @@ function getNavSections(
       label: 'Management',
       id: 'management-admin',
       items: [
-        { path: '/spend', label: 'Spend', icon: WalletCards, show: accountLanding, testId: 'nav-spend' },
         { path: '/alerts', label: 'Email activity', icon: Bell, show: role !== 'member' && role !== 'denied' && role !== null, testId: 'nav-alerts' },
         { path: '/access', label: 'Access', icon: Users, show: capabilities.canManageAccess, testId: 'nav-access' },
         { path: '/settings', label: 'Settings', icon: Settings, show: capabilities.canManageSystem || capabilities.canManageNotifications, testId: 'nav-settings' },
@@ -176,7 +175,7 @@ function getNavSections(
       label: 'Support',
       id: 'support',
       items: [
-        { path: '/help', label: 'Help', icon: BookOpen, show: true, testId: 'nav-help' },
+        { path: '/help', label: 'Help and contact', icon: CircleHelp, show: true, testId: 'nav-help' },
       ],
     },
   ].map((section) => ({
@@ -293,7 +292,7 @@ function Navigation({ location }: { location: string }) {
           <section key={section.label} aria-labelledby={`nav-section-${section.id}`}>
             <h2
               id={`nav-section-${section.id}`}
-              className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground"
+              className={section.id === 'support' ? 'sr-only' : 'mb-1.5 px-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground'}
             >
               {section.label}
             </h2>
@@ -305,16 +304,17 @@ function Navigation({ location }: { location: string }) {
                   <li key={item.path}>
                     <Link
                       href={reportingNavigationHref(item.path, search)}
-                      className={`flex min-h-11 items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors md:py-2 ${
+                      className={`flex min-h-11 items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:py-2 ${section.id === 'support' ? 'w-11 justify-center' : ''} ${
                         isActive
                           ? 'bg-primary/10 text-primary'
                           : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                       }`}
                       data-testid={item.testId}
                       aria-current={isActive ? 'page' : undefined}
+                      title={section.id === 'support' ? item.label : undefined}
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      {item.label}
+                      <Icon className={section.id === 'support' ? 'h-5 w-5 shrink-0' : 'h-4 w-4 shrink-0'} aria-hidden />
+                      <span className={section.id === 'support' ? 'sr-only' : undefined}>{item.label}</span>
                     </Link>
                   </li>
                 );
@@ -680,13 +680,15 @@ function DesktopTopBar({ location }: { location: string }) {
             <Link
               key={item.path}
               href={reportingNavigationHref(item.path, search)}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${
+              className={`flex h-11 w-11 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
               }`}
               data-testid={item.testId}
               aria-current={isActive ? 'page' : undefined}
+              aria-label={item.label}
+              title={item.label}
             >
-              {item.label}
+              <CircleHelp className="h-5 w-5" aria-hidden />
             </Link>
           );
         })}

@@ -1183,17 +1183,18 @@ test.describe('authenticated account route smoke', () => {
     const primaryRoutes = [
       ['nav-org-insights', '/org-insights', 'h1:text-is("Organization Budget Overview")'],
       ['nav-limits', '/limits', 'h1:text-is("Limits")'],
+      ['nav-help', '/help', 'h1:text-is("Use Budget Monitor")'],
     ] as const;
     const menuRoutes = [
-      ['Management', 'nav-spend', '/spend', 'h1:text-is("Spend")'],
       ['Management', 'nav-alerts', '/alerts', '[data-testid="text-alerts-title"]'],
       ['Management', 'nav-settings', '/settings', '[data-testid="text-settings-title"]'],
       ['Management', 'nav-access', '/access', 'h1:text-is("Access")'],
-      ['Support', 'nav-help', '/help', 'h1:text-is("Use Budget Monitor")'],
     ] as const;
 
     await page.goto('/');
     await expect(page).toHaveURL(/\/org-insights$/);
+    await expect(page.getByTestId('nav-help')).toHaveAccessibleName('Help and contact');
+    await expect(page.getByTestId('nav-spend')).toHaveCount(0);
     await expectReady(page, 'h1:text-is("Organization Budget Overview")');
     for (const [navId, path, ready] of primaryRoutes) {
       await page.locator(`[data-testid="${navId}"]`).click();
@@ -1230,8 +1231,7 @@ test.describe('authenticated account route smoke', () => {
     await expect(page.getByTestId('nav-allocations')).toBeVisible();
     await expect(page.getByTestId('nav-limits')).toBeVisible();
     await openCompactMenu(page, 'Management');
-    await expect(page.getByTestId('nav-spend')).toBeVisible();
-    await expect(page.getByTestId('nav-spend')).not.toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('nav-spend')).toHaveCount(0);
     await page.keyboard.press('Escape');
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -1867,7 +1867,7 @@ test.describe('mobile regression', () => {
     await expectReady(page, '[data-testid="text-dashboard-scope"]');
 
     const routes = [
-      ['nav-spend', '/spend', 'Spend'],
+      ['nav-help', '/help', 'Use Budget Monitor'],
       ['nav-limits', '/limits', 'Limits'],
       ['nav-allocations', '/allocations', 'Budget allocations'],
       ['nav-settings', '/settings', 'Settings'],

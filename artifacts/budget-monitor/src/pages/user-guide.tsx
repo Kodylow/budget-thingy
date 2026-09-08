@@ -24,7 +24,7 @@ export default function Help() {
       <header className="max-w-3xl space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Use Budget Monitor</h1>
         <p className="text-sm leading-6 text-muted-foreground">
-          Role-aware guidance for monitoring spend, allocations, and Agent limits across Comcast Enterprise.
+          How to monitor usage, manage budgets and limits, and find the right person to help.
         </p>
       </header>
 
@@ -66,9 +66,9 @@ export default function Help() {
       <div className="grid gap-x-10 gap-y-8 md:grid-cols-2">
         <GuideSection index="01 · Monitor" title="Read current spend" icon={<Search className="h-4 w-4" />}>
             <p>
-              <strong className="text-foreground">Overview</strong> summarizes actual spend for the selected
-              period and scope. Use scope to switch among your spend, groups and workspaces you manage,
-              and all spend you are authorized to see.
+              Start with <strong className="text-foreground">Home</strong> for your usage, or
+              <strong className="text-foreground"> Org Insights</strong> for the account-wide view if you have access.
+              Select the reporting period and scope before comparing amounts.
             </p>
             <p>
               The period and data-as-of text explain what the amount covers. Ordinary members see their
@@ -83,9 +83,9 @@ export default function Help() {
 
         <GuideSection index="02 · Investigate" title="Find where it went" icon={<Search className="h-4 w-4" />}>
             <p>
-              Open <strong className="text-foreground">Spend</strong> for searchable, sortable detail.
-              Choose Groups, Members, Projects, or an available planning-pool view, then narrow the
-              authorized scope with filters.
+              Use <strong className="text-foreground">My Team</strong> to investigate your team's usage,
+              or open a team or group from <strong className="text-foreground">Org Insights</strong>.
+              Use <strong className="text-foreground">My Projects</strong> to find your own projects and their usage.
             </p>
             <p>
               Project rows show the current catalog, while their spend columns use the selected reporting
@@ -100,13 +100,23 @@ export default function Help() {
         {capabilities.canWriteUserLimitsIn.length > 0 && (
           <GuideSection index="03 · Control" title="Set Agent limits" icon={<ShieldCheck className="h-4 w-4" />}>
             <p>
-              <strong className="text-foreground">Limits</strong> shows current monthly Agent limits for
-              eligible members. A platform limit may hard-block paid Agent usage when reached and resets
-              with the billing cycle.
+              <strong className="text-foreground">Limits</strong> organizes budget teams, workspace-qualified
+              groups, and people. Edit a workspace default, group limit, or individual override.
+              Select people, groups, or teams to stage bulk individual updates, then review the exact
+              targets and amounts before confirming.
             </p>
             <p>
               Editing depends on workspace permissions. You can review and change limits only in
-              workspaces where your current role grants that capability.
+              workspaces where your current role grants that capability. Check each target's result
+              after saving; retry unresolved targets if needed. Monthly Agent limits can block paid
+              Agent usage and reset with the billing cycle.
+            </p>
+            <p>
+              <strong className="text-foreground">Clear Limits</strong> is a separate admin action.
+              Review its complete inventory and type <code>CLEAR LIMITS</code> to confirm. It removes
+              limits and disables automatic policies that could recreate them; funding allocations
+              and account spending controls are unchanged. Clearing an individual override alone
+              can expose an inherited limit rather than make usage unlimited.
             </p>
             {capabilities.canEditAllocations && (
               <p>
@@ -134,6 +144,49 @@ export default function Help() {
             </div>
         </GuideSection>
       </div>
+
+      <section className="space-y-4 border-t border-border pt-6" aria-labelledby="help-contacts">
+        <div>
+          <h2 id="help-contacts" className="text-xl font-semibold">Who to contact</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            Start with the person responsible for the workspace or budget team involved.
+            If you do not know who that is, ask your workspace administrator to direct you.
+          </p>
+        </div>
+        <dl className="grid gap-x-10 gap-y-5 text-sm md:grid-cols-2">
+          <div>
+            <dt className="font-semibold">Access or missing workspaces</dt>
+            <dd className="mt-1 leading-6 text-muted-foreground">
+              Contact your workspace or account administrator. Include which workspace or team you
+              need to see and what you need to do. Access is based on your role; a missing page does
+              not mean its data is missing.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold">Funding or allocation changes</dt>
+            <dd className="mt-1 leading-6 text-muted-foreground">
+              Contact your budget team administrator or funding owner. Include the team, requested
+              amount, and budget period. A funding allocation is a planning baseline, not an Agent limit.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold">Agent limits or blocked usage</dt>
+            <dd className="mt-1 leading-6 text-muted-foreground">
+              Contact an administrator who manages limits for your workspace. Include the workspace,
+              affected person or group, and the limit or error shown. Increasing funding alone does
+              not raise a platform limit.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold">Incorrect totals, stale data, or app errors</dt>
+            <dd className="mt-1 leading-6 text-muted-foreground">
+              Contact the Budget Monitor app administrator through your workspace administrator.
+              Include the page, reporting dates, selected scope, data-as-of time, and what you expected.
+              Share only details the recipient is authorized to see; never send credentials.
+            </dd>
+          </div>
+        </dl>
+      </section>
 
       <Card className="rounded-md border-dashed shadow-none">
         <CardHeader className="pb-3">

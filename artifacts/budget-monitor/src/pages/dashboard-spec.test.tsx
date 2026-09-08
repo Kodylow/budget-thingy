@@ -158,7 +158,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
       mockCapabilities({ canViewAccountUsage: true }),
       'member',
     ).flatMap(section => section.items);
-    expect(items.some(item => item.testId === 'nav-spend')).toBe(true);
+    expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
     expect(items[0]).toEqual(expect.objectContaining({
       path: '/org-insights',
       testId: 'nav-org-insights',
@@ -175,11 +175,13 @@ describe('Dashboard and Spend Spec Behaviors', () => {
         role,
       ).flatMap(section => section.items);
       expect(withoutCapability.some(item => item.testId === 'nav-spend')).toBe(false);
-      expect(withCapability.some(item => item.testId === 'nav-spend')).toBe(true);
+      expect(withCapability.some(item => item.testId === 'nav-spend')).toBe(false);
+      expect(withoutCapability.some(item => item.testId === 'nav-org-insights')).toBe(false);
+      expect(withCapability.some(item => item.testId === 'nav-org-insights')).toBe(true);
     },
   );
 
-  it('uses the requested admin navigation order and keeps Spend under Management', () => {
+  it('keeps admin navigation without a Spend tab and provides Help and contact', () => {
     const sections = getNavSections(mockCapabilities({
       canViewAccountUsage: true,
       canEditAllocations: true,
@@ -194,9 +196,11 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     ]);
     expect(sections.find(s => s.label === 'Management')?.items)
       .toEqual(expect.arrayContaining([
-        expect.objectContaining({ path: '/spend', label: 'Spend' }),
         expect.objectContaining({ path: '/alerts', label: 'Email activity' }),
       ]));
+    expect(sections.flatMap(section => section.items).some(item => item.path === '/spend')).toBe(false);
+    expect(sections.find(section => section.id === 'support')?.items)
+      .toContainEqual(expect.objectContaining({ path: '/help', label: 'Help and contact' }));
   });
 
   it('shows Budget allocations to read-only account viewers without exposing it to members', () => {
