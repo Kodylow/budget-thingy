@@ -354,9 +354,9 @@ export default function Home() {
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base"><TrendingUp className="h-4 w-4 text-primary" /> My spend</CardTitle>
             </CardHeader>
-            <CardContent><div className="h-64 rounded-sm border bg-muted/25 p-3">
-              {billingCyclesQuery.isLoading ? <Skeleton className="h-full w-full" /> : billingCyclesQuery.isError && !billingCyclesQuery.data ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">Spend comparison unavailable<Button size="sm" variant="outline" onClick={() => void billingCyclesQuery.refetch()}>Retry</Button></div>
+            <CardContent><div className="min-h-72 min-w-0 rounded-sm border bg-muted/25 p-3 sm:min-h-80">
+              {billingCyclesQuery.isLoading ? <Skeleton className="h-64 w-full" /> : billingCyclesQuery.isError && !billingCyclesQuery.data ? (
+                <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">Spend comparison unavailable<Button size="sm" variant="outline" onClick={() => void billingCyclesQuery.refetch()}>Retry</Button></div>
               ) : <SpendStoryChart cycles={cycles} scope="personal" />}
             </div></CardContent>
           </Card>}

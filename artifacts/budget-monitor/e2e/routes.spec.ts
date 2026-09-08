@@ -2517,6 +2517,83 @@ test.describe('org budget chart focused mocked browser pass', () => {
   });
 });
 
+test('Home spend dates fit the real chart and card at desktop and mobile widths', async ({ page }, testInfo) => {
+  await mockApi(page, 'member');
+  await page.route('**/api/me/membership-context', route => json(route, {
+    defaultWorkspaceId: WORKSPACE_ID,
+    qualification: null,
+    workspaces: [{
+      workspaceId: WORKSPACE_ID, workspaceName: 'Sample Workspace',
+      groups: [], budgetTeams: [], unmappedGroups: [], isPreferred: true,
+    }],
+  }));
+  const cycle = (key: string, startDate: string, days: number) => ({
+    key, startDate,
+    endDate: new Date(Date.parse(startDate) + (days - 1) * 86400000).toISOString().slice(0, 10),
+    label: `${startDate} · Sample ${key} period`,
+    personalComplete: true, teamComplete: true,
+    points: Array.from({ length: days }, (_, index) => ({
+      day: index + 1,
+      date: new Date(Date.parse(startDate) + index * 86400000).toISOString().slice(0, 10),
+      personalSpendUsd: index === 5 ? null : index * 2,
+      teamSpendUsd: index * 3,
+    })),
+  });
+  await page.route('**/api/spend/billing-cycles?*', route => {
+    const billing = new URL(route.request().url()).searchParams.get('rangeType') === 'billing';
+    return json(route, { cycles: billing
+      ? [cycle('current', '2024-02-01', 29), cycle('previous', '2024-01-01', 31), cycle('twoAgo', '2023-12-01', 31)]
+      : [cycle('current', '2026-05-20', 112), cycle('previous', '2026-01-28', 112)],
+    });
+  });
+  for (const rangeType of ['full-term', 'billing']) {
+    let desktopTicks = 0;
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.goto(`/?rangeType=${rangeType}`);
+      const chart = page.locator('.recharts-wrapper').filter({
+        has: page.locator('svg[aria-label^="My cumulative spend"]'),
+      });
+      await expect(chart).toBeVisible();
+      await expect(chart.locator('.recharts-line')).toHaveCount(rangeType === 'full-term' ? 1 : 3);
+      const ticks = chart.locator('.recharts-xAxis .recharts-cartesian-axis-tick-value');
+      await expect(ticks.first()).toHaveText(rangeType === 'full-term' ? 'May 20' : 'Feb 1');
+      await expect(ticks.last()).toHaveText(rangeType === 'full-term' ? 'Sep 8' : 'Feb 29');
+      await expect(page.getByText('Period day', { exact: true })).toHaveCount(0);
+      if (rangeType === 'billing') await expect(page.getByText('Dates: current period (UTC)')).toBeVisible();
+      const tickCount = await ticks.count();
+      if (width === 1440) desktopTicks = tickCount;
+      else expect(tickCount).toBeLessThan(desktopTicks);
+      const geometry = await chart.evaluate(element => {
+        const frame = element.closest('.border.bg-muted\\/25')!;
+        const bounds = frame.getBoundingClientRect();
+        const svg = element.querySelector('svg.recharts-surface')!.getBoundingClientRect();
+        const labels = Array.from(element.querySelectorAll('.recharts-xAxis .recharts-cartesian-axis-tick-value'))
+          .map(label => {
+            const box = label.getBoundingClientRect();
+            return { left: box.left, right: box.right, bottom: box.bottom };
+          });
+        return {
+          labels,
+          frame: { left: bounds.left, right: bounds.right, bottom: bounds.bottom },
+          svg: { left: svg.left, right: svg.right, bottom: svg.bottom },
+          plotHeight: element.querySelector('.recharts-cartesian-grid')!.getBoundingClientRect().height,
+        };
+      });
+      expect(geometry.plotHeight).toBeGreaterThan(100);
+      geometry.labels.forEach((label, index) => {
+        expect(label.left).toBeGreaterThanOrEqual(geometry.frame.left + 8);
+        expect(label.right).toBeLessThanOrEqual(geometry.frame.right - 8);
+        expect(label.bottom).toBeLessThan(geometry.frame.bottom - 12);
+        expect(label.bottom).toBeLessThan(geometry.svg.bottom - 4);
+        if (index) expect(label.left - geometry.labels[index - 1].right).toBeGreaterThanOrEqual(12);
+      });
+      await chart.locator('xpath=ancestor::div[contains(@class, "bg-muted/25")]')
+        .screenshot({ path: testInfo.outputPath(`spend-${rangeType}-${width}.png`) });
+    }
+  }
+});
+
 function usageLimitAuditFixture(id: number) {
   return {
     id,

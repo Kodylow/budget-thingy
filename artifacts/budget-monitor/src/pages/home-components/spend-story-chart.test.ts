@@ -9,19 +9,22 @@ const observed = vi.hoisted(() => ({
   chartData: [] as Array<Record<string, unknown>>,
   tooltipDay: 0,
   lines: [] as Array<Record<string, unknown>>,
+  axis: {} as Record<string, any>,
+  margin: {} as Record<string, number>,
 }));
 
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: any) => children,
-  LineChart: ({ children, data }: any) => {
+  LineChart: ({ children, data, margin }: any) => {
     observed.chartData = data;
+    observed.margin = margin;
     return children;
   },
   Line: (props: any) => {
     observed.lines.push(props);
     return null;
   },
-  XAxis: () => null,
+  XAxis: (props: any) => { observed.axis = props; return null; },
   YAxis: () => null,
   CartesianGrid: () => null,
   Tooltip: ({ content }: any) => content({
@@ -38,6 +41,8 @@ beforeEach(() => {
   observed.chartData = [];
   observed.tooltipDay = 0;
   observed.lines = [];
+  observed.axis = {};
+  observed.margin = {};
 });
 
 describe('billing cycle spend series', () => {
@@ -172,5 +177,89 @@ describe('SpendStoryChart visible series', () => {
     );
     expect(html).toContain('No comparable period spend available');
     expect(observed.lines).toHaveLength(0);
+  });
+});
+
+describe('SpendStoryChart calendar axis', () => {
+  function cycle(key: BillingCycleComparisonCycle['key'], dates: Array<string | null>, values?: Array<number | null>) {
+    return {
+      key, label: key,
+      points: dates.flatMap((date, index) => date ? [{
+        day: index + 1, date,
+        personalSpendUsd: values ? values[index] : index,
+        teamSpendUsd: values ? values[index] : index,
+      }] : []),
+    } as BillingCycleComparisonCycle;
+  }
+
+  it('formats real full-term UTC dates instead of day numbers and reserves axis space', () => {
+    renderToStaticMarkup(React.createElement(SpendStoryChart, {
+      cycles: [cycle('current', ['2026-05-20T00:00:00Z', '2026-06-10T00:00:00Z', '2026-09-08T00:00:00Z'])],
+      scope: 'personal',
+    }));
+    expect(observed.axis.ticks.map(observed.axis.tickFormatter)).toEqual(['May 20', 'Jun 10', 'Sep 8']);
+    expect(observed.axis.dataKey).toBe('day');
+    expect(observed.axis.label).toBeUndefined();
+    expect(observed.axis.interval).toBe('preserveStartEnd');
+    expect(observed.axis.minTickGap).toBeGreaterThanOrEqual(24);
+    expect(observed.axis.height).toBeGreaterThanOrEqual(36);
+    expect(observed.margin.bottom).toBeGreaterThan(0);
+  });
+
+  it.each(['personal', 'team'] as const)('uses current dates for %s even when current spend is entirely unknown', (scope) => {
+    const html = renderToStaticMarkup(React.createElement(SpendStoryChart, {
+      cycles: [
+        cycle('current', ['2024-02-28', '2024-02-29', '2024-03-01'], [null, null, null]),
+        cycle('previous', ['2024-01-28', '2024-01-29', '2024-01-30']),
+      ], scope,
+    }));
+    expect(observed.axis.ticks.map(observed.axis.tickFormatter)).toEqual(['Feb 28', 'Feb 29', 'Mar 1']);
+    expect(html).toContain('Dates: current period (UTC)');
+    expect(observed.lines.map(line => line.dataKey)).toEqual(['previous']);
+  });
+
+  it('leaves absent reference buckets and longer previous-period tails unlabeled', () => {
+    observed.tooltipDay = 3;
+    const html = renderToStaticMarkup(React.createElement(SpendStoryChart, {
+      cycles: [
+        cycle('current', ['2026-02-27', null, '2026-03-01'], [0, null, 5]),
+        cycle('previous', ['2026-01-27', '2026-01-28', '2026-01-29', '2026-01-30']),
+      ], scope: 'personal',
+    }));
+    expect(observed.axis.ticks).toEqual([1, 3]);
+    expect(observed.axis.tickFormatter(2)).toBe('');
+    expect(observed.axis.tickFormatter(4)).toBe('');
+    expect(observed.chartData).toHaveLength(4);
+    expect(observed.chartData[0]).toMatchObject({ current: 0, previous: 0 });
+    expect(observed.chartData[1]).toMatchObject({ current: null, currentDate: null, previous: 1 });
+    expect(observed.chartData[3]).toMatchObject({ current: null, previous: 3 });
+    expect(html).toContain('Jan 30, 2026');
+    expect(html).not.toContain('Mar 2');
+    expect(observed.lines.every(line => line.connectNulls === false)).toBe(true);
+  });
+
+  it('keeps each tooltip series actual date, including observed zeroes', () => {
+    const html = renderToStaticMarkup(React.createElement(SpendStoryChart, {
+      cycles: [
+        cycle('current', ['2024-03-01']),
+        cycle('previous', ['2024-02-01']),
+        cycle('twoAgo', ['2024-01-01']),
+      ], scope: 'personal',
+    }));
+    expect(observed.axis.ticks).toEqual([1]);
+    expect(observed.axis.tickFormatter(1)).toBe('Mar 1');
+    for (const date of ['Mar 1, 2024', 'Feb 1, 2024', 'Jan 1, 2024']) expect(html).toContain(date);
+    expect(html.match(/\$0\.00/g)).toHaveLength(3);
+  });
+
+  it('does not substitute older dates when the current period has no points', () => {
+    const html = renderToStaticMarkup(React.createElement(SpendStoryChart, {
+      cycles: [cycle('current', []), cycle('previous', ['2026-01-31'])],
+      scope: 'personal',
+    }));
+    expect(observed.axis.ticks).toEqual([]);
+    expect(observed.axis.tickFormatter(1)).toBe('');
+    expect(html).toContain('Current period dates unavailable');
+    expect(html).toContain('Jan 31, 2026');
   });
 });

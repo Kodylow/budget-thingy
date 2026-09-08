@@ -26,11 +26,11 @@ export function billingCycleSeriesData(cycles: BillingCycleComparisonCycle[], sc
   });
 }
 
-function formatCycleDate(value: string) {
+function formatCycleDate(value: string, includeYear = true) {
   return new Date(value).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
-    year: 'numeric',
+    year: includeYear ? 'numeric' : undefined,
     timeZone: 'UTC',
   });
 }
@@ -47,14 +47,18 @@ export function SpendStoryChart({
    const visibleSeries = cycleSeries.filter(series => availableCycles.some(cycle => cycle.key === series.key));
    const chartData = billingCycleSeriesData(availableCycles, scope);
   const labels = new Map(cycles.map((cycle) => [cycle.key, cycle.label]));
+  // Keep one reference even when its spend is unknown. Never borrow dates
+  // from an older series or extrapolate past the current period's buckets.
+  const referenceDates = new Map(cycles.find(cycle => cycle.key === 'current')?.points.map(point => [point.day, point.date]));
+  const dateTicks = chartData.map(row => Number(row.day)).filter(day => referenceDates.has(day));
 
   if (!chartData.length || !visibleSeries.length) {
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No comparable period spend available</div>;
   }
 
   return (
-    <div className="h-full w-full min-w-0">
-      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1" aria-label="Spend comparison legend">
+    <div className="flex w-full min-w-0 flex-col">
+      <div className="mb-2 flex shrink-0 flex-wrap gap-x-4 gap-y-1" aria-label="Spend comparison legend">
         {visibleSeries.map((series) => (
           <span key={series.key} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             <svg width="18" height="10" viewBox="0 0 18 10" aria-hidden="true">
@@ -64,23 +68,34 @@ export function SpendStoryChart({
           </span>
         ))}
       </div>
-      <div className="h-[calc(100%-1.5rem)]">
+      {cycles.length > 1 && (
+        <p className="mb-2 shrink-0 text-xs text-muted-foreground">
+          {dateTicks.length ? 'Dates: current period (UTC)' : 'Current period dates unavailable'}
+        </p>
+      )}
+      <div className="h-52 shrink-0 sm:h-60">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={chartData}
-            margin={{ top: 8, right: 12, left: -12, bottom: 0 }}
+            margin={{ top: 8, right: 20, left: -12, bottom: 12 }}
             accessibilityLayer
-            aria-label={`${scope === 'personal' ? 'My' : 'Team'} cumulative spend by comparable period day`}
+            aria-label={`${scope === 'personal' ? 'My' : 'Team'} cumulative spend; dates use the current period in UTC, comparisons align by period day`}
           >
             <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" opacity={0.5} />
             <XAxis
               dataKey="day"
+              ticks={dateTicks}
+              tickFormatter={(day) => {
+                const date = referenceDates.get(Number(day));
+                return date ? formatCycleDate(date, false) : '';
+              }}
               axisLine={false}
               tickLine={false}
               tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
-              dy={8}
-              minTickGap={28}
-              label={{ value: 'Period day', position: 'insideBottomRight', offset: -2, fontSize: 10, fill: 'var(--muted-foreground)' }}
+              height={36}
+              tickMargin={10}
+              minTickGap={24}
+              interval="preserveStartEnd"
             />
             <YAxis
               axisLine={false}
