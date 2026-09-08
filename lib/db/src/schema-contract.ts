@@ -189,15 +189,32 @@ export async function validateSchemaContract(
 ): Promise<void> {
   await verifyGeneratedManifest();
   validateHistory(applied);
+  await validateSchemaContractSnapshot(client, schema, applied, false);
+}
+
+/**
+ * Validates a catalog shape assembled from explicit current-contract deltas.
+ * This is intentionally separate from journal validation: a narrowly reviewed
+ * history reconciliation can prove an old source identity first, then map its
+ * unchanged SQL to the equivalent current delta without accepting that old
+ * identity in the routine migration runner.
+ */
+export async function validateSchemaContractSnapshot(
+  client: PoolClient,
+  schema: string,
+  equivalentApplied: AppliedSchemaMigration[],
+  verifyManifest = true,
+): Promise<void> {
+  if (verifyManifest) await verifyGeneratedManifest();
   const version = await client.query<{ major: number }>(
     "SELECT current_setting('server_version_num')::integer / 10000 AS major",
   );
   if (version.rows[0]?.major !== schemaContract.postgresMajor) mismatch("PostgreSQL version", "major");
-  if (!applied.length) return;
-  const expected = expectedShape(applied);
+  if (!equivalentApplied.length) return;
+  const expected = expectedShape(equivalentApplied);
   const actual = await actualShape(client, schema);
-  const hasRepair5 = applied.some((migration) => migration.idx >= 5);
-  const hasRepair9 = applied.some((migration) => migration.idx >= 9);
+  const hasRepair5 = equivalentApplied.some((migration) => migration.idx >= 5);
+  const hasRepair9 = equivalentApplied.some((migration) => migration.idx >= 9);
   const optionalMissing = new Set<string>();
   const optionalMissingObjects = new Set<string>();
   if (!hasRepair5 && actual.relations.app_admins === undefined) optionalMissing.add("app_admins");

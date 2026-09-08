@@ -62,6 +62,52 @@ export const familyTeamMappingsTable = pgTable(
   ],
 );
 
+/**
+ * A funding decision for one concrete Enterprise group. The row's presence is
+ * significant: a null teamName is an explicit unmap and must suppress family
+ * or name inference.
+ */
+export const fundingGroupOverridesTable = pgTable(
+  "funding_group_overrides",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    groupId: text("group_id").notNull(),
+    teamName: text("team_name"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    primaryKey({
+      name: "funding_group_overrides_pkey",
+      columns: [table.workspaceId, table.groupId],
+    }),
+    index("funding_group_overrides_team_name_idx").on(table.teamName),
+  ],
+);
+
+export const fundingGroupOverrideAuditsTable = pgTable(
+  "funding_group_override_audits",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    workspaceId: text("workspace_id").notNull(),
+    groupId: text("group_id").notNull(),
+    previousTeamName: text("previous_team_name"),
+    newTeamName: text("new_team_name"),
+    actorUserId: text("actor_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("funding_group_override_audits_identity_created_idx").on(
+      table.workspaceId,
+      table.groupId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
 export const workspaceDefaultLimitTargetsTable = pgTable(
   "workspace_default_limit_targets",
   {
@@ -241,6 +287,9 @@ export const teamBudgetAdjustmentsTable = pgTable(
 );
 export type TeamLimitTarget = typeof teamLimitTargetsTable.$inferSelect;
 export type FamilyTeamMapping = typeof familyTeamMappingsTable.$inferSelect;
+export type FundingGroupOverride = typeof fundingGroupOverridesTable.$inferSelect;
+export type FundingGroupOverrideAudit =
+  typeof fundingGroupOverrideAuditsTable.$inferSelect;
 
 export const insertTeamBudgetSchema = createInsertSchema(teamBudgetsTable).omit({
   updatedAt: true,

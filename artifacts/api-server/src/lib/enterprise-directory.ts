@@ -1,6 +1,5 @@
 import { db, teamBudgetsTable, teamLimitTargetsTable } from "@workspace/db";
 import {
-  collisionSafeFamilyTeamName,
   FAMILY_TEAM_OVERRIDES,
 } from "@workspace/db/seed-teams";
 import { and, eq } from "drizzle-orm";
@@ -81,6 +80,11 @@ export interface CanonicalEffectiveTeams {
   byFamilyId: Map<string, string | null>;
   byRoleGroupId: Map<string, string | null>;
 }
+export interface CanonicalFundingOverride {
+  workspaceId: string;
+  groupId: string;
+  teamName: string | null;
+}
 export interface FamilyMapping {
   workspaceId: string;
   familyKey: string;
@@ -129,34 +133,24 @@ export function buildCanonicalAccountDirectory(input: {
   const mappingByIdentity = new Map(
     (input.mappings ?? []).map((row) => [`${row.workspaceId}\0${row.familyKey}`, row]),
   );
-  const identitiesByKey = new Map<string, Set<string>>();
-  for (const group of input.groups) {
-    if (group.workspaceId === LEGACY_WORKSPACE_ID) continue;
-    const key = parseDirectoryGroupName(group.name).familyKey;
-    const identities = identitiesByKey.get(key) ?? new Set();
-    identities.add(`${group.workspaceId}\0${key}`);
-    identitiesByKey.set(key, identities);
-  }
-  const nonlegacyTeams = new Map<string, string>();
+  const nonlegacyTeams = new Map<string, string | null>();
   for (const group of input.groups) {
     if (group.workspaceId === LEGACY_WORKSPACE_ID) continue;
     const parsed = parseDirectoryGroupName(group.name);
     const identity = `${group.workspaceId}\0${parsed.familyKey}`;
-    const mapped = mappingByIdentity.get(identity)?.teamName;
+    const mapping = mappingByIdentity.get(identity);
     nonlegacyTeams.set(
       identity,
       FAMILY_TEAM_OVERRIDES.get(parsed.familyKey) ??
-        (mapped && normalizeFamilyKey(mapped) !== parsed.familyKey
-          ? mapped
-          : collisionSafeFamilyTeamName(
-              parsed.familyName,
-              group.workspaceId,
-              (identitiesByKey.get(parsed.familyKey)?.size ?? 0) > 1,
-            )),
+        // Existing rows preserve the pre-policy inferred baseline. Absence is
+        // a newly discovered family and remains unmapped for explicit review.
+        mapping?.teamName ??
+        null,
     );
   }
   const teamsByKey = new Map<string, Set<string>>();
   for (const [identity, team] of nonlegacyTeams) {
+    if (!team) continue;
     const key = identity.split("\0")[1]!;
     const teams = teamsByKey.get(key) ?? new Set();
     teams.add(team);
@@ -230,6 +224,7 @@ export function buildCanonicalAccountDirectory(input: {
 export function buildCanonicalEffectiveTeams(
   account: CanonicalAccountDirectory,
   targets: readonly CanonicalTeamTarget[],
+  fundingOverrides: readonly CanonicalFundingOverride[] = [],
 ): CanonicalEffectiveTeams {
   const targeted = new Map<string, Set<string>>();
   const familyCounts = new Map<string, number>();
@@ -278,6 +273,14 @@ export function buildCanonicalEffectiveTeams(
   for (const group of account.roleGroupsById.values()) {
     byRoleGroupId.set(group.id, byFamilyId.get(group.familyId) ?? group.teamName);
   }
+  // Presence, including an explicit null, wins for this exact concrete group
+  // only. Never propagate a funding edit to role siblings or another workspace.
+  for (const override of fundingOverrides) {
+    const group = account.roleGroupsById.get(override.groupId);
+    if (group?.workspaceId === override.workspaceId) {
+      byRoleGroupId.set(group.id, override.teamName);
+    }
+  }
   return { byFamilyId, byRoleGroupId };
 }
 
@@ -288,11 +291,14 @@ export async function persistCanonicalFamilyFinancialRows(
     .where(eq(teamLimitTargetsTable.assignmentSource, "automatic"));
   for (const family of account.familiesById.values()) {
     if (family.isLegacy || !family.teamName) continue;
-    await db.insert(teamBudgetsTable).values({
-      teamName: family.teamName,
-      originalAmountUsd: 0,
-      amountUsd: 0,
-    }).onConflictDoNothing({ target: teamBudgetsTable.teamName });
+    // Directory discovery is inventory, not funding approval. Only families
+    // whose destination already exists may receive an automatic limit target;
+    // never manufacture a zero-dollar team for a newly unknown group.
+    const existingTeam = await db.query.teamBudgetsTable.findFirst({
+      where: eq(teamBudgetsTable.teamName, family.teamName),
+      columns: { teamName: true },
+    });
+    if (!existingTeam) continue;
     const memberGroup = family.roleGroups.get("member");
     if (!memberGroup) continue;
     const stale = automaticTargets.filter((target) =>

@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { buildSnapshotCanonicalAccount } from "./monitor.shared";
+import { deriveEffectiveTeamBudgets } from "../lib/team-budgets";
 import { getAirtableSourceConfigurationStatus } from "../lib/team-budgets";
 import { addTeamMonthlyAllocation } from "../lib/team-budgets";
 import {
@@ -98,12 +100,14 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Invalid team budget query" });
     return;
   }
-  const snapshot = await getEffectiveTeamBudgets();
-  const budgets = snapshot.teams.filter((team) => !team.isHidden);
-  const [dir, assignments] = await Promise.all([
-    getDirectory(),
-    db.select().from(teamLimitTargetsTable),
-  ]);
+  const configuration = req.configurationSnapshot!;
+  const budgets = deriveEffectiveTeamBudgets(
+    configuration.teamBudgets,
+    configuration.teamBudgetAdjustments,
+  ).filter((team) => !team.isHidden);
+  const dir = await getDirectory();
+  const configuredAccount = buildSnapshotCanonicalAccount(dir, configuration);
+  const assignments = configuration.teamLimitTargets;
   const selectedWorkspaceId = query.data.workspaceId ?? null;
   const cycleUsage = await usageForRequest(
     req.authz!,
@@ -128,7 +132,12 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
       spendUsage.workspaceIds.has(selectedWorkspaceId));
   const visibleTeams = new Set(
     scopedGroups
-      .map((group) => targetTeamForGroup(group, dir.account, assignments))
+      .map((group) => targetTeamForGroup(
+        group,
+        configuredAccount,
+        assignments,
+        configuration.fundingGroupOverrides,
+      ))
       .filter((teamName): teamName is string => teamName != null),
   );
   if (selectedWorkspaceId === null) {
@@ -140,12 +149,22 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
         (selectedWorkspaceId === null ||
           group.workspaceId === selectedWorkspaceId) &&
         dir.groupMembers.get(group.id)?.includes(req.authz!.userId))
-      .map((group) => targetTeamForGroup(group, dir.account, assignments))
+      .map((group) => targetTeamForGroup(
+        group,
+        configuredAccount,
+        assignments,
+        configuration.fundingGroupOverrides,
+      ))
       .filter((teamName): teamName is string => teamName != null),
   );
   const allWorkspaceIdsByTeam = new Map<string, Set<string>>();
   for (const group of dir.groups) {
-    const teamName = targetTeamForGroup(group, dir.account, assignments);
+    const teamName = targetTeamForGroup(
+      group,
+      configuredAccount,
+      assignments,
+      configuration.fundingGroupOverrides,
+    );
     if (!teamName) continue;
     const ids = allWorkspaceIdsByTeam.get(teamName) ?? new Set<string>();
     ids.add(group.workspaceId);
@@ -153,7 +172,12 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
   }
   const workspaceIdsByTeam = new Map<string, Set<string>>();
   for (const group of scopedGroups) {
-    const teamName = targetTeamForGroup(group, dir.account, assignments);
+    const teamName = targetTeamForGroup(
+      group,
+      configuredAccount,
+      assignments,
+      configuration.fundingGroupOverrides,
+    );
     if (!teamName) continue;
     const ids = workspaceIdsByTeam.get(teamName) ?? new Set<string>();
     ids.add(group.workspaceId);
@@ -169,7 +193,12 @@ router.get("/teams/budgets", async (req, res): Promise<void> => {
     GetTeamsBudgetsResponse.parse({
       budgets: visibleBudgets.map((b) => {
         const teamGroups = scopedGroups.filter((group) =>
-          targetTeamForGroup(group, dir.account, assignments) === b.teamName
+          targetTeamForGroup(
+            group,
+            configuredAccount,
+            assignments,
+            configuration.fundingGroupOverrides,
+          ) === b.teamName
         );
         const cycleAgentSpendUsd = teamGroups
           .reduce((sum, group) =>

@@ -16,6 +16,7 @@ import setLimitsRouter from "./set-limits";
 import billingCyclesRouter from "./monitor.billing-cycles";
 import orgInsightsRouter from "./monitor.org-insights";
 import membershipContextRouter from "./monitor.membership-context";
+import fundingRouter from "./monitor.funding";
 
 const router: IRouter = Router();
 router.use(requireAuth);
@@ -35,6 +36,7 @@ router.use(setLimitsRouter);
 router.use(billingCyclesRouter);
 router.use(orgInsightsRouter);
 router.use(membershipContextRouter);
+router.use(fundingRouter);
 
 export { canSeeAlertEntity };
 export default router;

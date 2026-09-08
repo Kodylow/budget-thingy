@@ -76,6 +76,34 @@ const member = {
   nonAiSpendUsd: 0,
 };
 
+function fundingInventory(revision: string, teamName: string | null = null) {
+  return {
+    revision,
+    groups: [
+      {
+        workspaceId: WORKSPACE_ID,
+        workspaceName: 'Smoke Workspace',
+        groupId: 'funding-unmapped',
+        groupName: 'Executive Group',
+        teamName,
+        origin: teamName === null ? 'unmapped' : 'explicit',
+        isHidden: false,
+      },
+      {
+        workspaceId: WORKSPACE_ID,
+        workspaceName: 'Smoke Workspace',
+        groupId: 'funding-mapped',
+        groupName: 'Smoke Members',
+        teamName: 'Smoke Team',
+        origin: 'inferred',
+        isHidden: false,
+      },
+    ],
+    teams: [{ teamName: 'Smoke Team', isHidden: false }],
+    freshness: { status: 'fresh', dataAsOf: '2026-09-04T00:00:00.000Z', error: null },
+  };
+}
+
 function alertFixture(id: number) {
   return {
     id,
@@ -235,6 +263,7 @@ function capabilities(role: Role, canPreviewRoles = false) {
     canManageAccess: account,
     canViewAccountUsage: account,
     canEditAllocations: account,
+    canManageFundingMappings: account,
     canManageNotifications: account,
     canManageSystem: account,
     canPreviewRoles,
@@ -920,6 +949,10 @@ async function mockApi(
       });
     }
     if (path === '/api/admin/team-budgets/audit') return json(route, { changes: [] });
+    if (path === '/api/admin/funding-groups') {
+      return json(route, fundingInventory('funding-smoke-r1'));
+    }
+    if (path === '/api/admin/funding-groups/audit') return json(route, { changes: [], nextBeforeId: null });
     if (/^\/api\/directory\/workspaces\/[^/]+\/members$/.test(path)) {
       return json(route, {
         workspaceId: WORKSPACE_ID,
@@ -1877,6 +1910,13 @@ test.describe('mobile regression', () => {
     await mockApi(page, 'account', false, [], observedRequests);
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByText('Unmapped groups', { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId('funding-groups-hierarchy').getByText('Executive Group', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Assign to team', exact: true }).click();
+    const mappingDialog = page.getByRole('dialog', { name: 'Assign funding group' });
+    await expect(mappingDialog).toContainText('Smoke Workspace');
+    await expect(mappingDialog).toContainText('Executive Group');
+    await mappingDialog.getByRole('button', { name: 'Close', exact: true }).first().click();
     const ledger = page.getByTestId('table-team-budget-history');
     for (const name of ['Team', 'Starting allocation', 'August', 'September']) {
       await expect(ledger.getByRole('columnheader', { name, exact: true })).toBeVisible();
@@ -2050,6 +2090,189 @@ test.describe('reference-home-org focused mocked pass', () => {
     await expect(page.locator('svg:visible').filter({ has: page.locator('path') }).first()).toBeVisible();
     await page.screenshot({ path: 'e2e/evidence/reference-exact/OrgInsights-mobile.png' });
     expect(observedRequests.filter((request) => /^(POST|PUT|PATCH|DELETE) /.test(request))).toEqual([]);
+  });
+});
+
+test.describe('funding assignment mocked browser coverage', () => {
+  test('assigns, reassigns, and explicitly unmaps one exact funding group', async ({ page }) => {
+    await mockApi(page, 'account');
+    let revisionNumber = 1;
+    let destination: string | null = null;
+    const patchBodies: Array<Record<string, unknown>> = [];
+    const inventory = () => ({
+      ...fundingInventory(`funding-lifecycle-r${revisionNumber}`, destination),
+      teams: [
+        { teamName: 'Smoke Team', isHidden: false },
+        { teamName: 'Zero Team', isHidden: false },
+      ],
+    });
+    await page.route('**/api/admin/funding-groups', async route => {
+      if (route.request().method() === 'GET') return json(route, inventory());
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      patchBodies.push(body);
+      destination = body.teamName as string | null;
+      revisionNumber += 1;
+      return json(route, inventory());
+    });
+
+    await page.goto('/allocations');
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    const hierarchy = page.getByTestId('funding-groups-hierarchy');
+    await hierarchy.getByRole('button', { name: 'Assign to team', exact: true }).click();
+    let dialog = page.getByRole('dialog', { name: 'Assign funding group' });
+    await dialog.getByTestId('select-funding-team-destination').click();
+    await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
+    await dialog.getByTestId('button-review-funding-group').click();
+    await dialog.getByTestId('button-save-funding-group').click();
+    await expect(dialog).toBeHidden();
+
+    await hierarchy.getByRole('button', { name: /Smoke Team.*total through/ }).click();
+    await hierarchy.getByText('Executive Group', { exact: true }).locator('xpath=../..').getByRole('button', { name: 'Change' }).click();
+    dialog = page.getByRole('dialog', { name: 'Change funding assignment' });
+    await dialog.getByTestId('select-funding-team-destination').click();
+    await page.getByRole('option', { name: 'Zero Team', exact: true }).click();
+    await dialog.getByTestId('button-review-funding-group').click();
+    await expect(dialog.getByTestId('button-save-funding-group')).toHaveText('Confirm reassignment');
+    await dialog.getByTestId('button-save-funding-group').click();
+    await expect(dialog).toBeHidden();
+
+    await hierarchy.getByRole('button', { name: /Zero Team.*total through/ }).click();
+    await hierarchy.getByText('Executive Group', { exact: true }).locator('xpath=../..').getByRole('button', { name: 'Change' }).click();
+    dialog = page.getByRole('dialog', { name: 'Change funding assignment' });
+    await dialog.getByTestId('select-funding-team-destination').click();
+    await page.getByRole('option', { name: 'Unmapped groups', exact: true }).click();
+    await dialog.getByTestId('button-review-funding-group').click();
+    await expect(dialog.getByTestId('button-save-funding-group')).toHaveText('Confirm unmap');
+    await dialog.getByTestId('button-save-funding-group').click();
+    await expect(dialog).toBeHidden();
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
+
+    expect(patchBodies).toEqual([
+      { workspaceId: WORKSPACE_ID, groupId: 'funding-unmapped', teamName: 'Smoke Team', expectedRevision: 'funding-lifecycle-r1' },
+      { workspaceId: WORKSPACE_ID, groupId: 'funding-unmapped', teamName: 'Zero Team', expectedRevision: 'funding-lifecycle-r2' },
+      { workspaceId: WORKSPACE_ID, groupId: 'funding-unmapped', teamName: null, expectedRevision: 'funding-lifecycle-r3' },
+    ]);
+  });
+
+  test('409 preserves destination, pending stays in queue, and refresh requires renewed review', async ({ page }) => {
+    const observedRequests: string[] = [];
+    await mockApi(page, 'account', false, [], observedRequests);
+    let inventoryRevision = 'funding-conflict-r1';
+    let patchCount = 0;
+    const patchBodies: Array<Record<string, unknown>> = [];
+    await page.route('**/api/admin/funding-groups', async route => {
+      if (route.request().method() === 'GET') {
+        return json(route, fundingInventory(inventoryRevision));
+      }
+      patchCount += 1;
+      patchBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+      await new Promise(resolve => setTimeout(resolve, 400));
+      if (patchCount === 1) {
+        inventoryRevision = 'funding-conflict-r2';
+        return json(route, { error: 'The funding configuration changed. Refresh and review again.' }, 409);
+      }
+      inventoryRevision = 'funding-conflict-r3';
+      return json(route, fundingInventory(inventoryRevision, 'Smoke Team'));
+    });
+
+    await page.goto('/allocations');
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    await page.getByRole('button', { name: 'Assign to team', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Assign funding group' });
+    await dialog.getByTestId('select-funding-team-destination').click();
+    await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
+    await dialog.getByTestId('button-review-funding-group').click();
+    await dialog.getByTestId('button-save-funding-group').click();
+
+    await expect(dialog.getByTestId('button-save-funding-group')).toHaveText('Saving…');
+    await expect(page.getByTestId('funding-groups-hierarchy').getByText('Executive Group', { exact: true })).toBeVisible();
+    await expect(dialog.getByTestId('status-funding-group-save-error')).toContainText('changed');
+    await expect(dialog.getByTestId('select-funding-team-destination')).toHaveCount(0);
+
+    await dialog.getByTestId('button-refresh-funding-group-conflict').click();
+    await expect(dialog.getByTestId('select-funding-team-destination')).toContainText('Smoke Team');
+    await expect(dialog.getByTestId('button-review-funding-group')).toBeVisible();
+    await expect(dialog.getByTestId('button-save-funding-group')).toHaveCount(0);
+    await dialog.getByTestId('button-review-funding-group').click();
+    await dialog.getByTestId('button-save-funding-group').click();
+
+    await expect(dialog).toBeHidden();
+    expect(patchBodies).toEqual([
+      {
+        workspaceId: WORKSPACE_ID,
+        groupId: 'funding-unmapped',
+        teamName: 'Smoke Team',
+        expectedRevision: 'funding-conflict-r1',
+      },
+      {
+        workspaceId: WORKSPACE_ID,
+        groupId: 'funding-unmapped',
+        teamName: 'Smoke Team',
+        expectedRevision: 'funding-conflict-r2',
+      },
+    ]);
+    await page.screenshot({ path: 'e2e/evidence/funding-assignment-after-conflict.png', fullPage: true });
+  });
+
+  test('unavailable inventory is not presented as a zero queue', async ({ page }) => {
+    await mockApi(page, 'account');
+    await page.route('**/api/admin/funding-groups', route =>
+      json(route, { error: 'Directory inventory unavailable' }, 503));
+
+    await page.goto('/allocations');
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByTestId('status-funding-groups-unavailable')).toContainText('not an empty queue');
+    await expect(page.getByText('No unmapped groups in this view.')).toHaveCount(0);
+  });
+
+  test('delegate and preview remain read-only and do not query privileged mapping audit', async ({ page }) => {
+    const observedRequests: string[] = [];
+    await mockApi(page, 'account', true, [], observedRequests);
+    const delegate = authEnvelope('account');
+    delegate.user!.id = 'allocation-delegate';
+    delegate.user!.email = 'allocation-delegate@example.test';
+    delegate.capabilities.canManageFundingMappings = false;
+    delegate.capabilities.canManageAccess = false;
+    await page.route('**/api/auth/user', route => json(route, delegate));
+
+    await page.goto('/allocations');
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByText('Executive Group', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Assign to team', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Change', exact: true })).toHaveCount(0);
+    expect(observedRequests.some(request => request.includes('/api/admin/funding-groups/audit'))).toBe(false);
+
+    const preview = authEnvelope('account');
+    preview.auth!.isPreview = true;
+    preview.auth!.previewReadOnly = true;
+    preview.capabilities.canManageFundingMappings = true;
+    await page.unroute('**/api/auth/user');
+    await page.route('**/api/auth/user', route => json(route, preview));
+    await page.reload();
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByRole('button', { name: 'Assign to team', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Change', exact: true })).toHaveCount(0);
+    expect(observedRequests.some(request => request.includes('/api/admin/funding-groups/audit'))).toBe(false);
+  });
+
+  test('identity transition does not retain an open assignment dialog', async ({ page }) => {
+    await mockApi(page, 'account');
+    let identity = 'funding-identity-a';
+    await page.route('**/api/auth/user', route => {
+      const envelope = authEnvelope('account');
+      envelope.user!.id = identity;
+      envelope.user!.email = `${identity}@example.test`;
+      return json(route, envelope);
+    });
+
+    await page.goto('/allocations');
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    await page.getByRole('button', { name: 'Assign to team', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Assign funding group' })).toBeVisible();
+    identity = 'funding-identity-b';
+    await page.reload();
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByRole('dialog', { name: 'Assign funding group' })).toHaveCount(0);
   });
 });
 

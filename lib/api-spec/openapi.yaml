@@ -1249,6 +1249,111 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /admin/funding-groups:
+    get:
+      operationId: getFundingGroups
+      tags: [teams]
+      summary: List funding-group assignments and destinations
+      description: >
+        Available to callers with account-usage visibility. Returns the scoped
+        custom-group inventory from the existing directory snapshot; it does
+        not query or mutate platform limits. Built-in groups and synthetic
+        accounting rows are excluded. Hidden destinations follow the existing
+        team visibility policy.
+      responses:
+        "200":
+          description: Funding-group inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FundingGroupsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateFundingGroup
+      tags: [teams]
+      summary: Assign, reassign, or explicitly unmap one funding group
+      description: >
+        Requires the narrow funding-mapping capability. The workspace/group
+        pair, destination, and expected committed configuration revision are
+        validated atomically. Null teamName is an explicit unmapped decision.
+        This operation has no platform, Airtable, allocation, or limit side effect.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FundingGroupUpdate"
+      responses:
+        "200":
+          description: Updated inventory at the new committed revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FundingGroupsResponse"
+        "400":
+          description: Invalid exact request body or assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Workspace, custom group, or destination team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Expected revision is stale
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: A current directory inventory is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /admin/funding-groups/audit:
+    get:
+      operationId: getFundingGroupAudit
+      tags: [teams]
+      summary: List funding-group assignment changes
+      description: >
+        Requires the narrow funding-mapping capability. Changes are returned
+        newest first, at most 200 per page.
+      parameters:
+        - name: beforeId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+      responses:
+        "200":
+          description: Funding mapping audit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FundingGroupAuditResponse"
+        "400":
+          description: Invalid audit cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /admin/team-budgets/audit:
     get:
       operationId: getTeamAllocationAudit
@@ -4434,7 +4539,7 @@ components:
           type: boolean
     AuthCapabilities:
       type: object
-      required: [canManageAccess, canEditAllocations, canPreviewRoles, canWriteGroupLimits, canWriteUserLimitsIn]
+      required: [canManageAccess, canEditAllocations, canManageFundingMappings, canPreviewRoles, canWriteGroupLimits, canWriteUserLimitsIn]
       properties:
         canManageAccess:
           type: boolean
@@ -4442,6 +4547,11 @@ components:
           type: boolean
         canEditAllocations:
           type: boolean
+        canManageFundingMappings:
+          type: boolean
+          description: >
+            Narrow server-derived authority to assign funding groups. This does
+            not grant allocation, access, system, or platform-limit authority.
         canManageNotifications:
           type: boolean
         canManageSystem:
@@ -5387,6 +5497,126 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TeamBudgetMatchIssue"
+    FundingGroup:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, workspaceName, groupId, groupName, teamName, origin, isHidden]
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+        workspaceName:
+          type: string
+          minLength: 1
+        groupId:
+          type: string
+          minLength: 1
+        groupName:
+          type: string
+          minLength: 1
+        teamName:
+          type: [string, "null"]
+          minLength: 1
+        origin:
+          type: string
+          enum: [inferred, explicit, unmapped]
+        isHidden:
+          type: boolean
+          description: True when the effective destination is a hidden budget team.
+    FundingTeamDestination:
+      type: object
+      additionalProperties: false
+      required: [teamName, isHidden]
+      properties:
+        teamName:
+          type: string
+          minLength: 1
+        isHidden:
+          type: boolean
+    FundingInventoryFreshness:
+      type: object
+      additionalProperties: false
+      required: [status, dataAsOf, error]
+      properties:
+        status:
+          type: string
+          enum: [fresh, stale, unavailable]
+        dataAsOf:
+          type: [string, "null"]
+          format: date-time
+        error:
+          type: [string, "null"]
+    FundingGroupsResponse:
+      type: object
+      additionalProperties: false
+      required: [revision, groups, teams, freshness]
+      properties:
+        revision:
+          type: string
+          minLength: 1
+          description: Opaque committed configuration revision for conflict detection.
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/FundingGroup"
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/FundingTeamDestination"
+        freshness:
+          $ref: "#/components/schemas/FundingInventoryFreshness"
+    FundingGroupUpdate:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, groupId, teamName, expectedRevision]
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+        groupId:
+          type: string
+          minLength: 1
+        teamName:
+          type: [string, "null"]
+          minLength: 1
+        expectedRevision:
+          type: string
+          minLength: 1
+    FundingGroupAudit:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, workspaceName, groupId, groupName, previousTeamName, newTeamName, actor, changedAt]
+      properties:
+        id:
+          type: integer
+        workspaceId:
+          type: string
+        workspaceName:
+          type: string
+        groupId:
+          type: string
+        groupName:
+          type: string
+        previousTeamName:
+          type: [string, "null"]
+        newTeamName:
+          type: [string, "null"]
+        actor:
+          type: string
+        changedAt:
+          type: string
+          format: date-time
+    FundingGroupAuditResponse:
+      type: object
+      additionalProperties: false
+      required: [changes, nextBeforeId]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/FundingGroupAudit"
+        nextBeforeId:
+          type: [integer, "null"]
     TeamAnnualAllocationUpdate:
       type: object
       additionalProperties: false

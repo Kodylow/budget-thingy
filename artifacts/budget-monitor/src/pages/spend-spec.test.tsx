@@ -9,6 +9,7 @@ const mockCapabilities = {
   canManageAccess: false,
   canViewAccountUsage: false,
   canEditAllocations: false,
+  canManageFundingMappings: false,
   canManageNotifications: false,
   canManageSystem: false,
   canPreviewRoles: false,

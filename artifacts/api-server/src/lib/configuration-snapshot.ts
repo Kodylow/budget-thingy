@@ -3,6 +3,7 @@ import {
   configurationRevisionTable,
   db,
   familyTeamMappingsTable,
+  fundingGroupOverridesTable,
   groupBudgetsTable,
   teamBudgetAdjustmentsTable,
   teamBudgetsTable,
@@ -14,6 +15,7 @@ type TeamLimitTarget = typeof teamLimitTargetsTable.$inferSelect;
 type TeamBudget = typeof teamBudgetsTable.$inferSelect;
 type TeamBudgetAdjustment = typeof teamBudgetAdjustmentsTable.$inferSelect;
 type FamilyTeamMapping = typeof familyTeamMappingsTable.$inferSelect;
+type FundingGroupOverride = typeof fundingGroupOverridesTable.$inferSelect;
 
 export interface ConfigurationSnapshot {
   /** Decimal bigint text; keep opaque rather than coercing it to a JS number. */
@@ -23,6 +25,7 @@ export interface ConfigurationSnapshot {
   teamBudgets: readonly Readonly<TeamBudget>[];
   teamBudgetAdjustments: readonly Readonly<TeamBudgetAdjustment>[];
   familyTeamMappings: readonly Readonly<FamilyTeamMapping>[];
+  fundingGroupOverrides: readonly Readonly<FundingGroupOverride>[];
 }
 
 let revisionReadInFlight: Promise<string> | null = null;
@@ -83,6 +86,7 @@ async function loadConsistentSnapshot(): Promise<ConfigurationSnapshot> {
       teamBudgets,
       teamBudgetAdjustments,
       familyTeamMappings,
+      fundingGroupOverrides,
     ] = await Promise.all([
       tx.select().from(groupBudgetsTable)
         .orderBy(asc(groupBudgetsTable.groupId)),
@@ -103,6 +107,11 @@ async function loadConsistentSnapshot(): Promise<ConfigurationSnapshot> {
           asc(familyTeamMappingsTable.workspaceId),
           asc(familyTeamMappingsTable.familyKey),
         ),
+      tx.select().from(fundingGroupOverridesTable)
+        .orderBy(
+          asc(fundingGroupOverridesTable.workspaceId),
+          asc(fundingGroupOverridesTable.groupId),
+        ),
     ]);
 
     return Object.freeze({
@@ -112,6 +121,7 @@ async function loadConsistentSnapshot(): Promise<ConfigurationSnapshot> {
       teamBudgets: immutableRows(teamBudgets),
       teamBudgetAdjustments: immutableRows(teamBudgetAdjustments),
       familyTeamMappings: immutableRows(familyTeamMappings),
+      fundingGroupOverrides: immutableRows(fundingGroupOverrides),
     });
   }, { isolationLevel: "repeatable read" });
 }

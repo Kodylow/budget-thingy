@@ -97,6 +97,7 @@ function capabilities() {
     canViewAccountUsage: false,
     canManageAccess: false,
     canEditAllocations: false,
+    canManageFundingMappings: false,
     canManageNotifications: false,
     canManageSystem: false,
     canPreviewRoles: false,
@@ -629,6 +630,12 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
   test("billing-cycle comparison retains removed-project attribution without widening scope", async () => {
     const projectId = `${PREFIX}-removed-billing-project`;
     const observedAt = new Date(`${TODAY}T12:00:00.000Z`);
+    await db.insert(teamLimitTargetsTable).values({
+      teamName: SHARED_TEAM,
+      workspaceId: W5,
+      groupId: DETAIL_GROUP,
+      groupName: "Detail - Member",
+    });
     await db.insert(apiProjectCreatorEvidenceTable).values([
       {
         workspaceId: W5,
@@ -694,6 +701,9 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
       expect(JSON.stringify(body)).not.toContain(COWORKER);
       expect(JSON.stringify(body)).not.toContain(W3);
     } finally {
+      await db.delete(teamLimitTargetsTable).where(
+        eq(teamLimitTargetsTable.groupId, DETAIL_GROUP),
+      );
       await db.delete(apiProjectCreatorEvidenceTable).where(
         eq(apiProjectCreatorEvidenceTable.projectId, projectId),
       );

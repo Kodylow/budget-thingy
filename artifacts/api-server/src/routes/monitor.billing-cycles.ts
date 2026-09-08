@@ -3,7 +3,6 @@ import {
   GetBillingCycleComparisonQueryParams,
   GetBillingCycleComparisonResponse,
 } from "@workspace/api-zod";
-import { db, teamLimitTargetsTable } from "@workspace/db";
 import { getRosterHistory } from "../lib/history";
 import {
   billingCycleWindows,
@@ -23,6 +22,7 @@ import {
 import { qualifiedGroupSpendComponents } from "../services/scoped-accounting";
 import {
   getBillingPeriodMetadata,
+  buildSnapshotCanonicalAccount,
   getDirectory,
   isAccountWide,
   readProjectMetadata,
@@ -175,10 +175,9 @@ router.get("/spend/billing-cycles", async (req, res): Promise<void> => {
   }
 
   try {
-    const [dir, assignments] = await Promise.all([
-      getDirectory(),
-      db.select().from(teamLimitTargetsTable),
-    ]);
+    const dir = await getDirectory();
+    const configuration = req.configurationSnapshot!;
+    const configuredAccount = buildSnapshotCanonicalAccount(dir, configuration);
     const authz = req.authz!;
     const selectedWorkspaceId = query.data.workspaceId ?? null;
     const scopedGroups = visibleGroups(authz, dir.groups)
@@ -187,7 +186,12 @@ router.get("/spend/billing-cycles", async (req, res): Promise<void> => {
         group.workspaceId === selectedWorkspaceId);
     const groupsWithTeams = dir.groups.map((group) => ({
       ...group,
-      teamName: targetTeamForGroup(group, dir.account, assignments) ?? null,
+      teamName: targetTeamForGroup(
+        group,
+        configuredAccount,
+        configuration.teamLimitTargets,
+        configuration.fundingGroupOverrides,
+      ) ?? null,
     }));
     const ownGroupIds = new Set(
       dir.groups

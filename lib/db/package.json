@@ -12,6 +12,7 @@
   "scripts": {
     "setup": "tsx src/bootstrap-cli.ts setup",
     "migrate": "tsx src/bootstrap-cli.ts migrate",
+    "reconcile:task31": "tsx scripts/reconcile-task31-migration-history.ts --execute-development",
     "generate": "drizzle-kit generate --config ./drizzle.config.ts",
     "seed": "tsx src/bootstrap-cli.ts seed",
     "typecheck": "tsc --noEmit"

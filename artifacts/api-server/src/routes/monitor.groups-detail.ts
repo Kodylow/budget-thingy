@@ -1,4 +1,5 @@
 import { Router, type Request } from "express";
+import { buildSnapshotCanonicalAccount } from "./monitor.shared";
 import {
   GetBudgetTeamReportQueryParams,
   GetReportingDetailQueryParams,
@@ -281,6 +282,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
           group,
           configuredAccount,
           req.configurationSnapshot!.teamLimitTargets,
+          req.configurationSnapshot!.fundingGroupOverrides,
         ) === selectedMembership.teamName);
       const groupUserIds = new Map(personalGroups.map((group) => [
         group.id,
@@ -1192,9 +1194,19 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
       cycleMemberSnapshotPromise,
       dailyUsageRollups(dir, usage),
       db.select().from(groupBudgetsTable),
-      db.select().from(teamLimitTargetsTable),
+      Promise.resolve([...req.configurationSnapshot!.teamLimitTargets]),
     ]);
-    const mergePlan = buildCanonicalGroupMergePlan(usage.groups, dir.workspaces);
+    const mergePlan = buildCanonicalGroupMergePlan(
+      usage.groups,
+      dir.workspaces,
+      buildGroupTeamMap(
+        usage.groups,
+        buildSnapshotCanonicalAccount(dir, req.configurationSnapshot!),
+        new Set(),
+        req.configurationSnapshot!.teamLimitTargets,
+        req.configurationSnapshot!.fundingGroupOverrides,
+      ),
+    );
     if (mergePlan.hiddenGroupIds.has(group.id)) {
       res.status(404).json({ error: "Group not found" });
       return;
@@ -1242,7 +1254,17 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
     };
 
     const budgetMap = new Map(budgets.map((b) => [b.groupId, b.amountUsd]));
-    const fullMergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
+    const fullMergePlan = buildCanonicalGroupMergePlan(
+      dir.groups,
+      dir.workspaces,
+      buildGroupTeamMap(
+        dir.groups,
+        buildSnapshotCanonicalAccount(dir, req.configurationSnapshot!),
+        new Set(),
+        groupTeamsRows,
+        req.configurationSnapshot!.fundingGroupOverrides,
+      ),
+    );
     const fullPrimaryId = fullMergePlan.primaryByGroupId.get(group.id) ?? group.id;
     const fullSourceIds = fullMergePlan.mergeMap.get(fullPrimaryId) ?? [group.id];
     const fullSourceGroups = fullSourceIds.map((id) =>
@@ -1397,11 +1419,28 @@ router.get("/groups/:groupId", async (req, res): Promise<void> => {
           workspaceId: group.workspaceId,
           workspaceName: dir.workspaces.get(group.workspaceId)?.name ?? null,
           name: group.name,
-          familyKey: dir.account.roleGroupsById.get(group.id)!.familyKey,
-          familyName: dir.account.roleGroupsById.get(group.id)!.familyName,
-          role: dir.account.roleGroupsById.get(group.id)!.role,
-          isLegacy: dir.account.roleGroupsById.get(group.id)!.isLegacy,
-          teamName: targetTeamForGroup(group, dir.account, groupTeamsRows) ?? null,
+          familyKey: buildSnapshotCanonicalAccount(
+            dir,
+            req.configurationSnapshot!,
+          ).roleGroupsById.get(group.id)!.familyKey,
+          familyName: buildSnapshotCanonicalAccount(
+            dir,
+            req.configurationSnapshot!,
+          ).roleGroupsById.get(group.id)!.familyName,
+          role: buildSnapshotCanonicalAccount(
+            dir,
+            req.configurationSnapshot!,
+          ).roleGroupsById.get(group.id)!.role,
+          isLegacy: buildSnapshotCanonicalAccount(
+            dir,
+            req.configurationSnapshot!,
+          ).roleGroupsById.get(group.id)!.isLegacy,
+          teamName: targetTeamForGroup(
+            group,
+            buildSnapshotCanonicalAccount(dir, req.configurationSnapshot!),
+            groupTeamsRows,
+            req.configurationSnapshot!.fundingGroupOverrides,
+          ) ?? null,
           type: group.type,
           memberCount: userIds.length,
           rollupMemberCount: mergedRollupMemberCount,
@@ -1459,7 +1498,17 @@ router.get("/groups/:groupId/projects", async (req, res): Promise<void> => {
     }
     const usage = await usageForRequest(req.authz!, dir, req.query as Record<string, unknown>);
     const scopedMembers = visibleGroupMembers(req.authz!, dir.groupMembers);
-    const mergePlan = buildCanonicalGroupMergePlan(usage.groups, dir.workspaces);
+    const mergePlan = buildCanonicalGroupMergePlan(
+      usage.groups,
+      dir.workspaces,
+      buildGroupTeamMap(
+        usage.groups,
+        buildSnapshotCanonicalAccount(dir, req.configurationSnapshot!),
+        new Set(),
+        req.configurationSnapshot!.teamLimitTargets,
+        req.configurationSnapshot!.fundingGroupOverrides,
+      ),
+    );
     if (mergePlan.hiddenGroupIds.has(group.id)) {
       res.status(404).json({ error: "Group not found" });
       return;
@@ -1550,14 +1599,27 @@ router.get("/clusters/:clusterKey/headline", async (req, res): Promise<void> => 
     }
     const roleOrder = { admin: 0, member: 1, viewer: 2, guest: 3, unsuffixed: 4 };
     const requestedFamilies = requested.map(
-      (group) => dir.account.roleGroupsById.get(group!.id)!,
+      (group) => buildSnapshotCanonicalAccount(
+        dir,
+        req.configurationSnapshot!,
+      ).roleGroupsById.get(group!.id)!,
     );
     const familyName = requestedFamilies[0]!.familyName;
     const roles = [...new Set(requestedFamilies.map((family) => family.role))]
       .sort((a, b) => roleOrder[a] - roleOrder[b]);
     const usage = await usageForRequest(req.authz!, dir, req.query as Record<string, unknown>);
     const visible = usage.groups;
-    const accountMergePlan = buildCanonicalGroupMergePlan(visible, dir.workspaces);
+    const accountMergePlan = buildCanonicalGroupMergePlan(
+      visible,
+      dir.workspaces,
+      buildGroupTeamMap(
+        visible,
+        buildSnapshotCanonicalAccount(dir, req.configurationSnapshot!),
+        new Set(),
+        req.configurationSnapshot!.teamLimitTargets,
+        req.configurationSnapshot!.fundingGroupOverrides,
+      ),
+    );
     const relevantGroupIds = new Set(
       groupIds.flatMap((groupId) => {
         const primaryId = accountMergePlan.primaryByGroupId.get(groupId) ?? groupId;

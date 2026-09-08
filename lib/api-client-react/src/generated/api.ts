@@ -49,12 +49,16 @@ import type {
   ExportSpendProjectsTableCsvParams,
   ExportUsersCsvParams,
   ForbiddenResponse,
+  FundingGroupAuditResponse,
+  FundingGroupUpdate,
+  FundingGroupsResponse,
   GetAccountUsageObservationExportParams,
   GetBillingCycleComparisonParams,
   GetBudgetTeamReportParams,
   GetCanonicalClusterHeadlineParams,
   GetClusterProjectsParams,
   GetDashboardParams,
+  GetFundingGroupAuditParams,
   GetGroupDetailParams,
   GetGroupProjectsParams,
   GetReportingDetailParams,
@@ -3304,6 +3308,241 @@ export function useGetTeamBudgetHistory<TData = Awaited<ReturnType<typeof getTea
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetTeamBudgetHistoryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetFundingGroupsUrl = () => {
+
+
+
+
+  return `/api/admin/funding-groups`
+}
+
+/**
+ * Available to callers with account-usage visibility. Returns the scoped custom-group inventory from the existing directory snapshot; it does not query or mutate platform limits. Built-in groups and synthetic accounting rows are excluded. Hidden destinations follow the existing team visibility policy.
+ * @summary List funding-group assignments and destinations
+ */
+export const getFundingGroups = async ( options?: RequestInit): Promise<FundingGroupsResponse> => {
+
+  return customFetch<FundingGroupsResponse>(getGetFundingGroupsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFundingGroupsQueryKey = () => {
+    return [
+    `/api/admin/funding-groups`
+    ] as const;
+    }
+
+
+export const getGetFundingGroupsQueryOptions = <TData = Awaited<ReturnType<typeof getFundingGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFundingGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFundingGroupsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFundingGroups>>> = ({ signal }) => getFundingGroups({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFundingGroups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFundingGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof getFundingGroups>>>
+export type GetFundingGroupsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List funding-group assignments and destinations
+ */
+
+export function useGetFundingGroups<TData = Awaited<ReturnType<typeof getFundingGroups>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFundingGroups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFundingGroupsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateFundingGroupUrl = () => {
+
+
+
+
+  return `/api/admin/funding-groups`
+}
+
+/**
+ * Requires the narrow funding-mapping capability. The workspace/group pair, destination, and expected committed configuration revision are validated atomically. Null teamName is an explicit unmapped decision. This operation has no platform, Airtable, allocation, or limit side effect.
+ * @summary Assign, reassign, or explicitly unmap one funding group
+ */
+export const updateFundingGroup = async (fundingGroupUpdate: FundingGroupUpdate, options?: RequestInit): Promise<FundingGroupsResponse> => {
+
+  return customFetch<FundingGroupsResponse>(getUpdateFundingGroupUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(fundingGroupUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateFundingGroupMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateFundingGroup>>, TError,{data: BodyType<FundingGroupUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateFundingGroup>>, TError,{data: BodyType<FundingGroupUpdate>}, TContext> => {
+
+const mutationKey = ['updateFundingGroup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateFundingGroup>>, {data: BodyType<FundingGroupUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateFundingGroup(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateFundingGroupMutationResult = NonNullable<Awaited<ReturnType<typeof updateFundingGroup>>>
+    export type UpdateFundingGroupMutationBody = BodyType<FundingGroupUpdate>
+    export type UpdateFundingGroupMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Assign, reassign, or explicitly unmap one funding group
+ */
+export const useUpdateFundingGroup = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateFundingGroup>>, TError,{data: BodyType<FundingGroupUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateFundingGroup>>,
+        TError,
+        {data: BodyType<FundingGroupUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateFundingGroupMutationOptions(options));
+    }
+
+export const getGetFundingGroupAuditUrl = (params?: GetFundingGroupAuditParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/funding-groups/audit?${stringifiedParams}` : `/api/admin/funding-groups/audit`
+}
+
+/**
+ * Requires the narrow funding-mapping capability. Changes are returned newest first, at most 200 per page.
+ * @summary List funding-group assignment changes
+ */
+export const getFundingGroupAudit = async (params?: GetFundingGroupAuditParams, options?: RequestInit): Promise<FundingGroupAuditResponse> => {
+
+  return customFetch<FundingGroupAuditResponse>(getGetFundingGroupAuditUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFundingGroupAuditQueryKey = (params?: GetFundingGroupAuditParams,) => {
+    return [
+    `/api/admin/funding-groups/audit`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetFundingGroupAuditQueryOptions = <TData = Awaited<ReturnType<typeof getFundingGroupAudit>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(params?: GetFundingGroupAuditParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFundingGroupAudit>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFundingGroupAuditQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFundingGroupAudit>>> = ({ signal }) => getFundingGroupAudit(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFundingGroupAudit>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFundingGroupAuditQueryResult = NonNullable<Awaited<ReturnType<typeof getFundingGroupAudit>>>
+export type GetFundingGroupAuditQueryError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+
+/**
+ * @summary List funding-group assignment changes
+ */
+
+export function useGetFundingGroupAudit<TData = Awaited<ReturnType<typeof getFundingGroupAudit>>, TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>>(
+ params?: GetFundingGroupAuditParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFundingGroupAudit>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFundingGroupAuditQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

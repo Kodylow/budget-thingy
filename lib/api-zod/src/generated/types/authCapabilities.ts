@@ -10,6 +10,8 @@ export interface AuthCapabilities {
   canManageAccess: boolean;
   canViewAccountUsage?: boolean;
   canEditAllocations: boolean;
+  /** Narrow server-derived authority to assign funding groups. This does not grant allocation, access, system, or platform-limit authority. */
+  canManageFundingMappings: boolean;
   canManageNotifications?: boolean;
   canManageSystem?: boolean;
   /** Server-derived designated-operator capability for entering role-scoped previews. */

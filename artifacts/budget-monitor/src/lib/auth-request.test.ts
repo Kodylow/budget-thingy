@@ -8,6 +8,7 @@ import {
 const capabilities = {
   canManageAccess: false,
   canEditAllocations: false,
+  canManageFundingMappings: false,
   canPreviewRoles: false,
   canWriteGroupLimits: false,
   canWriteUserLimitsIn: [],

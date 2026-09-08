@@ -4,8 +4,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   getGetTeamAllocationAuditQueryKey,
   getGetTeamBudgetHistoryQueryKey,
+  getGetFundingGroupsQueryKey,
+  getGetFundingGroupAuditQueryKey,
   useGetTeamAllocationAudit,
   useGetTeamBudgetHistory,
+  useGetFundingGroups,
+  useGetFundingGroupAudit,
+  useUpdateFundingGroup,
   useUpdateTeamAnnualAllocation,
   useUpdateTeamVisibility,
   useAddTeamMonthlyAllocation,
@@ -25,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuthContext } from '@/components/auth-context';
+import { FundingGroupAuditList, FundingGroupsHierarchy } from '@/components/funding-groups-hierarchy';
 import { invalidateBudgetCaches } from '@/lib/budget-cache';
 import { buildAllocationRow, parsePeriod, sumUsd } from '@/lib/allocation-ledger';
 import { useToast } from '@/hooks/use-toast';
@@ -356,8 +362,12 @@ function EditableOpeningFunding({
 }
 
 export default function TeamBudgets() {
-  const { capabilities, authorizationKey, auth, isPreviewing } = useAuthContext();
+  const { toast } = useToast();
+  const { capabilities, authorizationKey, auth, isPreviewing, revalidateAuthorization } = useAuthContext();
   const { canEdit, canManageVisibility, canViewAudit } = getAllocationPermissions(capabilities, isPreviewing || auth?.previewReadOnly === true);
+  const canManageFundingMappings = capabilities.canManageFundingMappings === true
+    && !isPreviewing
+    && auth?.previewReadOnly !== true;
   const [auditCursors, setAuditCursors] = useState<Array<number | undefined>>([undefined]);
   const auditBeforeId = auditCursors[auditCursors.length - 1];
   const auditParams = auditBeforeId === undefined ? {} : { beforeId: auditBeforeId };
@@ -372,6 +382,21 @@ export default function TeamBudgets() {
   const auditQuery = useGetTeamAllocationAudit(auditParams, {
     query: { queryKey: getGetTeamAllocationAuditQueryKey(auditParams), refetchOnMount: 'always', enabled: canViewAudit },
   });
+  const fundingGroupsQuery = useGetFundingGroups({
+    query: {
+      queryKey: getGetFundingGroupsQueryKey(),
+      refetchOnMount: 'always',
+      enabled: capabilities.canViewAccountUsage,
+    },
+  });
+  const fundingGroupAuditQuery = useGetFundingGroupAudit({}, {
+    query: {
+      queryKey: getGetFundingGroupAuditQueryKey({}),
+      refetchOnMount: 'always',
+      enabled: canManageFundingMappings,
+    },
+  });
+  const updateFundingGroup = useUpdateFundingGroup({ mutation: { retry: false } });
 
   const teams = useMemo(
     () => filterVisibleTeams([...(historyQuery.data?.teams ?? [])], canManageVisibility)
@@ -424,12 +449,22 @@ export default function TeamBudgets() {
   }, [teams, selectedYear, optimisticVisibility]);
 
   const filteredRows = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    const matchingGroupTeams = new Set(
+      (fundingGroupsQuery.data?.groups ?? [])
+        .filter(group => [group.groupName, group.workspaceName, group.teamName]
+          .some(label => label?.toLowerCase().includes(normalizedSearch)))
+        .map(group => group.teamName)
+        .filter((teamName): teamName is string => teamName !== null),
+    );
     return rowData.filter(r => {
       if (!showHidden && r.isHidden) return false;
-      if (searchQuery && !r.team.teamName.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      if (normalizedSearch
+        && !r.team.teamName.toLowerCase().includes(normalizedSearch)
+        && !matchingGroupTeams.has(r.team.teamName)) return false;
       return true;
     });
-  }, [rowData, showHidden, searchQuery]);
+  }, [fundingGroupsQuery.data?.groups, rowData, showHidden, searchQuery]);
 
   const visibleAuditChanges = useMemo(
     () => filterVisibleAudits(
@@ -501,11 +536,11 @@ export default function TeamBudgets() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <label className="relative block w-full sm:w-64">
-              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Find a team</span>
+              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Find funding</span>
               <Search className="absolute left-3 top-[34px] h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search teams..."
-                aria-label="Search teams"
+                placeholder="Search teams, groups, workspaces..."
+                aria-label="Search funding teams, groups, and workspaces"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="h-9 bg-background pl-9"
@@ -534,6 +569,46 @@ export default function TeamBudgets() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
+          <div className="border-b p-4 sm:p-5">
+            <FundingGroupsHierarchy
+              inventory={fundingGroupsQuery.data}
+              inventoryLoading={fundingGroupsQuery.isLoading}
+              inventoryError={fundingGroupsQuery.isError}
+              teamNames={(fundingGroupsQuery.data?.teams ?? [])
+                .filter(team => (showHidden && canManageVisibility) || !team.isHidden)
+                .map(team => team.teamName)}
+              searchQuery={searchQuery}
+              showHidden={showHidden && canManageVisibility}
+              teamAllocations={Object.fromEntries(rowData.map(row => [row.team.teamName, row.rowTotal]))}
+              allocationYear={selectedYear}
+              authorizationKey={authorizationKey}
+              canManage={canManageFundingMappings}
+              onRetry={() => { void fundingGroupsQuery.refetch(); }}
+              onRefresh={async () => {
+                const refreshed = await fundingGroupsQuery.refetch();
+                if (refreshed.isError || !refreshed.data) {
+                  throw refreshed.error ?? new Error('Funding group inventory is unavailable.');
+                }
+                return refreshed.data.revision;
+              }}
+              onSave={async data => {
+                const saved = await updateFundingGroup.mutateAsync({ data });
+                queryClient.setQueryData(getGetFundingGroupsQueryKey(), saved);
+                invalidateBudgetCaches(queryClient);
+                toast({
+                  title: data.teamName === null ? 'Group moved to Unmapped' : 'Funding assignment saved',
+                  description: `${data.teamName ?? 'Unmapped groups'} is now the reporting destination. No allocation or platform limit changed.`,
+                });
+                void revalidateAuthorization().catch(() => {
+                  toast({
+                    title: 'Assignment saved; access refresh failed',
+                    description: 'The mapping was committed, but authorization could not be refreshed. Reload before making another change.',
+                    variant: 'destructive',
+                  });
+                });
+              }}
+            />
+          </div>
           <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-3">
             <div className="text-sm">
               <strong>Funding ledger</strong>
@@ -809,6 +884,22 @@ export default function TeamBudgets() {
                       </div>
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            )}
+            {canManageFundingMappings && (
+              <Card className="rounded-md shadow-none">
+                <CardHeader>
+                  <CardTitle className="text-lg">Funding assignment audit</CardTitle>
+                  <CardDescription>Exact workspace/group attribution changes, newest first.</CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <FundingGroupAuditList
+                    changes={fundingGroupAuditQuery.data?.changes}
+                    loading={fundingGroupAuditQuery.isLoading}
+                    error={fundingGroupAuditQuery.isError}
+                    onRetry={() => { void fundingGroupAuditQuery.refetch(); }}
+                  />
                 </CardContent>
               </Card>
             )}

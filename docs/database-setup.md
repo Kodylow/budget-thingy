@@ -66,6 +66,22 @@ production policy, not a test-only rewrite. Other schema-changing or public-
 qualified migration statements are refused. New repairs have later timestamps;
 existing entries must never be reordered, renumbered, or backdated.
 
+### Task 31 development-history reconciliation
+
+The one supported exception is the reviewed Task 31 development history that
+recorded the original, byte-identified funding migration at timestamp
+`1788600009000` before the concurrent historical-evidence migration was merged.
+`pnpm --filter @workspace/db run reconcile:task31` is deliberately single-state:
+it refuses every other journal or catalog shape and refuses deployment
+environments. It first proves the old immutable source identity and its generated
+catalog equivalent, rehearses the union in a disposable PostgreSQL 16 cluster,
+and takes and verifies a private custom-format backup outside the repository.
+Under the normal schema advisory lock it repeats all checks, applies the real
+historical-evidence SQL, preserves the same funding journal row and hash while
+moving its timestamp and physical order, then validates the ordinary current
+journal and catalog contract before commit. It is not a force mode and is
+expected to refuse after its one successful use.
+
 ### Reviewing a new migration
 
 This supported contract targets **PostgreSQL 16**. Other major versions refuse

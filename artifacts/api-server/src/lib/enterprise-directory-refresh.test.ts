@@ -116,7 +116,7 @@ describe("Enterprise directory refresh write mode", () => {
     expect(requests.every((request) => request.method === "GET")).toBe(true);
   });
 
-  test("regular refresh still backfills mappings and canonical financial rows", async () => {
+  test("regular refresh records unknown families without manufacturing funding or limit targets", async () => {
     process.env["REPLIT_ENTERPRISE_API_KEY"] = "test-key";
     const requests: { method: string; path: string }[] = [];
     installProvider(normalWorkspaceId, normalTeam, requests);
@@ -127,16 +127,14 @@ describe("Enterprise directory refresh write mode", () => {
       eq(familyTeamMappingsTable.workspaceId, normalWorkspaceId),
       eq(familyTeamMappingsTable.familyKey, "directory normal family"),
     ))).toEqual([
-      expect.objectContaining({ familyName: normalTeam, teamName: normalTeam }),
+      expect.objectContaining({ familyName: normalTeam, teamName: null }),
     ]);
     expect(await db.select().from(teamBudgetsTable)
-      .where(eq(teamBudgetsTable.teamName, normalTeam))).toHaveLength(1);
+      .where(eq(teamBudgetsTable.teamName, normalTeam))).toHaveLength(0);
     expect(await db.select().from(teamLimitTargetsTable).where(and(
       eq(teamLimitTargetsTable.workspaceId, normalWorkspaceId),
       eq(teamLimitTargetsTable.groupId, `${normalWorkspaceId}-member`),
-    ))).toEqual([
-      expect.objectContaining({ teamName: normalTeam, assignmentSource: "automatic" }),
-    ]);
+    ))).toEqual([]);
     expect(requests.every((request) => request.method === "GET")).toBe(true);
   });
 

@@ -18,6 +18,9 @@ describe('Allocation page safety regressions', () => {
     expect(source).toContain('{canManageVisibility && (');
     expect(source).toContain('filterVisibleTeams([...(historyQuery.data?.teams ?? [])], canManageVisibility)');
     expect(source).toContain('filterVisibleAudits(');
+    expect(source).toContain('capabilities.canManageFundingMappings === true');
+    expect(source).toContain('enabled: capabilities.canViewAccountUsage');
+    expect(source).toContain('enabled: canManageFundingMappings');
   });
 
   it('uses review and explicit save instead of blur autosave', () => {
@@ -51,5 +54,16 @@ describe('Allocation page safety regressions', () => {
     expect(source).toContain('filteredRows.map(row => (');
     expect(source).toContain('<History className="h-4 w-4 text-primary" />');
     expect(source).toContain('Planning allocations do not change Replit platform limits.');
+  });
+
+  it('integrates exact funding-group edits without optimistic success', () => {
+    expect(source).toContain('<FundingGroupsHierarchy');
+    expect(source).toContain('await updateFundingGroup.mutateAsync({ data })');
+    expect(source).toContain('queryClient.setQueryData(getGetFundingGroupsQueryKey(), saved)');
+    expect(source).toContain('void revalidateAuthorization().catch(() => {');
+    expect(source).toContain('Assignment saved; access refresh failed');
+    expect(source).toContain('showHidden={showHidden && canManageVisibility}');
+    expect(source).toContain('teamAllocations={Object.fromEntries(rowData.map(row => [row.team.teamName, row.rowTotal]))}');
+    expect(source).toContain('<FundingGroupAuditList');
   });
 });

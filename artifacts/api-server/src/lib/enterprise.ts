@@ -25,6 +25,7 @@ import {
   parseDirectoryGroupName,
   persistCanonicalFamilyFinancialRows,
   type CanonicalAccountDirectory,
+  type CanonicalFundingOverride,
   type EnterpriseGroup,
   type EnterpriseMember,
   type EnterpriseWorkspace,

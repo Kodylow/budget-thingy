@@ -4,6 +4,7 @@ import {
   groupBudgetsTable,
   teamBudgetsTable,
   teamLimitTargetsTable,
+  fundingGroupOverridesTable,
   alertsTable,
   firedThresholdsTable,
   alertDeliveryClaimsTable,
@@ -16,10 +17,12 @@ import {
   getBillingPeriod,
   getBillingPeriodMetadata,
   isInternalReplitMember,
+  buildCanonicalAccountDirectory,
   buildCanonicalGroupMergePlan,
   buildCanonicalEffectiveTeams,
   resolveCanonicalMergedGroupBudget,
   type EnterpriseGroup,
+  type CanonicalAccountDirectory,
 } from "./enterprise";
 import { resolveUsageWindow } from "./usage-window";
 import { readUsageSnapshot } from "./usage-store";
@@ -29,12 +32,13 @@ import {
 } from "./usage-rollup";
 import { sendEmail, buildAlertEmail, isEmailConfigured } from "./email";
 import { resolveAlertRecipients } from "./alert-recipients";
-import { getVisibleEffectiveTeamBudgetMap } from "./team-budgets";
+import { deriveEffectiveTeamBudgets } from "./team-budgets";
 import { isAutomatedEmailEnabled } from "./notification-settings";
 import {
   hasCompleteRequiredProjectMetadata,
   readProjectMetadata,
 } from "./project-metadata";
+import { getConfigurationSnapshot } from "./configuration-snapshot";
 
 export const THRESHOLDS = [50, 75, 90, 100];
 
@@ -50,9 +54,15 @@ function teamMap(
   groups: readonly EnterpriseGroup[],
   targets: readonly TeamTarget[],
   hidden: ReadonlySet<string>,
+  fundingOverrides: readonly (typeof fundingGroupOverridesTable.$inferSelect)[] = [],
+  account = dir.account,
 ): Map<string, string> {
   const result = new Map<string, string>();
-  const effectiveTeams = buildCanonicalEffectiveTeams(dir.account, targets);
+  const effectiveTeams = buildCanonicalEffectiveTeams(
+    account,
+    targets,
+    fundingOverrides,
+  );
   for (const group of groups) {
     const team = effectiveTeams.byRoleGroupId.get(group.id);
     if (team && !hidden.has(team)) {
@@ -504,7 +514,26 @@ async function evaluateGroupOnce(
 ): Promise<Alert[]> {
   if (!(await isAutomatedEmailEnabled())) return [];
   const dir = await getDirectory();
-  const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
+  const configuration = await getConfigurationSnapshot();
+  const configuredAccount = buildCanonicalAccountDirectory({
+    workspaces: dir.workspaces,
+    groups: dir.groups,
+    groupMembers: dir.groupMembers,
+    members: dir.members,
+    mappings: configuration.familyTeamMappings,
+  });
+  const mergePlan = buildCanonicalGroupMergePlan(
+    dir.groups,
+    dir.workspaces,
+    teamMap(
+      dir,
+      dir.groups,
+      [...configuration.teamLimitTargets],
+      new Set(),
+      [...configuration.fundingGroupOverrides],
+      configuredAccount,
+    ),
+  );
   const primaryId = mergePlan.primaryByGroupId.get(group.id) ?? group.id;
   const primary = dir.groups.find((candidate) => candidate.id === primaryId);
   if (!primary) return [];
@@ -581,25 +610,59 @@ async function buildTeamSpecs(
     allTeamBudgetRows: Array<typeof teamBudgetsTable.$inferSelect>;
     budgetByTeam: ReadonlyMap<string, number>;
     groupTargets: TeamTarget[];
+    fundingOverrides: Array<typeof fundingGroupOverridesTable.$inferSelect>;
+    account: CanonicalAccountDirectory;
     firedByEntity?: ReadonlyMap<string, readonly number[]>;
   },
 ): Promise<EntitySpec[]> {
-  const [allCheckerTeamBudgetRows, budgetByTeam, groupTargets] = prepared
-    ? [prepared.allTeamBudgetRows, prepared.budgetByTeam, prepared.groupTargets]
-    : await Promise.all([
-        db.select().from(teamBudgetsTable),
-        getVisibleEffectiveTeamBudgetMap(),
-        db.select().from(teamLimitTargetsTable),
-      ]);
+  const fallbackConfiguration = prepared
+    ? null
+    : await getConfigurationSnapshot();
+  const [allCheckerTeamBudgetRows, budgetByTeam, groupTargets, fundingOverrides] = prepared
+    ? [
+        prepared.allTeamBudgetRows,
+        prepared.budgetByTeam,
+        prepared.groupTargets,
+        prepared.fundingOverrides,
+      ]
+    : [
+        [...fallbackConfiguration!.teamBudgets],
+        new Map(
+          deriveEffectiveTeamBudgets(
+            fallbackConfiguration!.teamBudgets,
+            fallbackConfiguration!.teamBudgetAdjustments,
+          ).filter((team) => !team.isHidden)
+            .map((team) => [team.teamName, team.effectiveAmountUsd]),
+        ),
+        [...fallbackConfiguration!.teamLimitTargets],
+        [...fallbackConfiguration!.fundingGroupOverrides],
+      ];
   const teamBudgets = allCheckerTeamBudgetRows.filter((tb) => !tb.isHidden);
   if (teamBudgets.length === 0) return [];
 
   const hiddenCheckerTeamNames = new Set(allCheckerTeamBudgetRows.filter((tb) => tb.isHidden).map((tb) => tb.teamName));
+  const configuredAccount = prepared?.account ?? buildCanonicalAccountDirectory({
+    workspaces: dir.workspaces,
+    groups: dir.groups,
+    groupMembers: dir.groupMembers,
+    members: dir.members,
+    mappings: fallbackConfiguration!.familyTeamMappings,
+  });
+  const effectiveTeamByGroup = teamMap(
+    dir,
+    dir.groups,
+    groupTargets,
+    new Set(),
+    fundingOverrides,
+    configuredAccount,
+  );
   const teamByGroupName = teamMap(
     dir,
     dir.groups,
     groupTargets,
     hiddenCheckerTeamNames,
+    fundingOverrides,
+    configuredAccount,
   );
 
   // Period start for team thresholds: use the shared cutoff-anchored billing
@@ -614,7 +677,7 @@ async function buildTeamSpecs(
   const mergePlan = buildCanonicalGroupMergePlan(
     dir.groups,
     dir.workspaces,
-    teamByGroupName,
+    effectiveTeamByGroup,
   );
   for (const group of dir.groups.filter((candidate) =>
     !mergePlan.hiddenGroupIds.has(candidate.id))) {
@@ -763,14 +826,36 @@ async function runCheckInternal(): Promise<CheckResult> {
     await persistSkippedCheckerState(lastAttemptAt, skipReason);
     return { checkedGroups: 0, checkedTeams: 0, alerts: [], evaluatedAt: null, dataAsOf: null, skipped: true, skipReason };
   }
-  const [budgets, effectiveTeamBudgetMap, allRunTeamBudgetRows, groupTargets] = await Promise.all([
-    db.select().from(groupBudgetsTable),
-    getVisibleEffectiveTeamBudgetMap(),
-    db.select().from(teamBudgetsTable),
-    db.select().from(teamLimitTargetsTable),
-  ]);
+  const configuration = await getConfigurationSnapshot();
+  const budgets = [...configuration.groupBudgets];
+  const allRunTeamBudgetRows = [...configuration.teamBudgets];
+  const effectiveTeamBudgetMap = new Map(
+    deriveEffectiveTeamBudgets(
+      configuration.teamBudgets,
+      configuration.teamBudgetAdjustments,
+    ).filter((team) => !team.isHidden)
+      .map((team) => [team.teamName, team.effectiveAmountUsd]),
+  );
+  const configuredAccount = buildCanonicalAccountDirectory({
+    workspaces: dir.workspaces,
+    groups: dir.groups,
+    groupMembers: dir.groupMembers,
+    members: dir.members,
+    mappings: configuration.familyTeamMappings,
+  });
   const budgetByGroupId = new Map(budgets.map((row) => [row.groupId, row.amountUsd]));
-  const mergePlan = buildCanonicalGroupMergePlan(dir.groups, dir.workspaces);
+  const mergePlan = buildCanonicalGroupMergePlan(
+    dir.groups,
+    dir.workspaces,
+    teamMap(
+      dir,
+      dir.groups,
+      [...configuration.teamLimitTargets],
+      new Set(),
+      [...configuration.fundingGroupOverrides],
+      configuredAccount,
+    ),
+  );
   const canonicalGroups = dir.groups.filter(
     (group) => !mergePlan.hiddenGroupIds.has(group.id),
   );
@@ -847,7 +932,9 @@ async function runCheckInternal(): Promise<CheckResult> {
     const teamResult = await evaluateTeamsOnce(dir, usage, {
       allTeamBudgetRows: allRunTeamBudgetRows,
       budgetByTeam: effectiveTeamBudgetMap,
-      groupTargets,
+      groupTargets: [...configuration.teamLimitTargets],
+      fundingOverrides: [...configuration.fundingGroupOverrides],
+      account: configuredAccount,
       firedByEntity,
     });
     checkedTeams = teamResult.checkedTeams;

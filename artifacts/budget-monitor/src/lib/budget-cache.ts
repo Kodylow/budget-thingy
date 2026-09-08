@@ -18,6 +18,8 @@ export const invalidateBudgetCaches = (queryClient: QueryClient, workspaceId?: s
        query.queryKey[0].startsWith('/api/spend/') ||
        query.queryKey[0].startsWith('/api/limits') ||
        query.queryKey[0].startsWith('/api/reporting/details/') ||
+       query.queryKey[0].startsWith('/api/admin/funding-groups') ||
+       query.queryKey[0].startsWith('/api/auth/') ||
        query.queryKey[0].startsWith('/api/directory/workspaces') ||
        query.queryKey[0].startsWith('/api/clusters/') ||
        query.queryKey[0].startsWith('/api/groups/') ||

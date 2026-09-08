@@ -94,11 +94,14 @@ import {
   getBillingPeriod,
   getBillingPeriodMetadata,
   buildCanonicalGroupMergePlan,
+  buildCanonicalAccountDirectory,
   buildCanonicalEffectiveTeams,
   type CanonicalAccountDirectory,
   resolveCanonicalMergedGroupBudget,
   type EnterpriseGroup,
+  type DirectoryCache,
 } from "../lib/enterprise";
+import type { ConfigurationSnapshot } from "../lib/configuration-snapshot";
 import { buildAlertEmail, isEmailConfigured, sendEmail, sendTestEmail, getEmailTestRecipient } from "../lib/email";
 import { resolveAlertRecipients } from "../lib/alert-recipients";
 import {
@@ -291,8 +294,9 @@ export function targetTeamForGroup(
   group: EnterpriseGroup,
   source: CanonicalAccountDirectory,
   targets: readonly (typeof teamLimitTargetsTable.$inferSelect)[] = [],
+  fundingOverrides: readonly import("@workspace/db").FundingGroupOverride[] = [],
 ): string | undefined {
-  return buildCanonicalEffectiveTeams(source, targets)
+  return buildCanonicalEffectiveTeams(source, targets, fundingOverrides)
     .byRoleGroupId.get(group.id) ?? undefined;
 }
 
@@ -300,14 +304,31 @@ export function groupTeamKey(group: Pick<EnterpriseGroup, "workspaceId" | "id">)
   return `${group.workspaceId}\0${group.id}`;
 }
 
+/** Rebuilds canonical families from the same committed snapshot as attribution. */
+export function buildSnapshotCanonicalAccount(
+  directory: Pick<
+    DirectoryCache,
+    "workspaces" | "groups" | "groupMembers" | "members"
+  >,
+  configuration: ConfigurationSnapshot,
+): CanonicalAccountDirectory {
+  return buildCanonicalAccountDirectory({
+    workspaces: directory.workspaces,
+    groups: directory.groups,
+    groupMembers: directory.groupMembers,
+    members: directory.members,
+    mappings: configuration.familyTeamMappings,
+  });
+}
 export function buildGroupTeamMap(
   groups: readonly EnterpriseGroup[],
   source: CanonicalAccountDirectory,
   hiddenTeamNames: ReadonlySet<string> = new Set(),
   targets: readonly (typeof teamLimitTargetsTable.$inferSelect)[] = [],
+  fundingOverrides: readonly import("@workspace/db").FundingGroupOverride[] = [],
 ): Map<string, string> {
   const result = new Map<string, string>();
-  const effectiveTeams = buildCanonicalEffectiveTeams(source, targets);
+  const effectiveTeams = buildCanonicalEffectiveTeams(source, targets, fundingOverrides);
   for (const group of groups) {
     const teamName = effectiveTeams.byRoleGroupId.get(group.id);
     if (teamName && !hiddenTeamNames.has(teamName)) {
@@ -612,4 +633,22 @@ export function alertToJson(
     currentPercentUsed: current?.percentUsed ?? null,
     currentUsageComplete: current?.isComplete ?? false,
   };
+}
+
+export function buildSnapshotGroupTeamMap(
+  groups: readonly EnterpriseGroup[],
+  directory: Pick<
+    DirectoryCache,
+    "workspaces" | "groups" | "groupMembers" | "members"
+  >,
+  configuration: ConfigurationSnapshot,
+  hiddenTeamNames: ReadonlySet<string> = new Set(),
+): Map<string, string> {
+  return buildGroupTeamMap(
+    groups,
+    buildSnapshotCanonicalAccount(directory, configuration),
+    hiddenTeamNames,
+    configuration.teamLimitTargets,
+    configuration.fundingGroupOverrides,
+  );
 }

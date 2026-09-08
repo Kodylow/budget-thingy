@@ -49,11 +49,18 @@ export function buildMembershipContext(
   const effectiveTeams = buildCanonicalEffectiveTeams(
     account,
     configuration.teamLimitTargets,
+    configuration.fundingGroupOverrides,
   );
   const visibleTeams = new Set(
     configuration.teamBudgets
       .filter((team) => !team.isHidden)
       .map((team) => team.teamName),
+  );
+  const overridesByIdentity = new Map(
+    configuration.fundingGroupOverrides.map((override) => [
+      `${override.workspaceId}\0${override.groupId}`,
+      override,
+    ]),
   );
 
   // A persisted target plus a visible budget is the canonical assertion that a
@@ -90,14 +97,19 @@ export function buildMembershipContext(
       !(directory.groupMembers.get(group.id) ?? []).includes(userId)
     ) continue;
     const canonical = account.roleGroupsById.get(group.id);
+    const override = overridesByIdentity.get(`${group.workspaceId}\0${group.id}`);
     const teamName = isCustomGroup(group)
       ? effectiveTeams.byRoleGroupId.get(group.id) ?? null
       : null;
-    const targetWorkspaceIds = canonical && teamName
-      ? officialTargetsByFamilyAndTeam.get(
-        `${canonical.familyKey}\0${teamName}`,
-      )
-      : undefined;
+    const targetWorkspaceIds = override
+      ? override.teamName && visibleTeams.has(override.teamName)
+        ? new Set([override.workspaceId])
+        : undefined
+      : canonical && teamName
+        ? officialTargetsByFamilyAndTeam.get(
+          `${canonical.familyKey}\0${teamName}`,
+        )
+        : undefined;
     if (!teamName || !targetWorkspaceIds?.size) {
       const groups = unmappedByWorkspace.get(group.workspaceId) ?? [];
       groups.push({ groupId: group.id, groupName: group.name });

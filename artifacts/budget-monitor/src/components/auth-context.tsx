@@ -167,6 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canManageAccess: false,
       canViewAccountUsage: false,
       canEditAllocations: false,
+      canManageFundingMappings: false,
       canManageNotifications: false,
       canManageSystem: false,
       canPreviewRoles: false,
@@ -181,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isDenied = isAuthenticated && auth == null;
     const realIsAccountAdmin = resolvedRealRole === 'account';
     const previewReadOnly = auth?.previewReadOnly === true;
-    const canWrite = !previewReadOnly && (effectiveCapabilities.canEditAllocations || effectiveCapabilities.canWriteGroupLimits || effectiveCapabilities.canWriteUserLimitsIn.length > 0);
+    const canWrite = !previewReadOnly && (effectiveCapabilities.canEditAllocations || effectiveCapabilities.canManageFundingMappings || effectiveCapabilities.canWriteGroupLimits || effectiveCapabilities.canWriteUserLimitsIn.length > 0);
 
     return {
       developmentView,

@@ -142,7 +142,7 @@ export async function applyFamilyMappingBackfill(
     }
     const resolvedNonlegacyByIdentity = new Map<string, {
       familyKey: string;
-      teamName: string;
+      teamName: string | null;
     }>();
     for (const row of existing) {
       if (!row.isLegacy && row.teamName) {
@@ -157,25 +157,20 @@ export async function applyFamilyMappingBackfill(
       const identity = `${family.workspaceId}\0${family.familyKey}`;
       const current = existingByIdentity.get(identity);
       const exactTeams = exactTeamsByIdentity.get(identity);
-      const hasCollision =
-        (discoveredNonlegacyIdentitiesByKey.get(family.familyKey)?.size ?? 0) > 1;
-      const automaticDefault = collisionSafeFamilyTeamName(
-        family.familyName,
-        family.workspaceId,
-        hasCollision,
-      );
-      const currentIsPlainAutomatic =
-        current?.teamName == null ||
-        normalizeSeedFamilyKey(current.teamName) === normalizeSeedFamilyKey(family.familyName);
       resolvedNonlegacyByIdentity.set(identity, {
         familyKey: family.familyKey,
         teamName: FAMILY_TEAM_OVERRIDES.get(family.familyKey) ??
           (exactTeams?.size === 1 ? [...exactTeams][0]! : undefined) ??
-          (!currentIsPlainAutomatic ? current!.teamName! : automaticDefault),
+          // Preserve every previously committed mapping, including an
+          // explicit null. A newly discovered unknown family is inventory for
+          // review, not authority to fabricate a funding destination.
+          current?.teamName ??
+          null,
       });
     }
     const nonlegacyTeamsByKey = new Map<string, Set<string>>();
     for (const resolved of resolvedNonlegacyByIdentity.values()) {
+      if (!resolved.teamName) continue;
       const teams = nonlegacyTeamsByKey.get(resolved.familyKey) ?? new Set<string>();
       teams.add(resolved.teamName);
       nonlegacyTeamsByKey.set(resolved.familyKey, teams);

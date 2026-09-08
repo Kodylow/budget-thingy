@@ -10,6 +10,7 @@ const user = { id: 'user-1' } as AuthUser;
 const capabilities = {
   canManageAccess: false,
   canEditAllocations: false,
+  canManageFundingMappings: false,
   canPreviewRoles: true,
   canWriteGroupLimits: false,
   canWriteUserLimitsIn: ['workspace-2', 'workspace-1'],

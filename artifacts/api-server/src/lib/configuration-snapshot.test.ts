@@ -60,6 +60,13 @@ describe("transactional configuration revision", () => {
            SELECT 'unused', 'unused', 'unused', false WHERE false`,
           "family_key",
         ],
+        [
+          "funding_group_overrides",
+          `INSERT INTO funding_group_overrides
+             (workspace_id, group_id, team_name)
+           SELECT 'unused', 'unused', NULL WHERE false`,
+          "group_id",
+        ],
       ] as const;
 
       // Statement triggers deliberately include zero-row DML. This verifies
@@ -72,7 +79,7 @@ describe("transactional configuration revision", () => {
 
       resetConfigurationSnapshotForTests();
       const after = asBigInt(await getConfigurationRevision());
-      expect(after - before).toBe(15n);
+      expect(after - before).toBe(18n);
     } finally {
       client.release();
     }

@@ -24,6 +24,7 @@ The workspace uses TypeScript, pnpm, Express, PostgreSQL/Drizzle, and React/Vite
 
 - Financial reporting uses canonical workspace-qualified totals. Overlapping memberships must not duplicate charges; unassigned spend stays reconcilable. Project attribution explains usage rather than replacing funding or alert totals.
 - Funding teams are defined by committed allocations and workspace/group mappings, not manager hierarchies or guessed names. Personal team context follows the effective person's actual memberships, not every team they administer.
+- Funding assignments are local, audited decisions for one exact workspace/group; explicit unmapping wins over inference. Directory discovery must preserve existing mappings without inventing new zero-budget teams. Funding changes never apply platform limits or change allocation dollars.
 - Annual team allocations are planning baselines plus approved adjustments, separate from monthly Agent enforcement limits. The established funding term is **May 20, 2026–May 20, 2027, inclusive**; it does not roll forward automatically.
 - The approved starting allocation source is `lib/db/data/starting-team-allocations.json`: 29 teams, $771,620.02, PREPROD hidden. “Consumer Solutions” aliases “Customer Solutions”; it is not a second allocation. Initialization/imports must not overwrite later administrator edits.
 - Planning additions are local until Airtable is explicitly configured. Opening allocations are undated, not recurring monthly amounts. Historical connector handoffs do not establish a live integration.

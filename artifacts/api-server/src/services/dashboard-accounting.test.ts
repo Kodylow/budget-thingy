@@ -87,6 +87,7 @@ function auth(overrides: Partial<Authorization>): Authorization {
       canViewAccountUsage: false,
       canManageAccess: false,
       canEditAllocations: false,
+      canManageFundingMappings: false,
       canManageNotifications: false,
       canManageSystem: false,
       canPreviewRoles: false,
@@ -158,7 +159,7 @@ describe("compact dashboard accounting", () => {
         "managed-group": ["managed-user"],
         "self-group": ["self"],
       },
-      userIds: ["self", "managed-user"],
+      userIds: ["managed-user", "self"],
     });
     const memberships = new Map([
       ["managed-group", ["managed-user"]],
@@ -353,7 +354,10 @@ describe("compact dashboard accounting", () => {
       usageStatus: "partial",
       coverage: { ratio: 0.5, missingWorkspaceDays: ["w1:2026-09-03"] },
       limitObservation: { status: "complete", observedAt: 1 },
-      period: { start: "2026-09-01T00:00:00.000Z", end: "2026-09-05T00:00:00.000Z" },
+      period: {
+        start: "2026-09-01T00:00:00.000Z",
+        end: "2026-09-05T00:00:00.000Z",
+      },
       scope: { viewScope: "managed", workspaceIds: ["w1"] },
     };
     expect(committedGenerationId(identity)).toBe(committedGenerationId(identity));

@@ -44,6 +44,7 @@ function authz(
       canViewAccountUsage: account,
       canManageAccess: account,
       canEditAllocations: account,
+      canManageFundingMappings: account,
       canManageNotifications: account,
       canManageSystem: account,
       canPreviewRoles: false,
@@ -149,33 +150,34 @@ describe("authorization scopes", () => {
     {
       persona: "true account admin",
       input: { roles: ["account"] as AuthzRole[], isTrueAccountAdmin: true },
-      expected: [true, true, true, true, true, true, true, true],
+      expected: [true, true, true, true, true, true, true, true, true],
     },
     {
       persona: "persisted budget editor",
       input: { roles: ["account"] as AuthzRole[], isTrueAccountAdmin: false },
-      expected: [true, true, false, false, false, false, false, false],
+      expected: [true, true, false, false, false, false, false, false, false],
     },
     {
       persona: "workspace admin",
       input: { roles: ["workspace_admin"] as AuthzRole[], workspaceIds: ["a"] },
-      expected: [false, false, false, false, false, false, false, false],
+      expected: [false, false, false, false, false, false, false, false, false],
     },
     {
       persona: "family admin",
       input: { roles: ["team_admin"] as AuthzRole[] },
-      expected: [false, false, false, false, false, false, false, false],
+      expected: [false, false, false, false, false, false, false, false, false],
     },
     {
       persona: "ordinary member",
       input: { roles: ["member"] as AuthzRole[] },
-      expected: [false, false, false, false, false, false, false, false],
+      expected: [false, false, false, false, false, false, false, false, false],
     },
   ])("applies the independent capability matrix for $persona", ({ input, expected }) => {
     const resolved = buildAuthorization({ userId: "user", ...input });
     expect([
       resolved.capabilities.canViewAccountUsage,
       resolved.capabilities.canEditAllocations,
+      resolved.capabilities.canManageFundingMappings,
       resolved.capabilities.canManageAccess,
       resolved.capabilities.canManageNotifications,
       resolved.capabilities.canManageSystem,
@@ -198,6 +200,7 @@ describe("authorization scopes", () => {
     expect(resolved.capabilities.canEditAllocations).toBe(true);
     expect(resolved.capabilities.canManageAccess).toBe(false);
     expect(resolved.capabilities.canWriteGroupLimits).toBe(false);
+    expect(resolved.capabilities.canManageFundingMappings).toBe(false);
     expect(resolved.capabilities.canWriteUserLimitsIn).toEqual(["managed-a"]);
   });
 
@@ -214,6 +217,7 @@ describe("authorization scopes", () => {
     expect(preview.capabilities).toMatchObject({
       canManageAccess: false,
       canEditAllocations: false,
+      canManageFundingMappings: false,
       canManageNotifications: false,
       canManageSystem: false,
       canWriteGroupLimits: false,
@@ -222,6 +226,34 @@ describe("authorization scopes", () => {
       canPreviewRoles: false,
       canSendTestEmail: false,
     });
+  });
+
+  it("grants the narrow mapping capability only to Kody with active managed access", () => {
+    const kody = buildAuthorization({
+      userId: "38408700",
+      roles: ["account"],
+      hasActiveManagedAccess: true,
+    });
+    expect(kody.capabilities.canManageFundingMappings).toBe(true);
+    expect(kody.capabilities.canManageAccess).toBe(false);
+    expect(kody.capabilities.canWriteGroupLimits).toBe(false);
+
+    expect(buildAuthorization({
+      userId: "38408700",
+      roles: ["account"],
+      hasActiveManagedAccess: false,
+    }).capabilities.canManageFundingMappings).toBe(false);
+    expect(buildAuthorization({
+      userId: "forged-kody",
+      roles: ["account"],
+      hasActiveManagedAccess: true,
+    }).capabilities.canManageFundingMappings).toBe(false);
+    expect(buildAuthorization({
+      userId: "38408700",
+      roles: ["account"],
+      hasActiveManagedAccess: true,
+      isPreview: true,
+    }).capabilities.canManageFundingMappings).toBe(false);
   });
 
   it("returns all for account access", () => {
@@ -268,6 +300,7 @@ describe("authorization scopes", () => {
 const BOOTSTRAP_EMAIL = "configured-operator@example.test";
 const BOOTSTRAP_USER_ID = "authz-bootstrap-operator";
 const OTHER_USER_ID = "authz-bootstrap-other";
+const KODY_USER_ID = "38408700";
 const WORKSPACE_IDS = ["authz-bootstrap-workspace-a", "authz-bootstrap-workspace-b"];
 
 function directoryMember(userId: string) {
@@ -290,7 +323,11 @@ describe("designated account-admin bootstrap", () => {
     process.env.BOOTSTRAP_ADMIN_EMAIL = BOOTSTRAP_EMAIL;
     await db
       .delete(appAdminsTable)
-      .where(inArray(appAdminsTable.userId, [BOOTSTRAP_USER_ID, OTHER_USER_ID]));
+      .where(inArray(appAdminsTable.userId, [
+        BOOTSTRAP_USER_ID,
+        OTHER_USER_ID,
+        KODY_USER_ID,
+      ]));
     __setDirectoryCacheForTests({
       workspaces: new Map(WORKSPACE_IDS.map((id) => [
         id,
@@ -310,7 +347,11 @@ describe("designated account-admin bootstrap", () => {
     __setDirectoryCacheForTests(null);
     await db
       .delete(appAdminsTable)
-      .where(inArray(appAdminsTable.userId, [BOOTSTRAP_USER_ID, OTHER_USER_ID]));
+      .where(inArray(appAdminsTable.userId, [
+        BOOTSTRAP_USER_ID,
+        OTHER_USER_ID,
+        KODY_USER_ID,
+      ]));
   });
 
   it("restores the exact normalized verified identity after an empty table", async () => {
@@ -340,6 +381,7 @@ describe("designated account-admin bootstrap", () => {
       capabilities: {
         canManageAccess: true,
         canEditAllocations: true,
+        canManageFundingMappings: false,
         canPreviewRoles: true,
         canWriteGroupLimits: true,
         canWriteUserLimitsIn: [...WORKSPACE_IDS].sort(),
@@ -451,6 +493,136 @@ describe("designated account-admin bootstrap", () => {
     expect(resolved.managedGroupIds).not.toContain(memberB);
   });
 
+  it("recomputes team-admin scope from exact committed group overrides", async () => {
+    const workspaceA = WORKSPACE_IDS[0]!;
+    const workspaceB = WORKSPACE_IDS[1]!;
+    const adminA = "authz-exact-a-admin";
+    const memberA = "authz-exact-a-member";
+    const viewerA = "authz-exact-a-viewer";
+    const adminB = "authz-exact-b-admin";
+    const memberB = "authz-exact-b-member";
+    const coworker = "authz-exact-coworker";
+    const activeMember = {
+      ...directoryMember(OTHER_USER_ID),
+      workspaces: new Map([
+        [workspaceA, { role: "member", isDisabled: false }],
+        [workspaceB, { role: "member", isDisabled: false }],
+      ]),
+    };
+    __setDirectoryCacheForTests({
+      workspaces: new Map([
+        [workspaceA, { id: workspaceA, name: "A", slug: "a", memberCount: 1 }],
+        [workspaceB, { id: workspaceB, name: "B", slug: "b", memberCount: 1 }],
+      ]),
+      groups: [
+        { id: adminA, workspaceId: workspaceA, name: "Exact - Admin", type: "custom" },
+        { id: memberA, workspaceId: workspaceA, name: "Exact - Member", type: "custom" },
+        { id: viewerA, workspaceId: workspaceA, name: "Exact - Viewer", type: "custom" },
+        { id: adminB, workspaceId: workspaceB, name: "Exact - Admin", type: "custom" },
+        { id: memberB, workspaceId: workspaceB, name: "Exact - Member", type: "custom" },
+      ],
+      groupMembers: new Map([
+        [adminA, [OTHER_USER_ID]],
+        [memberA, [coworker]],
+        [viewerA, []],
+        [adminB, []],
+        [memberB, []],
+      ]),
+      members: new Map([
+        [OTHER_USER_ID, activeMember],
+        [coworker, {
+          ...directoryMember(coworker),
+          workspaces: new Map([
+            [workspaceA, { role: "member", isDisabled: false }],
+          ]),
+        }],
+      ]),
+    });
+    const configuration = (
+      overrides: ConfigurationSnapshot["fundingGroupOverrides"],
+    ): ConfigurationSnapshot => ({
+      revision: String(overrides.length + 1),
+      groupBudgets: [],
+      teamLimitTargets: [],
+      teamBudgets: [],
+      teamBudgetAdjustments: [],
+      familyTeamMappings: [
+        {
+          workspaceId: workspaceA,
+          familyKey: "exact",
+          familyName: "Exact",
+          teamName: "Alpha",
+          isLegacy: false,
+        },
+        {
+          workspaceId: workspaceB,
+          familyKey: "exact",
+          familyName: "Exact",
+          teamName: "Alpha",
+          isLegacy: false,
+        },
+      ],
+      fundingGroupOverrides: overrides,
+    });
+    const override = (groupId: string, teamName: string | null) => ({
+      workspaceId: workspaceA,
+      groupId,
+      teamName,
+      updatedAt: new Date(),
+    });
+
+    const baseline = (await resolveAuthorization(
+      OTHER_USER_ID,
+      configuration([]),
+    ))!;
+    expect(baseline.roles).toContain("team_admin");
+    expect(baseline.teamNames).toEqual(["Alpha"]);
+    expect(baseline.managedGroupIds).toEqual(
+      expect.arrayContaining([adminA, memberA, viewerA]),
+    );
+    expect(baseline.managedGroupIds).not.toEqual(
+      expect.arrayContaining([adminB, memberB]),
+    );
+    expect(baseline.groupIds).toContain(memberA);
+    expect(baseline.userIds).toContain(coworker);
+
+    const explicitUnmap = (await resolveAuthorization(
+      OTHER_USER_ID,
+      configuration([override(memberA, null)]),
+    ))!;
+    expect(explicitUnmap.managedGroupIds).toContain(adminA);
+    expect(explicitUnmap.managedGroupIds).toContain(viewerA);
+    expect(explicitUnmap.managedGroupIds).not.toContain(memberA);
+    expect(explicitUnmap.groupIds).not.toContain(memberA);
+    expect(explicitUnmap.userIds).not.toContain(coworker);
+
+    const movedAdmin = (await resolveAuthorization(
+      OTHER_USER_ID,
+      configuration([override(adminA, "Beta")]),
+    ))!;
+    expect(movedAdmin.teamNames).toEqual(["Beta"]);
+    expect(movedAdmin.managedGroupIds).toContain(adminA);
+    expect(movedAdmin.managedGroupIds).not.toContain(memberA);
+    expect(movedAdmin.managedGroupIds).not.toContain(viewerA);
+    expect(movedAdmin.groupIds).not.toContain(memberA);
+    expect(movedAdmin.userIds).not.toContain(coworker);
+
+    const movedTogether = (await resolveAuthorization(
+      OTHER_USER_ID,
+      configuration([
+        override(adminA, "Beta"),
+        override(memberA, "Beta"),
+      ]),
+    ))!;
+    expect(movedTogether.managedGroupIds).toEqual(
+      expect.arrayContaining([adminA, memberA]),
+    );
+    expect(movedTogether.managedGroupIds).not.toContain(viewerA);
+    expect(movedTogether.managedGroupIds).not.toContain(memberB);
+    expect(movedTogether.groupIds).toContain(memberA);
+    expect(movedTogether.userIds).toContain(coworker);
+  });
+
   it("atomically pins concurrent first callbacks to one stable subject", async () => {
     const results = await Promise.all([
       maybeBootstrapAppAdmin({
@@ -551,6 +723,27 @@ describe("designated account-admin bootstrap", () => {
         `workspace_admin:${WORKSPACE_IDS[0]}`,
       ),
     ).toBe(resolved);
+  });
+
+  it("revokes Kody's stable-ID funding authority with managed access", async () => {
+    await db.insert(appAdminsTable).values({
+      userId: KODY_USER_ID,
+      email: "kody.low@repl.it",
+      createdBy: BOOTSTRAP_USER_ID,
+    });
+    const active = await resolveAuthorization(KODY_USER_ID);
+    expect(active).toMatchObject({
+      isTrueAccountAdmin: false,
+      capabilities: {
+        canManageFundingMappings: true,
+        canManageAccess: false,
+        canWriteGroupLimits: false,
+      },
+    });
+
+    await expect(revokeAppAdmin(KODY_USER_ID, BOOTSTRAP_USER_ID))
+      .resolves.toBe(true);
+    await expect(resolveAuthorization(KODY_USER_ID)).resolves.toBeNull();
   });
 
   it("resolves an active persisted app admin without directory membership", async () => {
@@ -683,6 +876,7 @@ describe("designated account-admin bootstrap", () => {
       teamLimitTargets: [],
       teamBudgets: [],
       teamBudgetAdjustments: [],
+      fundingGroupOverrides: [],
       familyTeamMappings: mapped
         ? [{
           workspaceId: workspaceA,
@@ -760,6 +954,7 @@ describe("seed app admins by Replit user ID", () => {
     const resolved = await resolveAuthorization(SEED_USER_ID);
     expect(resolved).toMatchObject({ role: "account", isTrueAccountAdmin: true });
     expect(resolved?.capabilities.canManageAccess).toBe(true);
+    expect(resolved?.capabilities.canManageFundingMappings).toBe(false);
   });
 
   it("seeds defensively during login without the email bootstrap", async () => {

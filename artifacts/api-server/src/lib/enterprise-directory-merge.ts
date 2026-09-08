@@ -40,12 +40,18 @@ export function buildCanonicalGroupMergePlan(
   const hiddenGroupIds = new Set<string>();
   const primaryByGroupId = new Map<string, string>();
   for (const matches of byName.values()) {
-    const mappedTeams = new Set(
-      matches
-        .map((group) => teamByGroupIdentity?.get(`${group.workspaceId}\0${group.id}`))
-        .filter((team): team is string => !!team),
-    );
-    if (mappedTeams.size > 1) {
+    // When canonical funding attribution was supplied, absence is a real
+    // unmapped state rather than permission to merge into a mapped namesake.
+    // This keeps both groups' spend intact and prevents the mapped group's
+    // authorization/alerts from absorbing explicitly unassigned spend.
+    const fundingStates = new Set(matches.map((group) => {
+      if (!teamByGroupIdentity) return "unknown";
+      const key = `${group.workspaceId}\0${group.id}`;
+      return teamByGroupIdentity.has(key)
+        ? `team:${teamByGroupIdentity.get(key)}`
+        : "unmapped";
+    }));
+    if (fundingStates.size > 1) {
       for (const group of matches) {
         mergeMap.set(group.id, [group.id]);
         primaryByGroupId.set(group.id, group.id);

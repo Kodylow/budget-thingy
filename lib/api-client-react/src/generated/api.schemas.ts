@@ -1835,6 +1835,8 @@ export interface AuthCapabilities {
   canManageAccess: boolean;
   canViewAccountUsage?: boolean;
   canEditAllocations: boolean;
+  /** Narrow server-derived authority to assign funding groups. This does not grant allocation, access, system, or platform-limit authority. */
+  canManageFundingMappings: boolean;
   canManageNotifications?: boolean;
   canManageSystem?: boolean;
   /** Server-derived designated-operator capability for entering role-scoped previews. */
@@ -2732,6 +2734,7 @@ export interface TeamBudgetHistoryResponse {
   issues: TeamBudgetMatchIssue[];
 }
 
+export type FundingGroupOrigin = typeof FundingGroupOrigin[keyof typeof FundingGroupOrigin];
 export interface TeamAnnualAllocationUpdate {
   /** @minimum 0 */
   annualAllocationUsd: number;
@@ -4282,6 +4285,13 @@ export const GetTeamsBudgetsPeriod = {
   'full-term': 'full-term',
 } as const;
 
+export type GetFundingGroupAuditParams = {
+/**
+ * @minimum 1
+ * @maximum 2147483647
+ */
+beforeId?: number;
+};
 export type GetTeamAllocationAuditParams = {
 /**
  * Return records older than this exclusive audit ID.
@@ -4371,3 +4381,95 @@ export type ListRecentUsageIngestRunsParams = {
 limit?: number;
 };
 
+
+export interface FundingGroupAudit {
+  id: number;
+  workspaceId: string;
+  workspaceName: string;
+  groupId: string;
+  groupName: string;
+  /** @nullable */
+  previousTeamName: string | null;
+  /** @nullable */
+  newTeamName: string | null;
+  actor: string;
+  changedAt: string;
+}
+
+export interface FundingGroup {
+  /** @minLength 1 */
+  workspaceId: string;
+  /** @minLength 1 */
+  workspaceName: string;
+  /** @minLength 1 */
+  groupId: string;
+  /** @minLength 1 */
+  groupName: string;
+  /**
+     * @minLength 1
+     * @nullable
+     */
+  teamName: string | null;
+  origin: FundingGroupOrigin;
+  /** True when the effective destination is a hidden budget team. */
+  isHidden: boolean;
+}
+
+export interface FundingGroupUpdate {
+  /** @minLength 1 */
+  workspaceId: string;
+  /** @minLength 1 */
+  groupId: string;
+  /**
+     * @minLength 1
+     * @nullable
+     */
+  teamName: string | null;
+  /** @minLength 1 */
+  expectedRevision: string;
+}
+
+export interface FundingInventoryFreshness {
+  status: FundingInventoryFreshnessStatus;
+  /** @nullable */
+  dataAsOf: string | null;
+  /** @nullable */
+  error: string | null;
+}
+
+export type FundingInventoryFreshnessStatus = typeof FundingInventoryFreshnessStatus[keyof typeof FundingInventoryFreshnessStatus];
+
+export interface FundingGroupsResponse {
+  /**
+     * Opaque committed configuration revision for conflict detection.
+     * @minLength 1
+     */
+  revision: string;
+  groups: FundingGroup[];
+  teams: FundingTeamDestination[];
+  freshness: FundingInventoryFreshness;
+}
+
+export interface FundingGroupAuditResponse {
+  changes: FundingGroupAudit[];
+  /** @nullable */
+  nextBeforeId: number | null;
+}
+
+export const FundingGroupOrigin = {
+  inferred: 'inferred',
+  explicit: 'explicit',
+  unmapped: 'unmapped',
+} as const;
+
+export interface FundingTeamDestination {
+  /** @minLength 1 */
+  teamName: string;
+  isHidden: boolean;
+}
+
+export const FundingInventoryFreshnessStatus = {
+  fresh: 'fresh',
+  stale: 'stale',
+  unavailable: 'unavailable',
+} as const;

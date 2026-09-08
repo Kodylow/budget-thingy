@@ -22,6 +22,11 @@ function fixture(input: {
     assignmentSource?: "unconfirmed" | "automatic" | "manual";
   }[];
   hiddenTeams?: string[];
+  overrides?: {
+    workspaceId: string;
+    groupId: string;
+    teamName: string | null;
+  }[];
 }): { directory: DirectoryCache; configuration: ConfigurationSnapshot } {
   const workspaces = new Map<string, EnterpriseWorkspace>(
     input.workspaceIds.map((id) => [id, {
@@ -56,7 +61,12 @@ function fixture(input: {
       isLegacy: group.workspaceId === LEGACY_WORKSPACE_ID,
     };
   });
-  const teamNames = [...new Set(input.targets.map((target) => target.teamName))];
+  const teamNames = [...new Set([
+    ...input.targets.map((target) => target.teamName),
+    ...(input.overrides ?? [])
+      .map((override) => override.teamName)
+      .filter((teamName): teamName is string => teamName !== null),
+  ])];
   const configuration = {
     revision: "1",
     groupBudgets: [],
@@ -76,6 +86,10 @@ function fixture(input: {
       updatedAt: new Date(0),
     })),
     teamBudgetAdjustments: [],
+    fundingGroupOverrides: (input.overrides ?? []).map((override) => ({
+      ...override,
+      updatedAt: new Date(0),
+    })),
     familyTeamMappings,
   } satisfies ConfigurationSnapshot;
   return {
@@ -108,6 +122,57 @@ function fixture(input: {
 }
 
 describe("buildMembershipContext", () => {
+  it("uses one snapshot for exact assignment/unmap despite stale directory account", () => {
+    const groups = [
+      {
+        id: "admin",
+        workspaceId: "workspace",
+        name: "AZ-Replit - Finance - Admin",
+        type: "custom",
+      },
+      {
+        id: "member",
+        workspaceId: "workspace",
+        name: "AZ-Replit - Finance - Member",
+        type: "custom",
+      },
+    ];
+    const data = fixture({
+      workspaceIds: ["workspace"],
+      groups,
+      memberships: { workspace: { role: "member" } },
+      groupMembers: {
+        admin: ["effective-user"],
+        member: ["effective-user"],
+      },
+      targets: [{
+        workspaceId: "workspace",
+        groupId: "member",
+        groupName: groups[1]!.name,
+        teamName: "Finance",
+      }],
+      overrides: [
+        { workspaceId: "workspace", groupId: "admin", teamName: "DXP" },
+        { workspaceId: "workspace", groupId: "member", teamName: null },
+      ],
+    });
+
+    const result = buildMembershipContext(
+      "effective-user",
+      data.directory,
+      data.configuration,
+    );
+    expect(result.workspaces[0]?.budgetTeams).toEqual([
+      expect.objectContaining({
+        teamName: "DXP",
+        groups: [expect.objectContaining({ groupId: "admin" })],
+      }),
+    ]);
+    expect(result.workspaces[0]?.unmappedGroups).toEqual([
+      expect.objectContaining({ groupId: "member" }),
+    ]);
+  });
+
   it("prefers the sole configured current target and drops role-only workspaces", () => {
     const liftMember = {
       id: "lift-member",

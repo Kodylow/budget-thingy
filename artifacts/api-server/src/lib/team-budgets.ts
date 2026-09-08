@@ -2,6 +2,9 @@ import { ReplitConnectors } from "@replit/connectors-sdk";
 import { and, asc, desc, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
 import {
   db,
+  configurationRevisionTable,
+  fundingGroupOverrideAuditsTable,
+  fundingGroupOverridesTable,
   teamLimitTargetsTable,
   teamBudgetAdjustmentsTable,
   teamBudgetAllocationAuditsTable,
@@ -932,6 +935,106 @@ export async function getTeamAllocationAudits(options: {
     .where(predicates.length ? and(...predicates) : undefined)
     .orderBy(desc(teamBudgetAllocationAuditsTable.id))
     .limit(200);
+}
+
+export type FundingOverrideMutationResult =
+  | {
+      status: "ok";
+      revision: string;
+      override: typeof fundingGroupOverridesTable.$inferSelect;
+    }
+  | { status: "conflict"; revision: string }
+  | { status: "team_not_found"; revision: string };
+
+/**
+ * Atomically commits one exact-group funding decision and its audit. Callers
+ * validate current directory membership and pass the previous effective team
+ * displayed to the actor; the database revision prevents that observation
+ * from racing any committed configuration edit.
+ */
+export async function setFundingGroupOverride(input: {
+  workspaceId: string;
+  groupId: string;
+  teamName: string | null;
+  previousEffectiveTeamName: string | null;
+  actorUserId: string;
+  expectedRevision: string;
+}): Promise<FundingOverrideMutationResult> {
+  return db.transaction(async (tx) => {
+    const [clock] = await tx.select()
+      .from(configurationRevisionTable)
+      .for("update");
+    if (!clock) throw new Error("Configuration revision singleton is missing");
+    const revision = clock.revision.toString();
+    if (revision !== input.expectedRevision) {
+      return { status: "conflict", revision };
+    }
+    if (input.teamName !== null) {
+      const [team] = await tx.select({ teamName: teamBudgetsTable.teamName })
+        .from(teamBudgetsTable)
+        .where(eq(teamBudgetsTable.teamName, input.teamName));
+      if (!team) return { status: "team_not_found", revision };
+    }
+
+    const [current] = await tx.select().from(fundingGroupOverridesTable)
+      .where(and(
+        eq(fundingGroupOverridesTable.workspaceId, input.workspaceId),
+        eq(fundingGroupOverridesTable.groupId, input.groupId),
+      ))
+      .for("update");
+    // A missing row and an explicit null are distinct. Saving null for the
+    // first time must create the durable inference-suppressing decision.
+    if (current && current.teamName === input.teamName) {
+      return { status: "ok", revision, override: current };
+    }
+
+    const [override] = await tx.insert(fundingGroupOverridesTable).values({
+      workspaceId: input.workspaceId,
+      groupId: input.groupId,
+      teamName: input.teamName,
+      updatedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: [
+        fundingGroupOverridesTable.workspaceId,
+        fundingGroupOverridesTable.groupId,
+      ],
+      set: { teamName: input.teamName, updatedAt: new Date() },
+    }).returning();
+    await tx.insert(fundingGroupOverrideAuditsTable).values({
+      workspaceId: input.workspaceId,
+      groupId: input.groupId,
+      previousTeamName: input.previousEffectiveTeamName,
+      newTeamName: input.teamName,
+      actorUserId: input.actorUserId,
+    });
+    const [committedClock] = await tx.select({
+      revision: configurationRevisionTable.revision,
+    }).from(configurationRevisionTable);
+    return {
+      status: "ok",
+      revision: committedClock!.revision.toString(),
+      override: override!,
+    };
+  });
+}
+
+export function getFundingGroupOverrides() {
+  return db.select().from(fundingGroupOverridesTable).orderBy(
+    asc(fundingGroupOverridesTable.workspaceId),
+    asc(fundingGroupOverridesTable.groupId),
+  );
+}
+
+export function getFundingGroupOverrideAudits(options: {
+  beforeId?: number;
+  limit?: number;
+} = {}) {
+  return db.select().from(fundingGroupOverrideAuditsTable)
+    .where(options.beforeId === undefined
+      ? undefined
+      : lt(fundingGroupOverrideAuditsTable.id, options.beforeId))
+    .orderBy(desc(fundingGroupOverrideAuditsTable.id))
+    .limit(Math.min(200, Math.max(1, options.limit ?? 100)));
 }
 
 export async function assignTeamLimitTarget(input: {

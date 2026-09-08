@@ -11,7 +11,7 @@ export interface MigrationSource {
   tag: string;
   sql: string;
 }
-interface Migration extends MigrationSource {
+export interface Migration extends MigrationSource {
   when: number;
   hash: string;
 }
@@ -68,7 +68,7 @@ export async function readMigrations(): Promise<Migration[]> {
 
 const identifier = (name: string) => `"${name}"`;
 
-async function validateJournal(
+export async function validateJournal(
   client: PoolClient, schema: string, journalSchema: string, migrations: Migration[],
 ): Promise<Migration[]> {
   const relation = await client.query<{ relkind: string }>(

@@ -19,6 +19,7 @@ export type Capability =
   | "canViewAccountUsage"
   | "canManageAccess"
   | "canEditAllocations"
+  | "canManageFundingMappings"
   | "canManageNotifications"
   | "canManageSystem"
   | "canPreviewRoles"
@@ -45,6 +46,7 @@ export interface Authorization {
     canViewAccountUsage: boolean;
     canManageAccess: boolean;
     canEditAllocations: boolean;
+    canManageFundingMappings: boolean;
     canManageNotifications: boolean;
     canManageSystem: boolean;
     canPreviewRoles: boolean;
@@ -326,6 +328,13 @@ export function buildAuthorization(input: {
   groupUserIds?: ReadonlyMap<string, Iterable<string>>;
   allWorkspaceIds?: Iterable<string>;
   isTrueAccountAdmin?: boolean;
+  /**
+   * Actual Enterprise account-admin flag. This is separate from the legacy
+   * bootstrap operator treatment carried by isTrueAccountAdmin.
+   */
+  isEnterpriseAccountAdmin?: boolean;
+  /** Active, non-revoked app-admin access resolved from persistent storage. */
+  hasActiveManagedAccess?: boolean;
   canPreviewRoles?: boolean;
   isPreview?: boolean;
 }): Authorization {
@@ -333,6 +342,8 @@ export function buildAuthorization(input: {
   const account = roles.includes("account");
   const workspaceIds = unique(input.workspaceIds ?? []);
   const trueAdmin = input.isTrueAccountAdmin === true;
+  const enterpriseAccountAdmin =
+    input.isEnterpriseAccountAdmin ?? trueAdmin;
   const preview = input.isPreview === true;
   const accountWideViewer = account;
   const mutationAllowed = !preview;
@@ -356,6 +367,13 @@ export function buildAuthorization(input: {
       canViewAccountUsage: accountWideViewer,
       canManageAccess: mutationAllowed && trueAdmin,
       canEditAllocations: mutationAllowed && account,
+      canManageFundingMappings: mutationAllowed && (
+        enterpriseAccountAdmin ||
+        (
+          input.userId === "38408700" &&
+          input.hasActiveManagedAccess === true
+        )
+      ),
       canManageNotifications: mutationAllowed && trueAdmin,
       canManageSystem: mutationAllowed && trueAdmin,
       canPreviewRoles: !preview && input.canPreviewRoles === true,
@@ -410,18 +428,30 @@ async function resolveFromDirectory(
   });
   const targets = snapshot.teamLimitTargets;
   const families = [...account.familiesById.values()];
-  const effectiveTeams = buildCanonicalEffectiveTeams(account, targets);
+  const effectiveTeams = buildCanonicalEffectiveTeams(
+    account,
+    targets,
+    snapshot.fundingGroupOverrides,
+  );
+  const administrativeTeamForFamily = (
+    family: (typeof families)[number],
+  ): string | null => {
+    const administrativeGroup = family.roleGroups.get("admin");
+    return administrativeGroup
+      ? effectiveTeams.byRoleGroupId.get(administrativeGroup.id) ?? null
+      : null;
+  };
   const forcedTeamFamilies = forceRole === "team_admin"
     ? families.filter((family) =>
         !family.isLegacy &&
-        effectiveTeams.byFamilyId.get(family.id) === forceValue &&
+        administrativeTeamForFamily(family) === forceValue &&
         (family.name.toLowerCase() === forceValue!.toLowerCase() ||
           family.key === forceValue!.toLowerCase())
       )
     : [];
   if (forceRole === "team_admin" && forcedTeamFamilies.length === 0) {
     const sameTeam = families.filter((family) =>
-      !family.isLegacy && effectiveTeams.byFamilyId.get(family.id) === forceValue
+      !family.isLegacy && administrativeTeamForFamily(family) === forceValue
     );
     if (sameTeam.length === 1) forcedTeamFamilies.push(sameTeam[0]!);
   }
@@ -463,47 +493,52 @@ async function resolveFromDirectory(
     if (workspaceIds.size) roles.push("workspace_admin");
   }
 
-  const adminFamilyIds = new Set<string>();
-  const includeLegacySibling = (familyId: string): void => {
+  const administrativeTeamsByFamily = new Map<string, Set<string>>();
+  const includeAdministrativeTeam = (familyId: string, teamName: string): void => {
+    const teams = administrativeTeamsByFamily.get(familyId) ?? new Set<string>();
+    teams.add(teamName);
+    administrativeTeamsByFamily.set(familyId, teams);
+  };
+  const includeLegacySibling = (familyId: string, teamName: string): void => {
     const family = account.familiesById.get(familyId);
     if (!family || family.isLegacy) return;
     const siblingTeams = new Set(
       families
         .filter((candidate) => !candidate.isLegacy && candidate.key === family.key)
         .flatMap((candidate) => {
-          const team = effectiveTeams.byFamilyId.get(candidate.id);
+          const team = administrativeTeamForFamily(candidate);
           return team ? [team] : [];
         }),
     );
-    if (siblingTeams.size !== 1) return;
-    const team = effectiveTeams.byFamilyId.get(family.id);
+    if (siblingTeams.size !== 1 || !siblingTeams.has(teamName)) return;
     for (const legacy of families) {
       if (
         legacy.isLegacy &&
-        legacy.key === family.key &&
-        effectiveTeams.byFamilyId.get(legacy.id) === team
+        legacy.key === family.key
       ) {
-        adminFamilyIds.add(legacy.id);
+        includeAdministrativeTeam(legacy.id, teamName);
       }
     }
   };
   if (forceRole === "team_admin") {
     for (const family of forcedTeamFamilies) {
-      const effectiveTeam = effectiveTeams.byFamilyId.get(family.id)!;
-      adminFamilyIds.add(family.id);
-      includeLegacySibling(family.id);
+      const effectiveTeam = administrativeTeamForFamily(family)!;
+      includeAdministrativeTeam(family.id, effectiveTeam);
+      includeLegacySibling(family.id, effectiveTeam);
       teamNames.add(effectiveTeam);
     }
     roles.push("team_admin");
   } else if (!forceRole && member) {
     for (const family of families) {
       const admins = family.roleGroups.get("admin");
-      const effectiveTeam = effectiveTeams.byFamilyId.get(family.id);
+      const effectiveTeam = admins
+        ? effectiveTeams.byRoleGroupId.get(admins.id) ?? null
+        : null;
       const activeInFamilyWorkspace =
         member.workspaces.get(family.workspaceId)?.isDisabled === false;
       if (effectiveTeam && activeInFamilyWorkspace && admins?.members.has(userId)) {
-        adminFamilyIds.add(family.id);
-        includeLegacySibling(family.id);
+        includeAdministrativeTeam(family.id, effectiveTeam);
+        includeLegacySibling(family.id, effectiveTeam);
         teamNames.add(effectiveTeam);
       }
     }
@@ -519,8 +554,16 @@ async function resolveFromDirectory(
 
   for (const group of dir.groups) {
     const roleGroup = account.roleGroupsById.get(group.id);
-    const teamVisible =
-      !!roleGroup && adminFamilyIds.has(roleGroup.familyId);
+    const effectiveGroupTeam = roleGroup
+      ? effectiveTeams.byRoleGroupId.get(roleGroup.id) ?? null
+      : null;
+    const teamVisible = !!roleGroup &&
+      effectiveGroupTeam !== null &&
+      (
+        administrativeTeamsByFamily.get(roleGroup.familyId)?.has(
+          effectiveGroupTeam,
+        ) === true
+      );
     const selfVisible =
       (!forceRole || forceRole === "member") &&
       member?.workspaces.get(group.workspaceId)?.isDisabled === false &&
@@ -556,6 +599,8 @@ async function resolveFromDirectory(
     groupUserIds,
     allWorkspaceIds,
     isTrueAccountAdmin: trueAdmin,
+    isEnterpriseAccountAdmin: member?.isAccountAdmin === true,
+    hasActiveManagedAccess: isAllowlisted,
     canPreviewRoles: isBootstrapAccountAdmin,
     isPreview: !!forceRole,
   });

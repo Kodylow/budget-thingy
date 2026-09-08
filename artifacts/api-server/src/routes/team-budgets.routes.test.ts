@@ -10,6 +10,9 @@ import {
   teamBudgetAdjustmentsTable,
   teamBudgetAllocationAuditsTable,
   teamBudgetsTable,
+  fundingGroupOverridesTable,
+  fundingGroupOverrideAuditsTable,
+  familyTeamMappingsTable,
   usageAccountDayTable,
   usageMemberDayTable,
   usageProjectDayTable,
@@ -18,7 +21,7 @@ import {
 
 import monitorRouter from "./monitor.ts";
 import { setAuthorizationResolver } from "../middlewares/requireAuth.ts";
-import { __setDirectoryCacheForTests } from "../lib/enterprise.ts";
+import { __setDirectoryCacheForTests, getDirectory } from "../lib/enterprise.ts";
 import {
   setTeamBudgetDirectoryFetcherForTests,
   TEAM_BUDGET_SOURCE,
@@ -35,6 +38,9 @@ const SECOND_GROUP_ID = `${PREFIX}-group-2`;
 const HIDDEN_ZERO_GROUP_ID = `${PREFIX}-hidden-zero`;
 const HIDDEN_ZERO_ALIAS_ID = `${PREFIX}-hidden-zero-alias`;
 const VISIBLE_ZERO_GROUP_ID = `${PREFIX}-visible-zero`;
+const SNAPSHOT_GROUP_ID = `${PREFIX}-snapshot-family`;
+const LEGACY_GROUP_ID = `${PREFIX}-legacy-unsuffixed`;
+const BUILTIN_GROUP_ID = `${PREFIX}-builtin-members`;
 const HIDDEN_ZERO_NAME = `${PREFIX} Hidden Zero - Member`;
 const VISIBLE_ZERO_NAME = `${PREFIX} Visible Zero - Member`;
 const SHARED_PROJECT_ID = `${PREFIX}-shared-project`;
@@ -75,6 +81,12 @@ beforeAll(async () => {
         slug: "task-158-two",
         memberCount: 1,
       }],
+      ["1awqan", {
+        id: "1awqan",
+        name: "Legacy Comcast",
+        slug: "legacy-comcast",
+        memberCount: 0,
+      }],
     ]),
     groups: [
       {
@@ -106,6 +118,24 @@ beforeAll(async () => {
         workspaceId: "task158-ws",
         name: VISIBLE_ZERO_NAME,
         type: "custom",
+      },
+      {
+        id: SNAPSHOT_GROUP_ID,
+        workspaceId: "task158-ws",
+        name: "Snapshot Only",
+        type: "custom",
+      },
+      {
+        id: LEGACY_GROUP_ID,
+        workspaceId: "1awqan",
+        name: "Executive Group",
+        type: "custom",
+      },
+      {
+        id: BUILTIN_GROUP_ID,
+        workspaceId: "task158-ws",
+        name: "Members",
+        type: "member",
       },
     ],
     members: new Map([
@@ -141,6 +171,7 @@ beforeAll(async () => {
         capabilities: {
           canViewAccountUsage: true,
           canManageAccess: false, canEditAllocations: true,
+          canManageFundingMappings: false,
           canManageNotifications: false, canManageSystem: false,
           canPreviewRoles: false,
           canWriteGroupLimits: false, canWriteUserLimitsIn: [],
@@ -155,6 +186,7 @@ beforeAll(async () => {
         capabilities: {
           canViewAccountUsage: true,
           canManageAccess: false, canEditAllocations: false,
+          canManageFundingMappings: false,
           canManageNotifications: false, canManageSystem: false,
           canPreviewRoles: false,
           canWriteGroupLimits: false, canWriteUserLimitsIn: [],
@@ -171,6 +203,22 @@ beforeAll(async () => {
         capabilities: {
           canViewAccountUsage: true,
           canManageAccess: false, canEditAllocations: true,
+          canManageFundingMappings: false,
+          canManageNotifications: false, canManageSystem: false,
+          canPreviewRoles: false,
+          canWriteGroupLimits: false, canWriteUserLimitsIn: [],
+          canRunChecks: false, canSendTestEmail: false,
+        },
+      });
+    }
+    if (userId === "38408700") {
+      return Promise.resolve({
+        role: "account", roles: ["account"], userId, workspaceIds: [],
+        teamNames: [], groupIds: [], userIds: [userId], isTrueAccountAdmin: false,
+        capabilities: {
+          canViewAccountUsage: true,
+          canManageAccess: false, canEditAllocations: true,
+          canManageFundingMappings: true,
           canManageNotifications: false, canManageSystem: false,
           canPreviewRoles: false,
           canWriteGroupLimits: false, canWriteUserLimitsIn: [],
@@ -462,6 +510,291 @@ test("budget audit and sync status reject workspace-scoped users", async () => {
     expect((await request(path, "task158-plain")).status).toBe(403);
     expect((await request(path, "task158-workspace")).status).toBe(403);
     expect((await request(path, "task158-account")).status).toBe(200);
+  }
+});
+
+test("funding group routes scope reads and enforce the narrow mutation capability", async () => {
+  await db.delete(familyTeamMappingsTable).where(eq(
+    familyTeamMappingsTable.familyKey,
+    "snapshot only",
+  ));
+  await db.insert(familyTeamMappingsTable).values({
+    workspaceId: "task158-ws",
+    familyKey: "snapshot only",
+    familyName: "Snapshot Only",
+    teamName: ASSIGNED,
+    isLegacy: false,
+  });
+  await db.delete(fundingGroupOverrideAuditsTable).where(inArray(
+    fundingGroupOverrideAuditsTable.groupId,
+    [VISIBLE_ZERO_GROUP_ID, HIDDEN_ZERO_GROUP_ID],
+  ));
+  await db.delete(fundingGroupOverridesTable).where(inArray(
+    fundingGroupOverridesTable.groupId,
+    [VISIBLE_ZERO_GROUP_ID, HIDDEN_ZERO_GROUP_ID],
+  ));
+  try {
+    const allocationsBefore = await request(
+      "/admin/team-budgets/history",
+      "task158-account",
+    );
+    expect(allocationsBefore.status).toBe(200);
+    expect((await request("/admin/funding-groups")).status).toBe(401);
+    expect((await request("/admin/funding-groups", "task158-plain")).status).toBe(403);
+    const adminInventory = await request(
+      "/admin/funding-groups",
+      "task158-account",
+    );
+    expect(adminInventory.status).toBe(200);
+    expect(adminInventory.json.teams).toEqual(expect.arrayContaining([
+      expect.objectContaining({ teamName: HIDDEN, isHidden: true }),
+    ]));
+    expect(adminInventory.json.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        groupId: HIDDEN_ZERO_GROUP_ID,
+        teamName: HIDDEN,
+        isHidden: true,
+      }),
+      expect.objectContaining({
+        groupId: SNAPSHOT_GROUP_ID,
+        groupName: "Snapshot Only",
+        teamName: ASSIGNED,
+        origin: "inferred",
+      }),
+      expect.objectContaining({
+        workspaceId: "1awqan",
+        groupId: LEGACY_GROUP_ID,
+        groupName: "Executive Group",
+        origin: "unmapped",
+      }),
+    ]));
+    expect(adminInventory.json.groups.some(
+      (group) => group.groupId === BUILTIN_GROUP_ID,
+    )).toBe(false);
+
+    const hiddenUnmap = await request(
+      "/admin/funding-groups",
+      "task158-account",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: HIDDEN_ZERO_GROUP_ID,
+        teamName: null,
+        expectedRevision: adminInventory.json.revision,
+      },
+    );
+    expect(hiddenUnmap.status).toBe(200);
+    expect(hiddenUnmap.json.groups.find(
+      (group) => group.groupId === HIDDEN_ZERO_GROUP_ID,
+    )).toMatchObject({ teamName: null, origin: "unmapped", isHidden: true });
+
+    const delegateInventory = await request(
+      "/admin/funding-groups",
+      "task158-delegate",
+    );
+    expect(delegateInventory.status).toBe(200);
+    expect(delegateInventory.json.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        workspaceId: "task158-ws",
+        workspaceName: "Task 158",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        groupName: VISIBLE_ZERO_NAME,
+        teamName: ASSIGNED,
+        origin: "inferred",
+        isHidden: false,
+      }),
+    ]));
+    expect(delegateInventory.json.teams.some(
+      (team) => team.teamName === HIDDEN,
+    )).toBe(false);
+    expect(delegateInventory.json.groups.some(
+      (group) => group.groupId === HIDDEN_ZERO_GROUP_ID,
+    )).toBe(false);
+
+    const forged = await request(
+      "/admin/funding-groups",
+      "task158-delegate",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: null,
+        expectedRevision: delegateInventory.json.revision,
+      },
+    );
+    expect(forged.status).toBe(403);
+    expect((await request(
+      "/admin/funding-groups",
+      "task158-readonly-account",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: null,
+        expectedRevision: delegateInventory.json.revision,
+      },
+    )).status).toBe(403);
+    expect((await request(
+      "/admin/funding-groups/audit",
+      "task158-readonly-account",
+    )).status).toBe(403);
+    const kodyAuditBefore = await request(
+      "/admin/funding-groups/audit",
+      "38408700",
+    );
+    expect(kodyAuditBefore.status).toBe(200);
+    expect(kodyAuditBefore.json.changes.some(
+      (change) => change.groupId === HIDDEN_ZERO_GROUP_ID,
+    )).toBe(false);
+    expect((await request(
+      "/admin/funding-groups",
+      "38408700",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: HIDDEN_ZERO_GROUP_ID,
+        teamName: ASSIGNED,
+        expectedRevision: delegateInventory.json.revision,
+      },
+    )).status).toBe(404);
+    expect((await request(
+      "/admin/funding-groups",
+      "38408700",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: HIDDEN,
+        expectedRevision: delegateInventory.json.revision,
+      },
+    )).status).toBe(404);
+
+    const unmapped = await request(
+      "/admin/funding-groups",
+      "38408700",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: null,
+        expectedRevision: delegateInventory.json.revision,
+      },
+    );
+    expect(unmapped.status).toBe(200);
+    expect(unmapped.json.groups.find(
+      (group) => group.groupId === VISIBLE_ZERO_GROUP_ID,
+    )).toMatchObject({ teamName: null, origin: "unmapped" });
+
+    const cachedDirectory = await getDirectory();
+    __setDirectoryCacheForTests({
+      fetchedAt: Date.now(),
+      workspaces: new Map(cachedDirectory.workspaces),
+      groups: [...cachedDirectory.groups],
+      groupMembers: new Map(cachedDirectory.groupMembers),
+      members: new Map(cachedDirectory.members),
+      budgets: cachedDirectory.budgets,
+    });
+    const afterDirectoryRefresh = await request(
+      "/admin/funding-groups",
+      "38408700",
+    );
+    expect(afterDirectoryRefresh.status).toBe(200);
+    expect(afterDirectoryRefresh.json.groups.find(
+      (group) => group.groupId === VISIBLE_ZERO_GROUP_ID,
+    )).toMatchObject({ teamName: null, origin: "unmapped" });
+    expect(afterDirectoryRefresh.json.groups.find(
+      (group) => group.groupId === SNAPSHOT_GROUP_ID,
+    )).toMatchObject({ teamName: ASSIGNED, origin: "inferred" });
+
+    expect((await request(
+      "/admin/funding-groups",
+      "task158-account",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: ASSIGNED,
+        expectedRevision: delegateInventory.json.revision,
+      },
+    )).status).toBe(409);
+    expect((await request(
+      "/admin/funding-groups",
+      "38408700",
+      "PATCH",
+      {
+        workspaceId: "wrong-workspace",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: ASSIGNED,
+        expectedRevision: unmapped.json.revision,
+      },
+    )).status).toBe(404);
+    expect((await request(
+      "/admin/funding-groups",
+      "38408700",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: ASSIGNED,
+        expectedRevision: unmapped.json.revision,
+        forgedCapability: true,
+      },
+    )).status).toBe(400);
+
+    const reassigned = await request(
+      "/admin/funding-groups",
+      "task158-account",
+      "PATCH",
+      {
+        workspaceId: "task158-ws",
+        groupId: VISIBLE_ZERO_GROUP_ID,
+        teamName: ASSIGNED,
+        expectedRevision: unmapped.json.revision,
+      },
+    );
+    expect(reassigned.status).toBe(200);
+    expect(reassigned.json.groups.find(
+      (group) => group.groupId === VISIBLE_ZERO_GROUP_ID,
+    )).toMatchObject({ teamName: ASSIGNED, origin: "explicit" });
+
+    const audit = await request("/admin/funding-groups/audit", "38408700");
+    expect(audit.status).toBe(200);
+    expect(audit.json.changes.filter(
+      (change) => change.groupId === VISIBLE_ZERO_GROUP_ID,
+    ).slice(0, 2)).toEqual([
+      expect.objectContaining({
+        workspaceId: "task158-ws",
+        previousTeamName: null,
+        newTeamName: ASSIGNED,
+        actor: "task158-account",
+      }),
+      expect.objectContaining({
+        previousTeamName: ASSIGNED,
+        newTeamName: null,
+        actor: "38408700",
+      }),
+    ]);
+    const allocationsAfter = await request(
+      "/admin/team-budgets/history",
+      "task158-account",
+    );
+    expect(allocationsAfter.status).toBe(200);
+    expect(allocationsAfter.json.teams).toEqual(allocationsBefore.json.teams);
+    const directoryAfter = await getDirectory();
+    expect(directoryAfter.budgets).toEqual(cachedDirectory.budgets);
+  } finally {
+    await db.delete(fundingGroupOverrideAuditsTable).where(inArray(
+      fundingGroupOverrideAuditsTable.groupId,
+      [VISIBLE_ZERO_GROUP_ID, HIDDEN_ZERO_GROUP_ID],
+    ));
+    await db.delete(fundingGroupOverridesTable).where(inArray(
+      fundingGroupOverridesTable.groupId,
+      [VISIBLE_ZERO_GROUP_ID, HIDDEN_ZERO_GROUP_ID],
+    ));
+    await db.delete(familyTeamMappingsTable).where(eq(
+      familyTeamMappingsTable.familyKey,
+      "snapshot only",
+    ));
   }
 });
 
@@ -1166,14 +1499,14 @@ test("shared reporting entry rejects extreme custom ranges before accounting", a
   expect(boundary.status).toBe(200);
 });
 
-test("complete zero-spend hidden teams stay out of rows without changing accounting", async () => {
+test("hidden-mapped and unmapped aliases stay separate without changing accounting", async () => {
   invalidateUsageSnapshotMemo();
   const [groups, dashboard] = await Promise.all([
     request(`/groups?${COMPLETE_RANGE}`, "task158-account"),
     request(`/dashboard?viewScope=all_authorized&${COMPLETE_RANGE}`, "task158-account"),
   ]);
   expect(groups.status).toBe(200);
-  expect(groups.json.usageHealth.status).toBe("complete");
+  expect(groups.json.usageHealth.status).toBe("partial");
   expect(dashboard.status).toBe(200);
 
   const returnedIds = groups.json.groups.map((group) => group.groupId);
@@ -1182,9 +1515,9 @@ test("complete zero-spend hidden teams stay out of rows without changing account
       team.families.flatMap((family) => family.groups.map((group) => group.groupId))
     )
   );
-  expect(returnedIds).not.toContain(HIDDEN_ZERO_GROUP_ID);
+  expect(returnedIds).toContain(HIDDEN_ZERO_GROUP_ID);
   expect(returnedIds).not.toContain(HIDDEN_ZERO_ALIAS_ID);
-  expect(hierarchyIds).not.toContain(HIDDEN_ZERO_GROUP_ID);
+  expect(hierarchyIds).toContain(HIDDEN_ZERO_GROUP_ID);
   expect(hierarchyIds).not.toContain(HIDDEN_ZERO_ALIAS_ID);
   expect(returnedIds).toContain(VISIBLE_ZERO_GROUP_ID);
   expect(groups.json.workspaceTeamRawSpend.some((row) => row.teamName === HIDDEN))
@@ -1229,7 +1562,7 @@ test("positive hidden-team spend remains visible as unassigned", async () => {
       .toMatchObject({
         teamName: null,
         rollupSpendUsd: 13,
-        rollupSpendLoaded: true,
+        rollupSpendLoaded: false,
       });
   } finally {
     await db.delete(teamLimitTargetsTable)

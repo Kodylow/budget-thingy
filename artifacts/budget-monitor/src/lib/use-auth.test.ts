@@ -12,7 +12,8 @@ function envelope(revision = 'revision-1', isPreview = false) {
       workspaceIds: [], teamNames: [], groupIds: [], userIds: ['hook-user'], isPreview,
     },
     capabilities: {
-      canManageAccess: false, canEditAllocations: false, canPreviewRoles: true,
+      canManageAccess: false, canEditAllocations: false,
+      canManageFundingMappings: false, canPreviewRoles: true,
       canWriteGroupLimits: false, canWriteUserLimitsIn: [],
     },
   };

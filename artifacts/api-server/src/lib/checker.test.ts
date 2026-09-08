@@ -119,6 +119,7 @@ import {
   runCheck,
   THRESHOLDS,
 } from "./checker";
+import { resetConfigurationSnapshotForTests } from "./configuration-snapshot";
 import {
   getNotificationSettings,
   updateNotificationSettings,
@@ -142,7 +143,23 @@ beforeEach(async () => {
       team_budget_upstream_sync, admin_emails, budget_checker_state,
       api_project_metadata, api_project_creator_evidence, usage_member_day, usage_project_day,
        api_project_metadata_state, usage_workspace_day, usage_account_day, ingest_run,
-       notification_settings CASCADE;
+       notification_settings, configuration_revision, family_team_mappings,
+       funding_group_overrides CASCADE;
+    CREATE TABLE configuration_revision (
+      singleton BOOLEAN PRIMARY KEY DEFAULT true,
+      revision BIGINT NOT NULL DEFAULT 0
+    );
+    INSERT INTO configuration_revision (singleton, revision) VALUES (true, 0);
+    CREATE TABLE family_team_mappings (
+      workspace_id TEXT NOT NULL, family_key TEXT NOT NULL,
+      family_name TEXT NOT NULL, team_name TEXT, is_legacy BOOLEAN NOT NULL,
+      PRIMARY KEY(workspace_id, family_key)
+    );
+    CREATE TABLE funding_group_overrides (
+      workspace_id TEXT NOT NULL, group_id TEXT NOT NULL, team_name TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(workspace_id, group_id)
+    );
     CREATE TABLE alerts (
       id SERIAL PRIMARY KEY, group_id TEXT NOT NULL, group_name TEXT NOT NULL,
       entity_type TEXT NOT NULL DEFAULT 'group', entity_id TEXT NOT NULL DEFAULT '',
@@ -278,6 +295,7 @@ beforeEach(async () => {
     INSERT INTO notification_settings(id, automated_email_enabled)
     VALUES ('singleton', true);
   `);
+  resetConfigurationSnapshotForTests();
   await pglite.exec(readFileSync(
     new URL("../../../../lib/db/drizzle/0012_richer_project_metadata.sql", import.meta.url),
     "utf8",
@@ -511,7 +529,7 @@ describe("checker Postgres snapshot cutover", () => {
       .toEqual(["Team A", "Team B"]);
   });
 
-  it("does not merge same-key nonlegacy families without explicit assignments", async () => {
+  it("does not infer funding for same-key nonlegacy families without assignments", async () => {
     groups = [
       { id: "g-a", workspaceId: "ws-1", name: "Shared Family - Member" },
       { id: "g-b", workspaceId: "ws-2", name: "Shared Family - Members" },
@@ -529,8 +547,7 @@ describe("checker Postgres snapshot cutover", () => {
     });
     const result = await runCheck();
     expect(result.checkedTeams).toBe(2);
-    expect(result.alerts.map((alert) => alert.entityId).sort())
-      .toEqual(["Shared Family [ws-1]", "Shared Family [ws-2]"]);
+    expect(result.alerts).toEqual([]);
   });
 
   it("aggregates same-key families only when exact targets deliberately share a team", async () => {

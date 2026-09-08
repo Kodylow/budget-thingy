@@ -34,6 +34,7 @@ const authorization: Authorization = {
     canViewAccountUsage: false,
     canManageAccess: false,
     canEditAllocations: false,
+    canManageFundingMappings: false,
     canManageNotifications: false,
     canManageSystem: false,
     canPreviewRoles: false,

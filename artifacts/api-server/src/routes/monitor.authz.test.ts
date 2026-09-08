@@ -130,6 +130,7 @@ function authorization(
       canViewAccountUsage: account,
       canManageAccess: account,
       canEditAllocations: account,
+      canManageFundingMappings: account,
       canManageNotifications: account,
       canManageSystem: account,
       canPreviewRoles: false,
@@ -589,6 +590,7 @@ it("enforces the editor action matrix on direct mutation routes", async () => {
     capabilities: {
       canViewAccountUsage: true,
       canEditAllocations: true,
+      canManageFundingMappings: false,
       canManageAccess: false,
       canManageNotifications: false,
       canManageSystem: false,
@@ -1008,7 +1010,7 @@ describe("GET /workspace-admins", () => {
           familyKey: "lone",
           familyName: "Lone",
           isLegacy: false,
-          teamName: "Lone",
+          teamName: null,
           admins: [],
         },
         {
@@ -1019,7 +1021,7 @@ describe("GET /workspace-admins", () => {
           familyKey: "zeta",
           familyName: "Zeta",
           isLegacy: false,
-          teamName: "Zeta",
+          teamName: null,
           admins: [
             {
               userId: "nullable-admin",

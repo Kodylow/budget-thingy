@@ -14,6 +14,7 @@ import {
   __setDirectoryCacheForTests,
   buildCanonicalAccountDirectory,
   buildCanonicalEffectiveTeams,
+  buildCanonicalGroupMergePlan,
   getProjectInfo,
   isInternalReplitEmail,
   persistCanonicalFamilyFinancialRows,
@@ -27,6 +28,7 @@ import {
   resolvePreviewAuthorization,
   type Authorization,
 } from "./authz";
+import type { ConfigurationSnapshot } from "./configuration-snapshot";
 import { readProjectMetadata } from "../routes/monitor.shared";
 
 describe("canonical enterprise directory", () => {
@@ -138,7 +140,7 @@ describe("canonical enterprise directory", () => {
     expect(unique.familiesById.get("1awqan:shared family")?.teamName).toBe("Team One");
   });
 
-  it("generates stable workspace-qualified teams for collisions while named overrides share", () => {
+  it("leaves newly discovered unknown families unmapped while approved overrides share", () => {
     const account = buildCanonicalAccountDirectory({
       workspaces: new Map(),
       groups: [
@@ -151,9 +153,9 @@ describe("canonical enterprise directory", () => {
       members: new Map(),
     });
     expect(account.familiesById.get("one:shared family")?.teamName)
-      .toBe("Shared Family [one]");
+      .toBeNull();
     expect(account.familiesById.get("two:shared family")?.teamName)
-      .toBe("Shared Family [two]");
+      .toBeNull();
     expect(account.familiesById.get("one:finance")?.teamName).toBe("Finance");
     expect(account.familiesById.get("two:finance")?.teamName).toBe("Finance");
     const effective = buildCanonicalEffectiveTeams(account, [
@@ -170,11 +172,11 @@ describe("canonical enterprise directory", () => {
         assignmentSource: "automatic",
       },
     ]);
-    expect(effective.byRoleGroupId.get("one-shared")).toBe("Shared Family [one]");
-    expect(effective.byRoleGroupId.get("two-shared")).toBe("Shared Family [two]");
+    expect(effective.byRoleGroupId.get("one-shared")).toBeNull();
+    expect(effective.byRoleGroupId.get("two-shared")).toBeNull();
   });
 
-  it("seeds distinct targets and zero-allocation budget identities for colliding families", async () => {
+  it("does not create funding teams or targets for newly unknown families", async () => {
     const workspaceIds = ["__financial_identity_one__", "__financial_identity_two__"];
     const groupIds = ["__financial_identity_group_one__", "__financial_identity_group_two__"];
     const teamNames = workspaceIds.map((workspaceId) =>
@@ -199,16 +201,63 @@ describe("canonical enterprise directory", () => {
         .where(inArray(teamLimitTargetsTable.groupId, groupIds));
       const budgets = await db.select().from(teamBudgetsTable)
         .where(inArray(teamBudgetsTable.teamName, teamNames));
-      expect(new Set(targets.map((target) => target.teamName))).toEqual(new Set(teamNames));
-      expect(budgets).toEqual(expect.arrayContaining(teamNames.map((teamName) =>
-        expect.objectContaining({ teamName, originalAmountUsd: 0, amountUsd: 0 })
-      )));
+      expect(targets).toEqual([]);
+      expect(budgets).toEqual([]);
     } finally {
       await db.delete(teamLimitTargetsTable)
         .where(inArray(teamLimitTargetsTable.groupId, groupIds));
       await db.delete(teamBudgetsTable)
         .where(inArray(teamBudgetsTable.teamName, teamNames));
     }
+  });
+
+  it("applies overrides only to the exact workspace/group and preserves explicit unmap", () => {
+    const account = buildCanonicalAccountDirectory({
+      workspaces: new Map(),
+      groups: [
+        { id: "admin", workspaceId: "one", name: "Finance - Admin", type: "custom" },
+        { id: "member", workspaceId: "one", name: "Finance - Member", type: "custom" },
+        { id: "same-name", workspaceId: "two", name: "Finance - Admin", type: "custom" },
+      ],
+      groupMembers: new Map(),
+      members: new Map(),
+    });
+    const effective = buildCanonicalEffectiveTeams(account, [], [
+      { workspaceId: "one", groupId: "admin", teamName: "DXP" },
+      { workspaceId: "one", groupId: "member", teamName: null },
+      // Mismatched workspace must never affect a globally same group id.
+      { workspaceId: "wrong", groupId: "same-name", teamName: "DXP" },
+    ]);
+    expect(effective.byRoleGroupId.get("admin")).toBe("DXP");
+    expect(effective.byRoleGroupId.get("member")).toBeNull();
+    expect(effective.byRoleGroupId.get("same-name")).toBe("Finance");
+    expect(effective.byFamilyId.get("one:finance")).toBe("Finance");
+  });
+
+  it("does not merge a hidden-team group with an unmapped namesake or lose spend", () => {
+    const groups = [
+      { id: "mapped", workspaceId: "one", name: "Duplicate", type: "custom" },
+      { id: "unmapped", workspaceId: "two", name: "Duplicate", type: "custom" },
+    ];
+    const effectiveFunding = new Map([["one\u0000mapped", "Hidden Finance"]]);
+    const hiddenTeams = new Set(["Hidden Finance"]);
+    const visibleFunding = new Map(
+      [...effectiveFunding].filter(([, team]) => !hiddenTeams.has(team)),
+    );
+    expect(visibleFunding.size).toBe(0);
+    const plan = buildCanonicalGroupMergePlan(
+      groups,
+      new Map(),
+      effectiveFunding,
+    );
+    expect(plan.mergeMap.get("mapped")).toEqual(["mapped"]);
+    expect(plan.mergeMap.get("unmapped")).toEqual(["unmapped"]);
+    expect(plan.hiddenGroupIds.size).toBe(0);
+    const spend = new Map([["mapped", 11], ["unmapped", 7]]);
+    const conserved = [...plan.mergeMap.values()]
+      .reduce((total, ids) =>
+        total + ids.reduce((sum, id) => sum + (spend.get(id) ?? 0), 0), 0);
+    expect(conserved).toBe(18);
   });
 
   it("backfill fails stale legacy mappings closed on ambiguity and inherits unique teams", async () => {
@@ -245,14 +294,11 @@ describe("canonical enterprise directory", () => {
     }
   });
 
-  it("leaves pre-provenance targets untouched and seeds new collision-safe automatic targets", async () => {
+  it("preserves pre-provenance mappings and leaves newly unknown destinations uncreated", async () => {
     const workspaceIds = ["__auto_collision_one__", "__auto_collision_two__"];
     const groupIds = ["__auto_collision_group_one__", "__auto_collision_group_two__"];
-    const familyKey = "__auto collision family__";
+    const familyKey = "auto collision family";
     const familyName = "Auto Collision Family";
-    const generatedTeamNames = workspaceIds.map((workspaceId) =>
-      `${familyName} [${workspaceId}]`
-    );
     await db.delete(teamLimitTargetsTable)
       .where(inArray(teamLimitTargetsTable.groupId, groupIds));
     await db.delete(familyTeamMappingsTable)
@@ -284,7 +330,7 @@ describe("canonical enterprise directory", () => {
       expect(new Set(rows
         .filter((row) => workspaceIds.includes(row.workspaceId))
         .map((row) => row.teamName)))
-        .toEqual(new Set(generatedTeamNames));
+        .toEqual(new Set([familyName]));
       const account = buildCanonicalAccountDirectory({
         workspaces: new Map(),
         groups: workspaceIds.map((workspaceId, index) => ({
@@ -312,48 +358,15 @@ describe("canonical enterprise directory", () => {
         }),
       )));
       const effective = buildCanonicalEffectiveTeams(account, untouchedTargets);
-      expect(effective.byRoleGroupId.get(groupIds[0]!)).toBe(generatedTeamNames[0]);
-      expect(effective.byRoleGroupId.get(groupIds[1]!)).toBe(generatedTeamNames[1]);
+      expect(effective.byRoleGroupId.get(groupIds[0]!)).toBe(familyName);
+      expect(effective.byRoleGroupId.get(groupIds[1]!)).toBe(familyName);
 
       await db.delete(teamLimitTargetsTable)
         .where(inArray(teamLimitTargetsTable.groupId, groupIds));
       await persistCanonicalFamilyFinancialRows(account);
       const repairedTargets = await db.select().from(teamLimitTargetsTable)
         .where(inArray(teamLimitTargetsTable.groupId, groupIds));
-      expect(new Set(repairedTargets.map((target) => target.teamName)))
-        .toEqual(new Set(generatedTeamNames));
-      expect(repairedTargets.every((target) => target.assignmentSource === "automatic"))
-        .toBe(true);
-      await db.update(teamLimitTargetsTable).set({
-        teamName: familyName,
-        monthlyLimitUsd: 42,
-        isEnabled: false,
-      }).where(and(
-        eq(teamLimitTargetsTable.workspaceId, workspaceIds[0]!),
-        eq(teamLimitTargetsTable.groupId, groupIds[0]!),
-      ));
-      await db.update(teamLimitTargetsTable).set({
-        teamName: "Manual Shared Identity",
-        assignmentSource: "manual",
-      }).where(and(
-        eq(teamLimitTargetsTable.workspaceId, workspaceIds[1]!),
-        eq(teamLimitTargetsTable.groupId, groupIds[1]!),
-      ));
-      await persistCanonicalFamilyFinancialRows(account);
-      const preservedTargets = await db.select().from(teamLimitTargetsTable)
-        .where(inArray(teamLimitTargetsTable.groupId, groupIds));
-      expect(preservedTargets.find((target) => target.groupId === groupIds[0]))
-        .toMatchObject({
-          teamName: generatedTeamNames[0],
-          assignmentSource: "automatic",
-          monthlyLimitUsd: 42,
-          isEnabled: false,
-        });
-      expect(preservedTargets.find((target) => target.groupId === groupIds[1]))
-        .toMatchObject({
-          teamName: "Manual Shared Identity",
-          assignmentSource: "manual",
-        });
+      expect(repairedTargets).toEqual([]);
 
       await db.delete(teamLimitTargetsTable)
         .where(inArray(teamLimitTargetsTable.groupId, groupIds));
@@ -379,8 +392,6 @@ describe("canonical enterprise directory", () => {
         .where(inArray(teamLimitTargetsTable.groupId, groupIds));
       await db.delete(familyTeamMappingsTable)
         .where(inArray(familyTeamMappingsTable.workspaceId, workspaceIds));
-      await db.delete(teamBudgetsTable)
-        .where(inArray(teamBudgetsTable.teamName, generatedTeamNames));
     }
   });
 
@@ -466,6 +477,7 @@ describe("canonical team-admin scope", () => {
         canViewAccountUsage: true,
         canManageAccess: true,
         canEditAllocations: true,
+        canManageFundingMappings: true,
         canManageNotifications: true,
         canManageSystem: true,
         canPreviewRoles: true,
@@ -475,7 +487,51 @@ describe("canonical team-admin scope", () => {
         canWriteUserLimitsIn: [],
       },
     };
-    const preview = await resolvePreviewAuthorization(real, "team_admin:Growth MDU");
+    const configuration: ConfigurationSnapshot = {
+      revision: "1",
+      groupBudgets: [],
+      teamLimitTargets: [{
+        workspaceId: "current",
+        groupId: "mdu-member",
+        groupName: "Growth MDU - Member",
+        teamName: "Growth MDU",
+        assignmentSource: "manual",
+        monthlyLimitUsd: null,
+        isEnabled: true,
+      }],
+      teamBudgets: [{
+        teamName: "Growth MDU",
+        originalAmountUsd: 1,
+        amountUsd: 1,
+        monthlyLimitUsd: null,
+        monthlyLimitSource: "derived",
+        isHidden: false,
+        updatedAt: new Date(0),
+      }],
+      teamBudgetAdjustments: [],
+      familyTeamMappings: [
+        {
+          workspaceId: "current",
+          familyKey: "growth mdu",
+          familyName: "Growth MDU",
+          teamName: "Growth MDU",
+          isLegacy: false,
+        },
+        {
+          workspaceId: "1awqan",
+          familyKey: "growth mdu",
+          familyName: "Growth MDU",
+          teamName: "Growth MDU",
+          isLegacy: true,
+        },
+      ],
+      fundingGroupOverrides: [],
+    };
+    const preview = await resolvePreviewAuthorization(
+      real,
+      "team_admin:Growth MDU",
+      configuration,
+    );
     expect(preview.groupIds).toEqual(expect.arrayContaining(["mdu-admin", "mdu-member", "legacy-mdu"]));
     expect(preview.groupIds).not.toContain("other-member");
     expect(preview.teamNames).toEqual(["Growth MDU"]);
@@ -530,6 +586,7 @@ describe("canonical team-admin scope", () => {
         canViewAccountUsage: true,
         canManageAccess: true,
         canEditAllocations: true,
+        canManageFundingMappings: true,
         canManageNotifications: true,
         canManageSystem: true,
         canPreviewRoles: true,

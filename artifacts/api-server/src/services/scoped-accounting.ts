@@ -954,10 +954,18 @@ async function computeScopedAccounting(
     members: dir.members,
     mappings: configuration.familyTeamMappings,
   });
-  const fullTeamByGroup = buildGroupTeamMap(
-    dir.groups, configuredAccount, hiddenTeams, assignments);
+  const effectiveTeamByGroup = buildGroupTeamMap(
+    dir.groups,
+    configuredAccount,
+    new Set(),
+    assignments,
+    configuration.fundingGroupOverrides,
+  );
+  const fullTeamByGroup = new Map(
+    [...effectiveTeamByGroup].filter(([, teamName]) => !hiddenTeams.has(teamName)),
+  );
   const fullMergePlan = buildCanonicalGroupMergePlan(
-    dir.groups, dir.workspaces, fullTeamByGroup);
+    dir.groups, dir.workspaces, effectiveTeamByGroup);
   const teamByGroup = new Map([...fullTeamByGroup].filter(([key]) =>
     usage.groups.some((group) => groupTeamKey(group) === key)));
   const visibleByCanonical = new Map<string, typeof usage.groups>();

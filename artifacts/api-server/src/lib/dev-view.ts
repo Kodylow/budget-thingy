@@ -65,6 +65,7 @@ export function devViewReadOnly(authz: Authorization): Authorization {
       ...authz.capabilities,
       canManageAccess: false,
       canEditAllocations: false,
+      canManageFundingMappings: false,
       canManageNotifications: false,
       canManageSystem: false,
       canPreviewRoles: false,
