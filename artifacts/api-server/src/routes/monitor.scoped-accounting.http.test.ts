@@ -23,6 +23,7 @@ import {
 } from "../lib/enterprise";
 import {
   beginUsageGenerationUpdate,
+  getUsageSnapshotGeneration,
   invalidateUsageSnapshotMemo,
 } from "../lib/usage-store";
 import { setAuthorizationResolver } from "../middlewares/requireAuth";
@@ -2049,6 +2050,104 @@ describe("authenticated group detail qualification", () => {
       date: TODAY,
       spendUsd: 505,
     });
+  });
+
+  test("budget team report rejects intermediate ingest units and recovers on the published generation", async () => {
+    const poolId = `pool:team:${encodeURIComponent(SHARED_TEAM)}`;
+    const path =
+      `/reporting/teams/${encodeURIComponent(poolId)}?${RANGE}` +
+      "&includeBudgetTracking=true";
+    const warm = await get(path, DETAIL_ACCOUNT_ADMIN);
+    expect(warm.status).toBe(200);
+    expect(await warm.json()).toMatchObject({
+      headline: { spendUsd: 505 },
+      budgetTracking: { spendUsd: 505 },
+    });
+
+    const before = getUsageSnapshotGeneration();
+    const finish = beginUsageGenerationUpdate();
+    try {
+      await db.update(usageWorkspaceDayTable)
+        .set({ totalCostUsd: 15, memberAttributableUsd: 15 })
+        .where(and(
+          eq(usageWorkspaceDayTable.workspaceId, W1),
+          eq(usageWorkspaceDayTable.usageDate, TODAY),
+        ));
+      await db.update(usageMemberDayTable)
+        .set({ totalCostUsd: 15, aiCostUsd: 15 })
+        .where(and(
+          eq(usageMemberDayTable.workspaceId, W1),
+          eq(usageMemberDayTable.usageDate, TODAY),
+        ));
+      invalidateUsageSnapshotMemo();
+
+      const intermediate = await get(path, DETAIL_ACCOUNT_ADMIN);
+      expect(intermediate.status).toBe(503);
+      expect(intermediate.headers.get("retry-after")).toBe("2");
+      expect(await intermediate.json()).toEqual({
+        error: "Reporting usage is refreshing; retry the request",
+        code: "REPORTING_USAGE_REFRESHING",
+      });
+      expect(getUsageSnapshotGeneration()).toBe(before);
+
+      // Authorization still runs before transient admission and cannot borrow
+      // the warmed account-admin response.
+      const hidden = await get(
+        `/reporting/details/${DETAIL_GROUP}?${RANGE}`,
+        DETAIL_OUTSIDER,
+      );
+      expect(hidden.status).toBe(404);
+
+      await db.update(usageWorkspaceDayTable)
+        .set({ totalCostUsd: 600, memberAttributableUsd: 600 })
+        .where(and(
+          eq(usageWorkspaceDayTable.workspaceId, W2),
+          eq(usageWorkspaceDayTable.usageDate, TODAY),
+        ));
+      await db.update(usageMemberDayTable)
+        .set({ totalCostUsd: 600, aiCostUsd: 600 })
+        .where(and(
+          eq(usageMemberDayTable.workspaceId, W2),
+          eq(usageMemberDayTable.usageDate, TODAY),
+        ));
+      invalidateUsageSnapshotMemo();
+      finish();
+
+      expect(getUsageSnapshotGeneration()).toBe(before + 1);
+      const committed = await get(path, DETAIL_ACCOUNT_ADMIN);
+      expect(committed.status).toBe(200);
+      expect(await committed.json()).toMatchObject({
+        headline: { spendUsd: 615 },
+        budgetTracking: { spendUsd: 615 },
+      });
+    } finally {
+      finish();
+      await db.update(usageWorkspaceDayTable)
+        .set({ totalCostUsd: 5, memberAttributableUsd: 5 })
+        .where(and(
+          eq(usageWorkspaceDayTable.workspaceId, W1),
+          eq(usageWorkspaceDayTable.usageDate, TODAY),
+        ));
+      await db.update(usageMemberDayTable)
+        .set({ totalCostUsd: 5, aiCostUsd: 5 })
+        .where(and(
+          eq(usageMemberDayTable.workspaceId, W1),
+          eq(usageMemberDayTable.usageDate, TODAY),
+        ));
+      await db.update(usageWorkspaceDayTable)
+        .set({ totalCostUsd: 500, memberAttributableUsd: 500 })
+        .where(and(
+          eq(usageWorkspaceDayTable.workspaceId, W2),
+          eq(usageWorkspaceDayTable.usageDate, TODAY),
+        ));
+      await db.update(usageMemberDayTable)
+        .set({ totalCostUsd: 500, aiCostUsd: 500 })
+        .where(and(
+          eq(usageMemberDayTable.workspaceId, W2),
+          eq(usageMemberDayTable.usageDate, TODAY),
+        ));
+      invalidateUsageSnapshotMemo();
+    }
   });
 
   test("budget team report and pool source IDs never expand beyond authorized scope", async () => {

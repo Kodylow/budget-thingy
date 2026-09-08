@@ -1,5 +1,5 @@
 export { beginExplicitSignIn, clearAuthCache, useAuth } from './use-auth';
-export { getLoginUrl, isEmbeddedPreview } from './login-navigation';
+export { getLoginUrl, isEmbeddedPreview, navigateToLogin } from './login-navigation';
 export { logAuthDebug } from './auth-debug';
 export type { AuthAvailability, UseAuthOptions } from './use-auth';
 export type { AuthUser, AuthAuthorization, AuthAuthorizationRole, AuthCapabilities } from './use-auth';

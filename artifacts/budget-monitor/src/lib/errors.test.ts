@@ -8,6 +8,8 @@ import { toast } from '../hooks/use-toast';
 import {
   describeError,
   getUsageHealthWarning,
+  isReportingUsageRefreshing,
+  requestRetryDelay,
   shouldRetryRequest,
   subscribeApiErrorToasts,
   updateNoticeState,
@@ -49,6 +51,99 @@ describe('shouldRetryRequest', () => {
 
   it('does not retry other client errors', () => {
     expect(shouldRetryRequest(0, { status: 400 })).toBe(false);
+  });
+
+  it('recognizes only the typed 503 reporting refresh response', () => {
+    expect(isReportingUsageRefreshing({
+      status: 503,
+      data: { code: 'REPORTING_USAGE_REFRESHING' },
+    })).toBe(true);
+    expect(isReportingUsageRefreshing({
+      status: 500,
+      data: { code: 'REPORTING_USAGE_REFRESHING' },
+    })).toBe(false);
+    expect(isReportingUsageRefreshing({
+      status: 503,
+      data: { code: 'SOMETHING_ELSE' },
+    })).toBe(false);
+    expect(isReportingUsageRefreshing({ status: 503 })).toBe(false);
+  });
+
+  it('bounds typed reporting refresh retries at 30 attempts', () => {
+    const refreshing = {
+      status: 503,
+      data: { code: 'REPORTING_USAGE_REFRESHING' },
+    };
+    expect(shouldRetryRequest(0, refreshing)).toBe(true);
+    expect(shouldRetryRequest(29, refreshing)).toBe(true);
+    expect(shouldRetryRequest(30, refreshing)).toBe(false);
+  });
+
+  it.each([401, 403, 404])('never retries HTTP %s even with the refresh code', (status) => {
+    expect(shouldRetryRequest(0, {
+      status,
+      data: { code: 'REPORTING_USAGE_REFRESHING' },
+    })).toBe(false);
+  });
+});
+
+describe('requestRetryDelay', () => {
+  const refreshing = (retryAfter?: string) => ({
+    status: 503,
+    data: { code: 'REPORTING_USAGE_REFRESHING' },
+    headers: new Headers(retryAfter == null ? undefined : { 'Retry-After': retryAfter }),
+  });
+
+  it('uses and clamps a valid Retry-After seconds hint', () => {
+    expect(requestRetryDelay(0, refreshing('0.25'))).toBe(1_000);
+    expect(requestRetryDelay(0, refreshing('3'))).toBe(3_000);
+    expect(requestRetryDelay(0, refreshing('20'))).toBe(5_000);
+  });
+
+  it('uses two seconds for absent, invalid, or non-positive refresh hints', () => {
+    expect(requestRetryDelay(0, refreshing())).toBe(2_000);
+    expect(requestRetryDelay(0, refreshing('soon'))).toBe(2_000);
+    expect(requestRetryDelay(0, refreshing('0'))).toBe(2_000);
+    expect(requestRetryDelay(0, refreshing('-1'))).toBe(2_000);
+  });
+
+  it('keeps all other errors at one second', () => {
+    expect(requestRetryDelay(0, { status: 503, headers: new Headers({ 'Retry-After': '5' }) })).toBe(1_000);
+    expect(requestRetryDelay(0, new TypeError('Failed to fetch'))).toBe(1_000);
+  });
+
+  it('recovers through real TanStack retries without entering a final error state', async () => {
+    let calls = 0;
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: shouldRetryRequest,
+          retryDelay: 0,
+        },
+      },
+    });
+
+    await expect(client.fetchQuery({
+      queryKey: ['reporting-refresh-recovery'],
+      queryFn: async () => {
+        calls += 1;
+        if (calls <= 2) {
+          throw {
+            status: 503,
+            data: { code: 'REPORTING_USAGE_REFRESHING' },
+          };
+        }
+        return { spendUsd: 42 };
+      },
+    })).resolves.toEqual({ spendUsd: 42 });
+
+    expect(calls).toBe(3);
+    expect(client.getQueryState(['reporting-refresh-recovery'])).toMatchObject({
+      status: 'success',
+      error: null,
+      data: { spendUsd: 42 },
+    });
+    client.clear();
   });
 });
 

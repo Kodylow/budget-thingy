@@ -7,6 +7,7 @@ import {
   getLoginUrl,
   isEmbeddedPreview,
   logAuthDebug,
+  navigateToLogin,
 } from '@workspace/replit-auth-web';
 
 export function AccountSessionActions() {
@@ -45,13 +46,16 @@ export function AccountSessionActions() {
       <Button size="sm" className="w-full" asChild>
         <a
           href={getLoginUrl(returnTo)}
-          target={embedded ? '_top' : '_self'}
+          target={embedded ? '_blank' : '_self'}
           rel="noopener noreferrer"
           data-testid="button-login-yourself"
-          onClick={() => {
+          onClick={(event) => {
+            event.preventDefault();
             developmentView.exit();
             logAuthDebug('login.click', { target: embedded ? '_top' : '_self' });
             beginExplicitSignIn();
+            const target = navigateToLogin(returnTo);
+            logAuthDebug('login.redirect', { target });
           }}
         >
           Sign in as yourself

@@ -16,7 +16,7 @@ import {
 } from '@/lib/client-performance';
 import { getDevelopmentUserId, setForbiddenHandler, setUnauthorizedHandler } from '@workspace/api-client-react';
 import { clearAuthCache, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@workspace/replit-auth-web';
-import { shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
+import { requestRetryDelay, shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
 import { previewScopedQueryHash } from '@/lib/preview-query-cache';
 import { createForbiddenRevalidator } from '@/lib/auth-transition';
 import { safeLoginReturnTarget } from '@/lib/login-navigation';
@@ -48,7 +48,7 @@ const queryClient = new QueryClient({
       refetchInterval: DATA_REFRESH_INTERVAL_MS,
       refetchOnWindowFocus: false,
       retry: shouldRetryRequest,
-      retryDelay: 1_000,
+      retryDelay: requestRetryDelay,
       queryKeyHashFn: previewScopedQueryHash,
     },
     mutations: {

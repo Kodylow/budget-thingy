@@ -7,7 +7,6 @@ import { Search } from 'lucide-react';
 import { OrgBudgetOverviewResponse } from '@workspace/api-client-react';
 import { formatUsd } from '@/pages/home-components/format';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 
 import {
   getFundedTeams,
@@ -221,7 +220,7 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
           {selectedTeams.length > 5 && <p className="text-xs text-muted-foreground">Select fewer teams for a clearer comparison.</p>}
           <div className="flex justify-between pl-6 text-[10px] text-muted-foreground"><span>Recorded spend</span><span>Allocation</span></div>
         </div>
-        <ScrollArea className="flex-1 min-h-0 p-3">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3">
           <div className="flex flex-col gap-2 pb-4">
              {filteredTeams.map(team => {
                const isSelected = selectedTeamIds.has(team.id);
@@ -266,7 +265,7 @@ export function OrgBudgetChart({ data }: { data: OrgBudgetOverviewResponse }) {
                <p className="text-center text-xs text-muted-foreground py-6">No matching teams.</p>
              )}
           </div>
-        </ScrollArea>
+        </div>
       </div>
     </div>
   );

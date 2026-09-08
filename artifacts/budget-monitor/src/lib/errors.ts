@@ -109,11 +109,26 @@ export function describeError(error: unknown): ErrorDescription {
   };
 }
 
-/** TanStack retry policy: retry transient failures once, never client failures. */
+export function isReportingUsageRefreshing(error: unknown): boolean {
+  return getErrorStatus(error) === 503 &&
+    errorRecord(errorRecord(error)?.data)?.code === 'REPORTING_USAGE_REFRESHING';
+}
+
+/** Only a known reporting refresh gets extended recovery; access failures never do. */
 export function shouldRetryRequest(failureCount: number, error: unknown): boolean {
+  if (isReportingUsageRefreshing(error)) return failureCount < 30;
   const status = getErrorStatus(error);
   if (status === 401 || status === 403 || status === 404) return false;
   return failureCount < 1 && (status === null || status >= 500);
+}
+
+export function requestRetryDelay(_failureCount: number, error: unknown): number {
+  if (!isReportingUsageRefreshing(error)) return 1_000;
+  const headers = errorRecord(error)?.headers;
+  const seconds = headers instanceof Headers ? Number(headers.get('Retry-After')) : NaN;
+  return Number.isFinite(seconds) && seconds > 0
+    ? Math.min(5_000, Math.max(1_000, seconds * 1_000))
+    : 2_000;
 }
 
 const DEDUPE_MS = 30_000;

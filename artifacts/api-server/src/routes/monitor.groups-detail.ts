@@ -38,6 +38,28 @@ import { buildMembershipContext } from "../lib/membership-context";
 const router = Router();
 const MAX_REPORTING_GROUP_IDS = 32;
 const DAY_MS = 86_400_000;
+const REPORTING_USAGE_RETRY_AFTER_SECONDS = 2;
+
+export class ReportingUsageTransitionError extends Error {
+  readonly code = "REPORTING_USAGE_REFRESHING";
+
+  constructor() {
+    super("Reporting usage is refreshing; retry the request");
+    this.name = "ReportingUsageTransitionError";
+  }
+}
+
+export function assertStableReportingUsageGeneration(
+  expectedGeneration?: number,
+): void {
+  if (
+    isUsageGenerationUpdateActive() ||
+    (expectedGeneration !== undefined &&
+      getUsageSnapshotGeneration() !== expectedGeneration)
+  ) {
+    throw new ReportingUsageTransitionError();
+  }
+}
 
 function reportingQuery(req: Request, teamMode: boolean) {
   if (!teamMode) return GetReportingDetailQueryParams.safeParse(req.query);
@@ -338,6 +360,10 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
       }
       groups = requested as EnterpriseGroup[];
     }
+    // An ingest cycle publishes one generation only after all of its admitted
+    // units settle. Do not populate an old-generation cache from an
+    // intermediate set of committed units.
+    assertStableReportingUsageGeneration();
     const authorizedAt = performance.now();
 
     const includeHierarchy = teamMode &&
@@ -885,9 +911,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
             canonicalSpendUsd: 0,
           });
         }
-        if (isUsageGenerationUpdateActive()) {
-          throw new Error("Usage generation is changing during budget tracking");
-        }
+        assertStableReportingUsageGeneration(prepared.usageGeneration);
         const selectedTracking = trackingRange === "selected";
         const billingTracking = trackingRange === "billing";
         const billingMetadata = billingTracking ? getBillingPeriodMetadata() : null;
@@ -915,7 +939,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
             prepared.configuration,
           );
         if (budgetPrepared.usageGeneration !== prepared.usageGeneration) {
-          throw new Error("Usage generation changed during budget tracking");
+          throw new ReportingUsageTransitionError();
         }
         // The selected report may have the same dates while still carrying a
         // workspace filter. Only selected tracking may reuse that projection.
@@ -930,10 +954,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
             undefined,
             budgetPrepared,
           );
-        if (isUsageGenerationUpdateActive() ||
-            getUsageSnapshotGeneration() !== prepared.usageGeneration) {
-          throw new Error("Usage generation changed during budget tracking");
-        }
+        assertStableReportingUsageGeneration(prepared.usageGeneration);
         const budgetTeamRow = budgetAccounting.poolRows.find((row) =>
           row.id === requestedPoolId);
         const fullFundingGroups = budgetAccounting.dir.groups.filter((group) =>
@@ -1020,10 +1041,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
           ? new Date(Date.parse(billingMetadata.end) - DAY_MS)
             .toISOString().slice(0, 10)
           : null;
-        if (isUsageGenerationUpdateActive() ||
-            getUsageSnapshotGeneration() !== budgetPrepared.usageGeneration) {
-          throw new Error("Usage generation changed during budget tracking");
-        }
+        assertStableReportingUsageGeneration(budgetPrepared.usageGeneration);
         return buildFixedTeamBudgetTracking({
           dailySpend,
           unavailableDays,
@@ -1072,6 +1090,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
         });
       })()
       : undefined;
+    assertStableReportingUsageGeneration(prepared.usageGeneration);
     const response = GetReportingDetailResponse.parse({
       kind: teamMode ? "team" : groupRows.length === 1 ? "group" : "family",
       ...(teamRow ? { id: teamRow.id, name: teamRow.name } : {}),
@@ -1141,6 +1160,17 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
   } catch (error) {
     if (error instanceof UsageWindowError) {
       res.status(400).json({ error: error.message });
+      return;
+    }
+    if (error instanceof ReportingUsageTransitionError) {
+      res.setHeader(
+        "Retry-After",
+        String(REPORTING_USAGE_RETRY_AFTER_SECONDS),
+      );
+      res.status(503).json({
+        error: error.message,
+        code: error.code,
+      });
       return;
     }
     if (error instanceof Error &&

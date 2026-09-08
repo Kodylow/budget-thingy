@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthGate } from './auth-gate';
-import { beginExplicitSignIn, getLoginUrl } from '@workspace/replit-auth-web';
+import { beginExplicitSignIn, getLoginUrl, navigateToLogin } from '@workspace/replit-auth-web';
 
 const retryAuthorization = vi.fn();
 const logout = vi.fn();
@@ -53,6 +54,7 @@ vi.mock('@/pages/dashboard-chart', () => ({}));
 vi.mock('@workspace/replit-auth-web', async importOriginal => ({
   ...await importOriginal<typeof import('@workspace/replit-auth-web')>(),
   beginExplicitSignIn: vi.fn(),
+  navigateToLogin: vi.fn(() => '_self'),
   isEmbeddedPreview: () => embedded,
 }));
 
@@ -84,7 +86,7 @@ afterEach(async () => {
 describe('AuthGate sign-in shell', () => {
   it.each([
     { inPreview: false, target: '_self' },
-    { inPreview: true, target: '_top' },
+    { inPreview: true, target: '_blank' },
   ])('uses the current browser tab with preview=$inPreview', async ({ inPreview, target }) => {
     embedded = inPreview;
     await act(async () => root.render(
@@ -96,9 +98,9 @@ describe('AuthGate sign-in shell', () => {
     expect(login?.getAttribute('target')).toBe(target);
     expect(container.textContent).not.toContain('protected');
     expect(beginExplicitSignIn).not.toHaveBeenCalled();
-    login?.addEventListener('click', event => event.preventDefault());
     await act(async () => login?.click());
     expect(beginExplicitSignIn).toHaveBeenCalledOnce();
+    expect(navigateToLogin).toHaveBeenCalledWith('/');
   });
 
   it('preserves the complete current path and query in the login return target', async () => {
@@ -107,6 +109,20 @@ describe('AuthGate sign-in shell', () => {
     expect(container.querySelector('a')?.getAttribute('href')).toBe(
       getLoginUrl('/spend?tab=members&search=team%20one'),
     );
+  });
+
+  it('still navigates when beginning sign-in synchronously renders loading', async () => {
+    vi.mocked(beginExplicitSignIn).mockImplementation(() => {
+      isLoading = true;
+      flushSync(() => root.render(createElement(AuthGate, null, 'protected')));
+    });
+    await act(async () => root.render(createElement(AuthGate, null, 'protected')));
+    const login = container.querySelector<HTMLAnchorElement>('[data-testid="button-login"]');
+
+    await act(async () => login?.click());
+
+    expect(container.querySelector('[data-testid="auth-loading"]')).not.toBeNull();
+    expect(navigateToLogin).toHaveBeenCalledWith('/');
   });
 
   it('keeps the normal login shell for an unavailable check and offers reconnect', async () => {

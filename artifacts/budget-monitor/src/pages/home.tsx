@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
+import { isReportingUsageRefreshing } from '@/lib/errors';
 import { PersonalBudgetPanel, type CanonicalTeamBudget, type TeamBudgetTracking } from './home-components/budget-panels';
 import { BudgetTrajectory } from './home-components/budget-trajectory';
 import { SpendStoryChart } from './home-components/spend-story-chart';
@@ -67,6 +68,7 @@ function HomeTeamReport({
     },
   });
   const tracking: TeamBudgetTracking | null = report.data?.budgetTracking ?? null;
+  const refreshingUsage = isReportingUsageRefreshing(report.failureReason ?? report.error);
   const comparisonsMatchBudgetWindow = tracking?.comparisonsMatchBudgetWindow === true;
   const hasTrajectory = Boolean(
     tracking?.points.some((point) => Number.isFinite(point.spendUsd)) ||
@@ -86,6 +88,7 @@ function HomeTeamReport({
           teamName={team.teamName}
           tracking={tracking}
           loading={report.isLoading}
+          refreshingUsage={refreshingUsage}
           error={report.isError && !report.data}
           onRetry={() => void report.refetch()}
           comparisonsMatchBudgetWindow={comparisonsMatchBudgetWindow}

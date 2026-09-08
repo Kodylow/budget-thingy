@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuthContext } from '@/components/auth-context';
 import { DevViewSignedOutPicker } from '@/components/dev-view-chip';
 import { AccountSessionActions } from '@/components/account-session-actions';
-import { beginExplicitSignIn, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@workspace/replit-auth-web';
+import { beginExplicitSignIn, getLoginUrl, isEmbeddedPreview, logAuthDebug, navigateToLogin } from '@workspace/replit-auth-web';
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const {
@@ -178,12 +178,15 @@ function SignedOutShell({
         <Button className="mt-8 h-11 w-full" asChild>
           <a
             href={getLoginUrl(returnTo)}
-            target={embedded ? '_top' : '_self'}
+            target={embedded ? '_blank' : '_self'}
             rel="noopener noreferrer"
             data-testid="button-login"
-            onClick={() => {
+            onClick={(event) => {
               logAuthDebug('login.click', { target: embedded ? '_top' : '_self' });
+              event.preventDefault();
               beginExplicitSignIn();
+              const target = navigateToLogin(returnTo);
+              logAuthDebug('login.redirect', { target });
             }}
           >
             Log in

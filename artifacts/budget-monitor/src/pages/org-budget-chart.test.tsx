@@ -37,9 +37,6 @@ vi.mock('recharts', () => ({
     return null;
   },
 }));
-vi.mock('@/components/ui/scroll-area', () => ({
-  ScrollArea: ({ children }: any) => <div>{children}</div>,
-}));
 
 const reporting = {
   acquisitionCoverage: 'complete',

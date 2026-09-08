@@ -105,9 +105,10 @@ vi.mock('./home-components/budget-trajectory', async () => {
   const actual = await vi.importActual<typeof import('./home-components/budget-trajectory')>('./home-components/budget-trajectory');
   return {
     ...actual,
-    BudgetTrajectory: ({ teamName, tracking, loading, error, onRetry }: any) => (
+    BudgetTrajectory: ({ teamName, tracking, loading, refreshingUsage, error, onRetry }: any) => (
       <section aria-label={`${teamName} trajectory`}>
         {loading && <output aria-label="Loading budget trajectory" />}
+        <output aria-label="Refreshing usage">{String(refreshingUsage)}</output>
         <output aria-label="Trajectory period">{tracking?.periodLabel}</output>
         <output aria-label="Trajectory spend">{String(tracking?.spendUsd)}</output>
         <output aria-label="Trajectory allocation">{String(tracking?.allocationUsd)}</output>
@@ -548,6 +549,36 @@ describe('Home selected-period regressions', () => {
     const body = renderHome();
     expect(body.querySelector('[aria-label="Loading"]')).not.toBeNull();
     expect(body.querySelector('[aria-label="Loading budget trajectory"]')).not.toBeNull();
+  });
+
+  it('passes a typed retry failureReason through during the initial loading state', () => {
+    mocks.teamReport.mockReturnValue(query(undefined, {
+      isLoading: true,
+      failureReason: {
+        status: 503,
+        data: { code: 'REPORTING_USAGE_REFRESHING' },
+      },
+    }));
+
+    const body = renderHome();
+    expect(body.querySelector('[aria-label="Refreshing usage"]')?.textContent).toBe('true');
+    expect(body.querySelector('[aria-label="Loading budget trajectory"]')).not.toBeNull();
+    expect(body.querySelector('[aria-label="Retry budget trajectory"]')).toBeNull();
+  });
+
+  it('marks a typed retry as refreshing while preserving cached trajectory data', () => {
+    mocks.teamReport.mockReturnValue(query({ budgetTracking: selectedTracking }, {
+      failureReason: {
+        status: 503,
+        data: { code: 'REPORTING_USAGE_REFRESHING' },
+      },
+    }));
+
+    const body = renderHome();
+    expect(body.querySelector('[aria-label="Refreshing usage"]')?.textContent).toBe('true');
+    expect(body.querySelector('[aria-label="Trajectory spend"]')?.textContent).toBe('321');
+    expect(body.querySelector('[aria-label="Platform trajectory"]')).not.toBeNull();
+    expect(body.textContent).not.toContain('Retry budget trajectory');
   });
 
   it('keeps cached values and charts without duplicating the shared refresh notice', () => {

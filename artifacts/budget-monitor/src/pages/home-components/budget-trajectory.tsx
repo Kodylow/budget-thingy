@@ -63,6 +63,7 @@ export function BudgetTrajectory({
   teamName,
   tracking,
   loading,
+  refreshingUsage = false,
   error,
   onRetry,
   comparisonsMatchBudgetWindow,
@@ -70,6 +71,7 @@ export function BudgetTrajectory({
   teamName: string | null;
   tracking: TeamBudgetTracking | null;
   loading: boolean;
+  refreshingUsage?: boolean;
   error: boolean;
   onRetry: () => void;
   comparisonsMatchBudgetWindow: boolean;
@@ -105,6 +107,11 @@ export function BudgetTrajectory({
         </div>
       </div>
 
+      {refreshingUsage && tracking && (
+        <p className="px-5 pt-3 text-xs text-muted-foreground" role="status">
+          Usage is updating. Showing the last loaded trajectory.
+        </p>
+      )}
       {tracking && (
         <div className="grid gap-4 bg-muted/15 px-5 py-4 sm:grid-cols-4">
           {tracking.spendUsd != null && <div>
@@ -122,10 +129,12 @@ export function BudgetTrajectory({
 
       <div className="px-5 py-4">
         {loading ? (
-          <div className="h-[280px] animate-pulse rounded-sm bg-muted" aria-label="Loading budget trajectory" />
+          <div className="flex h-[280px] items-center justify-center rounded-sm bg-muted" role="status" aria-label="Loading budget trajectory">
+            {refreshingUsage && <p className="px-5 text-center text-sm text-muted-foreground">Usage is updating. Your trajectory will load automatically.</p>}
+          </div>
         ) : error && !tracking ? (
           <div className="flex h-[280px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-            Budget trajectory unavailable
+            {refreshingUsage ? 'Usage is still updating. Retry in a moment.' : 'Budget trajectory unavailable'}
             <Button size="sm" variant="outline" onClick={onRetry}>Retry</Button>
           </div>
         ) : tracking && chartData.length > 0 ? (

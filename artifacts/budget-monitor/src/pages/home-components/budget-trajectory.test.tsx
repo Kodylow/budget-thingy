@@ -73,4 +73,75 @@ describe('Home budget trajectory', () => {
     expect(markup).not.toContain('Funding not yet spent');
     expect(markup).not.toContain('% of funding used');
   });
+
+  it('shows pending usage copy instead of unavailable during an initial refresh', () => {
+    const markup = renderToStaticMarkup(
+      <BudgetTrajectory
+        teamName="GPO Connected Living"
+        tracking={null}
+        loading
+        refreshingUsage
+        error={false}
+        onRetry={() => undefined}
+        comparisonsMatchBudgetWindow
+      />,
+    );
+
+    expect(markup).toContain('Usage is updating. Your trajectory will load automatically.');
+    expect(markup).not.toContain('Budget trajectory unavailable');
+  });
+
+  it('keeps the cached chart and adds a refresh notice without replacing it', () => {
+    const markup = renderToStaticMarkup(
+      <BudgetTrajectory
+        teamName="GPO Connected Living"
+        tracking={qualifiedAnnual}
+        loading={false}
+        refreshingUsage
+        error={false}
+        onRetry={() => undefined}
+        comparisonsMatchBudgetWindow
+      />,
+    );
+
+    expect(markup).toContain('Usage is updating. Showing the last loaded trajectory.');
+    expect(markup).toContain('GPO Connected Living cumulative spend and even-paced budget benchmark');
+    expect(markup).toContain('$1,234.00');
+    expect(markup).not.toContain('Budget trajectory unavailable');
+  });
+
+  it('offers retry with specific copy after typed refresh retries are exhausted', () => {
+    const markup = renderToStaticMarkup(
+      <BudgetTrajectory
+        teamName="GPO Connected Living"
+        tracking={null}
+        loading={false}
+        refreshingUsage
+        error
+        onRetry={() => undefined}
+        comparisonsMatchBudgetWindow
+      />,
+    );
+
+    expect(markup).toContain('Usage is still updating. Retry in a moment.');
+    expect(markup).toContain('Retry');
+    expect(markup).not.toContain('Budget trajectory unavailable');
+  });
+
+  it('keeps the ordinary unavailable retry state for genuine errors', () => {
+    const markup = renderToStaticMarkup(
+      <BudgetTrajectory
+        teamName="GPO Connected Living"
+        tracking={null}
+        loading={false}
+        error
+        onRetry={() => undefined}
+        comparisonsMatchBudgetWindow
+      />,
+    );
+
+    expect(markup).toContain('Budget trajectory unavailable');
+    expect(markup).toContain('Retry');
+    expect(markup).not.toContain('Usage is still updating');
+  });
 });
