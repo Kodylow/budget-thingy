@@ -294,6 +294,242 @@ export interface LimitOperationPrepareInput {
   idempotencyKey: string;
 }
 
+export type WorkspaceLimitType = typeof WorkspaceLimitType[keyof typeof WorkspaceLimitType];
+
+
+export const WorkspaceLimitType = {
+  workspace_default_user_limit: 'workspace_default_user_limit',
+  workspace_group_limit: 'workspace_group_limit',
+  workspace_user_limit: 'workspace_user_limit',
+} as const;
+
+export interface LimitTargetIdentity {
+  /** @pattern ^[A-Za-z0-9]+$ */
+  workspaceId: string;
+  type: WorkspaceLimitType;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  targetId: string;
+}
+
+export type LimitChangeInput = LimitTargetIdentity & ({
+  /** @pattern ^[A-Za-z0-9]+$ */
+  workspaceId?: string;
+  type?: WorkspaceLimitType;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  targetId?: string;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  amountUsd: number | null;
+});
+
+export type LimitRow = LimitChangeInput & ({
+  workspaceId?: string;
+  type?: WorkspaceLimitType;
+  targetId?: string;
+  /** @exclusiveMinimum 0 */
+  amountUsd?: number;
+  /** @nullable */
+  groupId: string | null;
+  /** @nullable */
+  userId: string | null;
+  canWrite: boolean;
+});
+
+export type LimitsReadResponseObservationStatus = typeof LimitsReadResponseObservationStatus[keyof typeof LimitsReadResponseObservationStatus];
+
+
+export const LimitsReadResponseObservationStatus = {
+  available: 'available',
+} as const;
+
+export type LimitsReadResponseObservation = {
+  status: LimitsReadResponseObservationStatus;
+  /** @nullable */
+  error: string | null;
+};
+
+export interface LimitsReadResponse {
+  canClearAll: boolean;
+  writeConfigured: boolean;
+  observation: LimitsReadResponseObservation;
+  /** @maxItems 60000 */
+  limits: LimitRow[];
+}
+
+export interface PrepareLimitChangesInput {
+  /**
+     * @minLength 8
+     * @maxLength 200
+     */
+  idempotencyKey: string;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+  targets: LimitChangeInput[];
+}
+
+export interface PrepareClearAllLimitsInput {
+  /**
+     * @minLength 8
+     * @maxLength 200
+     */
+  idempotencyKey: string;
+}
+
+export interface CommitLimitChangesInput {
+  /**
+     * @minLength 64
+     * @maxLength 64
+     */
+  reviewFingerprint: string;
+  confirmation?: string;
+  /** @maxItems 60000 */
+  targets: LimitChangeInput[];
+}
+
+export interface RetryLimitChangesInput {
+  /**
+     * @minLength 8
+     * @maxLength 200
+     */
+  idempotencyKey: string;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+  targets: LimitTargetIdentity[];
+}
+
+export type LimitChangeOperationTargetState = typeof LimitChangeOperationTargetState[keyof typeof LimitChangeOperationTargetState];
+
+
+export const LimitChangeOperationTargetState = {
+  queued: 'queued',
+  applying: 'applying',
+  verified: 'verified',
+  failed: 'failed',
+  verification_pending: 'verification_pending',
+} as const;
+
+export type LimitTargetAttemptStage = typeof LimitTargetAttemptStage[keyof typeof LimitTargetAttemptStage];
+
+
+export const LimitTargetAttemptStage = {
+  authorization: 'authorization',
+  membership: 'membership',
+  reconcile: 'reconcile',
+  write: 'write',
+  verification: 'verification',
+  audit: 'audit',
+} as const;
+
+export interface LimitTargetAttempt {
+  at: string;
+  stage: LimitTargetAttemptStage;
+  outcome: string;
+  /** @nullable */
+  requestId?: string | null;
+  /** @nullable */
+  retryAfterMs?: number | null;
+  /** @nullable */
+  message?: string | null;
+}
+
+export interface LimitChangeOperationTarget {
+  workspaceId: string;
+  type: WorkspaceLimitType;
+  targetId: string;
+  /** @nullable */
+  userId: string | null;
+  /** @nullable */
+  groupId: string | null;
+  /** @nullable */
+  memberName: string | null;
+  /** @nullable */
+  memberEmail: string | null;
+  /** @nullable */
+  oldAmountUsd: number | null;
+  /** @nullable */
+  newAmountUsd: number | null;
+  state: LimitChangeOperationTargetState;
+  attempts: number;
+  history: LimitTargetAttempt[];
+  /** @nullable */
+  errorStage: string | null;
+  /** @nullable */
+  errorCode: string | null;
+  /** @nullable */
+  errorMessage: string | null;
+  /** @nullable */
+  upstreamRequestId: string | null;
+  /** @nullable */
+  queuedAt: string | null;
+  /** @nullable */
+  applyingAt: string | null;
+  /** @nullable */
+  verifiedAt: string | null;
+  /** @nullable */
+  failedAt: string | null;
+}
+
+export type LimitChangeOperationKind = typeof LimitChangeOperationKind[keyof typeof LimitChangeOperationKind];
+
+
+export const LimitChangeOperationKind = {
+  change: 'change',
+  clear_all: 'clear_all',
+} as const;
+
+export type LimitChangeOperationState = typeof LimitChangeOperationState[keyof typeof LimitChangeOperationState];
+
+
+export const LimitChangeOperationState = {
+  prepared: 'prepared',
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+} as const;
+
+export type LimitChangeOperationCounts = {
+  total: number;
+  queued: number;
+  applying: number;
+  verified: number;
+  failed: number;
+  verificationPending: number;
+};
+
+export interface LimitChangeOperation {
+  /** @pattern ^[0-9a-fA-F-]{36}$ */
+  id: string;
+  /** @nullable */
+  workspaceId: string | null;
+  kind: LimitChangeOperationKind;
+  state: LimitChangeOperationState;
+  /** @nullable */
+  amountUsd: number | null;
+  reviewFingerprint: string;
+  /** @minimum 0 */
+  localPolicyCount: number;
+  actorUserId: string;
+  preparedAt: string;
+  /** @nullable */
+  committedAt: string | null;
+  /** @nullable */
+  completedAt: string | null;
+  counts: LimitChangeOperationCounts;
+  targets: LimitChangeOperationTarget[];
+}
+
 export interface LimitOperationCommitInput {
   /**
      * @minLength 64
@@ -322,30 +558,6 @@ export interface LimitOperationRetryInput {
      * @maxLength 200
      */
   idempotencyKey: string;
-}
-
-export type LimitTargetAttemptStage = typeof LimitTargetAttemptStage[keyof typeof LimitTargetAttemptStage];
-
-
-export const LimitTargetAttemptStage = {
-  authorization: 'authorization',
-  membership: 'membership',
-  reconcile: 'reconcile',
-  write: 'write',
-  verification: 'verification',
-  audit: 'audit',
-} as const;
-
-export interface LimitTargetAttempt {
-  at: string;
-  stage: LimitTargetAttemptStage;
-  outcome: string;
-  /** @nullable */
-  requestId?: string | null;
-  /** @nullable */
-  retryAfterMs?: number | null;
-  /** @nullable */
-  message?: string | null;
 }
 
 export type LimitOperationTargetState = typeof LimitOperationTargetState[keyof typeof LimitOperationTargetState];

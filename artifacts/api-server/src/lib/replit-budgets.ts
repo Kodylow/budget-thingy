@@ -1,4 +1,6 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
+import { db, limitOperationTargetsTable } from "@workspace/db";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   admitEnterpriseAdminRequest,
   observeEnterpriseAdminResponse,
@@ -48,6 +50,8 @@ export type ReplitBudgetWrite =
       workspaceId: string;
       amountUsd: number | null;
     };
+
+export type ConfiguredWorkspaceLimit = ReplitBudgetWrite & { amountUsd: number };
 
 export interface ReplitBudgetSnapshot {
   status: BudgetConnectorStatus;
@@ -478,19 +482,30 @@ function pageRows(body: unknown): unknown[] {
   throw new Error("Replit budgets API returned an invalid page");
 }
 
-function nextCursor(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
+function pagination(body: unknown): { cursor: string | null; hasMore: boolean } {
+  if (!body || typeof body !== "object") {
+    throw new Error("Replit budgets API returned missing pagination");
+  }
   const object = body as Record<string, any>;
-  const pagination = object.pagination ?? object.data?.pagination;
+  const metadata = object.pagination ?? object.data?.pagination;
+  if (!metadata || typeof metadata !== "object" || typeof metadata.hasMore !== "boolean") {
+    throw new Error("Replit budgets API returned missing or malformed pagination");
+  }
   const cursor =
-    pagination?.cursor ??
-    pagination?.nextCursor ??
+    metadata.cursor ??
+    metadata.nextCursor ??
     object.nextCursor ??
     object.cursor;
-  const hasMore = pagination?.hasMore ?? object.hasMore;
-  return hasMore !== false && typeof cursor === "string" && cursor
-    ? cursor
-    : null;
+  if (metadata.hasMore === true) {
+    if (typeof cursor !== "string" || cursor.length === 0) {
+      throw new Error("Replit budgets API returned an incomplete page without a cursor");
+    }
+    return { cursor, hasMore: true };
+  }
+  if (cursor != null) {
+    throw new Error("Replit budgets API returned a cursor for a completed page");
+  }
+  return { cursor: null, hasMore: false };
 }
 
 /** List all budget rows of one type, optionally scoped to a workspace. */
@@ -500,6 +515,7 @@ export async function listBudgets(
 ): Promise<unknown[]> {
   const rows: unknown[] = [];
   let cursor: string | null = null;
+  const seenCursors = new Set<string>();
   for (let page = 0; page < MAX_PAGES; page++) {
     const query = new URLSearchParams({ type });
     if (workspaceId) query.set("workspaceId", workspaceId);
@@ -507,10 +523,78 @@ export async function listBudgets(
     if (cursor) query.set("cursor", cursor);
     const body = await request(`/v1/budgets?${query}`, { method: "GET" });
     rows.push(...pageRows(body));
-    cursor = nextCursor(body);
+    cursor = pagination(body).cursor;
     if (!cursor) return rows;
+    if (seenCursors.has(cursor)) {
+      throw new Error("Replit budgets API repeated a pagination cursor");
+    }
+    seenCursors.add(cursor);
   }
   throw new Error(`Replit budgets pagination exceeded ${MAX_PAGES} pages`);
+}
+
+/**
+ * Discover the complete configured inventory supported by the Limits UI.
+ * listBudgets exhausts pagination and fails rather than returning a partial
+ * observation. Account spending controls are deliberately never requested.
+ */
+export async function listConfiguredWorkspaceLimits(): Promise<ConfiguredWorkspaceLimit[]> {
+  const limits: ConfiguredWorkspaceLimit[] = [];
+  for (const type of [
+    "workspace_default_user_limit",
+    "workspace_group_limit",
+    "workspace_user_limit",
+  ] as const) {
+    for (const value of await listBudgets(type)) {
+      if (!value || typeof value !== "object") {
+        throw new ReplitBudgetConnectorError("error", "Replit budgets API returned an invalid limit row");
+      }
+      const row = value as Record<string, unknown>;
+      const workspaceId = stringValue(row.workspaceId);
+      const amountUsd = finiteNumber(row.amountUsd);
+      if (
+        row.type !== type ||
+        !workspaceId ||
+        amountUsd == null ||
+        amountUsd <= 0 ||
+        row.currency !== "USD" ||
+        row.period !== "billing_cycle"
+      ) {
+        throw new ReplitBudgetConnectorError("error", "Replit budgets API returned an invalid configured limit");
+      }
+      if (type === "workspace_default_user_limit") {
+        limits.push({ type, workspaceId, amountUsd });
+      } else if (type === "workspace_group_limit") {
+        const groupId = stringValue(row.groupId);
+        if (!groupId) throw new ReplitBudgetConnectorError("error", "Configured group limit has no groupId");
+        limits.push({ type, workspaceId, groupId, amountUsd });
+      } else {
+        const userId = stringValue(row.userId);
+        if (!userId) throw new ReplitBudgetConnectorError("error", "Configured user limit has no userId");
+        limits.push({ type, workspaceId, userId, amountUsd });
+      }
+    }
+  }
+  const keys = new Set<string>();
+  for (const limit of limits) {
+    const id = limit.type === "workspace_group_limit"
+      ? limit.groupId
+      : limit.type === "workspace_user_limit" ? limit.userId : limit.workspaceId;
+    const key = `${limit.workspaceId}\u0000${limit.type}\u0000${id}`;
+    if (keys.has(key)) {
+      throw new ReplitBudgetConnectorError("error", "Replit budgets API returned duplicate configured limits");
+    }
+    keys.add(key);
+  }
+  return limits.sort((a, b) => {
+    const aid = a.type === "workspace_group_limit" ? a.groupId
+      : a.type === "workspace_user_limit" ? a.userId : a.workspaceId;
+    const bid = b.type === "workspace_group_limit" ? b.groupId
+      : b.type === "workspace_user_limit" ? b.userId : b.workspaceId;
+    return `${a.workspaceId}\u0000${a.type}\u0000${aid}`.localeCompare(
+      `${b.workspaceId}\u0000${b.type}\u0000${bid}`,
+    );
+  });
 }
 
 export async function listReplitMemberBudgets(
@@ -777,6 +861,7 @@ async function readbackBudget(
   let cursor: string | null = null;
   let requestId: string | undefined;
   const matchingRows: unknown[] = [];
+  const seenCursors = new Set<string>();
   for (let page = 0; page < MAX_PAGES; page++) {
     const query = new URLSearchParams({
       type: budget.type,
@@ -802,7 +887,14 @@ async function readbackBudget(
     matchingRows.push(
       ...rows.filter((row) => hasTargetIdentity(row, budget)),
     );
-    cursor = nextCursor(response.body);
+    try {
+      cursor = pagination(response.body).cursor;
+    } catch (error) {
+      throw validationError(
+        error instanceof Error ? error.message : "Malformed readback pagination",
+        requestId,
+      );
+    }
     if (!cursor) {
       if (budget.amountUsd === null) {
         if (matchingRows.length !== 0) {
@@ -822,6 +914,10 @@ async function readbackBudget(
       }
       return requestId;
     }
+    if (seenCursors.has(cursor)) {
+      throw validationError("Replit budgets API repeated a readback cursor", requestId);
+    }
+    seenCursors.add(cursor);
   }
   throw new ReplitBudgetConnectorError(
     "error",
@@ -833,9 +929,60 @@ async function readbackBudget(
 
 export async function setBudget(
   budget: ReplitBudgetWrite,
-  options: { retryTransient?: boolean } = {},
+  options: {
+    retryTransient?: boolean;
+    operationId?: string;
+    expectedAmountUsd?: number | null;
+  } = {},
 ): Promise<ReplitBudgetWriteResult> {
   validateBudgetWrite(budget);
+  const targetId = budget.type === "workspace_group_limit"
+    ? budget.groupId
+    : budget.type === "workspace_user_limit" ? budget.userId : budget.workspaceId;
+  const lockKey = JSON.stringify([budget.workspaceId, budget.type, targetId]);
+  return db.transaction(async (tx) => {
+  // Serialize every legacy and durable writer on the canonical identity. The
+  // lock remains held through POST and verified readback, closing the race
+  // between a conflict check and the upstream mutation.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+  const predicates = [
+    eq(limitOperationTargetsTable.workspaceId, budget.workspaceId),
+    eq(limitOperationTargetsTable.targetType, budget.type),
+    eq(limitOperationTargetsTable.targetId, targetId),
+    inArray(limitOperationTargetsTable.state, ["queued", "applying", "verification_pending"]),
+  ];
+  if (options.operationId) {
+    predicates.push(ne(limitOperationTargetsTable.operationId, options.operationId));
+  }
+  const [conflict] = await tx.select({ operationId: limitOperationTargetsTable.operationId })
+    .from(limitOperationTargetsTable)
+    .where(and(...predicates))
+    .limit(1);
+  if (conflict) {
+    throw new ReplitBudgetConnectorError(
+      "error",
+      "A durable operation is already active for this limit target",
+      409,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(options, "expectedAmountUsd")) {
+    const inventory = await listConfiguredWorkspaceLimits();
+    const current = inventory.find((limit) => {
+      const id = limit.type === "workspace_group_limit"
+        ? limit.groupId
+        : limit.type === "workspace_user_limit" ? limit.userId : limit.workspaceId;
+      return limit.workspaceId === budget.workspaceId &&
+        limit.type === budget.type && id === targetId;
+    })?.amountUsd ?? null;
+    if (current === budget.amountUsd) return {};
+    if (current !== options.expectedAmountUsd) {
+      throw new ReplitBudgetConnectorError(
+        "error",
+        "Current limit no longer matches the frozen review",
+        409,
+      );
+    }
+  }
   const hasEnterpriseKey = Boolean(process.env[BUDGETS_API_KEY_ENV]?.trim());
   if (
     (transportOverride && !(await connectorCanWrite())) ||
@@ -874,4 +1021,5 @@ export async function setBudget(
     ...(response.requestId ? { requestId: response.requestId } : {}),
     ...(readbackRequestId ? { readbackRequestId } : {}),
   };
+  });
 }

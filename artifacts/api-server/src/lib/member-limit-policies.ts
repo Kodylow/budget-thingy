@@ -4,7 +4,7 @@ import {
   memberLimitPolicyAssignmentsTable,
   workspaceDefaultLimitTargetsTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   getCachedDirectory,
   isInternalReplitMember,
@@ -453,6 +453,35 @@ export async function markMemberLimitAsHandSet(
   await databaseWriter.deleteAssignment(workspaceId, userId);
 }
 
+/**
+ * Remove local enforcement intent after an acknowledged live clear so a later
+ * ingest cannot recreate the configuration that the operator removed.
+ */
+export async function reconcileClearedLimitPolicy(input:
+  | { type: "workspace_user_limit"; workspaceId: string; userId: string }
+  | { type: "workspace_group_limit"; workspaceId: string; groupId: string }
+  | { type: "workspace_default_user_limit"; workspaceId: string }
+): Promise<void> {
+  if (input.type === "workspace_user_limit") {
+    await databaseWriter.deleteAssignment(input.workspaceId, input.userId);
+    return;
+  }
+  if (input.type === "workspace_group_limit") {
+    await db.update(groupUserLimitPoliciesTable).set({
+      amountUsd: null,
+      isEnabled: false,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(groupUserLimitPoliciesTable.workspaceId, input.workspaceId),
+      eq(groupUserLimitPoliciesTable.groupId, input.groupId),
+    ));
+    return;
+  }
+  await db.update(workspaceDefaultLimitTargetsTable).set({
+    isEnabled: false,
+  }).where(eq(workspaceDefaultLimitTargetsTable.workspaceId, input.workspaceId));
+}
+
 export async function setGroupMemberLimitPolicy(input: {
   workspaceId: string;
   groupId: string;
@@ -469,21 +498,25 @@ export async function setGroupMemberLimitPolicy(input: {
   ) {
     throw new TypeError("amountUsd must be null or greater than zero");
   }
-  await db.insert(groupUserLimitPoliciesTable).values({
-    workspaceId: input.workspaceId,
-    groupId: input.groupId,
-    amountUsd: input.amountUsd,
-    isEnabled: input.amountUsd !== null,
-  }).onConflictDoUpdate({
-    target: [
-      groupUserLimitPoliciesTable.workspaceId,
-      groupUserLimitPoliciesTable.groupId,
-    ],
-    set: {
+  await db.transaction(async (tx) => {
+    const key = JSON.stringify(["member-limit-policy", "group", input.workspaceId, input.groupId]);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+    await tx.insert(groupUserLimitPoliciesTable).values({
+      workspaceId: input.workspaceId,
+      groupId: input.groupId,
       amountUsd: input.amountUsd,
       isEnabled: input.amountUsd !== null,
-      updatedAt: new Date(),
-    },
+    }).onConflictDoUpdate({
+      target: [
+        groupUserLimitPoliciesTable.workspaceId,
+        groupUserLimitPoliciesTable.groupId,
+      ],
+      set: {
+        amountUsd: input.amountUsd,
+        isEnabled: input.amountUsd !== null,
+        updatedAt: new Date(),
+      },
+    });
   });
   return applyGroupMemberLimitPolicy(input.workspaceId, input.groupId);
 }
@@ -499,18 +532,24 @@ export async function setWorkspaceDefaultMemberLimitPolicy(input: {
   ) {
     throw new TypeError("amountUsd must be null or greater than zero");
   }
-  await db.insert(workspaceDefaultLimitTargetsTable).values({
-    workspaceId: input.workspaceId,
-    displayName: input.displayName,
-    monthlyLimitUsd: input.amountUsd ?? 1,
-    isEnabled: input.amountUsd !== null,
-  }).onConflictDoUpdate({
-    target: workspaceDefaultLimitTargetsTable.workspaceId,
-    set: {
+  await db.transaction(async (tx) => {
+    const key = JSON.stringify([
+      "member-limit-policy", "workspace_default", input.workspaceId, input.workspaceId,
+    ]);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+    await tx.insert(workspaceDefaultLimitTargetsTable).values({
+      workspaceId: input.workspaceId,
       displayName: input.displayName,
-      ...(input.amountUsd === null ? {} : { monthlyLimitUsd: input.amountUsd }),
+      monthlyLimitUsd: input.amountUsd ?? 1,
       isEnabled: input.amountUsd !== null,
-    },
+    }).onConflictDoUpdate({
+      target: workspaceDefaultLimitTargetsTable.workspaceId,
+      set: {
+        displayName: input.displayName,
+        ...(input.amountUsd === null ? {} : { monthlyLimitUsd: input.amountUsd }),
+        isEnabled: input.amountUsd !== null,
+      },
+    });
   });
   return applyWorkspaceDefaultMemberLimitPolicy(input.workspaceId);
 }

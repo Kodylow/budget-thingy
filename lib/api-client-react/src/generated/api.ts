@@ -32,6 +32,7 @@ import type {
   BillingCycleComparisonResponse,
   CheckResult,
   ClusterHeadline,
+  CommitLimitChangesInput,
   DashboardResponse,
   DevViewResponse,
   DevViewUnavailableResponse,
@@ -75,10 +76,12 @@ import type {
   HandleBrowserLoginCallbackParams,
   HealthStatus,
   LegacyWorkspaceLimitTarget,
+  LimitChangeOperation,
   LimitOperation,
   LimitOperationCommitInput,
   LimitOperationPrepareInput,
   LimitOperationRetryInput,
+  LimitsReadResponse,
   ListAlertsParams,
   ListDirectoryMembersParams,
   ListGroupsParams,
@@ -101,8 +104,11 @@ import type {
   MyMembershipContext,
   OkResponse,
   OrgBudgetOverviewResponse,
+  PrepareClearAllLimitsInput,
+  PrepareLimitChangesInput,
   ProjectDetailResponse,
   ReportingDetail,
+  RetryLimitChangesInput,
   SetLimitsWorkspace,
   SpendCsvResponse,
   SpendProjectsResponse,
@@ -6843,6 +6849,446 @@ export function useGetSetLimitsWorkspace<TData = Awaited<ReturnType<typeof getSe
 
 
 
+
+export const getGetLimitsUrl = () => {
+
+
+
+
+  return `/api/limits`
+}
+
+/**
+ * @summary Read the complete visible live Limits table
+ */
+export const getLimits = async ( options?: RequestInit): Promise<LimitsReadResponse> => {
+
+  return customFetch<LimitsReadResponse>(getGetLimitsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLimitsQueryKey = () => {
+    return [
+    `/api/limits`
+    ] as const;
+    }
+
+
+export const getGetLimitsQueryOptions = <TData = Awaited<ReturnType<typeof getLimits>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLimits>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLimitsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLimits>>> = ({ signal }) => getLimits({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLimits>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLimitsQueryResult = NonNullable<Awaited<ReturnType<typeof getLimits>>>
+export type GetLimitsQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Read the complete visible live Limits table
+ */
+
+export function useGetLimits<TData = Awaited<ReturnType<typeof getLimits>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLimits>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLimitsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPrepareLimitChangesUrl = () => {
+
+
+
+
+  return `/api/limits/changes/prepare`
+}
+
+/**
+ * @summary Freeze mixed workspace limit changes for review
+ */
+export const prepareLimitChanges = async (prepareLimitChangesInput: PrepareLimitChangesInput, options?: RequestInit): Promise<LimitChangeOperation> => {
+
+  return customFetch<LimitChangeOperation>(getPrepareLimitChangesUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(prepareLimitChangesInput)
+  }
+);}
+
+
+
+
+
+export const getPrepareLimitChangesMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareLimitChanges>>, TError,{data: BodyType<PrepareLimitChangesInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof prepareLimitChanges>>, TError,{data: BodyType<PrepareLimitChangesInput>}, TContext> => {
+
+const mutationKey = ['prepareLimitChanges'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof prepareLimitChanges>>, {data: BodyType<PrepareLimitChangesInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  prepareLimitChanges(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PrepareLimitChangesMutationResult = NonNullable<Awaited<ReturnType<typeof prepareLimitChanges>>>
+    export type PrepareLimitChangesMutationBody = BodyType<PrepareLimitChangesInput>
+    export type PrepareLimitChangesMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Freeze mixed workspace limit changes for review
+ */
+export const usePrepareLimitChanges = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareLimitChanges>>, TError,{data: BodyType<PrepareLimitChangesInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof prepareLimitChanges>>,
+        TError,
+        {data: BodyType<PrepareLimitChangesInput>},
+        TContext
+      > => {
+      return useMutation(getPrepareLimitChangesMutationOptions(options));
+    }
+
+export const getPrepareClearAllLimitsUrl = () => {
+
+
+
+
+  return `/api/limits/changes/clear-all/prepare`
+}
+
+/**
+ * @summary Freeze the complete configured workspace-limit inventory for clearing
+ */
+export const prepareClearAllLimits = async (prepareClearAllLimitsInput: PrepareClearAllLimitsInput, options?: RequestInit): Promise<LimitChangeOperation> => {
+
+  return customFetch<LimitChangeOperation>(getPrepareClearAllLimitsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(prepareClearAllLimitsInput)
+  }
+);}
+
+
+
+
+
+export const getPrepareClearAllLimitsMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareClearAllLimits>>, TError,{data: BodyType<PrepareClearAllLimitsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof prepareClearAllLimits>>, TError,{data: BodyType<PrepareClearAllLimitsInput>}, TContext> => {
+
+const mutationKey = ['prepareClearAllLimits'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof prepareClearAllLimits>>, {data: BodyType<PrepareClearAllLimitsInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  prepareClearAllLimits(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PrepareClearAllLimitsMutationResult = NonNullable<Awaited<ReturnType<typeof prepareClearAllLimits>>>
+    export type PrepareClearAllLimitsMutationBody = BodyType<PrepareClearAllLimitsInput>
+    export type PrepareClearAllLimitsMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Freeze the complete configured workspace-limit inventory for clearing
+ */
+export const usePrepareClearAllLimits = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareClearAllLimits>>, TError,{data: BodyType<PrepareClearAllLimitsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof prepareClearAllLimits>>,
+        TError,
+        {data: BodyType<PrepareClearAllLimitsInput>},
+        TContext
+      > => {
+      return useMutation(getPrepareClearAllLimitsMutationOptions(options));
+    }
+
+export const getCommitLimitChangesUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/limits/changes/${encodeURIComponent(String(operationId))}/commit`
+}
+
+/**
+ * @summary Commit an exact mixed or clear-all review
+ */
+export const commitLimitChanges = async (operationId: string,
+    commitLimitChangesInput: CommitLimitChangesInput, options?: RequestInit): Promise<LimitChangeOperation> => {
+
+  return customFetch<LimitChangeOperation>(getCommitLimitChangesUrl(operationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(commitLimitChangesInput)
+  }
+);}
+
+
+
+
+
+export const getCommitLimitChangesMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitLimitChanges>>, TError,{operationId: string;data: BodyType<CommitLimitChangesInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof commitLimitChanges>>, TError,{operationId: string;data: BodyType<CommitLimitChangesInput>}, TContext> => {
+
+const mutationKey = ['commitLimitChanges'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof commitLimitChanges>>, {operationId: string;data: BodyType<CommitLimitChangesInput>}> = (props) => {
+          const {operationId,data} = props ?? {};
+
+          return  commitLimitChanges(operationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CommitLimitChangesMutationResult = NonNullable<Awaited<ReturnType<typeof commitLimitChanges>>>
+    export type CommitLimitChangesMutationBody = BodyType<CommitLimitChangesInput>
+    export type CommitLimitChangesMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Commit an exact mixed or clear-all review
+ */
+export const useCommitLimitChanges = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof commitLimitChanges>>, TError,{operationId: string;data: BodyType<CommitLimitChangesInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof commitLimitChanges>>,
+        TError,
+        {operationId: string;data: BodyType<CommitLimitChangesInput>},
+        TContext
+      > => {
+      return useMutation(getCommitLimitChangesMutationOptions(options));
+    }
+
+export const getGetLimitChangesUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/limits/changes/${encodeURIComponent(String(operationId))}`
+}
+
+/**
+ * @summary Read and resume a durable mixed limit operation
+ */
+export const getLimitChanges = async (operationId: string, options?: RequestInit): Promise<LimitChangeOperation> => {
+
+  return customFetch<LimitChangeOperation>(getGetLimitChangesUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLimitChangesQueryKey = (operationId: string,) => {
+    return [
+    `/api/limits/changes/${operationId}`
+    ] as const;
+    }
+
+
+export const getGetLimitChangesQueryOptions = <TData = Awaited<ReturnType<typeof getLimitChanges>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(operationId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLimitChanges>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLimitChangesQueryKey(operationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLimitChanges>>> = ({ signal }) => getLimitChanges(operationId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: operationId !== null && operationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLimitChanges>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLimitChangesQueryResult = NonNullable<Awaited<ReturnType<typeof getLimitChanges>>>
+export type GetLimitChangesQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>
+
+
+/**
+ * @summary Read and resume a durable mixed limit operation
+ */
+
+export function useGetLimitChanges<TData = Awaited<ReturnType<typeof getLimitChanges>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | ApiError>>(
+ operationId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLimitChanges>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLimitChangesQueryOptions(operationId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRetryLimitChangesUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/limits/changes/${encodeURIComponent(String(operationId))}/retry`
+}
+
+/**
+ * @summary Retry selected durable mixed-limit targets
+ */
+export const retryLimitChanges = async (operationId: string,
+    retryLimitChangesInput: RetryLimitChangesInput, options?: RequestInit): Promise<LimitChangeOperation> => {
+
+  return customFetch<LimitChangeOperation>(getRetryLimitChangesUrl(operationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(retryLimitChangesInput)
+  }
+);}
+
+
+
+
+
+export const getRetryLimitChangesMutationOptions = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryLimitChanges>>, TError,{operationId: string;data: BodyType<RetryLimitChangesInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryLimitChanges>>, TError,{operationId: string;data: BodyType<RetryLimitChangesInput>}, TContext> => {
+
+const mutationKey = ['retryLimitChanges'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryLimitChanges>>, {operationId: string;data: BodyType<RetryLimitChangesInput>}> = (props) => {
+          const {operationId,data} = props ?? {};
+
+          return  retryLimitChanges(operationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryLimitChangesMutationResult = NonNullable<Awaited<ReturnType<typeof retryLimitChanges>>>
+    export type RetryLimitChangesMutationBody = BodyType<RetryLimitChangesInput>
+    export type RetryLimitChangesMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
+
+    /**
+ * @summary Retry selected durable mixed-limit targets
+ */
+export const useRetryLimitChanges = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryLimitChanges>>, TError,{operationId: string;data: BodyType<RetryLimitChangesInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryLimitChanges>>,
+        TError,
+        {operationId: string;data: BodyType<RetryLimitChangesInput>},
+        TContext
+      > => {
+      return useMutation(getRetryLimitChangesMutationOptions(options));
+    }
 
 export const getPrepareLimitOperationUrl = () => {
 

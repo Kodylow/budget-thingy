@@ -19,19 +19,30 @@ export type LimitTargetAttempt = {
   retryAfterMs?: number;
   message?: string;
 };
+export type ClearLimitPolicySnapshot = {
+  sourceType: "group" | "workspace_default";
+  workspaceId: string;
+  sourceId: string;
+  amountUsd: number;
+};
 
 export const limitOperationsTable = pgTable(
   "limit_operations",
   {
     id: text("id").primaryKey(),
-    workspaceId: text("workspace_id").notNull(),
+    workspaceId: text("workspace_id"),
+    kind: text("kind").notNull().default("change"),
     idempotencyKey: text("idempotency_key").notNull(),
     requestFingerprint: text("request_fingerprint").notNull(),
     state: text("state").notNull().default("prepared"),
     actorUserId: text("actor_user_id").notNull(),
     actorEmail: text("actor_email"),
     actorName: text("actor_name"),
-    amountUsdCents: integer("amount_usd_cents").notNull(),
+    amountUsdCents: integer("amount_usd_cents"),
+    clearPolicySnapshot: jsonb("clear_policy_snapshot")
+      .$type<ClearLimitPolicySnapshot[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
     committedAt: timestamp("committed_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -57,11 +68,14 @@ export const limitOperationTargetsTable = pgTable(
       .notNull()
       .references(() => limitOperationsTable.id, { onDelete: "cascade" }),
     workspaceId: text("workspace_id").notNull(),
-    userId: text("user_id").notNull(),
+    targetType: text("target_type").notNull().default("workspace_user_limit"),
+    targetId: text("target_id").notNull(),
+    userId: text("user_id"),
+    groupId: text("group_id"),
     memberName: text("member_name"),
     memberEmail: text("member_email"),
     oldAmountUsdCents: integer("old_amount_usd_cents"),
-    newAmountUsdCents: integer("new_amount_usd_cents").notNull(),
+    newAmountUsdCents: integer("new_amount_usd_cents"),
     state: text("state").notNull().default("queued"),
     attempts: integer("attempts").notNull().default(0),
     attemptHistory: jsonb("attempt_history")
@@ -79,13 +93,15 @@ export const limitOperationTargetsTable = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("limit_operation_targets_operation_user_idx").on(
+    uniqueIndex("limit_operation_targets_operation_identity_idx").on(
       table.operationId,
-      table.userId,
+      table.workspaceId,
+      table.targetType,
+      table.targetId,
     ),
     index("limit_operation_targets_state_updated_idx").on(table.state, table.updatedAt),
-    uniqueIndex("limit_operation_targets_active_user_idx")
-      .on(table.workspaceId, table.userId)
+    uniqueIndex("limit_operation_targets_active_identity_idx")
+      .on(table.workspaceId, table.targetType, table.targetId)
       .where(sql`${table.state} in ('queued', 'applying', 'verification_pending')`),
   ],
 );

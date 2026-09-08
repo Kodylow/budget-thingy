@@ -2642,6 +2642,122 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+  /limits:
+    get:
+      operationId: getLimits
+      tags: [limits]
+      summary: Read the complete visible live Limits table
+      responses:
+        "200":
+          description: Complete configured workspace limits and write capabilities
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitsReadResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Complete live limit inventory unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+  /limits/changes/prepare:
+    post:
+      operationId: prepareLimitChanges
+      tags: [limits]
+      summary: Freeze mixed workspace limit changes for review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrepareLimitChangesInput" }
+      responses:
+        "200":
+          description: Frozen exact old/new review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitChangeOperation" }
+        "400": { description: Invalid request, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Stale or conflicting request, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+  /limits/changes/clear-all/prepare:
+    post:
+      operationId: prepareClearAllLimits
+      tags: [limits]
+      summary: Freeze the complete configured workspace-limit inventory for clearing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrepareClearAllLimitsInput" }
+      responses:
+        "200":
+          description: Frozen exact old/null review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitChangeOperation" }
+        "400": { description: Invalid request, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Stale or conflicting request, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+  /limits/changes/{operationId}/commit:
+    post:
+      operationId: commitLimitChanges
+      tags: [limits]
+      summary: Commit an exact mixed or clear-all review
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommitLimitChangesInput" }
+      responses:
+        "202":
+          description: Durable per-target work accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitChangeOperation" }
+        "400": { description: Invalid request, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Stale or conflicting request, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+  /limits/changes/{operationId}:
+    get:
+      operationId: getLimitChanges
+      tags: [limits]
+      summary: Read and resume a durable mixed limit operation
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      responses:
+        "200":
+          description: Current operation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitChangeOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Operation not found, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+  /limits/changes/{operationId}/retry:
+    post:
+      operationId: retryLimitChanges
+      tags: [limits]
+      summary: Retry selected durable mixed-limit targets
+      parameters:
+        - $ref: "#/components/parameters/LimitOperationIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RetryLimitChangesInput" }
+      responses:
+        "202":
+          description: Retry accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LimitChangeOperation" }
+        "400": { description: Invalid request, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Operation not found, content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } } }
   /limits/operations/prepare:
     post:
       operationId: prepareLimitOperation
@@ -3232,6 +3348,153 @@ components:
           maxItems: 1000
           items: { type: string, minLength: 1 }
         idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+    WorkspaceLimitType:
+      type: string
+      enum: [workspace_default_user_limit, workspace_group_limit, workspace_user_limit]
+    LimitTargetIdentity:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, type, targetId]
+      properties:
+        workspaceId: { type: string, pattern: '^[A-Za-z0-9]+$' }
+        type: { $ref: "#/components/schemas/WorkspaceLimitType" }
+        targetId: { type: string, minLength: 1, maxLength: 255 }
+    LimitChangeInput:
+      allOf:
+        - $ref: "#/components/schemas/LimitTargetIdentity"
+        - type: object
+          additionalProperties: false
+          required: [amountUsd]
+          properties:
+            workspaceId: { type: string, pattern: '^[A-Za-z0-9]+$' }
+            type: { $ref: "#/components/schemas/WorkspaceLimitType" }
+            targetId: { type: string, minLength: 1, maxLength: 255 }
+            amountUsd: { type: ["number", "null"], exclusiveMinimum: 0, multipleOf: 0.01 }
+    LimitRow:
+      allOf:
+        - $ref: "#/components/schemas/LimitChangeInput"
+        - type: object
+          additionalProperties: false
+          required: [canWrite, groupId, userId]
+          properties:
+            workspaceId: { type: string }
+            type: { $ref: "#/components/schemas/WorkspaceLimitType" }
+            targetId: { type: string }
+            amountUsd: { type: number, exclusiveMinimum: 0 }
+            groupId: { type: ["string", "null"] }
+            userId: { type: ["string", "null"] }
+            canWrite: { type: boolean }
+    LimitsReadResponse:
+      type: object
+      additionalProperties: false
+      required: [canClearAll, writeConfigured, observation, limits]
+      properties:
+        canClearAll: { type: boolean }
+        writeConfigured: { type: boolean }
+        observation:
+          type: object
+          additionalProperties: false
+          required: [status, error]
+          properties:
+            status: { type: string, enum: [available] }
+            error: { type: ["string", "null"] }
+        limits:
+          type: array
+          maxItems: 60000
+          items: { $ref: "#/components/schemas/LimitRow" }
+    PrepareLimitChangesInput:
+      type: object
+      additionalProperties: false
+      required: [idempotencyKey, targets]
+      properties:
+        idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/LimitChangeInput" }
+    PrepareClearAllLimitsInput:
+      type: object
+      additionalProperties: false
+      required: [idempotencyKey]
+      properties:
+        idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+    CommitLimitChangesInput:
+      type: object
+      additionalProperties: false
+      required: [reviewFingerprint, targets]
+      properties:
+        reviewFingerprint: { type: string, minLength: 64, maxLength: 64 }
+        confirmation: { type: string }
+        targets:
+          type: array
+          maxItems: 60000
+          items: { $ref: "#/components/schemas/LimitChangeInput" }
+    RetryLimitChangesInput:
+      type: object
+      additionalProperties: false
+      required: [idempotencyKey, targets]
+      properties:
+        idempotencyKey: { type: string, minLength: 8, maxLength: 200 }
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/LimitTargetIdentity" }
+    LimitChangeOperationTarget:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, type, targetId, userId, groupId, memberName, memberEmail, oldAmountUsd, newAmountUsd, state, attempts, history, errorStage, errorCode, errorMessage, upstreamRequestId, queuedAt, applyingAt, verifiedAt, failedAt]
+      properties:
+        workspaceId: { type: string }
+        type: { $ref: "#/components/schemas/WorkspaceLimitType" }
+        targetId: { type: string }
+        userId: { type: ["string", "null"] }
+        groupId: { type: ["string", "null"] }
+        memberName: { type: ["string", "null"] }
+        memberEmail: { type: ["string", "null"] }
+        oldAmountUsd: { type: ["number", "null"] }
+        newAmountUsd: { type: ["number", "null"] }
+        state: { type: string, enum: [queued, applying, verified, failed, verification_pending] }
+        attempts: { type: integer }
+        history: { type: array, items: { $ref: "#/components/schemas/LimitTargetAttempt" } }
+        errorStage: { type: ["string", "null"] }
+        errorCode: { type: ["string", "null"] }
+        errorMessage: { type: ["string", "null"] }
+        upstreamRequestId: { type: ["string", "null"] }
+        queuedAt: { type: ["string", "null"], format: date-time }
+        applyingAt: { type: ["string", "null"], format: date-time }
+        verifiedAt: { type: ["string", "null"], format: date-time }
+        failedAt: { type: ["string", "null"], format: date-time }
+    LimitChangeOperation:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, kind, state, amountUsd, reviewFingerprint, localPolicyCount, actorUserId, preparedAt, committedAt, completedAt, counts, targets]
+      properties:
+        id: { type: string, pattern: '^[0-9a-fA-F-]{36}$' }
+        workspaceId: { type: ["string", "null"] }
+        kind: { type: string, enum: [change, clear_all] }
+        state: { type: string, enum: [prepared, queued, running, completed] }
+        amountUsd: { type: ["number", "null"] }
+        reviewFingerprint: { type: string }
+        localPolicyCount: { type: integer, minimum: 0 }
+        actorUserId: { type: string }
+        preparedAt: { type: string, format: date-time }
+        committedAt: { type: ["string", "null"], format: date-time }
+        completedAt: { type: ["string", "null"], format: date-time }
+        counts:
+          type: object
+          required: [total, queued, applying, verified, failed, verificationPending]
+          properties:
+            total: { type: integer }
+            queued: { type: integer }
+            applying: { type: integer }
+            verified: { type: integer }
+            failed: { type: integer }
+            verificationPending: { type: integer }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/LimitChangeOperationTarget" }
     LimitOperationCommitInput:
       type: object
       additionalProperties: false

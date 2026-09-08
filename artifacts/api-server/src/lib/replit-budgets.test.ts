@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   listBudgets,
+  listConfiguredWorkspaceLimits,
   listReplitGroupBudgets,
   listReplitMemberBudgets,
   ReplitBudgetWrite,
@@ -27,6 +28,48 @@ function json(
 afterEach(() => setReplitBudgetTransportForTests(null));
 
 describe("Replit budgets transport", () => {
+  it("builds a complete three-type inventory without requesting account controls", async () => {
+    const paths: string[] = [];
+    setReplitBudgetTransportForTests(async (path) => {
+      paths.push(path);
+      const type = new URL(`https://example.test${path}`).searchParams.get("type");
+      const cursor = new URL(`https://example.test${path}`).searchParams.get("cursor");
+      const row = type === "workspace_default_user_limit"
+        ? { type, workspaceId: "ws1", currency: "USD", period: "billing_cycle", amountUsd: 10 }
+        : type === "workspace_group_limit"
+          ? { type, workspaceId: "ws1", groupId: "g1", currency: "USD", period: "billing_cycle", amountUsd: 20 }
+          : { type, workspaceId: "ws1", userId: cursor ? "43" : "42", currency: "USD", period: "billing_cycle", amountUsd: 30 };
+      return json({
+        data: [row],
+        pagination: type === "workspace_user_limit" && !cursor
+          ? { hasMore: true, cursor: "page2" }
+          : { hasMore: false, cursor: null },
+      });
+    });
+    await expect(listConfiguredWorkspaceLimits()).resolves.toHaveLength(4);
+    expect(paths).toHaveLength(4);
+    expect(paths.every((path) => !path.includes("account_spending_controls"))).toBe(true);
+    expect(paths.every((path) => !path.includes("workspaceId="))).toBe(true);
+  });
+
+  it("rejects incomplete or malformed configured-limit observations", async () => {
+    setReplitBudgetTransportForTests(async (path) => json({
+      data: path.includes("workspace_group_limit")
+        ? [{
+            type: "workspace_group_limit",
+            workspaceId: "ws1",
+            currency: "USD",
+            period: "billing_cycle",
+            amountUsd: 20,
+          }]
+        : [],
+      pagination: { hasMore: false, cursor: null },
+    }));
+    await expect(listConfiguredWorkspaceLimits()).rejects.toThrow(
+      "Configured group limit has no groupId",
+    );
+  });
+
   it("lists with only the supported query keys and follows cursors", async () => {
     const paths: string[] = [];
     setReplitBudgetTransportForTests(async (path, init) => {
@@ -56,6 +99,62 @@ describe("Replit budgets transport", () => {
         ["type", "workspaceId", "limit", "cursor"].includes(key),
       )).toBe(true);
     }
+  });
+
+  it("never accepts a truncated page that claims more data without a cursor", async () => {
+    setReplitBudgetTransportForTests(async () => json({
+      data: [],
+      pagination: { hasMore: true, cursor: null },
+    }));
+    await expect(listBudgets("workspace_user_limit")).rejects.toThrow(
+      "incomplete page without a cursor",
+    );
+  });
+
+  it("rejects missing pagination and repeated cursors instead of treating them as EOF", async () => {
+    setReplitBudgetTransportForTests(async () => json({ data: [] }));
+    await expect(listBudgets("workspace_user_limit")).rejects.toThrow(
+      "missing or malformed pagination",
+    );
+
+    setReplitBudgetTransportForTests(async () => json({
+      data: [],
+      pagination: { hasMore: true, cursor: "same" },
+    }));
+    await expect(listBudgets("workspace_user_limit")).rejects.toThrow(
+      "repeated a pagination cursor",
+    );
+  });
+
+  it("rechecks a frozen old value under the writer lock before POST", async () => {
+    const methods: string[] = [];
+    setReplitBudgetTransportForTests(async (path, init) => {
+      methods.push(init.method);
+      const type = new URL(`https://example.test${path}`).searchParams.get("type");
+      return json({
+        data: type === "workspace_user_limit"
+          ? [{
+              type,
+              workspaceId: "ws1",
+              userId: "42",
+              currency: "USD",
+              period: "billing_cycle",
+              amountUsd: 15,
+            }]
+          : [],
+        pagination: { hasMore: false, cursor: null },
+      });
+    });
+    await expect(setBudget({
+      type: "workspace_user_limit",
+      workspaceId: "ws1",
+      userId: "42",
+      amountUsd: 20,
+    }, {
+      operationId: "operation-under-test",
+      expectedAmountUsd: 10,
+    })).rejects.toMatchObject({ upstreamStatus: 409 });
+    expect(methods).toEqual(["GET", "GET", "GET"]);
   });
 
   it("keeps member and group list wrappers compatible", async () => {

@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   hasCompleteRequestedWorkspaceAgentUsage,
   resolveLimitMemberAgentUsage,
+  canReadLimitsWorkspaceScope,
+  canReadLimitMemberScope,
 } from "./set-limits";
 import type { UsageCoverage } from "../lib/usage-store";
 
@@ -20,6 +22,31 @@ function coverage(overrides: Partial<UsageCoverage> = {}): UsageCoverage {
 }
 
 describe("Limits metric-specific usage readiness", () => {
+  test("allows safe scoped reads without write capability and never broadens member scope", () => {
+    expect(canReadLimitsWorkspaceScope({
+      accountWide: false,
+      workspaceScoped: false,
+      scopedGroupCount: 1,
+      selfIsMember: false,
+    })).toBe(true);
+    expect(canReadLimitsWorkspaceScope({
+      accountWide: false,
+      workspaceScoped: false,
+      scopedGroupCount: 0,
+      selfIsMember: true,
+    })).toBe(true);
+    expect(canReadLimitMemberScope({
+      broadRead: false,
+      authorizedUserIds: ["42"],
+      userId: "42",
+    })).toBe(true);
+    expect(canReadLimitMemberScope({
+      broadRead: false,
+      authorizedUserIds: ["42"],
+      userId: "43",
+    })).toBe(false);
+  });
+
   test("does not let missing account anchors suppress complete requested workspace usage", () => {
     expect(hasCompleteRequestedWorkspaceAgentUsage({ coverage: coverage() })).toBe(true);
   });

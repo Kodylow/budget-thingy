@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import { randomUUID } from "node:crypto";
 import router from "./routes";
+import { limitsChangesJsonParser } from "./routes/set-limits";
 import { authMiddleware } from "./middlewares/authMiddleware";
 import {
   getRequestOrigin,
@@ -138,6 +139,10 @@ app.use((req, res, next) => {
 });
 app.use(devViewReadOnlyBoundary);
 app.use(cookieParser());
+// Clear All commit can legitimately echo a frozen inventory of up to 60,000
+// targets. Keep the larger parser budget narrowly scoped to durable limits
+// operations; all other JSON endpoints retain Express's conservative default.
+app.use("/api/limits/changes", limitsChangesJsonParser);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requireSameOriginForCookieMutations);

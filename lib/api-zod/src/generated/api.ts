@@ -4445,6 +4445,462 @@ export const GetSetLimitsWorkspaceResponse = zod.object({
 
 
 /**
+ * @summary Read the complete visible live Limits table
+ */
+export const getLimitsResponseLimitsItemOneOneWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const getLimitsResponseLimitsItemOneOneTargetIdMax = 255;
+
+export const getLimitsResponseLimitsItemOneTwoWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const getLimitsResponseLimitsItemOneTwoTargetIdMax = 255;
+
+export const getLimitsResponseLimitsItemOneTwoAmountUsdExclusiveMin = 0;
+export const getLimitsResponseLimitsItemOneTwoAmountUsdMultipleOf = 0.01;
+
+export const getLimitsResponseLimitsItemTwoAmountUsdExclusiveMin = 0;
+
+export const getLimitsResponseLimitsMax = 60000;
+
+
+
+export const GetLimitsResponse = zod.object({
+  "canClearAll": zod.boolean(),
+  "writeConfigured": zod.boolean(),
+  "observation": zod.object({
+  "status": zod.enum(['available']),
+  "error": zod.string().nullable()
+}),
+  "limits": zod.array(zod.object({
+  "workspaceId": zod.string().regex(getLimitsResponseLimitsItemOneOneWorkspaceIdRegExp),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string().min(1).max(getLimitsResponseLimitsItemOneOneTargetIdMax)
+}).and(zod.object({
+  "workspaceId": zod.string().regex(getLimitsResponseLimitsItemOneTwoWorkspaceIdRegExp),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string().min(1).max(getLimitsResponseLimitsItemOneTwoTargetIdMax),
+  "amountUsd": zod.number().gt(getLimitsResponseLimitsItemOneTwoAmountUsdExclusiveMin).multipleOf(getLimitsResponseLimitsItemOneTwoAmountUsdMultipleOf).nullable()
+})).and(zod.object({
+  "workspaceId": zod.string().optional(),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']).optional(),
+  "targetId": zod.string().optional(),
+  "amountUsd": zod.number().gt(getLimitsResponseLimitsItemTwoAmountUsdExclusiveMin).optional(),
+  "groupId": zod.string().nullable(),
+  "userId": zod.string().nullable(),
+  "canWrite": zod.boolean()
+}))).max(getLimitsResponseLimitsMax)
+})
+
+
+/**
+ * @summary Freeze mixed workspace limit changes for review
+ */
+export const prepareLimitChangesBodyIdempotencyKeyMin = 8;
+export const prepareLimitChangesBodyIdempotencyKeyMax = 200;
+
+export const prepareLimitChangesBodyTargetsItemOneWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const prepareLimitChangesBodyTargetsItemOneTargetIdMax = 255;
+
+export const prepareLimitChangesBodyTargetsItemTwoWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const prepareLimitChangesBodyTargetsItemTwoTargetIdMax = 255;
+
+export const prepareLimitChangesBodyTargetsItemTwoAmountUsdExclusiveMin = 0;
+export const prepareLimitChangesBodyTargetsItemTwoAmountUsdMultipleOf = 0.01;
+
+export const prepareLimitChangesBodyTargetsMax = 1000;
+
+
+
+export const PrepareLimitChangesBody = zod.object({
+  "idempotencyKey": zod.string().min(prepareLimitChangesBodyIdempotencyKeyMin).max(prepareLimitChangesBodyIdempotencyKeyMax),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string().regex(prepareLimitChangesBodyTargetsItemOneWorkspaceIdRegExp),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string().min(1).max(prepareLimitChangesBodyTargetsItemOneTargetIdMax)
+}).and(zod.object({
+  "workspaceId": zod.string().regex(prepareLimitChangesBodyTargetsItemTwoWorkspaceIdRegExp),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string().min(1).max(prepareLimitChangesBodyTargetsItemTwoTargetIdMax),
+  "amountUsd": zod.number().gt(prepareLimitChangesBodyTargetsItemTwoAmountUsdExclusiveMin).multipleOf(prepareLimitChangesBodyTargetsItemTwoAmountUsdMultipleOf).nullable()
+}))).min(1).max(prepareLimitChangesBodyTargetsMax)
+})
+
+export const prepareLimitChangesResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+export const prepareLimitChangesResponseLocalPolicyCountMin = 0;
+
+
+
+export const PrepareLimitChangesResponse = zod.object({
+  "id": zod.string().regex(prepareLimitChangesResponseIdRegExp),
+  "workspaceId": zod.string().nullable(),
+  "kind": zod.enum(['change', 'clear_all']),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number().nullable(),
+  "reviewFingerprint": zod.string(),
+  "localPolicyCount": zod.number().min(prepareLimitChangesResponseLocalPolicyCountMin),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string(),
+  "userId": zod.string().nullable(),
+  "groupId": zod.string().nullable(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number().nullable(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Freeze the complete configured workspace-limit inventory for clearing
+ */
+export const prepareClearAllLimitsBodyIdempotencyKeyMin = 8;
+export const prepareClearAllLimitsBodyIdempotencyKeyMax = 200;
+
+
+
+export const PrepareClearAllLimitsBody = zod.object({
+  "idempotencyKey": zod.string().min(prepareClearAllLimitsBodyIdempotencyKeyMin).max(prepareClearAllLimitsBodyIdempotencyKeyMax)
+})
+
+export const prepareClearAllLimitsResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+export const prepareClearAllLimitsResponseLocalPolicyCountMin = 0;
+
+
+
+export const PrepareClearAllLimitsResponse = zod.object({
+  "id": zod.string().regex(prepareClearAllLimitsResponseIdRegExp),
+  "workspaceId": zod.string().nullable(),
+  "kind": zod.enum(['change', 'clear_all']),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number().nullable(),
+  "reviewFingerprint": zod.string(),
+  "localPolicyCount": zod.number().min(prepareClearAllLimitsResponseLocalPolicyCountMin),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string(),
+  "userId": zod.string().nullable(),
+  "groupId": zod.string().nullable(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number().nullable(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Commit an exact mixed or clear-all review
+ */
+export const commitLimitChangesPathOperationIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const CommitLimitChangesParams = zod.object({
+  "operationId": zod.coerce.string().regex(commitLimitChangesPathOperationIdRegExp)
+})
+
+export const commitLimitChangesBodyReviewFingerprintMin = 64;
+export const commitLimitChangesBodyReviewFingerprintMax = 64;
+
+export const commitLimitChangesBodyTargetsItemOneWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const commitLimitChangesBodyTargetsItemOneTargetIdMax = 255;
+
+export const commitLimitChangesBodyTargetsItemTwoWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const commitLimitChangesBodyTargetsItemTwoTargetIdMax = 255;
+
+export const commitLimitChangesBodyTargetsItemTwoAmountUsdExclusiveMin = 0;
+export const commitLimitChangesBodyTargetsItemTwoAmountUsdMultipleOf = 0.01;
+
+export const commitLimitChangesBodyTargetsMax = 60000;
+
+
+
+export const CommitLimitChangesBody = zod.object({
+  "reviewFingerprint": zod.string().min(commitLimitChangesBodyReviewFingerprintMin).max(commitLimitChangesBodyReviewFingerprintMax),
+  "confirmation": zod.string().optional(),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string().regex(commitLimitChangesBodyTargetsItemOneWorkspaceIdRegExp),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string().min(1).max(commitLimitChangesBodyTargetsItemOneTargetIdMax)
+}).and(zod.object({
+  "workspaceId": zod.string().regex(commitLimitChangesBodyTargetsItemTwoWorkspaceIdRegExp),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string().min(1).max(commitLimitChangesBodyTargetsItemTwoTargetIdMax),
+  "amountUsd": zod.number().gt(commitLimitChangesBodyTargetsItemTwoAmountUsdExclusiveMin).multipleOf(commitLimitChangesBodyTargetsItemTwoAmountUsdMultipleOf).nullable()
+}))).max(commitLimitChangesBodyTargetsMax)
+})
+
+export const commitLimitChangesResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+export const commitLimitChangesResponseLocalPolicyCountMin = 0;
+
+
+
+export const CommitLimitChangesResponse = zod.object({
+  "id": zod.string().regex(commitLimitChangesResponseIdRegExp),
+  "workspaceId": zod.string().nullable(),
+  "kind": zod.enum(['change', 'clear_all']),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number().nullable(),
+  "reviewFingerprint": zod.string(),
+  "localPolicyCount": zod.number().min(commitLimitChangesResponseLocalPolicyCountMin),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string(),
+  "userId": zod.string().nullable(),
+  "groupId": zod.string().nullable(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number().nullable(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Read and resume a durable mixed limit operation
+ */
+export const getLimitChangesPathOperationIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const GetLimitChangesParams = zod.object({
+  "operationId": zod.coerce.string().regex(getLimitChangesPathOperationIdRegExp)
+})
+
+export const getLimitChangesResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+export const getLimitChangesResponseLocalPolicyCountMin = 0;
+
+
+
+export const GetLimitChangesResponse = zod.object({
+  "id": zod.string().regex(getLimitChangesResponseIdRegExp),
+  "workspaceId": zod.string().nullable(),
+  "kind": zod.enum(['change', 'clear_all']),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number().nullable(),
+  "reviewFingerprint": zod.string(),
+  "localPolicyCount": zod.number().min(getLimitChangesResponseLocalPolicyCountMin),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string(),
+  "userId": zod.string().nullable(),
+  "groupId": zod.string().nullable(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number().nullable(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Retry selected durable mixed-limit targets
+ */
+export const retryLimitChangesPathOperationIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+
+
+export const RetryLimitChangesParams = zod.object({
+  "operationId": zod.coerce.string().regex(retryLimitChangesPathOperationIdRegExp)
+})
+
+export const retryLimitChangesBodyIdempotencyKeyMin = 8;
+export const retryLimitChangesBodyIdempotencyKeyMax = 200;
+
+export const retryLimitChangesBodyTargetsItemWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');
+export const retryLimitChangesBodyTargetsItemTargetIdMax = 255;
+
+export const retryLimitChangesBodyTargetsMax = 1000;
+
+
+
+export const RetryLimitChangesBody = zod.object({
+  "idempotencyKey": zod.string().min(retryLimitChangesBodyIdempotencyKeyMin).max(retryLimitChangesBodyIdempotencyKeyMax),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string().regex(retryLimitChangesBodyTargetsItemWorkspaceIdRegExp),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string().min(1).max(retryLimitChangesBodyTargetsItemTargetIdMax)
+})).min(1).max(retryLimitChangesBodyTargetsMax)
+})
+
+export const retryLimitChangesResponseIdRegExp = new RegExp('^[0-9a-fA-F-]{36}$');
+export const retryLimitChangesResponseLocalPolicyCountMin = 0;
+
+
+
+export const RetryLimitChangesResponse = zod.object({
+  "id": zod.string().regex(retryLimitChangesResponseIdRegExp),
+  "workspaceId": zod.string().nullable(),
+  "kind": zod.enum(['change', 'clear_all']),
+  "state": zod.enum(['prepared', 'queued', 'running', 'completed']),
+  "amountUsd": zod.number().nullable(),
+  "reviewFingerprint": zod.string(),
+  "localPolicyCount": zod.number().min(retryLimitChangesResponseLocalPolicyCountMin),
+  "actorUserId": zod.string(),
+  "preparedAt": zod.coerce.date(),
+  "committedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "counts": zod.object({
+  "total": zod.number(),
+  "queued": zod.number(),
+  "applying": zod.number(),
+  "verified": zod.number(),
+  "failed": zod.number(),
+  "verificationPending": zod.number()
+}),
+  "targets": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "type": zod.enum(['workspace_default_user_limit', 'workspace_group_limit', 'workspace_user_limit']),
+  "targetId": zod.string(),
+  "userId": zod.string().nullable(),
+  "groupId": zod.string().nullable(),
+  "memberName": zod.string().nullable(),
+  "memberEmail": zod.string().nullable(),
+  "oldAmountUsd": zod.number().nullable(),
+  "newAmountUsd": zod.number().nullable(),
+  "state": zod.enum(['queued', 'applying', 'verified', 'failed', 'verification_pending']),
+  "attempts": zod.number(),
+  "history": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "stage": zod.enum(['authorization', 'membership', 'reconcile', 'write', 'verification', 'audit']),
+  "outcome": zod.string(),
+  "requestId": zod.string().nullish(),
+  "retryAfterMs": zod.number().nullish(),
+  "message": zod.string().nullish()
+})),
+  "errorStage": zod.string().nullable(),
+  "errorCode": zod.string().nullable(),
+  "errorMessage": zod.string().nullable(),
+  "upstreamRequestId": zod.string().nullable(),
+  "queuedAt": zod.coerce.date().nullable(),
+  "applyingAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
  * @summary Freeze and review workspace member-limit targets
  */
 export const prepareLimitOperationBodyWorkspaceIdRegExp = new RegExp('^[A-Za-z0-9]+$');

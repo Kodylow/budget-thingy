@@ -37,7 +37,7 @@ const GroupDetail = lazy(() => import('@/pages/group-detail'));
 const ClusterDetail = lazy(() => import('@/pages/cluster-detail'));
 
 const ProjectDetail = lazy(() => import('@/pages/project-detail'));
-const Limits = lazy(() => import('@/pages/limits'));
+const Limits = lazy(() => import('@/pages/limits-live'));
 
 const DevelopmentViewChip = import.meta.env.DEV
   ? lazy(() => import('@/components/dev-view-chip').then(module => ({ default: module.DevViewChip })))
