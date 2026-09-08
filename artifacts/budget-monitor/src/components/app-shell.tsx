@@ -304,17 +304,16 @@ function Navigation({ location }: { location: string }) {
                   <li key={item.path}>
                     <Link
                       href={reportingNavigationHref(item.path, search)}
-                      className={`flex min-h-11 items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:py-2 ${section.id === 'support' ? 'w-11 justify-center' : ''} ${
+                      className={`flex min-h-11 items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:py-2 ${
                         isActive
                           ? 'bg-primary/10 text-primary'
                           : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                       }`}
                       data-testid={item.testId}
                       aria-current={isActive ? 'page' : undefined}
-                      title={section.id === 'support' ? item.label : undefined}
                     >
-                      <Icon className={section.id === 'support' ? 'h-5 w-5 shrink-0' : 'h-4 w-4 shrink-0'} aria-hidden />
-                      <span className={section.id === 'support' ? 'sr-only' : undefined}>{item.label}</span>
+                      <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                      <span>{item.label}</span>
                     </Link>
                   </li>
                 );
@@ -680,15 +679,14 @@ function DesktopTopBar({ location }: { location: string }) {
             <Link
               key={item.path}
               href={reportingNavigationHref(item.path, search)}
-              className={`flex h-11 w-11 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              className={`flex items-center gap-3 px-2.5 py-2 text-sm whitespace-nowrap font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                isActive ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground hover:bg-accent'
               }`}
               data-testid={item.testId}
               aria-current={isActive ? 'page' : undefined}
-              aria-label={item.label}
-              title={item.label}
             >
-              <CircleHelp className="h-5 w-5" aria-hidden />
+              <CircleHelp className="h-4 w-4 shrink-0" aria-hidden />
+              <span>{item.label}</span>
             </Link>
           );
         })}

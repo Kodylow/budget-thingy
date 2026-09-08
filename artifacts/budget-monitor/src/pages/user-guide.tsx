@@ -1,20 +1,13 @@
 import { useAuthContext } from '@/components/auth-context';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  BookOpen,
   CheckCircle2,
-  Download,
-  ExternalLink,
   Info,
   RefreshCw,
   Search,
   ShieldCheck,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-
-const walkthroughHref = `${import.meta.env.BASE_URL}guides/budget-monitor-walkthrough.pdf`;
 
 export default function Help() {
   const { capabilities } = useAuthContext();
@@ -28,39 +21,20 @@ export default function Help() {
         </p>
       </header>
 
-      <section className="flex flex-col gap-5 rounded-md border border-primary/15 bg-primary/[0.035] px-5 py-6 sm:flex-row sm:items-center sm:justify-between md:px-6">
-        <div className="flex min-w-0 gap-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <BookOpen className="h-5 w-5" aria-hidden />
-          </div>
-          <div>
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold">Budget Monitor walkthrough</h2>
-              <Badge variant="outline" className="text-[10px] font-medium">12 slides</Badge>
-            </div>
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-              Open the approved 12-slide guide for members and team administrators. Learn how to
-              monitor, investigate, manage limits, and interpret data freshness without changing data.
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-          <Button asChild>
-            <a
-              href={walkthroughHref}
-              target="_blank"
-              rel="noopener"
-              data-testid="help-open-walkthrough"
-            >
-              Open walkthrough (PDF) <ExternalLink className="ml-2 h-4 w-4" aria-hidden />
-            </a>
-          </Button>
-          <Button variant="outline" asChild>
-            <a href={walkthroughHref} download data-testid="help-download-walkthrough">
-              Download <Download className="ml-2 h-4 w-4" aria-hidden />
-            </a>
-          </Button>
-        </div>
+      <section className="space-y-2 rounded-md border border-primary/15 bg-primary/[0.035] px-5 py-6 md:px-6" aria-labelledby="help-contacts">
+        <h2 id="help-contacts" className="text-lg font-semibold">Contact</h2>
+        <ul className="space-y-2 text-sm leading-6">
+          {['chris.cattie@repl.it', 'support@repl.it'].map((email) => (
+            <li key={email}>
+              <a
+                href={`mailto:${email}`}
+                className="break-all rounded-sm text-primary underline underline-offset-4 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {email}
+              </a>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <div className="grid gap-x-10 gap-y-8 md:grid-cols-2">
@@ -144,49 +118,6 @@ export default function Help() {
             </div>
         </GuideSection>
       </div>
-
-      <section className="space-y-4 border-t border-border pt-6" aria-labelledby="help-contacts">
-        <div>
-          <h2 id="help-contacts" className="text-xl font-semibold">Who to contact</h2>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Start with the person responsible for the workspace or budget team involved.
-            If you do not know who that is, ask your workspace administrator to direct you.
-          </p>
-        </div>
-        <dl className="grid gap-x-10 gap-y-5 text-sm md:grid-cols-2">
-          <div>
-            <dt className="font-semibold">Access or missing workspaces</dt>
-            <dd className="mt-1 leading-6 text-muted-foreground">
-              Contact your workspace or account administrator. Include which workspace or team you
-              need to see and what you need to do. Access is based on your role; a missing page does
-              not mean its data is missing.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-semibold">Funding or allocation changes</dt>
-            <dd className="mt-1 leading-6 text-muted-foreground">
-              Contact your budget team administrator or funding owner. Include the team, requested
-              amount, and budget period. A funding allocation is a planning baseline, not an Agent limit.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-semibold">Agent limits or blocked usage</dt>
-            <dd className="mt-1 leading-6 text-muted-foreground">
-              Contact an administrator who manages limits for your workspace. Include the workspace,
-              affected person or group, and the limit or error shown. Increasing funding alone does
-              not raise a platform limit.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-semibold">Incorrect totals, stale data, or app errors</dt>
-            <dd className="mt-1 leading-6 text-muted-foreground">
-              Contact the Budget Monitor app administrator through your workspace administrator.
-              Include the page, reporting dates, selected scope, data-as-of time, and what you expected.
-              Share only details the recipient is authorized to see; never send credentials.
-            </dd>
-          </div>
-        </dl>
-      </section>
 
       <Card className="rounded-md border-dashed shadow-none">
         <CardHeader className="pb-3">
