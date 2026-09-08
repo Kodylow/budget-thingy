@@ -1967,6 +1967,7 @@ test.describe('mobile regression', () => {
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
     await expect(page.getByText('Unmapped groups', { exact: true }).first()).toBeVisible();
+    await page.getByTestId('button-toggle-unmapped-groups').click();
     await expect(page.getByTestId('funding-groups-hierarchy').getByText('Executive Group', { exact: true })).toBeVisible();
     await page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' }).click();
     await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
@@ -2177,8 +2178,30 @@ test.describe('funding assignment mocked browser coverage', () => {
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
     const hierarchy = page.getByTestId('funding-groups-hierarchy');
+    const unmappedToggle = hierarchy.getByTestId('button-toggle-unmapped-groups');
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(0);
+
+    await unmappedToggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(1);
     await expect(hierarchy.getByText('0 people', { exact: true })).toBeVisible();
+    await page.keyboard.press('Space');
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(0);
+
+    const fundingSearch = page.getByRole('textbox', { name: 'Search funding teams, groups, and workspaces' });
+    await fundingSearch.fill('Executive Group');
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
+    await fundingSearch.fill('');
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(0);
+
+    await unmappedToggle.focus();
+    await page.keyboard.press('Space');
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'true');
     const executiveDestination = hierarchy.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' });
     await executiveDestination.click();
     await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
@@ -2187,12 +2210,17 @@ test.describe('funding assignment mocked browser coverage', () => {
     await dialog.getByTestId('button-save-funding-group').click();
     await expect(dialog).toBeHidden();
 
-    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
     await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(0);
-    await expect(hierarchy.getByRole('button', { name: /Smoke Team.*total through.*2 groups/ })).toBeVisible();
+    const smokeTeamToggle = hierarchy.getByRole('button', { name: /Smoke Team.*total through.*2 groups/ });
+    await expect(smokeTeamToggle).toBeVisible();
+    if (await smokeTeamToggle.getAttribute('aria-expanded') === 'false') {
+      await smokeTeamToggle.click();
+    }
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
 
     await page.reload();
     await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'false');
     await hierarchy.getByRole('button', { name: /Smoke Team.*total through/ }).click();
     await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
     await executiveDestination.click();
@@ -2202,14 +2230,22 @@ test.describe('funding assignment mocked browser coverage', () => {
     await dialog.getByTestId('button-save-funding-group').click();
     await expect(dialog).toBeHidden();
 
+    const zeroTeamToggle = hierarchy.getByRole('button', { name: /Zero Team.*total through/ });
+    if (await zeroTeamToggle.getAttribute('aria-expanded') === 'false') {
+      await zeroTeamToggle.click();
+    }
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
     await executiveDestination.click();
     await page.getByRole('option', { name: 'Unmapped groups', exact: true }).click();
     dialog = page.getByRole('dialog', { name: 'Change funding assignment' });
     await expect(dialog.getByTestId('button-save-funding-group')).toHaveText('Confirm unmap');
     await dialog.getByTestId('button-save-funding-group').click();
     await expect(dialog).toBeHidden();
-    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
+    await expect(unmappedToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toHaveCount(0);
+    await unmappedToggle.click();
     await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(1);
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
 
     expect(patchBodies).toEqual([
       { workspaceId: WORKSPACE_ID, groupId: 'funding-unmapped', teamName: 'Smoke Team', expectedRevision: 'funding-lifecycle-r1' },
@@ -2241,6 +2277,7 @@ test.describe('funding assignment mocked browser coverage', () => {
 
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
+    await page.getByTestId('button-toggle-unmapped-groups').click();
     await page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' }).click();
     await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Assign funding group' });
@@ -2298,6 +2335,7 @@ test.describe('funding assignment mocked browser coverage', () => {
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
     await expect(page.getByText('Directory inventory may be out of date')).toBeVisible();
+    await page.getByTestId('button-toggle-unmapped-groups').click();
     await expect(page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' })).toBeDisabled();
   });
 
@@ -2313,6 +2351,7 @@ test.describe('funding assignment mocked browser coverage', () => {
 
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
+    await page.getByTestId('button-toggle-unmapped-groups').click();
     await expect(page.getByText('Executive Group', { exact: true })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' })).toBeDisabled();
     expect(observedRequests.some(request => request.includes('/api/admin/funding-groups/audit'))).toBe(false);
@@ -2325,6 +2364,8 @@ test.describe('funding assignment mocked browser coverage', () => {
     await page.route('**/api/auth/user', route => json(route, preview));
     await page.reload();
     await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByTestId('button-toggle-unmapped-groups')).toHaveAttribute('aria-expanded', 'false');
+    await page.getByTestId('button-toggle-unmapped-groups').click();
     await expect(page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' })).toBeDisabled();
     expect(observedRequests.some(request => request.includes('/api/admin/funding-groups/audit'))).toBe(false);
   });
@@ -2341,12 +2382,14 @@ test.describe('funding assignment mocked browser coverage', () => {
 
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
+    await page.getByTestId('button-toggle-unmapped-groups').click();
     await page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' }).click();
     await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Assign funding group' })).toBeVisible();
     identity = 'funding-identity-b';
     await page.reload();
     await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByTestId('button-toggle-unmapped-groups')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByRole('dialog', { name: 'Assign funding group' })).toHaveCount(0);
   });
 });

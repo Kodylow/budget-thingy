@@ -45,12 +45,6 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogTitle: ({ children }: any) => <h2>{children}</h2>,
 }));
 
-vi.mock('@/components/ui/collapsible', () => ({
-  Collapsible: ({ children }: any) => <div>{children}</div>,
-  CollapsibleContent: ({ children }: any) => <div>{children}</div>,
-  CollapsibleTrigger: ({ children }: any) => <div>{children}</div>,
-}));
-
 const initialInventory: FundingGroupInventory = {
   revision: 'r1',
   groups: [
@@ -94,6 +88,76 @@ describe('FundingGroupsHierarchy interactions', () => {
     container.remove();
   });
 
+  const props = {
+    inventory: initialInventory,
+    inventoryLoading: false,
+    inventoryError: false,
+    teamNames: ['Alpha'],
+    searchQuery: '',
+    showHidden: false,
+    authorizationKey: 'auth',
+    canManage: true,
+    onRetry: () => {},
+    onRefresh: async () => 'r1',
+    onSave: async () => {},
+    teamAllocations: { Alpha: 100 },
+    allocationYear: 2026,
+  };
+
+  const unmappedTrigger = () => container.querySelector<HTMLButtonElement>('[data-testid="button-toggle-unmapped-groups"]')!;
+  const teamTrigger = () => [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Alpha'))!;
+
+  it('starts collapsed with a count and toggles the real accessible disclosure', async () => {
+    await act(async () => root.render(<FundingGroupsHierarchy {...props} />));
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('false');
+    expect(unmappedTrigger().textContent).toContain('Unmapped groups');
+    expect(unmappedTrigger().textContent).toContain('1');
+    expect(container.querySelector('[data-testid="unmapped-group-card"]')).toBeNull();
+    expect(teamTrigger().getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => unmappedTrigger().click());
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    expect(container.textContent).toContain('0 people');
+    expect(container.querySelector('[data-testid="unmapped-group-card"]')).not.toBeNull();
+    await act(async () => unmappedTrigger().click());
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-testid="unmapped-group-card"]')).toBeNull();
+  });
+
+  it('reveals search matches without losing explicit state on clear or refresh', async () => {
+    const render = async (searchQuery = '', inventory = initialInventory, authorizationKey = 'auth') =>
+      act(async () => root.render(<FundingGroupsHierarchy {...props} {...{ searchQuery, inventory, authorizationKey }} />));
+    await render('Zero');
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    expect(container.textContent).toContain('Zero Group');
+    await render('One');
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('false');
+    expect(teamTrigger().getAttribute('aria-expanded')).toBe('true');
+    await render('');
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('false');
+    await act(async () => unmappedTrigger().click());
+    await render('Zero');
+    await render('', { ...initialInventory, revision: 'r2', groups: [...initialInventory.groups] });
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('true');
+    await render('', initialInventory, 'different-auth');
+    expect(unmappedTrigger().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps populated unmapped groups and empty mapped groups in their proper sections', async () => {
+    const inventory = {
+      ...initialInventory,
+      groups: initialInventory.groups.map(group => ({ ...group, memberCount: group.teamName === null ? 3 : 0 })),
+    };
+    await act(async () => root.render(<FundingGroupsHierarchy {...props} inventory={inventory} />));
+    await act(async () => unmappedTrigger().click());
+    const card = container.querySelector('[data-testid="unmapped-group-card"]')!;
+    expect(card.textContent).toContain('3 people');
+    expect(card.textContent).not.toContain('One Group');
+    await act(async () => teamTrigger().click());
+    expect(container.textContent).toContain('One Group');
+    expect(container.textContent).toContain('0 people');
+  });
+
   it('waits for confirmation and committed inventory before moving a group', async () => {
     let resolveSave!: () => void;
     const save = vi.fn((_input: unknown) => new Promise<void>(resolve => { resolveSave = resolve; }));
@@ -126,6 +190,8 @@ describe('FundingGroupsHierarchy interactions', () => {
     }
 
     await act(async () => root.render(<Harness />));
+    await act(async () => unmappedTrigger().click());
+    await act(async () => teamTrigger().click());
     expect(container.textContent).toContain('0 people');
     expect(container.textContent).toContain('1 person');
     expect(container.querySelectorAll('[data-testid="unmapped-group-card"]')).toHaveLength(1);
@@ -169,7 +235,11 @@ describe('FundingGroupsHierarchy interactions', () => {
           allocationYear={2026}
         />,
       ));
-      expect([...container.querySelectorAll('select')].every(select => select.disabled)).toBe(true);
+      await act(async () => unmappedTrigger().click());
+      await act(async () => teamTrigger().click());
+      const selectors = [...container.querySelectorAll('select')];
+      expect(selectors).toHaveLength(2);
+      expect(selectors.every(select => select.disabled)).toBe(true);
     };
 
     await render(false, 'fresh');

@@ -259,6 +259,7 @@ export function FundingGroupsHierarchy({
   allocationYear: number;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [unmappedExpanded, setUnmappedExpanded] = useState(false);
   const [editing, setEditing] = useState<{ group: FundingGroup; teamName: string | null } | null>(null);
   const hierarchy = useMemo(
     () => buildFundingHierarchy(inventory?.groups ?? [], teamNames, searchQuery, showHidden),
@@ -268,6 +269,7 @@ export function FundingGroupsHierarchy({
   useEffect(() => {
     setEditing(null);
     setExpanded(new Set());
+    setUnmappedExpanded(false);
   }, [authorizationKey]);
 
   if (inventoryLoading && !inventory) {
@@ -300,6 +302,7 @@ export function FundingGroupsHierarchy({
   }
 
   const canEdit = canManage && !inventoryError && !inventoryLoading && inventory.freshness.status === 'fresh';
+  const unmappedOpen = unmappedExpanded || Boolean(searchQuery.trim() && hierarchy.unmapped.length);
 
   return (
     <section className="space-y-4" aria-labelledby="funding-groups-heading" data-testid="funding-groups-hierarchy">
@@ -330,16 +333,22 @@ export function FundingGroupsHierarchy({
         </p>
         {!canManage && <p className="mt-1 text-xs text-muted-foreground">Changing assignments requires funding-mapping permission.</p>}
       </div>
-      <div className="overflow-hidden rounded-md border">
-        <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
-          <div>
-            <strong>Unmapped groups</strong>
-            <p className="text-xs text-muted-foreground">
-              {canManage ? 'Choose a budgeted team below, then confirm the assignment.' : 'Groups awaiting a budget team.'}
-            </p>
-          </div>
-          <Badge variant={hierarchy.unmapped.length ? 'destructive' : 'secondary'}>{hierarchy.unmapped.length}</Badge>
-        </div>
+      <Collapsible open={unmappedOpen} onOpenChange={setUnmappedExpanded} className="overflow-hidden rounded-md border">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" className="h-auto w-full justify-between gap-3 rounded-none bg-muted/30 px-4 py-3 text-left whitespace-normal" data-testid="button-toggle-unmapped-groups">
+            <span className="min-w-0">
+              <strong className="block">Unmapped groups</strong>
+              <span className="block text-xs font-normal text-muted-foreground">
+                {canManage ? 'Choose a budgeted team below, then confirm the assignment.' : 'Groups awaiting a budget team.'}
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
+              <Badge variant={hierarchy.unmapped.length ? 'destructive' : 'secondary'}>{hierarchy.unmapped.length}</Badge>
+              <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${unmappedOpen ? 'rotate-180' : ''}`} />
+            </span>
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="border-t">
         {hierarchy.unmapped.length === 0 ? (
           <div className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground">
             <Check className="h-4 w-4" /> No unmapped groups in this view.
@@ -364,7 +373,8 @@ export function FundingGroupsHierarchy({
             ))}
           </ul>
         )}
-      </div>
+        </CollapsibleContent>
+      </Collapsible>
       <div className="overflow-hidden rounded-md border">
         <div className="border-b bg-muted/20 px-4 py-3 text-sm font-semibold">Budget teams and mapped groups</div>
         {hierarchy.teams.length === 0 ? (
