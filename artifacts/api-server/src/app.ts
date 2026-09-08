@@ -12,6 +12,11 @@ import {
 import { logger } from "./lib/logger";
 import { DEV_VIEW_AS_HEADER, isDevViewEnabled } from "./lib/dev-view";
 import { dataUnavailableLogging } from "./lib/data-unavailable-logging";
+import {
+  isDocumentNavigation,
+  rootProbeDiagnostic,
+  sendHealth,
+} from "./routes/health";
 
 const app: Express = express();
 const SAFE_DEV_VIEW_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -32,7 +37,7 @@ export function devViewReadOnlyBoundary(
   next();
 }
 
-function diagnosticEndpoint(url: string | undefined): string {
+export function diagnosticEndpoint(url: string | undefined): string {
   const segments = (url?.split("?")[0] ?? "/").split("/");
   return segments
     .map((segment, index) => {
@@ -102,7 +107,9 @@ app.use((req, res, next) => {
       status: res.statusCode,
       durationMs: Math.round(durationMs * 10) / 10,
     };
-    if (res.statusCode >= 500) {
+    if (res.statusCode === 503 && res.locals.reportingUsageRefreshing === true) {
+      req.log.info({ ...details, code: "REPORTING_USAGE_REFRESHING" }, "Reporting usage is refreshing");
+    } else if (res.statusCode >= 500) {
       req.log.error(details, "HTTP request failed");
     } else if (res.statusCode >= 400) {
       req.log.warn(details, "HTTP request completed with client error");
@@ -146,6 +153,17 @@ app.use((_req, res, next) => {
   next();
 });
 
+app.get("/", (req, res, next) => {
+  req.log.info(
+    { event: "api.process_root_request", ...rootProbeDiagnostic(req) },
+    "API process root requested",
+  );
+  if (isDocumentNavigation(req)) {
+    next();
+    return;
+  }
+  sendHealth(req, res);
+});
 app.use("/api", router);
 
 export default app;

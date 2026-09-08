@@ -28,9 +28,14 @@ import {
   UsageWindowError,
 } from "../lib/usage-window";
 import {
-  getUsageSnapshotGeneration,
-  isUsageGenerationUpdateActive,
-} from "../lib/usage-store";
+  assertStableReportingUsageGeneration,
+  ReportingUsageTransitionError,
+  REPORTING_USAGE_RETRY_AFTER_SECONDS,
+} from "../lib/reporting-usage-transition";
+export {
+  assertStableReportingUsageGeneration,
+  ReportingUsageTransitionError,
+} from "../lib/reporting-usage-transition";
 import { authorizeSpendView } from "./monitor.spend-tables";
 import { buildAuthorization } from "../lib/authz";
 import { buildMembershipContext } from "../lib/membership-context";
@@ -38,28 +43,6 @@ import { buildMembershipContext } from "../lib/membership-context";
 const router = Router();
 const MAX_REPORTING_GROUP_IDS = 32;
 const DAY_MS = 86_400_000;
-const REPORTING_USAGE_RETRY_AFTER_SECONDS = 2;
-
-export class ReportingUsageTransitionError extends Error {
-  readonly code = "REPORTING_USAGE_REFRESHING";
-
-  constructor() {
-    super("Reporting usage is refreshing; retry the request");
-    this.name = "ReportingUsageTransitionError";
-  }
-}
-
-export function assertStableReportingUsageGeneration(
-  expectedGeneration?: number,
-): void {
-  if (
-    isUsageGenerationUpdateActive() ||
-    (expectedGeneration !== undefined &&
-      getUsageSnapshotGeneration() !== expectedGeneration)
-  ) {
-    throw new ReportingUsageTransitionError();
-  }
-}
 
 function reportingQuery(req: Request, teamMode: boolean) {
   if (!teamMode) return GetReportingDetailQueryParams.safeParse(req.query);
@@ -1163,6 +1146,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
       return;
     }
     if (error instanceof ReportingUsageTransitionError) {
+      res.locals.reportingUsageRefreshing = true;
       res.setHeader(
         "Retry-After",
         String(REPORTING_USAGE_RETRY_AFTER_SECONDS),

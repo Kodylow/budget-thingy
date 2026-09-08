@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from 'react';
+import React, { Component, lazy, Suspense, useEffect, useLayoutEffect, type ErrorInfo, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -19,7 +19,7 @@ import { clearAuthCache, getLoginUrl, isEmbeddedPreview, logAuthDebug } from '@w
 import { requestRetryDelay, shouldRetryRequest, useApiErrorToasts } from '@/lib/errors';
 import { previewScopedQueryHash } from '@/lib/preview-query-cache';
 import { createForbiddenRevalidator } from '@/lib/auth-transition';
-import { safeLoginReturnTarget } from '@/lib/login-navigation';
+import { resolvedRootDestination, safeLoginReturnTarget } from '@/lib/login-navigation';
 import { UnavailableObserver } from '@/components/unavailable-observer';
 
 const Dashboard = lazy(() => import('@/pages/dashboard'));
@@ -240,6 +240,26 @@ function AuthenticatedLoginRoute() {
   return <RouteLoading />;
 }
 
+export function RootRoute() {
+  const { availability, capabilities } = useAuthContext();
+  const [, setLocation] = useLocation();
+  const destination = resolvedRootDestination(
+    availability,
+    capabilities.canViewAccountUsage === true,
+  );
+
+  useLayoutEffect(() => {
+    if (destination === '/org-insights') {
+      // Account-wide reporting has its own canonical URL and must not inherit
+      // personal Home filters from a bookmarked root URL.
+      setLocation('/org-insights', { replace: true });
+    }
+  }, [destination, setLocation]);
+
+  if (destination !== '/') return <RouteLoading />;
+  return <Home />;
+}
+
 function Router() {
   const [location] = useLocation();
   useEffect(() => {
@@ -264,7 +284,7 @@ function Router() {
     <AppShell>
       <Suspense fallback={<RouteLoading />}>
         <Switch>
-          <Route path="/" component={Home} />
+          <Route path="/" component={RootRoute} />
           <Route path="/overview" component={Dashboard} />
           <Route path="/org-insights" component={OrgInsights} />
           <Route path="/spend" component={Spend} />

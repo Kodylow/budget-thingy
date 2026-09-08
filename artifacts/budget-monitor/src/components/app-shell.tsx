@@ -29,6 +29,7 @@ import {
 } from '@/components/admin-data-quality';
 import { useVisibleViewport } from '@/lib/use-visible-viewport';
 import { reportingNavigationHref, reportingNavigationKey } from '@/lib/reporting-navigation';
+import { resolvedRootDestination } from '@/lib/login-navigation';
 import {
   Command,
   CommandEmpty,
@@ -145,19 +146,18 @@ function usePreviewOptions(canPreviewRbac: boolean, isPreviewing: boolean, isOpe
 function getNavSections(
   capabilities: ReturnType<typeof useAuthContext>['capabilities'],
   role: ReturnType<typeof useAuthContext>['role'],
-  email?: string | null,
 ) {
-  const canSeeSpend = role === 'account' ||
-    (role !== null && role !== 'denied' && email?.trim().toLowerCase() === 'kody.low@repl.it');
+  const accountLanding = capabilities.canViewAccountUsage === true;
   return [
     {
       label: 'Spend monitoring',
       id: 'spend-monitoring',
       items: [
-        { path: '/', label: 'Home', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
+        accountLanding
+          ? { path: '/org-insights', label: 'Org Insights', icon: Building2, show: true, testId: 'nav-org-insights' }
+          : { path: '/', label: 'Home', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
         { path: '/my-team', label: 'My Team', icon: Users, show: role !== 'denied' && role !== null, testId: 'nav-my-team' },
         { path: '/spend?tab=projects&viewScope=my', label: 'My Projects', icon: FolderCode, show: true, testId: 'nav-my-projects' },
-        { path: '/org-insights', label: 'Org Insights', icon: Building2, show: capabilities.canViewAccountUsage === true, testId: 'nav-org-insights' },
         { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canViewAccountUsage, testId: 'nav-allocations' },
         { path: '/limits', label: 'Limits', icon: ShieldCheck, show: capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
       ],
@@ -166,7 +166,7 @@ function getNavSections(
       label: 'Management',
       id: 'management-admin',
       items: [
-        { path: '/spend', label: 'Spend', icon: WalletCards, show: canSeeSpend, testId: 'nav-spend' },
+        { path: '/spend', label: 'Spend', icon: WalletCards, show: accountLanding, testId: 'nav-spend' },
         { path: '/alerts', label: 'Email activity', icon: Bell, show: role !== 'member' && role !== 'denied' && role !== null, testId: 'nav-alerts' },
         { path: '/access', label: 'Access', icon: Users, show: capabilities.canManageAccess, testId: 'nav-access' },
         { path: '/settings', label: 'Settings', icon: Settings, show: capabilities.canManageSystem || capabilities.canManageNotifications, testId: 'nav-settings' },
@@ -250,7 +250,9 @@ function getSelectedPreviewLabel(
 }
 
 function MobileTopBar({ isOpen, open }: Pick<MobileNavigation, 'isOpen' | 'open'>) {
+  const { capabilities } = useAuthContext();
   const search = useSearch();
+  const landingPath = resolvedRootDestination('authorized', capabilities.canViewAccountUsage === true) ?? '/';
   return (
     <div className="xl:hidden flex-none h-14 border-b border-border bg-background flex items-center justify-between px-4 sticky top-0 z-30">
       <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -267,7 +269,7 @@ function MobileTopBar({ isOpen, open }: Pick<MobileNavigation, 'isOpen' | 'open'
           <span className="sr-only">Open menu</span>
         </Button>
         <Link
-          href={reportingNavigationHref('/', search)}
+          href={reportingNavigationHref(landingPath, search)}
           data-testid="link-overview-brand-mobile"
           className="flex min-h-11 min-w-0 items-center gap-2 rounded-sm font-display text-sm font-bold leading-tight tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
@@ -280,9 +282,9 @@ function MobileTopBar({ isOpen, open }: Pick<MobileNavigation, 'isOpen' | 'open'
 }
 
 function Navigation({ location }: { location: string }) {
-  const { capabilities, role, user } = useAuthContext();
+  const { capabilities, role } = useAuthContext();
   const search = useSearch();
-  const sections = getNavSections(capabilities, role, user?.email);
+  const sections = getNavSections(capabilities, role);
 
   return (
     <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
@@ -630,9 +632,10 @@ function DesktopIdentityMenu() {
 }
 
 function DesktopTopBar({ location }: { location: string }) {
-  const { capabilities, role, user } = useAuthContext();
+  const { capabilities, role } = useAuthContext();
   const search = useSearch();
-  const sections = getNavSections(capabilities, role, user?.email);
+  const sections = getNavSections(capabilities, role);
+  const landingPath = resolvedRootDestination('authorized', capabilities.canViewAccountUsage === true) ?? '/';
 
   const primarySection = sections.find(s => s.label === 'Spend monitoring');
   const managementSection = sections.find(s => s.label === 'Management');
@@ -642,7 +645,7 @@ function DesktopTopBar({ location }: { location: string }) {
     <header className="hidden xl:flex items-center h-16 border-b border-border bg-card px-5 shrink-0 z-30">
       <div className="mr-5 flex shrink-0 items-center">
         <Link
-          href={reportingNavigationHref('/', search)}
+          href={reportingNavigationHref(landingPath, search)}
           data-testid="link-overview-brand"
           className="flex items-center gap-2 rounded-sm font-display text-base font-semibold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
@@ -748,7 +751,9 @@ interface SidebarProps extends MobileNavigation {
 }
 
 function MobileSidebar({ location, isOpen, close }: SidebarProps) {
+  const { capabilities } = useAuthContext();
   const search = useSearch();
+  const landingPath = resolvedRootDestination('authorized', capabilities.canViewAccountUsage === true) ?? '/';
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && close()}>
       <SheetContent
@@ -765,7 +770,7 @@ function MobileSidebar({ location, isOpen, close }: SidebarProps) {
           <div className="min-w-0 pr-10">
             <SheetTitle className="font-display text-lg font-bold text-foreground tracking-tight">
               <Link
-                href={reportingNavigationHref('/', search)}
+                href={reportingNavigationHref(landingPath, search)}
                 onClick={close}
                 className="flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >

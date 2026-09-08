@@ -1,5 +1,6 @@
 import {
   currentDiagnosticRoute,
+  getApiDiagnostics,
   parseDataUnavailableHeader,
   recordApiDiagnostic,
   sanitizeDiagnosticRequestId,
@@ -433,8 +434,16 @@ export async function customFetch<T = unknown>(
         category,
         ...(dataState ? { dataState } : {}),
       };
+      // Successful qualifications are state, not a new failure on every poll.
+      // Reuse bounded, scope-cleared history; every request still reaches the panel.
+      const previous = [...getApiDiagnostics()].reverse().find(entry =>
+        entry.method === method && entry.endpoint === diagnostic.endpoint &&
+        entry.route === diagnostic.route,
+      );
+      const unchangedQualification = category === "success" && previous?.category === "success" &&
+        JSON.stringify(previous.dataState?.unavailable) === JSON.stringify(dataState?.unavailable);
       recordApiDiagnostic(diagnostic);
-      if (dataState?.unavailable) {
+      if (dataState?.unavailable && !unchangedQualification) {
         try {
           console.warn("api_data_unavailable", {
             endpoint: diagnostic.endpoint,
@@ -446,7 +455,10 @@ export async function customFetch<T = unknown>(
           // Console instrumentation must never alter request behavior.
         }
       }
-      if (category !== "success" && category !== "aborted") {
+      if (category === "refreshing" && previous?.category !== "refreshing") {
+        console.info("api_usage_refreshing", diagnostic);
+      }
+      if (category !== "success" && category !== "aborted" && category !== "refreshing") {
         // Deliberately exclude errors, headers, bodies, and URLs before sanitization.
         try {
           console.error("api_request_failed", diagnostic);
@@ -488,7 +500,10 @@ export async function customFetch<T = unknown>(
     return result;
   } catch (error) {
     const category: ApiDiagnosticCategory =
-      error instanceof ApiError ? "http"
+      error instanceof ApiError
+        ? error.status === 503 && error.data !== null &&
+          typeof error.data === "object" && "code" in error.data &&
+          error.data.code === "REPORTING_USAGE_REFRESHING" ? "refreshing" : "http"
         : error instanceof ResponseParseError ? "parse"
           : typeof DOMException !== "undefined" &&
               error instanceof DOMException &&

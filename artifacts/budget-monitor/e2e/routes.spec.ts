@@ -276,6 +276,49 @@ function capabilities(role: Role, canPreviewRoles = false) {
   };
 }
 
+function orgBudgetOverviewFixture() {
+  const reporting = {
+    acquisitionCoverage: 'complete',
+    rosterAttributionBasis: 'current_membership',
+    creatorCoverage: 'not_applicable',
+    creatorAttributionBasis: 'not_applicable',
+    freshness: 'fresh',
+    valueBasis: 'verified',
+    comparisonsVerified: true,
+  };
+  return {
+    periodStart: '2026-05-20',
+    periodEnd: '2027-05-20',
+    asOf: '2026-09-08',
+    complete: true,
+    reporting,
+    qualification: null,
+    summary: {
+      accountSpendUsd: 10,
+      teamAllocationUsd: 100,
+      remainingUsd: 90,
+      teamsOverBudget: 0,
+      unassignedSpendUsd: 0,
+    },
+    teams: [{
+      id: 'smoke-team',
+      name: 'Smoke Team',
+      allocationUsd: 100,
+      spendUsd: 10,
+      remainingUsd: 90,
+      percentUsed: 10,
+      complete: true,
+      reporting,
+      points: [
+        { date: '2026-06-01', spendUsd: 2 },
+        { date: '2026-07-01', spendUsd: 5 },
+        { date: '2026-08-01', spendUsd: 8 },
+        { date: '2026-09-01', spendUsd: 10 },
+      ],
+    }],
+  };
+}
+
 function authEnvelope(role: Role, canPreviewRoles = false, previewAs: string | null = null) {
   if (role === 'signed_out') {
     return { user: null, auth: null, capabilities: capabilities(role) };
@@ -770,6 +813,9 @@ async function mockApi(
       dashboardGeneration += 1;
       return json(route, dashboardFixture(effectiveRole, url, `generation-${dashboardGeneration}`));
     }
+    if (path === '/api/org-insights') {
+      return json(route, orgBudgetOverviewFixture());
+    }
     const spendMatch = path.match(/^\/api\/spend\/(pools|groups|people|projects)$/);
     if (spendMatch) {
       return json(route, spendFixture(spendMatch[1] as 'pools' | 'groups' | 'people' | 'projects', url));
@@ -1126,7 +1172,7 @@ test.describe('authenticated account route smoke', () => {
   test('opens every navigation page by link and hard refresh without browser failures', async ({ page }) => {
   const failures = watchBrowserFailures(page);
     const primaryRoutes = [
-      ['nav-dashboard', '/', '[data-testid="text-dashboard-scope"]'],
+      ['nav-org-insights', '/org-insights', 'h1:text-is("Organization Budget Overview")'],
       ['nav-limits', '/limits', 'h1:text-is("Limits")'],
     ] as const;
     const menuRoutes = [
@@ -1138,7 +1184,8 @@ test.describe('authenticated account route smoke', () => {
     ] as const;
 
     await page.goto('/');
-    await expectReady(page, '[data-testid="text-dashboard-scope"]');
+    await expect(page).toHaveURL(/\/org-insights$/);
+    await expectReady(page, 'h1:text-is("Organization Budget Overview")');
     for (const [navId, path, ready] of primaryRoutes) {
       await page.locator(`[data-testid="${navId}"]`).click();
       await expect(page).toHaveURL(new RegExp(`${path === '/' ? '/$' : `${path}$`}`));
@@ -1157,16 +1204,18 @@ test.describe('authenticated account route smoke', () => {
     expect(failures).toEqual([]);
   });
 
-  test('navigation intents preserve reporting range, titles, active state, and management access', async ({ page }) => {
-    const range = 'rangeType=billing';
-    await page.goto(`/?${range}&viewScope=all_authorized`);
+  test('capability-derived navigation has one landing item on desktop and mobile', async ({ page }) => {
+    await page.goto('/?rangeType=billing&viewScope=my');
+    await expect(page).toHaveURL(/\/org-insights$/);
     await expect(page.locator('header nav a')).toHaveText([
-      'Home', 'My Team', 'My Projects', 'Org Insights', 'Budget allocations', 'Limits',
+      'Org Insights', 'My Team', 'My Projects', 'Budget allocations', 'Limits',
     ]);
+    await expect(page.getByTestId('nav-dashboard')).toHaveCount(0);
+    await expect(page.getByTestId('link-overview-brand')).toHaveAttribute('href', '/org-insights');
     await page.getByTestId('nav-my-projects').click();
     await expect(page).toHaveURL(/\/spend\?[^#]*tab=projects/);
     expect(new URL(page.url()).searchParams.get('viewScope')).toBe('my');
-    expect(new URL(page.url()).searchParams.get('rangeType')).toBe('billing');
+    expect(new URL(page.url()).searchParams.has('rangeType')).toBe(false);
     await expect(page.getByRole('heading', { name: 'My Projects', exact: true })).toBeVisible();
     await expect(page.locator('[aria-current="page"]')).toHaveCount(1);
     await expect(page.getByTestId('nav-allocations')).toBeVisible();
@@ -1177,10 +1226,12 @@ test.describe('authenticated account route smoke', () => {
     await page.keyboard.press('Escape');
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/?${range}&viewScope=all_authorized`);
+    await page.goto('/?rangeType=billing&viewScope=my');
+    await expect(page).toHaveURL(/\/org-insights$/);
+    await expect(page.getByTestId('link-overview-brand-mobile')).toHaveAttribute('href', '/org-insights');
     const sheet = await openMobileSheet(page);
-    expect((await sheet.locator('a[data-testid^="nav-"]').allTextContents()).slice(0, 6)).toEqual([
-      'Home', 'My Team', 'My Projects', 'Org Insights', 'Budget allocations', 'Limits',
+    expect((await sheet.locator('a[data-testid^="nav-"]').allTextContents()).slice(0, 5)).toEqual([
+      'Org Insights', 'My Team', 'My Projects', 'Budget allocations', 'Limits',
     ]);
     await sheet.getByTestId('nav-my-projects').click();
     await expect(page).toHaveURL(/\/spend\?[^#]*tab=projects/);
@@ -1188,17 +1239,18 @@ test.describe('authenticated account route smoke', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
     await page.setViewportSize({ width: 1280, height: 844 });
-    await page.goto(`/?${range}&viewScope=all_authorized`);
+    await page.goto('/');
     await expect(page.getByTestId('nav-my-team')).toBeVisible();
     await page.getByTestId('nav-my-team').click();
-    await expect(page).toHaveURL(/\/spend\?[^#]*tab=people/);
+    await expect(page).toHaveURL(/\/my-team$/);
     await expect(page.getByRole('heading', { name: 'My Team', exact: true })).toBeVisible();
     await expect(page.locator('[aria-current="page"]')).toHaveCount(1);
 
     await page.unrouteAll();
     await mockApi(page, 'member');
     await page.goto('/');
-    await expect(page.getByTestId('nav-my-team')).toHaveCount(0);
+    await expect(page.getByTestId('nav-dashboard').filter({ visible: true })).toBeVisible();
+    await expect(page.getByTestId('nav-org-insights')).toHaveCount(0);
   });
 
   test('loads discovered dynamic routes and gives invalid URLs terminal fallbacks', async ({ page }) => {
@@ -2007,29 +2059,29 @@ test.describe('mobile regression', () => {
 });
 
 test.describe('reference-home-org focused mocked pass', () => {
-  test('account Home navigates to Org Insights with complete readable content and preserved range', async ({ page }) => {
+  test('account capability lands directly on canonical Org Insights without mounting personal Home', async ({ page }) => {
     const observedRequests: string[] = [];
     await mockApi(page, 'account', false, [], observedRequests);
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto('/?rangeType=billing');
-    await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })).toBeVisible();
-    await expect(page.getByText('My Last 6 Months')).toBeVisible();
-    await expect(page.getByText('My Spend Story')).toBeVisible();
+    await page.goto('/?rangeType=custom&workspaceId=personal-workspace&viewScope=my');
+    await expect(page).toHaveURL(/\/org-insights$/);
+    await expect(page.getByRole('heading', { name: 'Organization Budget Overview' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })).toHaveCount(0);
+    await expect(page.getByText('My Last 6 Months')).toHaveCount(0);
+    await expect(page.getByText('My Spend Story')).toHaveCount(0);
     await expect(page.getByTestId('nav-org-insights')).toBeVisible();
-    await page.screenshot({ path: 'e2e/evidence/reference-exact/Home-desktop.png' });
-    await page.getByTestId('nav-org-insights').click();
-    await expect(page).toHaveURL(/\/org-insights\?.*rangeType=billing/);
-    await expect(page.getByRole('heading', { name: 'Org Insights' })).toBeVisible();
-    await expect(page.getByText('Top Spenders')).toBeVisible();
-    await expect(page.locator('div.text-sm.font-medium').filter({ hasText: 'Agent' })).toBeVisible();
-    await expect(page.locator('div.text-sm.font-medium').filter({ hasText: 'Other' })).toBeVisible();
-    await expect(page.getByText('Users by Period Spend')).toBeVisible();
-    await expect(page.locator('svg:visible').filter({ has: page.locator('path') }).first()).toBeVisible();
+    await expect(page.getByTestId('nav-dashboard')).toHaveCount(0);
+    await expect(page.getByTestId('link-overview-brand')).toHaveAttribute('href', '/org-insights');
+    await expect(page.getByTestId('org-card-account-spend')).toBeVisible();
+    await expect(page.getByTestId('org-budget-chart')).toBeVisible();
+    await expect(page.getByText('Smoke Team', { exact: true }).first()).toBeVisible();
     expect(observedRequests.filter((request) => /^(POST|PUT|PATCH|DELETE) /.test(request))).toEqual([]);
-    expect(observedRequests.filter((request) => request.includes('/api/dashboard?')).every((request) => /viewScope=(all_authorized|managed|my)/.test(request))).toBeTruthy();
-    const peopleRequests = observedRequests.filter((request) => request.includes('/api/spend/people?'));
-    expect(peopleRequests.some((request) => request.includes('viewScope=all_authorized'))).toBeTruthy();
-    await expect(page.locator('.recharts-bar-rectangle').first()).toBeAttached();
+    expect(observedRequests.some((request) => request.includes('/api/dashboard'))).toBe(false);
+    expect(observedRequests.some((request) => request.includes('/api/spend/'))).toBe(false);
+    expect(observedRequests.some((request) => request.includes('workspaceId=personal-workspace'))).toBe(false);
+    expect(observedRequests.filter((request) => request.includes('/api/org-insights'))).toEqual([
+      'GET /api/org-insights',
+    ]);
     await expect(page.getByText('Invalid Date', { exact: true })).toHaveCount(0);
     await page.screenshot({ path: 'e2e/evidence/reference-exact/OrgInsights-desktop.png' });
   });
@@ -2052,38 +2104,40 @@ test.describe('reference-home-org focused mocked pass', () => {
     expect(observedRequests.filter((request) => /^(POST|PUT|PATCH|DELETE) /.test(request))).toEqual([]);
   });
 
-  test('Org Insights search and workspace filters use scoped query parameters without export controls', async ({ page }) => {
+  test('Org Insights uses its fixed account-wide endpoint without personal filters', async ({ page }) => {
     const observedRequests: string[] = [];
     await mockApi(page, 'account', false, [], observedRequests);
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto('/org-insights?rangeType=billing');
-    await expect(page.getByText('Users by Period Spend')).toBeVisible();
-    const search = page.getByPlaceholder('Search user...');
-    await search.fill('Smoke');
-    await expect.poll(() => observedRequests.some((request) => request.includes('/api/spend/people?') && request.includes('search=Smoke'))).toBeTruthy();
-    await expect(page.getByText('All workspaces')).toBeVisible();
-    await expect(page.getByText('All teams')).toHaveCount(0);
-    await expect(page.getByText('CSV')).toHaveCount(0);
-    await expect(page.getByText('Current Cycle Agent')).toBeVisible();
+    await page.goto('/org-insights');
+    await expect(page.getByRole('heading', { name: 'Organization Budget Overview' })).toBeVisible();
+    await expect(page.getByText('Funding Period: 2026-05-20 to 2027-05-20')).toBeVisible();
+    await expect(page.getByPlaceholder('Search user...')).toHaveCount(0);
+    expect(observedRequests.filter((request) => request.includes('/api/org-insights'))).toEqual([
+      'GET /api/org-insights',
+    ]);
+    expect(observedRequests.some((request) => request.includes('/api/dashboard'))).toBe(false);
+    expect(observedRequests.some((request) => request.includes('/api/spend/'))).toBe(false);
     expect(observedRequests.filter((request) => /^(POST|PUT|PATCH|DELETE) /.test(request))).toEqual([]);
     await page.screenshot({ path: 'e2e/evidence/reference-exact/OrgInsights-desktop.png' });
   });
 
-  test('Home and Org Insights fit compact mobile layout with local table scrolling', async ({ page }) => {
+  test('capability-derived Org Insights landing fits compact mobile layout', async ({ page }) => {
     const observedRequests: string[] = [];
     await mockApi(page, 'account', false, [], observedRequests);
     await page.setViewportSize({ width: 390, height: 1000 });
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/org-insights$/);
+    await expect(page.getByRole('heading', { name: 'Organization Budget Overview' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    await page.screenshot({ path: 'e2e/evidence/reference-exact/Home-mobile.png' });
     await page.getByTestId('button-open-navigation').click();
     const mobileOrgLink = page.getByTestId('nav-org-insights').filter({ visible: true });
     await expect(mobileOrgLink).toBeVisible();
+    await expect(page.getByTestId('nav-dashboard')).toHaveCount(0);
     await mobileOrgLink.click();
-    await expect(page.getByRole('heading', { name: 'Org Insights' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Organization Budget Overview' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    await expect(page.locator('svg:visible').filter({ has: page.locator('path') }).first()).toBeVisible();
+    await expect(page.getByTestId('org-budget-chart')).toBeVisible();
     await page.screenshot({ path: 'e2e/evidence/reference-exact/OrgInsights-mobile.png' });
     expect(observedRequests.filter((request) => /^(POST|PUT|PATCH|DELETE) /.test(request))).toEqual([]);
   });

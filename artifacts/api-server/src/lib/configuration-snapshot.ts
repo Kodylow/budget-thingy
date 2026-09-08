@@ -80,39 +80,35 @@ async function loadConsistentSnapshot(): Promise<ConfigurationSnapshot> {
       throw new Error("Configuration revision singleton is missing");
     }
 
-    const [
-      groupBudgets,
-      teamLimitTargets,
-      teamBudgets,
-      teamBudgetAdjustments,
-      familyTeamMappings,
-      fundingGroupOverrides,
-    ] = await Promise.all([
-      tx.select().from(groupBudgetsTable)
-        .orderBy(asc(groupBudgetsTable.groupId)),
-      tx.select().from(teamLimitTargetsTable)
-        .orderBy(
-          asc(teamLimitTargetsTable.workspaceId),
-          asc(teamLimitTargetsTable.groupId),
-        ),
-      tx.select().from(teamBudgetsTable)
-        .orderBy(asc(teamBudgetsTable.teamName)),
-      tx.select().from(teamBudgetAdjustmentsTable)
-        .orderBy(
-          asc(teamBudgetAdjustmentsTable.submissionPeriod),
-          asc(teamBudgetAdjustmentsTable.id),
-        ),
-      tx.select().from(familyTeamMappingsTable)
-        .orderBy(
-          asc(familyTeamMappingsTable.workspaceId),
-          asc(familyTeamMappingsTable.familyKey),
-        ),
-      tx.select().from(fundingGroupOverridesTable)
-        .orderBy(
-          asc(fundingGroupOverridesTable.workspaceId),
-          asc(fundingGroupOverridesTable.groupId),
-        ),
-    ]);
+    // A transaction is pinned to one pg client. Keep its statements ordered;
+    // concurrency belongs at the pool level, not within a checked-out client.
+    const groupBudgets = await tx.select().from(groupBudgetsTable)
+      .orderBy(asc(groupBudgetsTable.groupId));
+    const teamLimitTargets = await tx.select().from(teamLimitTargetsTable)
+      .orderBy(
+        asc(teamLimitTargetsTable.workspaceId),
+        asc(teamLimitTargetsTable.groupId),
+      );
+    const teamBudgets = await tx.select().from(teamBudgetsTable)
+      .orderBy(asc(teamBudgetsTable.teamName));
+    const teamBudgetAdjustments = await tx.select()
+      .from(teamBudgetAdjustmentsTable)
+      .orderBy(
+        asc(teamBudgetAdjustmentsTable.submissionPeriod),
+        asc(teamBudgetAdjustmentsTable.id),
+      );
+    const familyTeamMappings = await tx.select()
+      .from(familyTeamMappingsTable)
+      .orderBy(
+        asc(familyTeamMappingsTable.workspaceId),
+        asc(familyTeamMappingsTable.familyKey),
+      );
+    const fundingGroupOverrides = await tx.select()
+      .from(fundingGroupOverridesTable)
+      .orderBy(
+        asc(fundingGroupOverridesTable.workspaceId),
+        asc(fundingGroupOverridesTable.groupId),
+      );
 
     return Object.freeze({
       revision: revision.toString(),

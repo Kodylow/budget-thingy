@@ -145,40 +145,37 @@ describe('Dashboard and Spend Spec Behaviors', () => {
   });
 
   it.each(['member', 'workspace_admin', 'team_admin'] as const)(
-    'hides the Spend tab for %s without the email exception',
+    'hides account Spend for %s without the resolved capability',
     role => {
-      const items = getNavSections(mockCapabilities(), role, 'other@example.com').flatMap(section => section.items);
+      const items = getNavSections(mockCapabilities(), role).flatMap(section => section.items);
       expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
       expect(items.some(item => item.testId === 'nav-my-projects')).toBe(true);
     },
   );
 
-  it('keeps the Spend tab for account admins without an email exception', () => {
-    const items = getNavSections(mockCapabilities(), 'account').flatMap(section => section.items);
+  it('shows managed account reporting from the effective capability, including a scoped member such as Kody', () => {
+    const items = getNavSections(
+      mockCapabilities({ canViewAccountUsage: true }),
+      'member',
+    ).flatMap(section => section.items);
     expect(items.some(item => item.testId === 'nav-spend')).toBe(true);
+    expect(items[0]).toEqual(expect.objectContaining({
+      path: '/org-insights',
+      testId: 'nav-org-insights',
+    }));
+    expect(items.some(item => item.testId === 'nav-dashboard')).toBe(false);
   });
 
-  it.each(['kody.low@repl.it', ' KODY.LOW@REPL.IT '])(
-    'shows the Spend tab for the exact authorized email exception: %s',
-    email => {
-      const items = getNavSections(mockCapabilities(), 'member', email).flatMap(section => section.items);
-      expect(items.some(item => item.testId === 'nav-spend')).toBe(true);
-    },
-  );
-
-  it.each(['kody.low@repl.it.example.com', 'someone+kody.low@repl.it', '', null])(
-    'does not show the Spend tab for a nonmatching email: %s',
-    email => {
-      const items = getNavSections(mockCapabilities(), 'member', email).flatMap(section => section.items);
-      expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
-    },
-  );
-
-  it.each(['denied', null] as const)(
-    'does not show the Spend tab for an unauthorized role: %s',
+  it.each(['account', 'workspace_admin', 'team_admin', 'member'] as const)(
+    'uses the effective account-view capability rather than the %s role',
     role => {
-      const items = getNavSections(mockCapabilities(), role, 'kody.low@repl.it').flatMap(section => section.items);
-      expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
+      const withoutCapability = getNavSections(mockCapabilities(), role).flatMap(section => section.items);
+      const withCapability = getNavSections(
+        mockCapabilities({ canViewAccountUsage: true }),
+        role,
+      ).flatMap(section => section.items);
+      expect(withoutCapability.some(item => item.testId === 'nav-spend')).toBe(false);
+      expect(withCapability.some(item => item.testId === 'nav-spend')).toBe(true);
     },
   );
 
@@ -189,10 +186,9 @@ describe('Dashboard and Spend Spec Behaviors', () => {
       canWriteUserLimitsIn: ['workspace-1'],
     }), 'account');
     expect(sections[0].items.map(item => [item.path, item.label])).toEqual([
-      ['/', 'Home'],
+      ['/org-insights', 'Org Insights'],
       ['/my-team', 'My Team'],
       ['/spend?tab=projects&viewScope=my', 'My Projects'],
-      ['/org-insights', 'Org Insights'],
       ['/allocations', 'Budget allocations'],
       ['/limits', 'Limits'],
     ]);
@@ -229,7 +225,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     ]));
   });
 
-  it('keeps Home personal and team scoped, including for account admins', () => {
+  it('keeps Home personal while account viewers enter through Org Insights', () => {
     const source = readFileSync(new URL('./home.tsx', import.meta.url), 'utf8');
     expect(source).toContain('PersonalBudgetPanel');
     expect(source).not.toContain('TeamBudgetPanel');

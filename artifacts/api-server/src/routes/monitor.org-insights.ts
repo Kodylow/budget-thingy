@@ -12,9 +12,10 @@ import {
   fixedTeamBudgetPeriodAsOf,
 } from "../lib/usage-window";
 import {
-  getUsageSnapshotGeneration,
-  isUsageGenerationUpdateActive,
-} from "../lib/usage-store";
+  assertStableReportingUsageGeneration,
+  ReportingUsageTransitionError,
+  REPORTING_USAGE_RETRY_AFTER_SECONDS,
+} from "../lib/reporting-usage-transition";
 import { getConfigurationSnapshot } from "../lib/configuration-snapshot";
 import { projectAttributionKey } from "../lib/usage-rollup";
 import type {
@@ -134,6 +135,7 @@ router.get("/org-insights", async (req, res): Promise<void> => {
   }
 
   try {
+    assertStableReportingUsageGeneration();
     const now = nowForOrgInsights();
     const period = fixedTeamBudgetPeriodAsOf(now);
     const query = {
@@ -147,9 +149,8 @@ router.get("/org-insights", async (req, res): Promise<void> => {
     const result = await buildScopedAccounting(
       authz, query, undefined, prepared);
     const currentConfiguration = await getConfigurationSnapshot();
-    if (isUsageGenerationUpdateActive() ||
-        getUsageSnapshotGeneration() !== prepared.usageGeneration ||
-        currentConfiguration.revision !== prepared.allocationRevision) {
+    assertStableReportingUsageGeneration(prepared.usageGeneration);
+    if (currentConfiguration.revision !== prepared.allocationRevision) {
       res.status(503).json({
         error: "Committed accounting inputs changed while composing report",
         retryable: true,
@@ -295,6 +296,12 @@ router.get("/org-insights", async (req, res): Promise<void> => {
     };
     res.json(GetOrgBudgetOverviewResponse.parse(response));
   } catch (error) {
+    if (error instanceof ReportingUsageTransitionError) {
+      res.locals.reportingUsageRefreshing = true;
+      res.setHeader("Retry-After", String(REPORTING_USAGE_RETRY_AFTER_SECONDS));
+      res.status(503).json({ error: error.message, code: error.code });
+      return;
+    }
     res.status(503).json({
       error: error instanceof Error ? error.message : "Stored accounting unavailable",
     });

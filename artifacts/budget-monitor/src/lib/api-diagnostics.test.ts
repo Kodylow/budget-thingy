@@ -71,6 +71,59 @@ describe('API diagnostics', () => {
     expect(getApiDiagnostics()[0]?.dataState?.unavailable).toBeUndefined();
   });
 
+  it('distinguishes typed refresh retries from genuine failures without changing rejection', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let code = 'REPORTING_USAGE_REFRESHING';
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ code }), {
+        status: 503,
+        headers: { 'content-type': 'application/json', 'retry-after': '2' },
+      }),
+    )));
+    await expect(customFetch('/api/org-insights')).rejects.toMatchObject({ status: 503, data: { code } });
+    await expect(customFetch('/api/org-insights')).rejects.toMatchObject({ status: 503 });
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(error).not.toHaveBeenCalled();
+    expect(getApiDiagnostics().map(entry => entry.category)).toEqual(['refreshing', 'refreshing']);
+    code = 'OTHER_FAILURE';
+    await expect(customFetch('/api/org-insights')).rejects.toMatchObject({ status: 503 });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(getApiDiagnostics().at(-1)?.category).toBe('http');
+  });
+
+  it('logs unchanged successful qualifications once, retaining every request and reporting changes again', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let count = 1;
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}', {
+      headers: {
+        'content-type': 'application/json',
+        ...(count ? { 'x-data-unavailable': JSON.stringify({
+          count,
+          sites: [{ path: 'body.rows[].allocationUsd', reason: 'missing_allocation', count }],
+          truncated: false,
+        }) } : {}),
+      },
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    await customFetch('/api/dashboard');
+    await customFetch('/api/dashboard');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(getApiDiagnostics()).toHaveLength(2);
+    expect(getApiDiagnostics().every(entry => entry.dataState?.unavailable?.count === 1)).toBe(true);
+    count = 2;
+    await customFetch('/api/dashboard');
+    expect(warn).toHaveBeenCalledTimes(2);
+    count = 0;
+    await customFetch('/api/dashboard');
+    count = 2;
+    await customFetch('/api/dashboard');
+    expect(warn).toHaveBeenCalledTimes(3);
+    clearApiDiagnostics();
+    await customFetch('/api/dashboard');
+    expect(warn).toHaveBeenCalledTimes(4);
+  });
+
   it('keeps only approved scoping parameters and redacts identity paths', () => {
     expect(sanitizeDiagnosticUrl(
       'https://example.test/api/users/person%40example.com?token=secret&role=admin&start=2026-01-01',

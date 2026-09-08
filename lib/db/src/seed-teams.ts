@@ -95,15 +95,15 @@ export async function applyFamilyMappingBackfill(
   discovered: readonly DiscoveredFamilyMapping[],
 ): Promise<(typeof familyTeamMappingsTable.$inferSelect)[]> {
   return db.transaction(async (tx) => {
-    const [existing, exactTargets] = await Promise.all([
-      tx.select().from(familyTeamMappingsTable),
-      tx.select({
+    // A Drizzle transaction owns one pg client. Do not overlap statements on
+    // that client: node-postgres' former implicit queueing is deprecated.
+    const existing = await tx.select().from(familyTeamMappingsTable);
+    const exactTargets = await tx.select({
         workspaceId: teamLimitTargetsTable.workspaceId,
         groupId: teamLimitTargetsTable.groupId,
         teamName: teamLimitTargetsTable.teamName,
         assignmentSource: teamLimitTargetsTable.assignmentSource,
-      }).from(teamLimitTargetsTable),
-    ]);
+      }).from(teamLimitTargetsTable);
     const existingByIdentity = new Map(
       existing.map((row) => [`${row.workspaceId}\0${row.familyKey}`, row]),
     );

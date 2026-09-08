@@ -1,6 +1,27 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
-import { safeLoginReturnTarget } from './lib/login-navigation';
+import {
+  resolvedRootDestination,
+  safeLoginReturnTarget,
+} from './lib/login-navigation';
+
+describe('resolved root landing', () => {
+  it('routes an effective account viewer to canonical Org Insights', () => {
+    expect(resolvedRootDestination('authorized', true)).toBe('/org-insights');
+  });
+
+  it('keeps scoped and preview roles on personal Home when their effective capability is false', () => {
+    expect(resolvedRootDestination('authorized', false)).toBe('/');
+  });
+
+  it.each(['loading', 'signed-out', 'unavailable', 'denied', 'invalid-preview'] as const)(
+    'does not choose or mount a landing while authorization is %s',
+    availability => {
+      expect(resolvedRootDestination(availability, true)).toBeNull();
+      expect(resolvedRootDestination(availability, false)).toBeNull();
+    },
+  );
+});
 
 describe('authenticated /login navigation', () => {
   it('returns a completed login to an allowed local route with its query', () => {
@@ -10,9 +31,15 @@ describe('authenticated /login navigation', () => {
     expect(safeLoginReturnTarget(
       '?returnTo=%2Fgroups%2Fgroup-1%3FrangeType%3Dcustom',
     )).toBe('/groups/group-1?rangeType=custom');
+    expect(safeLoginReturnTarget(
+      '?returnTo=%2Fusers%2Fuser-1%3FreturnTo%3D%252Fspend',
+    )).toBe('/users/user-1?returnTo=%2Fspend');
+    expect(safeLoginReturnTarget(
+      '?returnTo=%2Fworkspaces%2Fworkspace-1%2Fprojects%2Fproject-1%23usage',
+    )).toBe('/workspaces/workspace-1/projects/project-1#usage');
   });
 
-  it('defaults a normal OIDC /login completion to the overview', () => {
+  it('defaults a normal OIDC /login completion to the capability-derived root landing', () => {
     expect(safeLoginReturnTarget('')).toBe('/');
     expect(safeLoginReturnTarget('?code=completed-by-server')).toBe('/');
   });

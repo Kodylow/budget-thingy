@@ -1,4 +1,4 @@
-export type ApiDiagnosticCategory = "success" | "http" | "network" | "parse" | "aborted";
+export type ApiDiagnosticCategory = "success" | "http" | "network" | "parse" | "aborted" | "refreshing";
 
 export const DATA_UNAVAILABLE_REASONS = [
   "no_usage_observed",

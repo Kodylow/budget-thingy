@@ -15,7 +15,7 @@ Internal spending and funding monitor for the Comcast Replit Enterprise account.
 The workspace uses TypeScript, pnpm, Express, PostgreSQL/Drizzle, and React/Vite. Main locations:
 
 - `artifacts/api-server/`: API, Enterprise ingestion, accounting, authorization, and notifications.
-- `artifacts/budget-monitor/`: web app; Home is personal/team context, Org Insights is authorized account reporting, Spend is the analytical ledger, and Usage Limits manages workspace-qualified current-cycle limits.
+- `artifacts/budget-monitor/`: web app; resolved account-usage capability lands on Org Insights, while Home remains personal/team context for other authorized viewers. Spend is the analytical ledger, and Usage Limits manages workspace-qualified current-cycle limits.
 - `artifacts/budget-walkthrough/`: walkthrough slides.
 - `lib/db/`: schema, migrations, and approved seed inputs.
 - `lib/api-spec/openapi.yaml`: API contract. Regenerate clients/validators with `pnpm --filter @workspace/api-spec run codegen` after contract edits.

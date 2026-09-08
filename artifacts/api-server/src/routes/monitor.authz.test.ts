@@ -421,6 +421,11 @@ const listedReads = (fixture) => {
   ];
 };
 
+it("returns 404 for an authorized unknown API route", async () => {
+  const response = await request("/route-that-does-not-exist", fixtures[0]);
+  expect(response.status).toBe(404);
+});
+
 describe.each(fixtures)("$id mounted monitor scope", (fixture) => {
   it.each(listedReads(fixture))("%s responds inside the effective scope", async (path) => {
     const response = await request(path, fixture);
@@ -1511,6 +1516,24 @@ describe("organization budget overview", () => {
       resetConfigurationSnapshotForTests();
       __setOrgInsightsNowForTests(null);
     }
+  });
+
+  it("recovers Org Insights from a typed usage transition without weakening authorization", async () => {
+    const finish = beginUsageGenerationUpdate();
+    try {
+      const response = await request("/org-insights", fixtures[0]);
+      expect(response.status).toBe(503);
+      expect(response.headers.get("retry-after")).toBe("2");
+      expect(await response.json()).toEqual({
+        error: "Reporting usage is refreshing; retry the request",
+        code: "REPORTING_USAGE_REFRESHING",
+      });
+      expect((await request("/org-insights", fixtures[4])).status).toBe(403);
+      expect((await request("/org-insights?workspaceId=x", fixtures[0])).status).toBe(400);
+    } finally {
+      finish();
+    }
+    expect((await request("/org-insights", fixtures[0])).status).toBe(200);
   });
 
   it("reconciles one account-wide committed report without fabricating gaps", async () => {
