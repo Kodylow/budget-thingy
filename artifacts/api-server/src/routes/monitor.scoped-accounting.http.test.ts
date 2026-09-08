@@ -854,7 +854,7 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
     });
 
     const peopleResponse = await get(
-      `/spend/people?viewScope=my&pageSize=100&${RANGE}`,
+      `/spend/people?viewScope=my&pageSize=1&${RANGE}`,
       INTERNAL_SELF,
     );
     expect(peopleResponse.status).toBe(200);
@@ -864,18 +864,52 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
         spendUsd: number;
         agentSpendUsd: number;
         currentCycleAgentSpendUsd: number | null;
+        workspaces: Array<{ workspaceId: string; spendUsd: number }>;
+      }>;
+      totalRows: number;
+      filteredRows: number;
+    };
+    expect(people.rows).toHaveLength(1);
+    expect(people.totalRows).toBe(1);
+    expect(people.filteredRows).toBe(1);
+    expect(people.rows[0]?.id).toBe(`person:${INTERNAL_SELF}`);
+    expect(people.rows[0]?.workspaces.map((row) => row.workspaceId).sort())
+      .toEqual([W10, W7, W8, W9].sort());
+    expect(people.rows[0]?.workspaces.reduce(
+      (sum, row) => sum + row.spendUsd, 0)).toBe(15);
+    expect(people.rows.reduce((sum, row) => sum + row.spendUsd, 0)).toBe(15);
+    expect(people.rows[0]?.currentCycleAgentSpendUsd).toBeNull();
+
+    const workspacePeopleResponse = await get(
+      `/spend/people?viewScope=my&workspaceId=${W7}&${RANGE}`,
+      INTERNAL_SELF,
+    );
+    const workspacePeople = await workspacePeopleResponse.json() as {
+      totalRows: number;
+      filteredRows: number;
+      totals: { spendUsd: number };
+      rows: Array<{
+        id: string;
+        workspaceId: string | null;
+        spendUsd: number;
+        workspaces: Array<{ workspaceId: string }>;
       }>;
     };
-    expect(people.rows).toHaveLength(4);
-    expect(people.rows.map((row) => row.id).sort()).toEqual([
-      `person:${W10}:${INTERNAL_SELF}`,
-      `person:${W7}:${INTERNAL_SELF}`,
-      `person:${W8}:${INTERNAL_SELF}`,
-      `person:${W9}:${INTERNAL_SELF}`,
-    ].sort());
-    expect(people.rows.reduce((sum, row) => sum + row.spendUsd, 0)).toBe(15);
-    expect(people.rows.reduce(
-      (sum, row) => sum + (row.currentCycleAgentSpendUsd ?? 0), 0)).toBe(12);
+    expect(workspacePeople).toMatchObject({
+      totalRows: 1,
+      filteredRows: 1,
+      totals: { spendUsd: 8 },
+      rows: [{
+        id: `person:${INTERNAL_SELF}`,
+        workspaceId: W7,
+        spendUsd: 8,
+        workspaces: [{ workspaceId: W7 }],
+      }],
+    });
+    expect((await get(
+      `/spend/people?viewScope=my&status=per_workspace&${RANGE}`,
+      INTERNAL_SELF,
+    )).status).toBe(400);
 
     const projectsResponse = await get(
       `/spend/projects?viewScope=my&pageSize=100&${RANGE}`,
@@ -1397,7 +1431,7 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
       totals: { reconciliationUsd: number };
     };
     expect(value.rows).toContainEqual(expect.objectContaining({
-      id: `person:${W5}:${DETAIL_WORKSPACE_ADMIN}`,
+      id: `person:${DETAIL_WORKSPACE_ADMIN}`,
       spendUsd: 0,
       agentSpendUsd: 0,
     }));
@@ -1637,14 +1671,44 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
     );
     expect(peopleResponse.status).toBe(200);
     const people = await peopleResponse.json() as {
-      rows: Array<{ id: string; spendUsd: number }>;
+      rows: Array<{
+        id: string;
+        userId: string;
+        spendUsd: number;
+        workspaces: Array<{ workspaceId: string }>;
+      }>;
     };
     expect(people.rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: `person:${W3}:${COWORKER}`, spendUsd: 10 }),
-      expect.objectContaining({ id: `person:${W4}:${FAMILY_ADMIN}`, spendUsd: 1 }),
+      expect.objectContaining({ id: `person:${COWORKER}`, spendUsd: 10 }),
+      expect.objectContaining({ id: `person:${FAMILY_ADMIN}`, spendUsd: 1 }),
     ]));
-    expect(people.rows.some((row: { id: string }) =>
-      row.id === `person:${W4}:${COWORKER}`)).toBe(false);
+    expect(people.rows.some((row) =>
+      row.id === `person:${COWORKER}` && row.spendUsd !== 10)).toBe(false);
+    expect(people.rows.find((row) => row.userId === COWORKER)?.workspaces)
+      .toEqual([expect.objectContaining({ workspaceId: W3 })]);
+    const workspaceResponse = await get(
+      `/spend/people?viewScope=all_authorized&workspaceId=${W3}&${RANGE}`,
+      FAMILY_ADMIN,
+    );
+    const workspacePeople = await workspaceResponse.json() as {
+      totalRows: number;
+      rows: Array<{
+        userId: string;
+        workspaceId: string | null;
+        spendUsd: number;
+        workspaces: Array<{ workspaceId: string }>;
+      }>;
+    };
+    expect(workspacePeople.totalRows).toBe(
+      new Set(workspacePeople.rows.map((row) => row.userId)).size);
+    expect(workspacePeople.rows).toContainEqual(
+      expect.objectContaining({
+        userId: COWORKER,
+        workspaceId: W3,
+        spendUsd: 10,
+        workspaces: [expect.objectContaining({ workspaceId: W3 })],
+      }),
+    );
     const peopleCsvResponse = await get(
       `/spend/people.csv?viewScope=all_authorized&${RANGE}&sort=spend_desc`,
       FAMILY_ADMIN,
@@ -1670,7 +1734,7 @@ describe("authenticated scoped accounting HTTP endpoints", () => {
     const csv = await csvResponse.text();
     expect(json.filteredRows).toBe(1);
     expect(json.rows.map((row: { id: string }) => row.id)).toEqual([
-      `person:${W3}:${COWORKER}`,
+      `person:${COWORKER}`,
     ]);
     expect(csvResponse.headers.get("x-filtered-rows")).toBe("1");
     expect(csvResponse.headers.get("x-total-spend-usd")).toBe("10");

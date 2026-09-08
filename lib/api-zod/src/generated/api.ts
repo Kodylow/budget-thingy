@@ -1583,6 +1583,7 @@ export const ListSpendPoolsResponse = zod.object({
 }),
   "rows": zod.array(zod.object({
   "id": zod.string(),
+  "userId": zod.string().optional().describe('Stable user identity for person rows.'),
   "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
   "name": zod.string(),
   "workspaceId": zod.string().nullable(),
@@ -1604,7 +1605,23 @@ export const ListSpendPoolsResponse = zod.object({
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
   "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
   "sharedPool": zod.boolean(),
-  "sourceGroupIds": zod.array(zod.string()).optional().describe('Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows.\n')
+  "sourceGroupIds": zod.array(zod.string()).optional().describe('Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows.\n'),
+  "workspaces": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "currentCycleAgentSpendUsd": zod.number().nullable(),
+  "currentCycleRemainingUsd": zod.number().nullable(),
+  "currentCyclePercentUsed": zod.number().nullable(),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']),
+  "usageObserved": zod.boolean()
+})).optional().describe('Workspace-qualified spend and limit facts for person rows.')
 })),
   "page": zod.number().min(1),
   "pageSize": zod.number().min(1).max(listSpendPoolsResponsePageSizeMax),
@@ -1733,6 +1750,7 @@ export const ListSpendGroupsResponse = zod.object({
 }),
   "rows": zod.array(zod.object({
   "id": zod.string(),
+  "userId": zod.string().optional().describe('Stable user identity for person rows.'),
   "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
   "name": zod.string(),
   "workspaceId": zod.string().nullable(),
@@ -1754,7 +1772,23 @@ export const ListSpendGroupsResponse = zod.object({
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
   "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
   "sharedPool": zod.boolean(),
-  "sourceGroupIds": zod.array(zod.string()).optional().describe('Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows.\n')
+  "sourceGroupIds": zod.array(zod.string()).optional().describe('Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows.\n'),
+  "workspaces": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "currentCycleAgentSpendUsd": zod.number().nullable(),
+  "currentCycleRemainingUsd": zod.number().nullable(),
+  "currentCyclePercentUsed": zod.number().nullable(),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']),
+  "usageObserved": zod.boolean()
+})).optional().describe('Workspace-qualified spend and limit facts for person rows.')
 })),
   "page": zod.number().min(1),
   "pageSize": zod.number().min(1).max(listSpendGroupsResponsePageSizeMax),
@@ -1883,6 +1917,7 @@ export const ListSpendPeopleResponse = zod.object({
 }),
   "rows": zod.array(zod.object({
   "id": zod.string(),
+  "userId": zod.string().optional().describe('Stable user identity for person rows.'),
   "kind": zod.enum(['pool', 'group', 'person', 'project', 'unattributed', 'reconciliation']),
   "name": zod.string(),
   "workspaceId": zod.string().nullable(),
@@ -1904,7 +1939,23 @@ export const ListSpendPeopleResponse = zod.object({
   "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
   "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']).describe('Current durable observation state; last successful values may remain visible during refresh or after failure.'),
   "sharedPool": zod.boolean(),
-  "sourceGroupIds": zod.array(zod.string()).optional().describe('Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows.\n')
+  "sourceGroupIds": zod.array(zod.string()).optional().describe('Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows.\n'),
+  "workspaces": zod.array(zod.object({
+  "workspaceId": zod.string(),
+  "workspaceName": zod.string().nullable(),
+  "spendUsd": zod.number(),
+  "agentSpendUsd": zod.number(),
+  "otherServicesUsd": zod.number(),
+  "allocationUsd": zod.number().nullable(),
+  "remainingUsd": zod.number().nullable(),
+  "percentUsed": zod.number().nullable(),
+  "currentCycleAgentSpendUsd": zod.number().nullable(),
+  "currentCycleRemainingUsd": zod.number().nullable(),
+  "currentCyclePercentUsed": zod.number().nullable(),
+  "limitState": zod.enum(['not_applicable', 'explicit', 'inherited', 'no_limit', 'unavailable']),
+  "limitObservationStatus": zod.enum(['not_applicable', 'complete', 'failed', 'unavailable', 'refreshing']),
+  "usageObserved": zod.boolean()
+})).optional().describe('Workspace-qualified spend and limit facts for person rows.')
 })),
   "page": zod.number().min(1),
   "pageSize": zod.number().min(1).max(listSpendPeopleResponsePageSizeMax),
@@ -2907,6 +2958,8 @@ export const GetTeamBudgetHistoryResponse = zod.object({
 
 
 
+export const getFundingGroupsResponseGroupsItemMemberCountMin = 0;
+
 
 
 
@@ -2918,6 +2971,7 @@ export const GetFundingGroupsResponse = zod.object({
   "workspaceName": zod.string().min(1),
   "groupId": zod.string().min(1),
   "groupName": zod.string().min(1),
+  "memberCount": zod.number().min(getFundingGroupsResponseGroupsItemMemberCountMin).nullable().describe('Distinct current directory members of this concrete group in this workspace, or null when its roster observation is unavailable.'),
   "teamName": zod.string().min(1).nullable(),
   "origin": zod.enum(['inferred', 'explicit', 'unmapped']),
   "isHidden": zod.boolean().describe('True when the effective destination is a hidden budget team.')
@@ -2956,6 +3010,8 @@ export const UpdateFundingGroupBody = zod.object({
 
 
 
+export const updateFundingGroupResponseGroupsItemMemberCountMin = 0;
+
 
 
 
@@ -2967,6 +3023,7 @@ export const UpdateFundingGroupResponse = zod.object({
   "workspaceName": zod.string().min(1),
   "groupId": zod.string().min(1),
   "groupName": zod.string().min(1),
+  "memberCount": zod.number().min(updateFundingGroupResponseGroupsItemMemberCountMin).nullable().describe('Distinct current directory members of this concrete group in this workspace, or null when its roster observation is unavailable.'),
   "teamName": zod.string().min(1).nullable(),
   "origin": zod.enum(['inferred', 'explicit', 'unmapped']),
   "isHidden": zod.boolean().describe('True when the effective destination is a hidden budget team.')
@@ -4440,6 +4497,7 @@ export const PrepareLimitOperationResponse = zod.object({
 }))
 })
 
+
 /**
  * @summary Commit an exactly reviewed limit operation
  */
@@ -4515,6 +4573,8 @@ export const CommitLimitOperationResponse = zod.object({
   "failedAt": zod.coerce.date().nullable()
 }))
 })
+
+
 /**
  * @summary Get and resume a durable limit operation
  */
@@ -4646,3 +4706,5 @@ export const RetryLimitOperationTargetsResponse = zod.object({
   "failedAt": zod.coerce.date().nullable()
 }))
 })
+
+

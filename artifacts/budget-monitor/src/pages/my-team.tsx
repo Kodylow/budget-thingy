@@ -29,6 +29,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { reportingNavigationHref } from '@/lib/reporting-navigation';
 import { dashboardTotalSpend } from '@/lib/spend-presentation';
 import { formatUsd } from '@/pages/home-components/format';
+import { PersonWorkspaceDetails } from '@/components/person-workspace-details';
 
 export function resolveMyTeamScope(
   role: ReturnType<typeof useAuthContext>['role'],
@@ -78,7 +79,8 @@ function initials(name: string) {
 
 export function resolveLimitStatus(row: SpendTableRow): JourneyStatus | null {
   if (
-    row.limitState === 'no_limit'
+    (row.workspaces?.length ?? 0) > 1
+    || row.limitState === 'no_limit'
     || row.limitState === 'unavailable'
     || row.allocationUsd == null
     || row.currentCycleAgentSpendUsd == null
@@ -91,7 +93,7 @@ export function resolveLimitStatus(row: SpendTableRow): JourneyStatus | null {
   return 'Within budget';
 }
 
-function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
+export function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
   if (rows.length === 0) {
     return <EmptyState title="No recorded people spend" description="No people with recorded spend were found in this scope and period." />;
   }
@@ -109,12 +111,17 @@ function PeopleTable({ rows }: { rows: SpendTableRow[] }) {
         return [
           <div className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{initials(row.name)}</span>
-            <span><span className="block whitespace-nowrap font-medium">{row.name}</span><span className="block whitespace-nowrap text-xs text-muted-foreground">{row.workspaceName || 'Workspace unavailable'}</span></span>
+            <div>
+              <span className="block whitespace-nowrap font-medium">{row.name}</span>
+              {(row.workspaces?.length ?? 0) > 1
+                ? <PersonWorkspaceDetails workspaces={row.workspaces!} />
+                : <span className="block whitespace-nowrap text-xs text-muted-foreground">{row.workspaceName || 'Workspace unavailable'}</span>}
+            </div>
           </div>,
           <span className="whitespace-nowrap font-mono text-xs">{row.usageObserved === false ? 'Unavailable' : formatUsd(row.spendUsd)}</span>,
           <span className="whitespace-nowrap font-mono text-xs">{formatUsd(row.currentCycleAgentSpendUsd)}</span>,
           <span className="flex flex-col items-end gap-1">
-            <span className="whitespace-nowrap font-mono text-xs">{row.limitState === 'no_limit' ? 'No limit' : formatUsd(row.allocationUsd)}</span>
+            <span className="whitespace-nowrap font-mono text-xs">{(row.workspaces?.length ?? 0) > 1 ? 'Per workspace' : row.limitState === 'no_limit' ? 'No limit' : formatUsd(row.allocationUsd)}</span>
             {status && <StatusBadge status={status} />}
             {row.limitObservationStatus === 'refreshing' && <span className="text-[10px] text-muted-foreground">Refreshing</span>}
             {row.limitObservationStatus === 'failed' && <span className="text-[10px] text-muted-foreground">{row.allocationUsd != null ? 'Last known · refresh failed' : 'Observation failed'}</span>}

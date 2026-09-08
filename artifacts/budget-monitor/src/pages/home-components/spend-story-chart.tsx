@@ -42,18 +42,20 @@ export function SpendStoryChart({
   cycles: BillingCycleComparisonCycle[];
   scope: 'personal' | 'team';
 }) {
-  const chartData = billingCycleSeriesData(cycles, scope);
-  const hasSpend = chartData.some((row) => cycleSeries.some(({ key }) => row[key] != null));
+   const availableCycles = cycles.filter(cycle => cycle.points.some(point =>
+     Number.isFinite(point[scope === 'personal' ? 'personalSpendUsd' : 'teamSpendUsd'])));
+   const visibleSeries = cycleSeries.filter(series => availableCycles.some(cycle => cycle.key === series.key));
+   const chartData = billingCycleSeriesData(availableCycles, scope);
   const labels = new Map(cycles.map((cycle) => [cycle.key, cycle.label]));
 
-  if (!chartData.length || !hasSpend) {
+  if (!chartData.length || !visibleSeries.length) {
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No comparable period spend available</div>;
   }
 
   return (
     <div className="h-full w-full min-w-0">
       <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1" aria-label="Spend comparison legend">
-        {cycleSeries.map((series) => (
+        {visibleSeries.map((series) => (
           <span key={series.key} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             <svg width="18" height="10" viewBox="0 0 18 10" aria-hidden="true">
               <path d="M0 5h18" stroke={series.color} strokeWidth="2" strokeDasharray={series.dash} />
@@ -95,10 +97,10 @@ export function SpendStoryChart({
                 const row = payload[0].payload as Record<string, number | string | null>;
                 return (
                   <ChartTooltip title={`Cycle day ${label}`}>
-                    {cycleSeries.map((series) => {
+                    {visibleSeries.map((series) => {
                       const value = row[series.key];
                       const date = row[`${series.key}Date`];
-                      if (typeof date !== 'string') return null;
+                       if (typeof date !== 'string' || typeof value !== 'number' || !Number.isFinite(value)) return null;
                       return (
                         <div key={series.key} className="flex items-start justify-between gap-5">
                           <span className="text-muted-foreground">
@@ -106,7 +108,7 @@ export function SpendStoryChart({
                             <span className="block text-[10px]">{formatCycleDate(date)}</span>
                           </span>
                           <span className="font-mono font-semibold">
-                            {typeof value === 'number' ? formatFinancialUsd(value) : 'Unavailable'}
+                             {formatFinancialUsd(value)}
                           </span>
                         </div>
                       );
@@ -115,7 +117,7 @@ export function SpendStoryChart({
                 );
               }}
             />
-            {cycleSeries.map((series) => (
+            {visibleSeries.map((series) => (
               <Line
                 key={series.key}
                 type="monotone"

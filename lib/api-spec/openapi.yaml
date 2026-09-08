@@ -4275,6 +4275,9 @@ components:
       required: [id, kind, name, workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, status, memberCount, ownerName, limitState, limitObservationStatus, sharedPool]
       properties:
         id: { type: string }
+        userId:
+          type: string
+          description: Stable user identity for person rows.
         kind:
           type: string
           enum: [pool, group, person, project, unattributed, reconciliation]
@@ -4320,6 +4323,33 @@ components:
             Complete scope-filtered physical group IDs contributing to a
             canonical team pool. Present only for team-pool rows.
           items: { type: string }
+        workspaces:
+          type: array
+          description: Workspace-qualified spend and limit facts for person rows.
+          items:
+            $ref: "#/components/schemas/SpendPersonWorkspace"
+    SpendPersonWorkspace:
+      type: object
+      required: [workspaceId, workspaceName, spendUsd, agentSpendUsd, otherServicesUsd, allocationUsd, remainingUsd, percentUsed, currentCycleAgentSpendUsd, currentCycleRemainingUsd, currentCyclePercentUsed, limitState, limitObservationStatus, usageObserved]
+      properties:
+        workspaceId: { type: string }
+        workspaceName: { type: [string, "null"] }
+        spendUsd: { type: number }
+        agentSpendUsd: { type: number }
+        otherServicesUsd: { type: number }
+        allocationUsd: { type: [number, "null"] }
+        remainingUsd: { type: [number, "null"] }
+        percentUsed: { type: [number, "null"] }
+        currentCycleAgentSpendUsd: { type: [number, "null"] }
+        currentCycleRemainingUsd: { type: [number, "null"] }
+        currentCyclePercentUsed: { type: [number, "null"] }
+        limitState:
+          type: string
+          enum: [not_applicable, explicit, inherited, no_limit, unavailable]
+        limitObservationStatus:
+          type: string
+          enum: [not_applicable, complete, failed, unavailable, refreshing]
+        usageObserved: { type: boolean }
     SpendTableResponse:
       type: object
       required: [view, scope, period, rows, page, pageSize, totalRows, filteredRows, totals, facets, metadata]
@@ -5500,7 +5530,7 @@ components:
     FundingGroup:
       type: object
       additionalProperties: false
-      required: [workspaceId, workspaceName, groupId, groupName, teamName, origin, isHidden]
+      required: [workspaceId, workspaceName, groupId, groupName, memberCount, teamName, origin, isHidden]
       properties:
         workspaceId:
           type: string
@@ -5514,6 +5544,10 @@ components:
         groupName:
           type: string
           minLength: 1
+        memberCount:
+          type: [integer, "null"]
+          minimum: 0
+          description: Distinct current directory members of this concrete group in this workspace, or null when its roster observation is unavailable.
         teamName:
           type: [string, "null"]
           minLength: 1

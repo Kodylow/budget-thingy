@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, FolderKanban, Pencil, Plus, Unlink } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, FolderKanban, Users } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -35,12 +35,48 @@ function GroupIdentity({ group }: { group: FundingGroup }) {
       <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground" title={`${group.workspaceId} / ${group.groupId}`}>
         {group.workspaceId} / {group.groupId}
       </div>
+      <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Users className="h-3.5 w-3.5" aria-hidden="true" />
+        {group.memberCount == null ? 'People unavailable' : `${group.memberCount} ${group.memberCount === 1 ? 'person' : 'people'}`}
+      </div>
     </div>
+  );
+}
+
+function GroupTeamSelect({ group, teams, disabled, onSelect }: {
+  group: FundingGroup;
+  teams: string[];
+  disabled: boolean;
+  onSelect: (teamName: string | null) => void;
+}) {
+  return (
+    <Select
+      value={group.teamName ?? '__unmapped__'}
+      disabled={disabled}
+      onValueChange={value => {
+        const teamName = value === '__unmapped__' ? null : value;
+        if (teamName !== group.teamName) onSelect(teamName);
+      }}
+    >
+      <SelectTrigger
+        className="w-full min-w-0"
+        aria-label={`Budgeted team for ${group.groupName} in ${group.workspaceName}`}
+        data-testid="select-funding-group-team"
+      >
+        <SelectValue placeholder="Choose a budgeted team" />
+      </SelectTrigger>
+      <SelectContent className="max-h-[300px]">
+        <SelectItem value="__unmapped__">Unmapped groups</SelectItem>
+        {teams.map(team => <SelectItem key={team} value={team}>{team}</SelectItem>)}
+      </SelectContent>
+    </Select>
   );
 }
 
 function MappingDialog({
   group,
+  initialDestination,
+  canSave,
   teams,
   revision,
   open,
@@ -49,6 +85,8 @@ function MappingDialog({
   onRefresh,
 }: {
   group: FundingGroup | null;
+  initialDestination: string | null;
+  canSave: boolean;
   teams: string[];
   revision: string;
   open: boolean;
@@ -66,12 +104,12 @@ function MappingDialog({
 
   useEffect(() => {
     if (!open || !group) return;
-    setDestination(group.teamName ?? '__unmapped__');
-    setStep('select');
+    setDestination(initialDestination ?? '__unmapped__');
+    setStep('review');
     setPending(false);
     setError('');
     setRevisionAtOpen(revision);
-    setReviewedRevision(null);
+    setReviewedRevision(revision);
   }, [group, open]);
 
   if (!group) return null;
@@ -80,7 +118,7 @@ function MappingDialog({
   const isUnchanged = teamName === group.teamName;
 
   const save = async () => {
-    if (pending || isUnchanged || !reviewedRevision) return;
+    if (!canSave || pending || isUnchanged || !reviewedRevision) return;
     setPending(true);
     setError('');
     try {
@@ -180,7 +218,7 @@ function MappingDialog({
           ) : (
             <>
               <Button variant="outline" disabled={pending} onClick={() => setStep('select')}>Back</Button>
-              <Button disabled={pending || isUnchanged || !reviewedRevision} onClick={() => void save()} data-testid="button-save-funding-group">
+              <Button disabled={!canSave || pending || isUnchanged || !reviewedRevision} onClick={() => void save()} data-testid="button-save-funding-group">
                 {pending ? 'Saving…' : teamName === null ? 'Confirm unmap' : group.teamName ? 'Confirm reassignment' : 'Confirm assignment'}
               </Button>
             </>
@@ -221,7 +259,7 @@ export function FundingGroupsHierarchy({
   allocationYear: number;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [editing, setEditing] = useState<FundingGroup | null>(null);
+  const [editing, setEditing] = useState<{ group: FundingGroup; teamName: string | null } | null>(null);
   const hierarchy = useMemo(
     () => buildFundingHierarchy(inventory?.groups ?? [], teamNames, searchQuery, showHidden),
     [inventory?.groups, searchQuery, showHidden, teamNames],
@@ -261,6 +299,8 @@ export function FundingGroupsHierarchy({
     );
   }
 
+  const canEdit = canManage && !inventoryError && !inventoryLoading && inventory.freshness.status === 'fresh';
+
   return (
     <section className="space-y-4" aria-labelledby="funding-groups-heading" data-testid="funding-groups-hierarchy">
       {inventoryError && (
@@ -288,13 +328,14 @@ export function FundingGroupsHierarchy({
         <p className="mt-1 text-sm text-muted-foreground">
           Review each concrete workspace group’s reporting destination. Inferred assignments remain editable.
         </p>
+        {!canManage && <p className="mt-1 text-xs text-muted-foreground">Changing assignments requires funding-mapping permission.</p>}
       </div>
       <div className="overflow-hidden rounded-md border">
         <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
           <div>
             <strong>Unmapped groups</strong>
             <p className="text-xs text-muted-foreground">
-              {canManage ? 'Choose a group below to assign it to a budget team.' : 'Groups awaiting a budget team.'}
+              {canManage ? 'Choose a budgeted team below, then confirm the assignment.' : 'Groups awaiting a budget team.'}
             </p>
           </div>
           <Badge variant={hierarchy.unmapped.length ? 'destructive' : 'secondary'}>{hierarchy.unmapped.length}</Badge>
@@ -313,17 +354,12 @@ export function FundingGroupsHierarchy({
                 data-testid="unmapped-group-card"
               >
                 <div className="flex-1"><GroupIdentity group={group} /></div>
-                {canManage && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full justify-center rounded-full border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 hover:text-primary"
-                    onClick={() => setEditing(group)}
-                  >
-                    <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                    Assign to team
-                  </Button>
-                )}
+                <GroupTeamSelect
+                  group={group}
+                  teams={teamNames}
+                  disabled={!canEdit}
+                  onSelect={teamName => setEditing({ group, teamName })}
+                />
               </li>
             ))}
           </ul>
@@ -365,16 +401,16 @@ export function FundingGroupsHierarchy({
                 {mapped.length === 0 ? (
                   <div className="flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground"><FolderKanban className="h-4 w-4" />No mapped groups.</div>
                 ) : mapped.map(group => (
-                  <div key={fundingGroupKey(group)} className="flex items-center justify-between gap-3 border-b px-6 py-3 last:border-b-0">
+                  <div key={fundingGroupKey(group)} className="flex flex-col justify-between gap-3 border-b px-6 py-3 last:border-b-0 sm:flex-row sm:items-center">
                     <GroupIdentity group={group} />
-                    <div className="flex items-center gap-2">
+                    <div className="flex w-full min-w-0 items-center gap-2 sm:w-72 sm:shrink-0">
                       <Badge variant="secondary" className="hidden font-normal sm:inline-flex">{group.origin}</Badge>
-                      {canManage && (
-                        <Button variant="ghost" size="sm" onClick={() => setEditing(group)}>
-                          {group.teamName ? <Pencil className="mr-2 h-3.5 w-3.5" /> : <Unlink className="mr-2 h-3.5 w-3.5" />}
-                          Change
-                        </Button>
-                      )}
+                      <GroupTeamSelect
+                        group={group}
+                        teams={teamNames}
+                        disabled={!canEdit}
+                        onSelect={teamName => setEditing({ group, teamName })}
+                      />
                     </div>
                   </div>
                 ))}
@@ -384,13 +420,21 @@ export function FundingGroupsHierarchy({
         })}
       </div>
       <MappingDialog
-        key={`${authorizationKey}:${editing ? fundingGroupKey(editing) : 'closed'}`}
-        group={editing}
+        key={`${authorizationKey}:${editing ? fundingGroupKey(editing.group) : 'closed'}`}
+        group={editing?.group ?? null}
+        initialDestination={editing?.teamName ?? null}
+        canSave={canEdit}
         teams={teamNames}
         revision={inventory.revision}
         open={editing !== null}
         onOpenChange={open => { if (!open) setEditing(null); }}
-        onSave={onSave}
+        onSave={async input => {
+          await onSave(input);
+          const teamName = input.teamName;
+          if (teamName !== null) {
+            setExpanded(current => new Set([...current, teamName]));
+          }
+        }}
         onRefresh={onRefresh}
       />
     </section>

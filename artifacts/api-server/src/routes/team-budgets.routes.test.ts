@@ -152,14 +152,25 @@ beforeAll(async () => {
       ["task158-creator-2", member("task158-creator-2", false, {
         "task158-ws-2": { role: "member", isDisabled: false },
       })],
+      ["task158-disabled", member("task158-disabled", false, {
+        "task158-ws": { role: "member", isDisabled: true },
+      })],
     ]),
     groupMembers: new Map([
       [GROUP_ID, [
         "task158-workspace",
         "task158-plain",
+        "task158-plain",
         "task158-own-account",
+        "task158-creator-2",
+        "task158-disabled",
       ]],
       [SECOND_GROUP_ID, ["task158-creator-2"]],
+      [HIDDEN_ZERO_GROUP_ID, []],
+      [HIDDEN_ZERO_ALIAS_ID, []],
+      [VISIBLE_ZERO_GROUP_ID, []],
+      [LEGACY_GROUP_ID, []],
+      [BUILTIN_GROUP_ID, []],
     ]),
   });
   const { resolveAuthorization } = await import("../lib/authz.ts");
@@ -552,12 +563,18 @@ test("funding group routes scope reads and enforce the narrow mutation capabilit
     expect(adminInventory.json.groups).toEqual(expect.arrayContaining([
       expect.objectContaining({
         groupId: HIDDEN_ZERO_GROUP_ID,
+        memberCount: 0,
         teamName: HIDDEN,
         isHidden: true,
       }),
       expect.objectContaining({
+        groupId: GROUP_ID,
+        memberCount: 3,
+      }),
+      expect.objectContaining({
         groupId: SNAPSHOT_GROUP_ID,
         groupName: "Snapshot Only",
+        memberCount: null,
         teamName: ASSIGNED,
         origin: "inferred",
       }),
@@ -599,6 +616,7 @@ test("funding group routes scope reads and enforce the narrow mutation capabilit
         workspaceName: "Task 158",
         groupId: VISIBLE_ZERO_GROUP_ID,
         groupName: VISIBLE_ZERO_NAME,
+        memberCount: 0,
         teamName: ASSIGNED,
         origin: "inferred",
         isHidden: false,
@@ -683,7 +701,7 @@ test("funding group routes scope reads and enforce the narrow mutation capabilit
     expect(unmapped.status).toBe(200);
     expect(unmapped.json.groups.find(
       (group) => group.groupId === VISIBLE_ZERO_GROUP_ID,
-    )).toMatchObject({ teamName: null, origin: "unmapped" });
+    )).toMatchObject({ memberCount: 0, teamName: null, origin: "unmapped" });
 
     const cachedDirectory = await getDirectory();
     __setDirectoryCacheForTests({
@@ -755,7 +773,26 @@ test("funding group routes scope reads and enforce the narrow mutation capabilit
     expect(reassigned.status).toBe(200);
     expect(reassigned.json.groups.find(
       (group) => group.groupId === VISIBLE_ZERO_GROUP_ID,
-    )).toMatchObject({ teamName: ASSIGNED, origin: "explicit" });
+    )).toMatchObject({
+      memberCount: 0,
+      teamName: ASSIGNED,
+      origin: "explicit",
+    });
+    expect(reassigned.json.groups.find(
+      (group) => group.groupId === SNAPSHOT_GROUP_ID,
+    )).toMatchObject({ memberCount: null });
+    const persistedReassignment = await request(
+      "/admin/funding-groups",
+      "task158-account",
+    );
+    expect(persistedReassignment.status).toBe(200);
+    expect(persistedReassignment.json.groups.find(
+      (group) => group.groupId === VISIBLE_ZERO_GROUP_ID,
+    )).toMatchObject({
+      memberCount: 0,
+      teamName: ASSIGNED,
+      origin: "explicit",
+    });
 
     const audit = await request("/admin/funding-groups/audit", "38408700");
     expect(audit.status).toBe(200);

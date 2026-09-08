@@ -7,9 +7,9 @@ import {
 } from './funding-groups-hierarchy';
 
 const groups: FundingGroup[] = [
-  { workspaceId: 'ws-1', workspaceName: 'Comcast', groupId: 'g-1', groupName: 'BnD', teamName: null, origin: 'unmapped', isHidden: false },
-  { workspaceId: 'ws-2', workspaceName: 'DXP Lab', groupId: 'g-1', groupName: 'Members', teamName: 'Experience', origin: 'inferred', isHidden: false },
-  { workspaceId: 'ws-3', workspaceName: 'PREPROD', groupId: 'g-3', groupName: 'Viewer', teamName: 'Hidden', origin: 'explicit', isHidden: true },
+  { workspaceId: 'ws-1', workspaceName: 'Comcast', groupId: 'g-1', groupName: 'BnD', memberCount: 0, teamName: null, origin: 'unmapped', isHidden: false },
+  { workspaceId: 'ws-2', workspaceName: 'DXP Lab', groupId: 'g-1', groupName: 'Members', memberCount: 1, teamName: 'Experience', origin: 'inferred', isHidden: false },
+  { workspaceId: 'ws-3', workspaceName: 'PREPROD', groupId: 'g-3', groupName: 'Viewer', memberCount: 12, teamName: 'Hidden', origin: 'explicit', isHidden: true },
 ];
 
 describe('funding groups hierarchy', () => {

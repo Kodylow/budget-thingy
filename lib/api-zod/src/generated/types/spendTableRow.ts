@@ -5,12 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { SpendPersonWorkspace } from './spendPersonWorkspace';
 import type { SpendTableRowKind } from './spendTableRowKind';
 import type { SpendTableRowLimitObservationStatus } from './spendTableRowLimitObservationStatus';
 import type { SpendTableRowLimitState } from './spendTableRowLimitState';
 
 export interface SpendTableRow {
   id: string;
+  /** Stable user identity for person rows. */
+  userId?: string;
   kind: SpendTableRowKind;
   name: string;
   /** @nullable */
@@ -59,4 +62,6 @@ export interface SpendTableRow {
   sharedPool: boolean;
   /** Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows. */
   sourceGroupIds?: string[];
+  /** Workspace-qualified spend and limit facts for person rows. */
+  workspaces?: SpendPersonWorkspace[];
 }

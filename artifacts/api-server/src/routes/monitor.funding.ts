@@ -69,12 +69,22 @@ function fundingInventory(
       const policyTeamName = teamName ??
         inferred.byRoleGroupId.get(group.id) ??
         null;
+      const roleGroup = configuredAccount.roleGroupsById.get(group.id);
+      const memberCount = !directory.groupMembers.has(group.id) || !roleGroup
+        ? null
+        : [...roleGroup.members.values()]
+          .filter((member) => {
+            const membership = member.workspaces.get(group.workspaceId);
+            return membership !== undefined && !membership.isDisabled;
+          })
+          .length;
       return {
         workspaceId: group.workspaceId,
         workspaceName:
           directory.workspaces.get(group.workspaceId)?.name ?? group.workspaceId,
         groupId: group.id,
         groupName: group.name,
+        memberCount,
         teamName,
         origin: override
           ? override.teamName === null ? "unmapped" as const : "explicit" as const

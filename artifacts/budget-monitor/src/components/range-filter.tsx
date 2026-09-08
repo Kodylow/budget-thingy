@@ -1,53 +1,28 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
 import { useRange } from '@/components/range-context';
 import { CalendarIcon } from 'lucide-react';
-import { isValidCustomRange, type RangeSelection } from '@/lib/range-selection';
-import { Button } from '@/components/ui/button';
+import { type RangeSelection } from '@/lib/range-selection';
 
 const rangeOptions: Array<{ value: RangeSelection; label: string }> = [
-  { value: 'full-term', label: 'Full period' },
+  { value: 'full-term', label: 'Full term' },
   { value: 'billing', label: 'Billing period' },
-  { value: 'mtd', label: 'Month to date' },
-  { value: 'ytd', label: 'Year to date' },
-  { value: 'custom', label: 'Custom range' },
 ];
 
 export function RangeFilter({
   selectedLabel,
-  allowedSelections,
 }: {
   selectedLabel?: string;
-  allowedSelections?: RangeSelection[];
 }) {
   const {
     rangeSelection,
     setRangeSelection,
-    startDate,
-    endDate,
-    setCustomRange,
   } = useRange();
-  const [draftStartDate, setDraftStartDate] = useState(startDate || '');
-  const [draftEndDate, setDraftEndDate] = useState(endDate || '');
-
-  useEffect(() => {
-    setDraftStartDate(startDate || '');
-    setDraftEndDate(endDate || '');
-  }, [startDate, endDate]);
-
-  const validDraft = isValidCustomRange(draftStartDate, draftEndDate);
-  const options = allowedSelections
-    ? rangeOptions.filter(({ value }) => allowedSelections.includes(value))
-    : rangeOptions;
-  const selectedValue = options.some(({ value }) => value === rangeSelection)
-    ? rangeSelection
-    : options[0]?.value;
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0">
       <Select
-        value={selectedValue}
+        value={rangeSelection}
         onValueChange={(val: string) => setRangeSelection(val as RangeSelection)}
       >
         <SelectTrigger
@@ -63,42 +38,9 @@ export function RangeFilter({
           </div>
         </SelectTrigger>
         <SelectContent>
-          {options.map(({ value, label }) => <SelectItem key={value} value={value}>{allowedSelections && value === 'full-term' ? 'Full term' : label}</SelectItem>)}
+          {rangeOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
         </SelectContent>
       </Select>
-
-      {selectedValue === 'custom' && (
-        <form
-          className="min-w-0 w-full sm:w-auto"
-          aria-label="Custom reporting period"
-          onSubmit={event => {
-            event.preventDefault();
-            if (validDraft) setCustomRange(draftStartDate, draftEndDate);
-          }}
-        >
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 sm:flex sm:flex-nowrap sm:py-0 min-w-0 w-full sm:w-auto shrink">
-          <Input
-            type="date"
-            required
-            aria-label="Reporting start date"
-            value={draftStartDate}
-            onChange={e => setDraftStartDate(e.target.value)}
-            className="h-9 w-full min-w-0 border-0 p-0 text-base shadow-none focus-visible:ring-0 bg-transparent sm:h-6 sm:w-32 sm:min-w-[110px] sm:text-xs"
-          />
-          <span className="text-muted-foreground text-[10px] uppercase font-semibold shrink-0">to</span>
-          <Input
-            type="date"
-            required
-            aria-label="Reporting end date"
-            value={draftEndDate}
-            onChange={e => setDraftEndDate(e.target.value)}
-            className="h-9 w-full min-w-0 border-0 p-0 text-base shadow-none focus-visible:ring-0 bg-transparent sm:h-6 sm:w-32 sm:min-w-[110px] sm:text-xs"
-          />
-          <Button type="submit" size="sm" disabled={!validDraft} className="col-span-3 h-8 sm:ml-1">Apply</Button>
-        </div>
-        {!validDraft && <p className="mt-1 text-xs text-muted-foreground">Choose an ordered date range of at most 400 days.</p>}
-        </form>
-      )}
     </div>
   );
 }

@@ -19,7 +19,10 @@ const dayNumber = (date: string) => Math.floor(utcDate(date).getTime() / 86_400_
 const dateLabel = (date: string | number) => (typeof date === 'number' ? new Date(date * 86_400_000) : utcDate(date)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 const axisMoney = (value: number) => value >= 1000 ? `$${Math.round(value / 1000)}k` : `$${Math.round(value)}`;
 
-export function trajectoryChartData(tracking: TeamBudgetTracking) {
+export function trajectoryChartData(tracking: TeamBudgetTracking | Pick<TeamBudgetTracking,
+  'benchmarkEligible' | 'comparisonsMatchBudgetWindow' | 'periodStart' | 'periodEnd' |
+  'allocationUsd' | 'reportingStart' | 'reportingEnd' | 'asOf' | 'points'
+>) {
   const benchmark = tracking.benchmarkEligible &&
     tracking.comparisonsMatchBudgetWindow === true &&
     tracking.periodStart &&

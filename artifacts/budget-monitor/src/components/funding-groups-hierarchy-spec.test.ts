@@ -9,6 +9,14 @@ describe('funding group mapping interaction safety', () => {
     expect(source).toContain('Workspace ID');
     expect(source).toContain('Group ID');
     expect(source).toContain('total through {allocationYear}');
+    expect(source).toContain("group.memberCount === 1 ? 'person' : 'people'");
+  });
+
+  it('provides an inline, accessible destination selector that starts in review', () => {
+    expect(source).toContain('data-testid="select-funding-group-team"');
+    expect(source).toContain('Budgeted team for ${group.groupName} in ${group.workspaceName}');
+    expect(source).toContain('initialDestination');
+    expect(source).toContain("setStep('review')");
   });
 
   it('captures a revision for review rather than reading a changing prop at save time', () => {

@@ -144,26 +144,29 @@ function usePreviewOptions(canPreviewRbac: boolean, isPreviewing: boolean, isOpe
 
 function getNavSections(
   capabilities: ReturnType<typeof useAuthContext>['capabilities'],
-  role: ReturnType<typeof useAuthContext>['role']
+  role: ReturnType<typeof useAuthContext>['role'],
+  email?: string | null,
 ) {
+  const canSeeSpend = role === 'account' ||
+    (role !== null && role !== 'denied' && email?.trim().toLowerCase() === 'kody.low@repl.it');
   return [
     {
       label: 'Spend monitoring',
       id: 'spend-monitoring',
       items: [
         { path: '/', label: 'Home', icon: LayoutDashboard, show: true, testId: 'nav-dashboard' },
-        { path: '/org-insights', label: 'Org Insights', icon: Building2, show: capabilities.canViewAccountUsage === true, testId: 'nav-org-insights' },
         { path: '/my-team', label: 'My Team', icon: Users, show: role !== 'denied' && role !== null, testId: 'nav-my-team' },
         { path: '/spend?tab=projects&viewScope=my', label: 'My Projects', icon: FolderCode, show: true, testId: 'nav-my-projects' },
-        { path: '/spend', label: 'Spend', icon: WalletCards, show: isAccountAdminOrManager(role), testId: 'nav-spend' },
+        { path: '/org-insights', label: 'Org Insights', icon: Building2, show: capabilities.canViewAccountUsage === true, testId: 'nav-org-insights' },
+        { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canViewAccountUsage, testId: 'nav-allocations' },
+        { path: '/limits', label: 'Limits', icon: ShieldCheck, show: capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
       ],
     },
     {
       label: 'Management',
       id: 'management-admin',
       items: [
-        { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canViewAccountUsage, testId: 'nav-allocations' },
-        { path: '/limits', label: 'Usage Limits', icon: ShieldCheck, show: capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
+        { path: '/spend', label: 'Spend', icon: WalletCards, show: canSeeSpend, testId: 'nav-spend' },
         { path: '/alerts', label: 'Email activity', icon: Bell, show: role !== 'member' && role !== 'denied' && role !== null, testId: 'nav-alerts' },
         { path: '/access', label: 'Access', icon: Users, show: capabilities.canManageAccess, testId: 'nav-access' },
         { path: '/settings', label: 'Settings', icon: Settings, show: capabilities.canManageSystem || capabilities.canManageNotifications, testId: 'nav-settings' },
@@ -180,10 +183,6 @@ function getNavSections(
     ...section,
     items: section.items.filter((item) => item.show),
   })).filter((section) => section.items.length > 0);
-}
-
-function isAccountAdminOrManager(role: ReturnType<typeof useAuthContext>['role']): boolean {
-  return role === 'account' || role === 'workspace_admin' || role === 'team_admin';
 }
 
 function getDisplayName(user: ReturnType<typeof useAuthContext>['user']): string {
@@ -281,9 +280,9 @@ function MobileTopBar({ isOpen, open }: Pick<MobileNavigation, 'isOpen' | 'open'
 }
 
 function Navigation({ location }: { location: string }) {
-  const { capabilities, role } = useAuthContext();
+  const { capabilities, role, user } = useAuthContext();
   const search = useSearch();
-  const sections = getNavSections(capabilities, role);
+  const sections = getNavSections(capabilities, role, user?.email);
 
   return (
     <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
@@ -631,9 +630,9 @@ function DesktopIdentityMenu() {
 }
 
 function DesktopTopBar({ location }: { location: string }) {
-  const { capabilities, role } = useAuthContext();
+  const { capabilities, role, user } = useAuthContext();
   const search = useSearch();
-  const sections = getNavSections(capabilities, role);
+  const sections = getNavSections(capabilities, role, user?.email);
 
   const primarySection = sections.find(s => s.label === 'Spend monitoring');
   const managementSection = sections.find(s => s.label === 'Management');
@@ -701,10 +700,10 @@ function DesktopTopBar({ location }: { location: string }) {
               <DropdownMenuLabel className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Management</DropdownMenuLabel>
               {managementSection.items.map(item => {
                 const Icon = item.icon;
-                const isActive = location === item.path;
+                const isActive = reportingNavigationKey(location, search) === item.path;
                 return (
                   <DropdownMenuItem asChild key={item.path}>
-                    <Link href={item.path} className="flex items-center w-full cursor-pointer" data-testid={item.testId} aria-current={isActive ? 'page' : undefined}>
+                    <Link href={reportingNavigationHref(item.path, search)} className="flex items-center w-full cursor-pointer" data-testid={item.testId} aria-current={isActive ? 'page' : undefined}>
                       <Icon className="mr-2 h-4 w-4 text-muted-foreground" />
                       {item.label}
                     </Link>

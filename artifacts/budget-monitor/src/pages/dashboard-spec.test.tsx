@@ -24,16 +24,16 @@ const mockCapabilities = (overrides: Partial<AuthCapabilities> = {}): AuthCapabi
 describe('Dashboard and Spend Spec Behaviors', () => {
   it('sends one generated dashboard request with URL-owned reporting controls', () => {
     expect(dashboardRequestParams({
-      rangeType: 'custom',
-      startDate: '2026-09-01',
-      endDate: '2026-09-03',
+      rangeType: 'billing',
+      startDate: undefined,
+      endDate: undefined,
       granularity: 'day',
       trendMode: 'cumulative',
       viewScope: 'all_authorized',
     })).toEqual({
-      rangeType: 'custom',
-      startDate: '2026-09-01',
-      endDate: '2026-09-03',
+      rangeType: 'billing',
+      startDate: undefined,
+      endDate: undefined,
       granularity: 'day',
       trendMode: 'cumulative',
       viewScope: 'all_authorized',
@@ -45,14 +45,12 @@ describe('Dashboard and Spend Spec Behaviors', () => {
 
   it('preserves dashboard range, trend, and scope when opening Spend', () => {
     const href = dashboardSpendHref(
-      '?rangeType=custom&startDate=2026-09-01&endDate=2026-09-03&viewScope=managed&granularity=week&trendMode=period',
+      '?rangeType=billing&viewScope=managed&granularity=week&trendMode=period',
       { view: 'groups', search: 'Platform' },
     );
     const url = new URL(href, 'https://example.test');
     expect(Object.fromEntries(url.searchParams)).toMatchObject({
-      rangeType: 'custom',
-      startDate: '2026-09-01',
-      endDate: '2026-09-03',
+      rangeType: 'billing',
       viewScope: 'managed',
       granularity: 'week',
       trendMode: 'period',
@@ -116,13 +114,6 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     expect(source).toContain("max-w-[200px]");
   });
 
-  it('initializes valid dates before requesting a custom range', () => {
-    const source = readFileSync(new URL('../components/range-context.tsx', import.meta.url), 'utf8');
-    expect(source).toContain("selection === 'custom'");
-    expect(source).toContain("rangeSelection === 'custom' ? safeCustomRange.startDate : urlStartDate");
-    expect(source).toContain("rangeSelection === 'custom' ? safeCustomRange.endDate : urlEndDate");
-  });
-
   it('gates settings visibility using canManageSystem/canManageNotifications, not canManageAccess', () => {
     const sectionsAccessOnly = getNavSections(mockCapabilities({ canManageAccess: true }), 'account');
     expect(sectionsAccessOnly.find(s => s.label === 'Management')?.items.find(i => i.path === '/settings')).toBeUndefined();
@@ -153,15 +144,45 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     ]));
   });
 
-  it.each(['account', 'workspace_admin', 'team_admin'] as const)(
-    'keeps the Spend tab for %s',
+  it.each(['member', 'workspace_admin', 'team_admin'] as const)(
+    'hides the Spend tab for %s without the email exception',
     role => {
-      const items = getNavSections(mockCapabilities(), role).flatMap(section => section.items);
+      const items = getNavSections(mockCapabilities(), role, 'other@example.com').flatMap(section => section.items);
+      expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
+      expect(items.some(item => item.testId === 'nav-my-projects')).toBe(true);
+    },
+  );
+
+  it('keeps the Spend tab for account admins without an email exception', () => {
+    const items = getNavSections(mockCapabilities(), 'account').flatMap(section => section.items);
+    expect(items.some(item => item.testId === 'nav-spend')).toBe(true);
+  });
+
+  it.each(['kody.low@repl.it', ' KODY.LOW@REPL.IT '])(
+    'shows the Spend tab for the exact authorized email exception: %s',
+    email => {
+      const items = getNavSections(mockCapabilities(), 'member', email).flatMap(section => section.items);
       expect(items.some(item => item.testId === 'nav-spend')).toBe(true);
     },
   );
 
-  it('keeps spend monitoring primary and planning administration secondary', () => {
+  it.each(['kody.low@repl.it.example.com', 'someone+kody.low@repl.it', '', null])(
+    'does not show the Spend tab for a nonmatching email: %s',
+    email => {
+      const items = getNavSections(mockCapabilities(), 'member', email).flatMap(section => section.items);
+      expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
+    },
+  );
+
+  it.each(['denied', null] as const)(
+    'does not show the Spend tab for an unauthorized role: %s',
+    role => {
+      const items = getNavSections(mockCapabilities(), role, 'kody.low@repl.it').flatMap(section => section.items);
+      expect(items.some(item => item.testId === 'nav-spend')).toBe(false);
+    },
+  );
+
+  it('uses the requested admin navigation order and keeps Spend under Management', () => {
     const sections = getNavSections(mockCapabilities({
       canViewAccountUsage: true,
       canEditAllocations: true,
@@ -169,15 +190,15 @@ describe('Dashboard and Spend Spec Behaviors', () => {
     }), 'account');
     expect(sections[0].items.map(item => [item.path, item.label])).toEqual([
       ['/', 'Home'],
-      ['/org-insights', 'Org Insights'],
       ['/my-team', 'My Team'],
       ['/spend?tab=projects&viewScope=my', 'My Projects'],
-      ['/spend', 'Spend'],
+      ['/org-insights', 'Org Insights'],
+      ['/allocations', 'Budget allocations'],
+      ['/limits', 'Limits'],
     ]);
     expect(sections.find(s => s.label === 'Management')?.items)
       .toEqual(expect.arrayContaining([
-        expect.objectContaining({ path: '/allocations', label: 'Budget allocations' }),
-        expect.objectContaining({ path: '/limits', label: 'Limits' }),
+        expect.objectContaining({ path: '/spend', label: 'Spend' }),
         expect.objectContaining({ path: '/alerts', label: 'Email activity' }),
       ]));
   });
@@ -187,7 +208,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
       mockCapabilities({ canViewAccountUsage: true }),
       'account',
     );
-    expect(readOnlyAccount.find(s => s.label === 'Management')?.items)
+    expect(readOnlyAccount.find(s => s.label === 'Spend monitoring')?.items)
       .toContainEqual(expect.objectContaining({
         path: '/allocations',
         label: 'Budget allocations',

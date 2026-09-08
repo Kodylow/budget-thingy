@@ -121,7 +121,7 @@ function OverviewHeader({
         </div>
         <div className="space-y-1">
           <span className="block text-xs font-medium text-muted-foreground">Period</span>
-          <RangeFilter selectedLabel={selectedPeriodLabel} allowedSelections={['full-term', 'billing']} />
+          <RangeFilter selectedLabel={selectedPeriodLabel} />
         </div>
       </div>
     </div>
@@ -261,7 +261,8 @@ export default function Home() {
   const selectedBudgetTeamIds = new Set(selectedWorkspace?.budgetTeams.map((team) => team.poolId) ?? []);
   const teams = ((teamBudgetsQuery.data?.budgets ?? []) as CanonicalTeamBudget[])
     .filter((team) => Boolean(team.poolId) && selectedBudgetTeamIds.has(team.poolId));
-  const cycles = billingCyclesQuery.data?.cycles ?? [];
+  const cycles = (billingCyclesQuery.data?.cycles ?? [])
+    .filter((cycle) => rangeType === 'billing' || cycle.key === 'current');
   const hasPersonalComparison = cycles.some((cycle) => cycle.points.some((point) => Number.isFinite(point.personalSpendUsd)));
   const showPersonalComparison = hasPersonalComparison || billingCyclesQuery.isLoading || billingCyclesQuery.isError;
   const selectedCycle = cycles.find((cycle) => cycle.key === 'current');

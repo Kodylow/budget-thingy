@@ -20,6 +20,7 @@ import {
   prepareScopedAccounting,
   rowsForView,
   type SpendRow,
+  type SpendPersonWorkspace,
   type TableView,
 } from "../services/scoped-accounting";
 import type { Authorization } from "../lib/authz";
@@ -53,6 +54,75 @@ function compareRows(sort: string, a: SpendRow, b: SpendRow): number {
       b.spendUsd - a.spendUsd || a.name.localeCompare(b.name);
   }
   return b.spendUsd - a.spendUsd || a.name.localeCompare(b.name);
+}
+
+function personWorkspace(row: SpendRow): SpendPersonWorkspace {
+  return {
+    workspaceId: row.workspaceId!,
+    workspaceName: row.workspaceName,
+    spendUsd: row.spendUsd,
+    agentSpendUsd: row.agentSpendUsd,
+    otherServicesUsd: row.otherServicesUsd,
+    allocationUsd: row.allocationUsd,
+    remainingUsd: row.remainingUsd,
+    percentUsed: row.percentUsed,
+    currentCycleAgentSpendUsd: row.currentCycleAgentSpendUsd ?? null,
+    currentCycleRemainingUsd: row.currentCycleRemainingUsd ?? null,
+    currentCyclePercentUsed: row.currentCyclePercentUsed ?? null,
+    limitState: row.limitState!,
+    limitObservationStatus: row.limitObservationStatus,
+    usageObserved: row.usageObserved,
+  };
+}
+
+export function projectPeopleRows(rows: readonly SpendRow[]): SpendRow[] {
+  const grouped = new Map<string, SpendRow[]>();
+  for (const row of rows) {
+    const userId = row.userId;
+    if (!userId || row.workspaceId === null) continue;
+    const current = grouped.get(userId) ?? [];
+    current.push(row);
+    grouped.set(userId, current);
+  }
+  return [...grouped.entries()].map(([userId, memberships]) => {
+    memberships.sort((a, b) =>
+      (a.workspaceName ?? a.workspaceId!).localeCompare(
+        b.workspaceName ?? b.workspaceId!));
+    const first = memberships[0]!;
+    const workspaces = memberships.map(personWorkspace);
+    if (memberships.length === 1) {
+      return { ...first, id: `person:${userId}`, userId, workspaces };
+    }
+    const currentKnown = memberships.every(
+      (row) => row.currentCycleAgentSpendUsd != null);
+    return {
+      ...first,
+      id: `person:${userId}`,
+      userId,
+      workspaceId: null,
+      workspaceName: memberships
+        .map((row) => row.workspaceName ?? row.workspaceId!)
+        .join(", "),
+      spendUsd: memberships.reduce((sum, row) => sum + row.spendUsd, 0),
+      agentSpendUsd: memberships.reduce((sum, row) => sum + row.agentSpendUsd, 0),
+      otherServicesUsd: memberships.reduce(
+        (sum, row) => sum + row.otherServicesUsd, 0),
+      allocationUsd: null,
+      remainingUsd: null,
+      percentUsed: null,
+      currentCycleAgentSpendUsd: currentKnown
+        ? memberships.reduce(
+          (sum, row) => sum + row.currentCycleAgentSpendUsd!, 0)
+        : null,
+      currentCycleRemainingUsd: null,
+      currentCyclePercentUsed: null,
+      status: "per_workspace",
+      limitState: "not_applicable",
+      limitObservationStatus: "not_applicable",
+      usageObserved: memberships.some((row) => row.usageObserved),
+      workspaces,
+    };
+  });
 }
 
 export function matchesSpendStatus(row: SpendRow, status: string): boolean {
@@ -116,30 +186,63 @@ export async function buildSpendTablePayload(
     await buildScopedAccounting(authz, query, view, prepared);
   const allRows = rowsForView(result, view).filter((row) =>
     ownerId === undefined || row.ownerId === ownerId);
-  const filtered = filterAndSortSpendRows(allRows, query);
+  const workspaceId = String(query["workspaceId"] ?? "");
+  const projectionRows = view === "people" && workspaceId
+    ? allRows.filter((row) => row.workspaceId === workspaceId)
+    : allRows;
+  const rawFiltered = filterAndSortSpendRows(projectionRows, query);
+  const filteredUserIds = view === "people"
+    ? new Set(rawFiltered.map((row) => row.userId))
+    : null;
+  const presentedAllRows = view === "people"
+    ? projectPeopleRows(projectionRows)
+    : projectionRows;
+  const filtered = view === "people"
+    ? projectPeopleRows(projectionRows.filter(
+      (row) => filteredUserIds!.has(row.userId)))
+    : rawFiltered;
+  filtered.sort((a, b) => compareRows(String(query["sort"] ?? "status"), a, b));
   const page = Number(query["page"] ?? 1);
   const pageSize = Number(query["pageSize"] ?? 25);
   const rows = pageSpendRows(filtered, page, pageSize);
   const statuses: Record<string, number> = {};
   const workspaces = new Map<string, { id: string; name: string; count: number }>();
+  const statusPeople = new Map<string, Set<string>>();
+  const workspacePeople = new Map<string, Set<string>>();
   for (const row of allRows) {
-    statuses[row.status] = (statuses[row.status] ?? 0) + 1;
+    if (view === "people" && row.userId) {
+      const people = statusPeople.get(row.status) ?? new Set<string>();
+      people.add(row.userId);
+      statusPeople.set(row.status, people);
+    } else {
+      statuses[row.status] = (statuses[row.status] ?? 0) + 1;
+    }
     if (row.workspaceId) {
       const current = workspaces.get(row.workspaceId) ?? {
         id: row.workspaceId,
         name: row.workspaceName ?? row.workspaceId,
         count: 0,
       };
-      current.count += 1;
+      if (view === "people" && row.userId) {
+        const people = workspacePeople.get(row.workspaceId) ?? new Set<string>();
+        people.add(row.userId);
+        workspacePeople.set(row.workspaceId, people);
+      } else {
+        current.count += 1;
+      }
       workspaces.set(row.workspaceId, current);
     }
+  }
+  for (const [status, people] of statusPeople) statuses[status] = people.size;
+  for (const [workspaceId, people] of workspacePeople) {
+    workspaces.get(workspaceId)!.count = people.size;
   }
   const allocationUsd = view === "pools"
     ? filtered.reduce((sum, row) => sum + (row.allocationUsd ?? 0), 0)
     : 0;
   return {
     view, scope: result.scope, period: result.period, rows, page, pageSize,
-    totalRows: allRows.length, filteredRows: filtered.length,
+    totalRows: presentedAllRows.length, filteredRows: filtered.length,
     totals: {
       spendUsd: filtered.reduce((sum, row) => sum + row.spendUsd, 0),
       agentSpendUsd: filtered.reduce((sum, row) => sum + row.agentSpendUsd, 0),
@@ -173,7 +276,7 @@ export async function buildSpendTablePayload(
       })()
       : undefined,
     staleEvaluation: intelligence?.staleEvaluation,
-    filteredAllRows: filtered,
+    filteredAllRows: view === "people" ? rawFiltered : filtered,
   };
 }
 
@@ -327,8 +430,9 @@ function createCsvHandler(
       );
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="spend-${view}.csv"`);
-      res.setHeader("X-Filtered-Rows", String(payload.filteredRows));
-      res.setHeader("X-Total-Spend-Usd", String(payload.totals.spendUsd));
+      res.setHeader("X-Filtered-Rows", String(payload.filteredAllRows.length));
+      res.setHeader("X-Total-Spend-Usd", String(payload.filteredAllRows.reduce(
+        (sum, row) => sum + row.spendUsd, 0)));
       res.setHeader("X-Generation-Id", payload.metadata.generationId);
       res.setHeader("X-Data-Status", payload.metadata.status);
       res.setHeader("X-Data-As-Of", payload.metadata.dataAsOf ?? "");

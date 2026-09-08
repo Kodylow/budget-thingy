@@ -61,6 +61,7 @@ import {
 } from '@/lib/spend-presentation';
 import { DeploymentChip, DeploymentLink, StaleSpendingChip } from '@/components/project-observation';
 import { BudgetTeamDetail } from '@/pages/budget-team-detail';
+import { PersonWorkspaceDetails } from '@/components/person-workspace-details';
 
 export function getAvailableSpendViews({
   isAccountAdmin,
@@ -845,7 +846,7 @@ function GenericSpendTable({
                 } else if (col === 'name' && row.kind === 'person') {
                     displayVal = (
                       <div className="flex items-center gap-2 min-w-0">
-                        <Link href={spendDetailHref(`/users/${row.id.split(':').pop()}`, window.location.pathname + window.location.search)} className="font-medium hover:text-primary hover:underline transition-colors truncate">
+                         <Link href={spendDetailHref(`/users/${row.userId ?? row.id.split(':').pop()}`, window.location.pathname + window.location.search)} className="font-medium hover:text-primary hover:underline transition-colors truncate">
                           {val}
                         </Link>
                       </div>
@@ -861,7 +862,7 @@ function GenericSpendTable({
                              {val}
                            </Link>
                          ) : row.kind === 'person' ? (
-                           <Link href={spendDetailHref(`/users/${row.id.split(':').pop()}`, window.location.pathname + window.location.search)}>
+                           <Link href={spendDetailHref(`/users/${row.userId ?? row.id.split(':').pop()}`, window.location.pathname + window.location.search)}>
                              {val}
                            </Link>
                          ) : row.kind === 'pool' ? (
@@ -877,7 +878,7 @@ function GenericSpendTable({
                            )
                          ) : val}
                        </span>
-                       {row.workspaceName && !columns.includes('workspaceName') && (
+                       {row.workspaceName && !columns.includes('workspaceName') && (row.kind !== 'person' || (row.workspaces?.length ?? 0) <= 1) && (
                          <span className="text-[10px] bg-secondary/10 text-secondary border border-secondary/25 px-1.5 py-0.5 rounded-full shrink-0">
                            {row.workspaceName}
                          </span>
@@ -897,9 +898,16 @@ function GenericSpendTable({
                    );
                 }
 
+                const hasWorkspaceLimits = row.kind === 'person' && (row.workspaces?.length ?? 0) > 1;
+                if (col === 'name' && hasWorkspaceLimits) {
+                  displayVal = <div>{displayVal}<PersonWorkspaceDetails workspaces={row.workspaces!} /></div>;
+                }
+
                 return (
                   <TableCell key={col} className={`${isNumeric ? 'text-right font-mono' : ''} ${col === 'spendUsd' ? 'font-medium' : ''}`}>
-                     {col === 'deployments' && row.kind === 'project' ? (
+                     {hasWorkspaceLimits && ['allocationUsd', 'remainingUsd', 'percentUsed', 'currentCycleRemainingUsd', 'currentCyclePercentUsed', 'limitState', 'limitObservationStatus'].includes(col) ? (
+                       <span className="text-xs text-muted-foreground">Per workspace</span>
+                     ) : col === 'deployments' && row.kind === 'project' ? (
                        <div className="flex flex-col gap-1 items-start justify-center">
                           {(row as SpendProjectRow).deploymentAvailability === 'unavailable'
                             ? <span className="text-xs text-muted-foreground">Deployment observation unavailable</span>

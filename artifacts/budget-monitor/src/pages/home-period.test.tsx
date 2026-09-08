@@ -43,8 +43,8 @@ vi.mock('@/components/range-context', () => ({
 }));
 
 vi.mock('@/components/range-filter', () => ({
-  RangeFilter: ({ selectedLabel, allowedSelections }: { selectedLabel: string; allowedSelections?: string[] }) => (
-    <output aria-label="Selected range">{selectedLabel} · Full term · {allowedSelections?.join(',')}</output>
+  RangeFilter: ({ selectedLabel, ...props }: { selectedLabel: string }) => (
+    <output aria-label="Selected range" data-props={Object.keys(props).join(',')}>{selectedLabel} · Full term · Billing period</output>
   ),
 }));
 
@@ -122,7 +122,12 @@ vi.mock('./home-components/budget-trajectory', async () => {
 });
 
 vi.mock('./home-components/spend-story-chart', () => ({
-  SpendStoryChart: ({ scope }: any) => <div aria-label={`${scope} spend story`} />,
+  SpendStoryChart: ({ cycles, scope }: any) => (
+    <div
+      aria-label={`${scope} spend story`}
+      data-cycle-keys={cycles.map((cycle: any) => cycle.key).join(',')}
+    />
+  ),
 }));
 
 vi.mock('./dashboard-chart', () => ({
@@ -271,11 +276,13 @@ describe('Home selected-period regressions', () => {
   });
 
   it('offers only full-term and billing-period choices on Home', () => {
-    const range = renderHome().querySelector('[aria-label="Selected range"]')?.textContent;
+    const filter = renderHome().querySelector('[aria-label="Selected range"]');
+    const range = filter?.textContent;
     expect(range).toContain('Full term');
-    expect(range).toContain('full-term,billing');
+    expect(range).toContain('Billing period');
     expect(range).not.toContain('mtd');
     expect(range).not.toContain('custom');
+    expect(filter?.getAttribute('data-props')).toBe('');
   });
 
   it('requests the canonical annual budget window and keeps its benchmark visible with partial usage', () => {
@@ -426,6 +433,49 @@ describe('Home selected-period regressions', () => {
     expect(personalStory?.compareDocumentPosition(trajectory!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(trajectory?.parentElement?.className).toContain('lg:col-span-2');
     expect(body.querySelector('[aria-label$="team budget"]')).toBeNull();
+  });
+
+  it('passes only the current cycle to My spend for full-term', () => {
+    mocks.range = { rangeType: 'full-term' };
+    mocks.comparison.mockReturnValue(query({
+      hasTeams: true,
+      cycles: [
+        { key: 'current', label: 'Full term', points: [{ personalSpendUsd: 5 }] },
+        { key: 'previous', label: 'Previous', points: [{ personalSpendUsd: 4 }] },
+        { key: 'twoAgo', label: 'Two ago', points: [{ personalSpendUsd: 3 }] },
+      ],
+    }));
+
+    const story = renderHome().querySelector('[aria-label="personal spend story"]');
+    expect(story?.getAttribute('data-cycle-keys')).toBe('current');
+  });
+
+  it('passes all known comparison cycles to My spend for billing', () => {
+    mocks.range = { rangeType: 'billing' };
+    mocks.comparison.mockReturnValue(query({
+      hasTeams: true,
+      cycles: [
+        { key: 'current', label: 'Current', points: [{ personalSpendUsd: 0 }] },
+        { key: 'previous', label: 'Previous', points: [{ personalSpendUsd: 4 }] },
+        { key: 'twoAgo', label: 'Two ago', points: [{ personalSpendUsd: 3 }] },
+      ],
+    }));
+
+    const story = renderHome().querySelector('[aria-label="personal spend story"]');
+    expect(story?.getAttribute('data-cycle-keys')).toBe('current,previous,twoAgo');
+  });
+
+  it('hides full-term My spend when current is empty even if a prior cycle is known', () => {
+    mocks.range = { rangeType: 'full-term' };
+    mocks.comparison.mockReturnValue(query({
+      hasTeams: true,
+      cycles: [
+        { key: 'current', label: 'Full term', points: [{ personalSpendUsd: null }] },
+        { key: 'previous', label: 'Previous', points: [{ personalSpendUsd: 4 }] },
+      ],
+    }));
+
+    expect(renderHome().querySelector('[aria-label="personal spend story"]')).toBeNull();
   });
 
   it('removes the lower comparison, trend, and activity cards', () => {

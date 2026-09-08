@@ -93,6 +93,7 @@ export function computeProjectMetadataRevision(
 
 export interface SpendRow {
   id: string;
+  userId?: string;
   projectId?: string;
   kind: "pool" | "group" | "person" | "project" | "unattributed" | "reconciliation";
   name: string;
@@ -121,6 +122,7 @@ export interface SpendRow {
   usageObserved: boolean;
   isPublished?: boolean | null;
   sourceGroupIds?: string[];
+  workspaces?: SpendPersonWorkspace[];
   ownerId?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -138,6 +140,23 @@ export interface SpendRow {
   currentMonthSpendUsd?: number | null;
   currentMonthUsageAvailability?: "complete" | "partial" | "unavailable";
   staleButSpending?: boolean;
+}
+
+export interface SpendPersonWorkspace {
+  workspaceId: string;
+  workspaceName: string | null;
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  allocationUsd: number | null;
+  remainingUsd: number | null;
+  percentUsed: number | null;
+  currentCycleAgentSpendUsd: number | null;
+  currentCycleRemainingUsd: number | null;
+  currentCyclePercentUsed: number | null;
+  limitState: SpendRow["limitState"];
+  limitObservationStatus: SpendRow["limitObservationStatus"];
+  usageObserved: boolean;
 }
 
 export interface StaleSpendEvaluation {
@@ -1574,6 +1593,7 @@ async function buildDetailProjection(
         const usageObserved = observedWorkspaces.has(workspaceId);
         peopleRows.push({
           id: `person:${workspaceId}:${userId}`,
+          userId,
           kind: "person",
           name: member?.name ?? member?.username ?? userId,
           workspaceId,

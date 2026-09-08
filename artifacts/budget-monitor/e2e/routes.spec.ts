@@ -85,6 +85,7 @@ function fundingInventory(revision: string, teamName: string | null = null) {
         workspaceName: 'Smoke Workspace',
         groupId: 'funding-unmapped',
         groupName: 'Executive Group',
+        memberCount: 0,
         teamName,
         origin: teamName === null ? 'unmapped' : 'explicit',
         isHidden: false,
@@ -94,6 +95,7 @@ function fundingInventory(revision: string, teamName: string | null = null) {
         workspaceName: 'Smoke Workspace',
         groupId: 'funding-mapped',
         groupName: 'Smoke Members',
+        memberCount: 3,
         teamName: 'Smoke Team',
         origin: 'inferred',
         isHidden: false,
@@ -1125,10 +1127,10 @@ test.describe('authenticated account route smoke', () => {
   const failures = watchBrowserFailures(page);
     const primaryRoutes = [
       ['nav-dashboard', '/', '[data-testid="text-dashboard-scope"]'],
-      ['nav-spend', '/spend', 'h1:text-is("Spend")'],
       ['nav-limits', '/limits', 'h1:text-is("Limits")'],
     ] as const;
     const menuRoutes = [
+      ['Management', 'nav-spend', '/spend', 'h1:text-is("Spend")'],
       ['Management', 'nav-alerts', '/alerts', '[data-testid="text-alerts-title"]'],
       ['Management', 'nav-settings', '/settings', '[data-testid="text-settings-title"]'],
       ['Management', 'nav-access', '/access', 'h1:text-is("Access")'],
@@ -1156,22 +1158,30 @@ test.describe('authenticated account route smoke', () => {
   });
 
   test('navigation intents preserve reporting range, titles, active state, and management access', async ({ page }) => {
-    const range = 'rangeType=custom&startDate=2026-09-01&endDate=2026-09-04';
+    const range = 'rangeType=billing';
     await page.goto(`/?${range}&viewScope=all_authorized`);
+    await expect(page.locator('header nav a')).toHaveText([
+      'Home', 'My Team', 'My Projects', 'Org Insights', 'Budget allocations', 'Limits',
+    ]);
     await page.getByTestId('nav-my-projects').click();
     await expect(page).toHaveURL(/\/spend\?[^#]*tab=projects/);
     expect(new URL(page.url()).searchParams.get('viewScope')).toBe('my');
-    expect(new URL(page.url()).searchParams.get('startDate')).toBe('2026-09-01');
-    expect(new URL(page.url()).searchParams.get('endDate')).toBe('2026-09-04');
+    expect(new URL(page.url()).searchParams.get('rangeType')).toBe('billing');
     await expect(page.getByRole('heading', { name: 'My Projects', exact: true })).toBeVisible();
     await expect(page.locator('[aria-current="page"]')).toHaveCount(1);
-    await openCompactMenu(page, 'Management');
     await expect(page.getByTestId('nav-allocations')).toBeVisible();
     await expect(page.getByTestId('nav-limits')).toBeVisible();
+    await openCompactMenu(page, 'Management');
+    await expect(page.getByTestId('nav-spend')).toBeVisible();
+    await expect(page.getByTestId('nav-spend')).not.toHaveAttribute('aria-current', 'page');
+    await page.keyboard.press('Escape');
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/?${range}&viewScope=all_authorized`);
     const sheet = await openMobileSheet(page);
+    expect((await sheet.locator('a[data-testid^="nav-"]').allTextContents()).slice(0, 6)).toEqual([
+      'Home', 'My Team', 'My Projects', 'Org Insights', 'Budget allocations', 'Limits',
+    ]);
     await sheet.getByTestId('nav-my-projects').click();
     await expect(page).toHaveURL(/\/spend\?[^#]*tab=projects/);
     await expect(page.getByRole('heading', { name: 'My Projects', exact: true })).toBeVisible();
@@ -1395,17 +1405,12 @@ test('projection keeps partial, unknown, stale, and historical comparisons safe'
   await page.getByTestId('projection-method').locator('summary').click();
   await expect(page.getByText(/stale/i).first()).toBeVisible();
   await expect(page.locator('.budget-meter__projection--green')).toHaveCount(0);
-  await page.goto('/?rangeType=custom&startDate=2026-09-01&endDate=2026-09-04');
-  await page.getByTestId('projection-method').locator('summary').click();
-  await expect(page.getByTestId('text-projected-total')).toHaveText('Unavailable');
-  await expect(page.getByText(/historical reporting selection/i)).toBeVisible();
-  await expect(page.getByText(/remaining-budget or risk comparison/i)).toBeVisible();
 });
 
-test('dashboard and Spend keep one authorized UTC window through drill-through and back', async ({ page }) => {
+test('dashboard and Spend keep one authorized billing period through drill-through and back', async ({ page }) => {
   const observedRequests: string[] = [];
   await mockApi(page, 'account', false, [], observedRequests);
-  await page.goto('/?rangeType=custom&startDate=2026-09-01&endDate=2026-09-04&viewScope=all_authorized');
+  await page.goto('/?rangeType=billing&viewScope=all_authorized');
   await expectReady(page, '[data-testid="text-dashboard-scope"]');
   await expect(page.locator('[data-testid="text-dashboard-scope"]')).toHaveText('Overview');
   await expect(page.locator('[data-testid="text-dashboard-period"]')).toContainText('All authorized usage');
@@ -1421,7 +1426,7 @@ test('dashboard and Spend keep one authorized UTC window through drill-through a
   await expect(page.getByText('Partial usage coverage; missing facts are not zero.', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'e2e/evidence/overview/simplified-overview.png', fullPage: true });
 
-  await page.goto('/spend?rangeType=custom&startDate=2026-09-01&endDate=2026-09-04&viewScope=all_authorized');
+  await page.goto('/spend?rangeType=billing&viewScope=all_authorized');
   await expect(page).toHaveURL(/\/spend\?/);
   await expect(page.getByRole('heading', { name: 'Spend', exact: true })).toBeVisible();
   const spendView = page.getByRole('combobox', { name: 'Spend view' });
@@ -1437,18 +1442,14 @@ test('dashboard and Spend keep one authorized UTC window through drill-through a
   await expect(page.getByText('Showing 1–25 of 125 results')).toBeVisible();
 
   const dashboardRequest = observedRequests.find((request) => request.includes('/api/dashboard?'));
-  expect(dashboardRequest).toContain('rangeType=custom');
-  expect(dashboardRequest).toContain('startDate=2026-09-01');
-  expect(dashboardRequest).toContain('endDate=2026-09-04');
+  expect(dashboardRequest).toContain('rangeType=billing');
   expect(dashboardRequest).toContain('viewScope=all_authorized');
   const spendRequest = observedRequests.find((request) => request.includes('/api/spend/groups?'));
-  expect(spendRequest).toContain('rangeType=custom');
-  expect(spendRequest).toContain('startDate=2026-09-01');
-  expect(spendRequest).toContain('endDate=2026-09-04');
+  expect(spendRequest).toContain('rangeType=billing');
   expect(spendRequest).toContain('viewScope=all_authorized');
 });
 
-test('Settings preserves accounting while a custom range refreshes', async ({ page }) => {
+test('Settings preserves accounting while the reporting period refreshes', async ({ page }) => {
   const observedRequests: string[] = [];
   await mockApi(page, 'account', false, [], observedRequests);
   await page.goto('/settings');
@@ -1462,38 +1463,36 @@ test('Settings preserves accounting while a custom range refreshes', async ({ pa
   expect(initialRequest).toContain('viewScope=all_authorized');
   expect(observedRequests.some((request) => request.includes('/api/summary'))).toBe(false);
 
-  let releaseCustomRequest!: () => void;
-  const customRequestBlocked = new Promise<void>((resolve) => {
-    releaseCustomRequest = resolve;
+  let releaseFullTermRequest!: () => void;
+  const fullTermRequestBlocked = new Promise<void>((resolve) => {
+    releaseFullTermRequest = resolve;
   });
   await page.route('**/api/dashboard?*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.searchParams.get('rangeType') !== 'custom') {
+    if (url.searchParams.get('rangeType') !== 'full-term') {
       await route.fallback();
       return;
     }
     observedRequests.push(`GET ${url.pathname}${url.search}`);
-    await customRequestBlocked;
-    await json(route, dashboardFixture('account', url, 'custom-generation'));
+    await fullTermRequestBlocked;
+    await json(route, dashboardFixture('account', url, 'full-term-generation'));
   });
 
   await page.locator('button[role="combobox"]').filter({ hasText: 'Sep 1–4, 2026' }).click();
-  await page.getByRole('option', { name: 'Custom range' }).click();
+  await page.getByRole('option', { name: 'Full term' }).click();
   await expect(page.locator('[data-testid="internal-spend-accounting"]')).toContainText('$12.00 gross');
   await expect(page.locator('[data-testid="status-settings-accounting-refresh"]')).toContainText(
     'previous successful range remains visible',
   );
-  releaseCustomRequest();
+  releaseFullTermRequest();
   await expect(page.locator('[data-testid="status-settings-accounting-partial"]')).toBeVisible();
   await expect(page.locator('[data-testid="internal-spend-accounting"]')).toContainText(
     'Accounting is unavailable until usage for this reporting range is complete.',
   );
 
-  const customRequest = observedRequests.find((request) =>
-    request.includes('/api/dashboard?') && request.includes('rangeType=custom'));
-  expect(customRequest).toContain('viewScope=all_authorized');
-  expect(customRequest).toContain('startDate=');
-  expect(customRequest).toContain('endDate=');
+  const fullTermRequest = observedRequests.find((request) =>
+    request.includes('/api/dashboard?') && request.includes('rangeType=full-term'));
+  expect(fullTermRequest).toContain('viewScope=all_authorized');
 });
 
 test('closed preview controls and disabled Spend tabs issue no data requests', async ({ page }) => {
@@ -1873,19 +1872,14 @@ test.describe('mobile regression', () => {
     expect(observedRequests.filter((request) => /^(POST|PUT|PATCH|DELETE) /.test(request))).toEqual([]);
   });
 
-  test('Overview custom reporting dates fit at 390x844', async ({ page }) => {
+  test('Overview reporting period selector fits at 390x844', async ({ page }) => {
     const observedRequests: string[] = [];
     await page.setViewportSize({ width: 390, height: 844 });
     await mockApi(page, 'account', false, [], observedRequests);
-    await page.goto('/?rangeType=mtd&viewScope=all_authorized');
+    await page.goto('/?rangeType=full-term&viewScope=all_authorized');
     await expectReady(page, '[data-testid="text-dashboard-scope"]');
     await page.getByRole('combobox', { name: 'Reporting period' }).click();
-    await page.getByRole('option', { name: 'Custom range' }).click();
-    const start = page.getByLabel('Reporting start date');
-    const end = page.getByLabel('Reporting end date');
-    await start.fill('2026-09-01');
-    await end.fill('2026-09-04');
-    await expectPhoneInputFont(page, 'input[aria-label="Reporting start date"]');
+    await expect(page.getByRole('option')).toHaveText(['Full term', 'Billing period']);
     await expectNoDocumentOverflow(page);
     expect(observedRequests.filter((request) => /^(POST|PUT|PATCH|DELETE) /.test(request))).toEqual([]);
   });
@@ -1913,7 +1907,8 @@ test.describe('mobile regression', () => {
     await expectReady(page, '[data-testid="page-team-budgets"]');
     await expect(page.getByText('Unmapped groups', { exact: true }).first()).toBeVisible();
     await expect(page.getByTestId('funding-groups-hierarchy').getByText('Executive Group', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Assign to team', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' }).click();
+    await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
     const mappingDialog = page.getByRole('dialog', { name: 'Assign funding group' });
     await expect(mappingDialog).toContainText('Smoke Workspace');
     await expect(mappingDialog).toContainText('Executive Group');
@@ -2016,14 +2011,14 @@ test.describe('reference-home-org focused mocked pass', () => {
     const observedRequests: string[] = [];
     await mockApi(page, 'account', false, [], observedRequests);
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto('/?rangeType=custom&startDate=2026-09-01&endDate=2026-09-04');
+    await page.goto('/?rangeType=billing');
     await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ })).toBeVisible();
     await expect(page.getByText('My Last 6 Months')).toBeVisible();
     await expect(page.getByText('My Spend Story')).toBeVisible();
     await expect(page.getByTestId('nav-org-insights')).toBeVisible();
     await page.screenshot({ path: 'e2e/evidence/reference-exact/Home-desktop.png' });
     await page.getByTestId('nav-org-insights').click();
-    await expect(page).toHaveURL(/\/org-insights\?.*rangeType=custom/);
+    await expect(page).toHaveURL(/\/org-insights\?.*rangeType=billing/);
     await expect(page.getByRole('heading', { name: 'Org Insights' })).toBeVisible();
     await expect(page.getByText('Top Spenders')).toBeVisible();
     await expect(page.locator('div.text-sm.font-medium').filter({ hasText: 'Agent' })).toBeVisible();
@@ -2049,7 +2044,7 @@ test.describe('reference-home-org focused mocked pass', () => {
     await expect(page.getByText('Managed usage')).toHaveCount(0);
     await page.screenshot({ path: 'e2e/evidence/reference-exact/Home-mobile.png' });
     const homeRequestCount = observedRequests.length;
-    await page.goto('/org-insights?rangeType=custom&startDate=2026-09-01&endDate=2026-09-04');
+    await page.goto('/org-insights?rangeType=billing');
     await expect(page.getByTestId('org-insights-forbidden')).toBeVisible();
     const directOrgRequests = observedRequests.slice(homeRequestCount);
     expect(directOrgRequests.some((request) => request.includes('/api/dashboard?'))).toBe(false);
@@ -2119,34 +2114,39 @@ test.describe('funding assignment mocked browser coverage', () => {
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
     const hierarchy = page.getByTestId('funding-groups-hierarchy');
-    await hierarchy.getByRole('button', { name: 'Assign to team', exact: true }).click();
-    let dialog = page.getByRole('dialog', { name: 'Assign funding group' });
-    await dialog.getByTestId('select-funding-team-destination').click();
+    await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(1);
+    await expect(hierarchy.getByText('0 people', { exact: true })).toBeVisible();
+    const executiveDestination = hierarchy.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' });
+    await executiveDestination.click();
     await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
-    await dialog.getByTestId('button-review-funding-group').click();
+    let dialog = page.getByRole('dialog', { name: 'Assign funding group' });
+    expect(patchBodies).toEqual([]);
     await dialog.getByTestId('button-save-funding-group').click();
     await expect(dialog).toBeHidden();
 
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
+    await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(0);
+    await expect(hierarchy.getByRole('button', { name: /Smoke Team.*total through.*2 groups/ })).toBeVisible();
+
+    await page.reload();
+    await expectReady(page, '[data-testid="page-team-budgets"]');
     await hierarchy.getByRole('button', { name: /Smoke Team.*total through/ }).click();
-    await hierarchy.getByText('Executive Group', { exact: true }).locator('xpath=../..').getByRole('button', { name: 'Change' }).click();
-    dialog = page.getByRole('dialog', { name: 'Change funding assignment' });
-    await dialog.getByTestId('select-funding-team-destination').click();
+    await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
+    await executiveDestination.click();
     await page.getByRole('option', { name: 'Zero Team', exact: true }).click();
-    await dialog.getByTestId('button-review-funding-group').click();
+    dialog = page.getByRole('dialog', { name: 'Change funding assignment' });
     await expect(dialog.getByTestId('button-save-funding-group')).toHaveText('Confirm reassignment');
     await dialog.getByTestId('button-save-funding-group').click();
     await expect(dialog).toBeHidden();
 
-    await hierarchy.getByRole('button', { name: /Zero Team.*total through/ }).click();
-    await hierarchy.getByText('Executive Group', { exact: true }).locator('xpath=../..').getByRole('button', { name: 'Change' }).click();
-    dialog = page.getByRole('dialog', { name: 'Change funding assignment' });
-    await dialog.getByTestId('select-funding-team-destination').click();
+    await executiveDestination.click();
     await page.getByRole('option', { name: 'Unmapped groups', exact: true }).click();
-    await dialog.getByTestId('button-review-funding-group').click();
+    dialog = page.getByRole('dialog', { name: 'Change funding assignment' });
     await expect(dialog.getByTestId('button-save-funding-group')).toHaveText('Confirm unmap');
     await dialog.getByTestId('button-save-funding-group').click();
     await expect(dialog).toBeHidden();
     await expect(hierarchy.getByText('Executive Group', { exact: true })).toBeVisible();
+    await expect(hierarchy.getByTestId('unmapped-group-card')).toHaveCount(1);
 
     expect(patchBodies).toEqual([
       { workspaceId: WORKSPACE_ID, groupId: 'funding-unmapped', teamName: 'Smoke Team', expectedRevision: 'funding-lifecycle-r1' },
@@ -2178,11 +2178,9 @@ test.describe('funding assignment mocked browser coverage', () => {
 
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
-    await page.getByRole('button', { name: 'Assign to team', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Assign funding group' });
-    await dialog.getByTestId('select-funding-team-destination').click();
+    await page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' }).click();
     await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
-    await dialog.getByTestId('button-review-funding-group').click();
+    const dialog = page.getByRole('dialog', { name: 'Assign funding group' });
     await dialog.getByTestId('button-save-funding-group').click();
 
     await expect(dialog.getByTestId('button-save-funding-group')).toHaveText('Saving…');
@@ -2226,6 +2224,20 @@ test.describe('funding assignment mocked browser coverage', () => {
     await expect(page.getByText('No unmapped groups in this view.')).toHaveCount(0);
   });
 
+  test('stale inventory keeps inline assignment controls read-only', async ({ page }) => {
+    await mockApi(page, 'account');
+    await page.route('**/api/admin/funding-groups', route => {
+      const inventory = fundingInventory('funding-stale-r1');
+      inventory.freshness.status = 'stale';
+      return json(route, inventory);
+    });
+
+    await page.goto('/allocations');
+    await expectReady(page, '[data-testid="page-team-budgets"]');
+    await expect(page.getByText('Directory inventory may be out of date')).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' })).toBeDisabled();
+  });
+
   test('delegate and preview remain read-only and do not query privileged mapping audit', async ({ page }) => {
     const observedRequests: string[] = [];
     await mockApi(page, 'account', true, [], observedRequests);
@@ -2239,8 +2251,7 @@ test.describe('funding assignment mocked browser coverage', () => {
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
     await expect(page.getByText('Executive Group', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Assign to team', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Change', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' })).toBeDisabled();
     expect(observedRequests.some(request => request.includes('/api/admin/funding-groups/audit'))).toBe(false);
 
     const preview = authEnvelope('account');
@@ -2251,8 +2262,7 @@ test.describe('funding assignment mocked browser coverage', () => {
     await page.route('**/api/auth/user', route => json(route, preview));
     await page.reload();
     await expectReady(page, '[data-testid="page-team-budgets"]');
-    await expect(page.getByRole('button', { name: 'Assign to team', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Change', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' })).toBeDisabled();
     expect(observedRequests.some(request => request.includes('/api/admin/funding-groups/audit'))).toBe(false);
   });
 
@@ -2268,12 +2278,95 @@ test.describe('funding assignment mocked browser coverage', () => {
 
     await page.goto('/allocations');
     await expectReady(page, '[data-testid="page-team-budgets"]');
-    await page.getByRole('button', { name: 'Assign to team', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Budgeted team for Executive Group in Smoke Workspace' }).click();
+    await page.getByRole('option', { name: 'Smoke Team', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Assign funding group' })).toBeVisible();
     identity = 'funding-identity-b';
     await page.reload();
     await expectReady(page, '[data-testid="page-team-budgets"]');
     await expect(page.getByRole('dialog', { name: 'Assign funding group' })).toHaveCount(0);
+  });
+});
+
+test.describe('org budget chart focused mocked browser pass', () => {
+  test('renders native chart series and keeps team controls functional on desktop and mobile', async ({ page }) => {
+    await mockApi(page, 'account');
+    const reporting = {
+      acquisitionCoverage: 'complete',
+      rosterAttributionBasis: 'current_membership',
+      creatorCoverage: 'not_applicable',
+      creatorAttributionBasis: 'not_applicable',
+      freshness: 'fresh',
+      valueBasis: 'verified',
+      comparisonsVerified: true,
+    };
+    const points = (values: Array<number | null>) => values.map((spendUsd, index) => ({
+      date: `2026-0${index + 6}-01`,
+      spendUsd,
+    }));
+    const team = (id: string, name: string, allocationUsd: number | null, spendUsd: number | null, complete = true) => ({
+      id, name, allocationUsd, spendUsd,
+      remainingUsd: allocationUsd != null && spendUsd != null ? allocationUsd - spendUsd : null,
+      percentUsed: allocationUsd && spendUsd != null ? (spendUsd / allocationUsd) * 100 : null,
+      complete, reporting,
+      points: points(spendUsd == null ? [null, null, null, null] : [spendUsd * .25, spendUsd * .55, spendUsd * .8, spendUsd]),
+    });
+    await page.route('**/api/org-insights', route => json(route, {
+      periodStart: '2026-05-20',
+      periodEnd: '2027-05-20',
+      asOf: '2026-09-08',
+      complete: false,
+      reporting,
+      qualification: 'Partial data for one team',
+      summary: {
+        accountSpendUsd: 300,
+        teamAllocationUsd: 500,
+        remainingUsd: 200,
+        teamsOverBudget: 0,
+        unassignedSpendUsd: 10,
+      },
+      teams: [
+        team('alpha', 'Alpha Team', 100, 90),
+        team('beta', 'Beta Team', 150, 70),
+        team('gamma', 'Gamma Team', 120, 50, false),
+        team('delta', 'Delta Team', 130, 20),
+        team('unfunded', 'Unfunded Team', null, 15),
+      ],
+    }));
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/org-insights');
+    const chart = page.getByTestId('org-budget-chart');
+    await expect(chart).toBeVisible();
+    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(chart.getByRole('button', { name: 'Beta Team' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(chart.getByRole('button', { name: 'Gamma Team' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(chart.getByRole('button', { name: 'Delta Team' })).toHaveAttribute('aria-pressed', 'false');
+    await expect(chart.locator('svg').first()).toBeVisible();
+    await expect.poll(() => chart.locator('svg path').count()).toBeGreaterThan(4);
+    const initialPaths = await chart.locator('svg path').count();
+    await chart.getByRole('button', { name: 'Alpha Team' }).click();
+    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => chart.locator('svg path').count()).toBeLessThan(initialPaths);
+    await chart.getByRole('button', { name: 'All' }).click();
+    await expect(chart.getByRole('button', { name: 'Delta Team' })).toHaveAttribute('aria-pressed', 'true');
+    await chart.getByRole('button', { name: 'Clear' }).click();
+    await expect(chart.getByText('No teams selected.')).toBeVisible();
+    await expect(chart.getByPlaceholder('Search teams...')).toBeVisible();
+    await chart.getByRole('button', { name: 'All' }).click();
+    await chart.getByPlaceholder('Search teams...').fill('Gamma');
+    await expect(chart.getByRole('button', { name: 'Gamma Team' })).toBeVisible();
+    await expect(chart.getByRole('button', { name: 'Alpha Team' })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await page.screenshot({ path: 'e2e/evidence/org-budget-chart-desktop.png', fullPage: true });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await expect(chart.getByText('Teams Budget Trajectory')).toBeVisible();
+    await page.screenshot({ path: 'e2e/evidence/org-budget-chart-mobile.png', fullPage: true });
+    expect(page.getByRole('button', { name: 'All' })).toBeVisible();
+    expect(page.getByRole('button', { name: 'Clear' })).toBeVisible();
+    expect(await page.locator('svg path').count()).toBeGreaterThan(0);
   });
 });
 

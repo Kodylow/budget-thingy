@@ -64,6 +64,14 @@ describe('home budget panels', () => {
     expect(markup).not.toContain('Personal spend and monthly limit');
     expect(markup).not.toContain('remaining this billing period');
     expect(markup).not.toContain('unavailable');
+    expect(markup).toContain('Monthly Agent limit');
+    expect(markup).toContain('$100.00');
+    expect(markup).toContain('Limit source');
+    expect(markup).toContain('explicit');
+    expect(markup).toContain('June billing cycle');
+    expect(markup).toContain('Current-cycle Agent spend');
+    expect(markup).not.toContain('Monthly limit details');
+    expect(markup).not.toContain('aria-expanded');
   });
 
   it('preserves zero team spend and hides nonmatching annual comparisons and qualifications', () => {

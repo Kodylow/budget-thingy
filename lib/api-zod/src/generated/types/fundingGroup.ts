@@ -17,6 +17,12 @@ export interface FundingGroup {
   /** @minLength 1 */
   groupName: string;
   /**
+     * Distinct current directory members of this concrete group in this workspace, or null when its roster observation is unavailable.
+     * @minimum 0
+     * @nullable
+     */
+  memberCount: number | null;
+  /**
      * @minLength 1
      * @nullable
      */

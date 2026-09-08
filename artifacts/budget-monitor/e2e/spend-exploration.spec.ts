@@ -294,6 +294,10 @@ test('changing views retains exploration scope and each view has independent req
   await mockSpendApi(page);
   await page.goto(`/spend?tab=groups&search=ops&status=budgeted&workspaceId=${WORKSPACE_ID}&sort=name_desc&columns_groups=name,spendUsd,memberCount`);
 
+  await page.getByRole('combobox', { name: 'Reporting period' }).click();
+  await expect(page.getByRole('option')).toHaveText(['Full term', 'Billing period']);
+  await page.keyboard.press('Escape');
+
   await page.getByRole('combobox', { name: 'Spend view' }).click();
   await page.getByRole('option', { name: 'Members' }).click();
   await expect(page).toHaveURL(/tab=people/);
@@ -320,22 +324,18 @@ test('changing views retains exploration scope and each view has independent req
   expect(params(page).get('columns_people')).toContain('otherServicesUsd');
 });
 
-test('custom-range group exploration carries dates and Back to results restores the complete ledger state', async ({ page }) => {
+test('billing group exploration and Back to results restore the complete ledger state', async ({ page }) => {
   const requests: string[] = [];
   await mockSpendApi(page, { requests });
-  const resultUrl = `/spend?tab=groups&rangeType=custom&startDate=2026-09-01&endDate=2026-09-04&search=Exploration&status=budgeted&workspaceId=${WORKSPACE_ID}&sort=name_asc&page=2&pageSize=10&density=compact&columns_groups=name,spendUsd,memberCount`;
+  const resultUrl = `/spend?tab=groups&rangeType=billing&search=Exploration&status=budgeted&workspaceId=${WORKSPACE_ID}&sort=name_asc&page=2&pageSize=10&density=compact&columns_groups=name,spendUsd,memberCount`;
   await page.goto(resultUrl);
   await page.getByRole('link', { name: 'Exploration Group', exact: true }).click();
 
   await expect(page).toHaveURL(new RegExp(`/groups/${GROUP_ID}`));
-  expect(params(page).get('rangeType')).toBe('custom');
-  expect(params(page).get('startDate')).toBe('2026-09-01');
-  expect(params(page).get('endDate')).toBe('2026-09-04');
+  expect(params(page).get('rangeType')).toBe('billing');
   await expect(page.getByTestId('page-group-detail')).toBeVisible();
   const detailRequest = requests.find((request) => request.includes(`/api/reporting/details/${GROUP_ID}?`));
-  expect(detailRequest).toContain('rangeType=custom');
-  expect(detailRequest).toContain('startDate=2026-09-01');
-  expect(detailRequest).toContain('endDate=2026-09-04');
+  expect(detailRequest).toContain('rangeType=billing');
 
   await page.getByTestId('link-group-detail-back').click();
   await expect(page).toHaveURL(new RegExp(resultUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -364,7 +364,7 @@ test('custom-range group exploration carries dates and Back to results restores 
 test('group Projects is URL-driven and browser Back returns to Members', async ({ page }) => {
   const requests: string[] = [];
   await mockSpendApi(page, { requests });
-  await page.goto(`/groups/${GROUP_ID}?rangeType=custom&startDate=2026-09-01&endDate=2026-09-04`);
+  await page.goto(`/groups/${GROUP_ID}?rangeType=billing`);
   await expect(page.getByTestId('page-group-detail')).toBeVisible();
   await page.getByTestId('tab-group-projects').click();
   await expect(page).toHaveURL(/tab=projects/);
@@ -377,7 +377,7 @@ test('group Projects is URL-driven and browser Back returns to Members', async (
 test('filtered export is scoped but excludes pagination and presentation parameters', async ({ page }) => {
   const requests: string[] = [];
   await mockSpendApi(page, { requests });
-  await page.goto(`/spend?tab=groups&rangeType=custom&startDate=2026-09-01&endDate=2026-09-04&viewScope=all_authorized&search=ops&status=budgeted&workspaceId=${WORKSPACE_ID}&sort=name_asc&page=3&pageSize=10&density=compact&columns_groups=name,spendUsd`);
+  await page.goto(`/spend?tab=groups&rangeType=billing&viewScope=all_authorized&search=ops&status=budgeted&workspaceId=${WORKSPACE_ID}&sort=name_asc&page=3&pageSize=10&density=compact&columns_groups=name,spendUsd`);
   await page.getByRole('button', { name: 'Table options' }).click();
   await page.getByRole('menuitem', { name: 'Export filtered CSV' }).click();
   await expect.poll(() => requests.find((request) => request.includes('/api/spend/groups.csv?'))).toBeTruthy();
@@ -385,9 +385,7 @@ test('filtered export is scoped but excludes pagination and presentation paramet
   const exportRequest = requests.find((request) => request.includes('/api/spend/groups.csv?'));
   const exportParams = new URL(`http://fixture.test${exportRequest?.split(' ')[1]}`).searchParams;
   expect(Object.fromEntries(exportParams)).toMatchObject({
-    rangeType: 'custom',
-    startDate: '2026-09-01',
-    endDate: '2026-09-04',
+    rangeType: 'billing',
     viewScope: 'all_authorized',
     search: 'ops',
     status: 'budgeted',

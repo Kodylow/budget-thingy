@@ -58,7 +58,6 @@ export function PersonalBudgetPanel({
   billingPeriodLabel: string;
   showCurrentCycleComparison: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const hasFiniteLimit = limit?.state === 'explicit' || limit?.state === 'inherited';
   const canCompare = showCurrentCycleComparison && hasFiniteLimit && limit?.amount != null && limit.currentCycleAgentSpendUsd != null;
   const percent = canCompare ? limit.currentCyclePercentUsed : null;
@@ -90,16 +89,6 @@ export function PersonalBudgetPanel({
           </>
         ) : null}
         {limit && (
-          <button
-            type="button"
-            onClick={() => setExpanded((open) => !open)}
-            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-            aria-expanded={expanded}
-          >
-            Monthly limit details {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-          </button>
-        )}
-        {expanded && limit && (
           <div className="grid grid-cols-2 gap-3 rounded-sm border bg-muted/20 p-3 text-xs">
             <div><p className="text-muted-foreground">Monthly Agent limit</p><p className="mt-1 font-mono">{limit.state === 'no_limit' ? 'Unlimited' : formatUsd(hasFiniteLimit ? limit.amount : null)}</p></div>
             <div><p className="text-muted-foreground">Limit source</p><p className="mt-1 font-medium">{limit.state.replace('_', ' ')}</p></div>

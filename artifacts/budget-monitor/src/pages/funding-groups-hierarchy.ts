@@ -5,6 +5,7 @@ export type FundingGroup = {
   workspaceName: string;
   groupId: string;
   groupName: string;
+  memberCount: number | null;
   teamName: string | null;
   origin: FundingGroupOrigin;
   isHidden: boolean;

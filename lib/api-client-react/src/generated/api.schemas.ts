@@ -1619,8 +1619,56 @@ export const SpendTableRowLimitObservationStatus = {
   refreshing: 'refreshing',
 } as const;
 
+export type SpendPersonWorkspaceLimitState = typeof SpendPersonWorkspaceLimitState[keyof typeof SpendPersonWorkspaceLimitState];
+
+
+export const SpendPersonWorkspaceLimitState = {
+  not_applicable: 'not_applicable',
+  explicit: 'explicit',
+  inherited: 'inherited',
+  no_limit: 'no_limit',
+  unavailable: 'unavailable',
+} as const;
+
+export type SpendPersonWorkspaceLimitObservationStatus = typeof SpendPersonWorkspaceLimitObservationStatus[keyof typeof SpendPersonWorkspaceLimitObservationStatus];
+
+
+export const SpendPersonWorkspaceLimitObservationStatus = {
+  not_applicable: 'not_applicable',
+  complete: 'complete',
+  failed: 'failed',
+  unavailable: 'unavailable',
+  refreshing: 'refreshing',
+} as const;
+
+export interface SpendPersonWorkspace {
+  workspaceId: string;
+  /** @nullable */
+  workspaceName: string | null;
+  spendUsd: number;
+  agentSpendUsd: number;
+  otherServicesUsd: number;
+  /** @nullable */
+  allocationUsd: number | null;
+  /** @nullable */
+  remainingUsd: number | null;
+  /** @nullable */
+  percentUsed: number | null;
+  /** @nullable */
+  currentCycleAgentSpendUsd: number | null;
+  /** @nullable */
+  currentCycleRemainingUsd: number | null;
+  /** @nullable */
+  currentCyclePercentUsed: number | null;
+  limitState: SpendPersonWorkspaceLimitState;
+  limitObservationStatus: SpendPersonWorkspaceLimitObservationStatus;
+  usageObserved: boolean;
+}
+
 export interface SpendTableRow {
   id: string;
+  /** Stable user identity for person rows. */
+  userId?: string;
   kind: SpendTableRowKind;
   name: string;
   /** @nullable */
@@ -1669,6 +1717,8 @@ export interface SpendTableRow {
   sharedPool: boolean;
   /** Complete scope-filtered physical group IDs contributing to a canonical team pool. Present only for team-pool rows. */
   sourceGroupIds?: string[];
+  /** Workspace-qualified spend and limit facts for person rows. */
+  workspaces?: SpendPersonWorkspace[];
 }
 
 export type SpendTableResponseView = typeof SpendTableResponseView[keyof typeof SpendTableResponseView];
@@ -2752,6 +2802,12 @@ export interface FundingGroup {
   groupId: string;
   /** @minLength 1 */
   groupName: string;
+  /**
+     * Distinct current directory members of this concrete group in this workspace, or null when its roster observation is unavailable.
+     * @minimum 0
+     * @nullable
+     */
+  memberCount: number | null;
   /**
      * @minLength 1
      * @nullable
@@ -4476,3 +4532,4 @@ export type ListRecentUsageIngestRunsParams = {
  */
 limit?: number;
 };
+
