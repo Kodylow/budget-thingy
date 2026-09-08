@@ -99,23 +99,25 @@ vi.mock('./home-components/budget-panels', () => ({
       <output aria-label="Personal monthly limit">{String(props.limit?.amount)}</output>
     </section>
   ),
-  TeamBudgetPanel: ({ team, tracking, selectedPeriodLabel, wholeBudgetMode, error, onRetry }: any) => (
-    <section aria-label={`${team.teamName} team budget`}>
-      <output aria-label="Team selected period">{selectedPeriodLabel}</output>
-      <output aria-label="Team selected spend">{String(tracking?.spendUsd)}</output>
-      <output aria-label="Team tracked allocation">{String(tracking?.allocationUsd)}</output>
-      <output aria-label="Team budget kind">{String(tracking?.budgetKind)}</output>
-      <output aria-label="Team workspace scope">{tracking?.scopeComplete && wholeBudgetMode ? `Full team · ${tracking.workspaceCount} workspaces` : 'Partial tracking'}</output>
-      {error && <button onClick={onRetry}>Retry team report</button>}
-    </section>
-  ),
 }));
 
 vi.mock('./home-components/budget-trajectory', async () => {
   const actual = await vi.importActual<typeof import('./home-components/budget-trajectory')>('./home-components/budget-trajectory');
   return {
     ...actual,
-    BudgetTrajectory: ({ teamName }: any) => <div aria-label={`${teamName} trajectory`} />,
+    BudgetTrajectory: ({ teamName, tracking, loading, error, onRetry }: any) => (
+      <section aria-label={`${teamName} trajectory`}>
+        {loading && <output aria-label="Loading budget trajectory" />}
+        <output aria-label="Trajectory period">{tracking?.periodLabel}</output>
+        <output aria-label="Trajectory spend">{String(tracking?.spendUsd)}</output>
+        <output aria-label="Trajectory allocation">{String(tracking?.allocationUsd)}</output>
+        <output aria-label="Trajectory budget kind">{String(tracking?.budgetKind)}</output>
+        <output aria-label="Trajectory workspace scope">
+          {tracking?.scopeComplete ? `Full team · ${tracking.workspaceCount} workspaces` : 'Partial tracking'}
+        </output>
+        {error && <button onClick={onRetry}>Retry budget trajectory</button>}
+      </section>
+    ),
   };
 });
 
@@ -301,9 +303,9 @@ describe('Home selected-period regressions', () => {
       scope: 'own',
       workspaceId: 'workspace-1',
     }));
-    expect(body.querySelector('[aria-label="Team tracked allocation"]')?.textContent).toBe('9368.38');
+    expect(body.querySelector('[aria-label="Trajectory allocation"]')?.textContent).toBe('9368.38');
     expect(body.querySelector('[aria-label="Platform trajectory"]')).not.toBeNull();
-    expect(body.querySelector('[aria-label="Team workspace scope"]')?.textContent).toBe('Full team · 1 workspaces');
+    expect(body.querySelector('[aria-label="Trajectory workspace scope"]')?.textContent).toBe('Full team · 1 workspaces');
   });
 
   it('requests billing tracking and uses its monthly Agent values rather than the annual team amount', () => {
@@ -329,10 +331,10 @@ describe('Home selected-period regressions', () => {
       scope: 'own',
       workspaceId: 'workspace-1',
     }));
-    expect(body.querySelector('[aria-label="Team budget kind"]')?.textContent).toBe('monthly_agent');
-    expect(body.querySelector('[aria-label="Team tracked allocation"]')?.textContent).toBe('750');
-    expect(body.querySelector('[aria-label="Team tracked allocation"]')?.textContent).not.toBe('10000');
-    expect(body.querySelector('[aria-label="Team selected spend"]')?.textContent).toBe('125');
+    expect(body.querySelector('[aria-label="Trajectory budget kind"]')?.textContent).toBe('monthly_agent');
+    expect(body.querySelector('[aria-label="Trajectory allocation"]')?.textContent).toBe('750');
+    expect(body.querySelector('[aria-label="Trajectory allocation"]')?.textContent).not.toBe('10000');
+    expect(body.querySelector('[aria-label="Trajectory spend"]')?.textContent).toBe('125');
   });
 
   it('does not claim full-team scope when whole-budget tracking is partial', () => {
@@ -342,7 +344,7 @@ describe('Home selected-period regressions', () => {
     }));
 
     const body = renderHome();
-    expect(body.querySelector('[aria-label="Team workspace scope"]')?.textContent).toBe('Partial tracking');
+    expect(body.querySelector('[aria-label="Trajectory workspace scope"]')?.textContent).toBe('Partial tracking');
     expect(body.textContent).not.toContain('Full team · 2 workspaces');
   });
 
@@ -398,15 +400,45 @@ describe('Home selected-period regressions', () => {
     expect(selected.every((point) => point.benchmark == null)).toBe(true);
   });
 
-  it('labels main panels from the dashboard and uses selected-period spend rather than limit or annual lookup values', () => {
+  it('labels the personal panel and trajectory from canonical data rather than unrelated budget lookup values', () => {
     const body = renderHome();
 
-    expect(body.querySelector('[aria-label="Personal selected period"]')?.textContent).toBe('Apr 3–19, 2026');
+    expect(body.querySelector('[aria-label="Personal selected period"]')?.textContent).toBe('Full term');
     expect(body.querySelector('[aria-label="Personal selected spend"]')?.textContent).toBe('47.25');
     expect(body.querySelector('[aria-label="Personal selected spend"]')?.textContent).not.toBe('900');
-    expect(body.querySelector('[aria-label="Team selected period"]')?.textContent).toBe('Apr 3–19, 2026');
-    expect(body.querySelector('[aria-label="Team selected spend"]')?.textContent).toBe('321');
-    expect(body.querySelector('[aria-label="Team selected spend"]')?.textContent).not.toBe('8888');
+    expect(body.querySelector('[aria-label="Trajectory period"]')?.textContent).toBe('Apr 3–19, 2026');
+    expect(body.querySelector('[aria-label="Trajectory spend"]')?.textContent).toBe('321');
+    expect(body.querySelector('[aria-label="Trajectory spend"]')?.textContent).not.toBe('8888');
+  });
+
+  it('places My spend once beside the personal panel and before the full-width trajectory', () => {
+    const body = renderHome();
+    const personalPanel = body.querySelector('[aria-label="Personal budget"]');
+    const personalStory = body.querySelector('[aria-label="personal spend story"]');
+    const trajectory = body.querySelector('[aria-label="Platform trajectory"]');
+
+    expect(body.querySelectorAll('[aria-label="personal spend story"]')).toHaveLength(1);
+    expect(body.textContent?.match(/My spend/g)).toHaveLength(1);
+    expect(personalPanel).not.toBeNull();
+    expect(personalStory).not.toBeNull();
+    expect(trajectory).not.toBeNull();
+    expect(personalPanel?.compareDocumentPosition(personalStory!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(personalStory?.compareDocumentPosition(trajectory!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(trajectory?.parentElement?.className).toContain('lg:col-span-2');
+    expect(body.querySelector('[aria-label$="team budget"]')).toBeNull();
+  });
+
+  it('removes the lower comparison, trend, and activity cards', () => {
+    const body = renderHome();
+
+    expect(body.querySelector('[aria-label="team spend story"]')).toBeNull();
+    expect(body.querySelector('[aria-label="Selected-period trend chart"]')).toBeNull();
+    expect(body.textContent).not.toContain('My Spend Story');
+    expect(body.textContent).not.toContain('Team spend');
+    expect(body.textContent).not.toContain('Selected-period trend');
+    expect(body.textContent).not.toContain('Activity');
+    expect(body.querySelector('#monthly-context')).toBeNull();
+    expect(body.querySelector('[aria-label="Selected-period spend comparisons"]')).toBeNull();
   });
 
   it('hides sections that have no teams, comparison points, activity, or trend observations', () => {
@@ -423,7 +455,7 @@ describe('Home selected-period regressions', () => {
     }));
 
     const body = renderHome();
-    expect(body.querySelector('[aria-label$="team budget"]')).toBeNull();
+    expect(body.querySelector('[aria-label$="trajectory"]')).toBeNull();
     expect(body.querySelector('[aria-label$="spend story"]')).toBeNull();
     expect(body.querySelector('[aria-label="Selected-period trend chart"]')).toBeNull();
     expect(body.textContent).not.toContain('Activity');
@@ -440,11 +472,11 @@ describe('Home selected-period regressions', () => {
     const body = renderHome();
     expect(body.querySelector('[aria-label="Personal selected spend"]')?.textContent).toBe('0');
     expect(body.querySelector('[aria-label="personal spend story"]')).not.toBeNull();
-    expect(body.querySelector('[aria-label="Selected-period trend chart"]')).not.toBeNull();
-    expect(body.textContent).toContain('0 active days');
+    expect(body.querySelector('[aria-label="Selected-period trend chart"]')).toBeNull();
+    expect(body.textContent).not.toContain('active days');
   });
 
-  it('retains local retry actions for initial comparison and team-report failures', () => {
+  it('retains local retry actions for initial personal comparison and trajectory failures', () => {
     mocks.dashboard.mockReturnValue(query(dashboardData, { isError: true }));
     mocks.teamBudgets.mockReturnValue(query({
       budgets: [{ poolId: 'pool-1', teamName: 'Platform' }],
@@ -452,9 +484,20 @@ describe('Home selected-period regressions', () => {
     mocks.comparison.mockReturnValue(query(undefined, { isError: true }));
     mocks.teamReport.mockReturnValue(query(undefined, { isError: true }));
 
-    const buttons = [...renderHome().querySelectorAll('button')].map((button) => button.textContent);
+    const body = renderHome();
+    const buttons = [...body.querySelectorAll('button')].map((button) => button.textContent);
     expect(buttons.filter((text) => text?.includes('Retry')).length).toBe(2);
-    expect(buttons).toContain('Retry team report');
+    expect(body.textContent).toContain('Spend comparison unavailable');
+    expect(buttons).toContain('Retry budget trajectory');
+  });
+
+  it('keeps loading states for the personal comparison and budget trajectory', () => {
+    mocks.comparison.mockReturnValue(query(undefined, { isLoading: true }));
+    mocks.teamReport.mockReturnValue(query(undefined, { isLoading: true }));
+
+    const body = renderHome();
+    expect(body.querySelector('[aria-label="Loading"]')).not.toBeNull();
+    expect(body.querySelector('[aria-label="Loading budget trajectory"]')).not.toBeNull();
   });
 
   it('keeps cached values and charts without duplicating the shared refresh notice', () => {
@@ -463,10 +506,40 @@ describe('Home selected-period regressions', () => {
     }
     const body = renderHome();
     expect(body.querySelector('[aria-label="Personal selected spend"]')?.textContent).toBe('47.25');
-    expect(body.querySelector('[aria-label="Team selected spend"]')?.textContent).toBe('321');
+    expect(body.querySelector('[aria-label="Trajectory spend"]')?.textContent).toBe('321');
     expect(body.querySelector('[aria-label="Platform trajectory"]')).not.toBeNull();
     expect(body.querySelector('[aria-label="personal spend story"]')).not.toBeNull();
     expect(body.textContent).not.toMatch(/refresh|unavailable|Retry/i);
+  });
+
+  it('renders every team trajectory full width without duplicating My spend', () => {
+    mocks.membership.mockReturnValue(query({
+      defaultWorkspaceId: 'workspace-1',
+      workspaces: [{
+        ...workspace,
+        budgetTeams: [
+          { poolId: 'pool-1', teamName: 'Platform' },
+          { poolId: 'pool-2', teamName: 'Infrastructure' },
+        ],
+      }],
+      qualification: null,
+    }));
+    mocks.teamBudgets.mockReturnValue(query({
+      budgets: [
+        { poolId: 'pool-1', teamName: 'Platform' },
+        { poolId: 'pool-2', teamName: 'Infrastructure' },
+      ],
+    }));
+
+    const body = renderHome();
+    expect(body.querySelectorAll('[aria-label="personal spend story"]')).toHaveLength(1);
+    expect(body.textContent?.match(/My spend/g)).toHaveLength(1);
+    for (const teamName of ['Platform', 'Infrastructure']) {
+      const trajectory = body.querySelector(`[aria-label="${teamName} trajectory"]`);
+      expect(trajectory).not.toBeNull();
+      expect(trajectory?.parentElement?.className).toContain('lg:col-span-2');
+    }
+    expect(body.querySelector('[aria-label$="team budget"]')).toBeNull();
   });
 
   it('does not substitute selected-period active-project analytics for missing current project inventory', () => {

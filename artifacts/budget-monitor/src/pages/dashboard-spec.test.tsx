@@ -211,7 +211,7 @@ describe('Dashboard and Spend Spec Behaviors', () => {
   it('keeps Home personal and team scoped, including for account admins', () => {
     const source = readFileSync(new URL('./home.tsx', import.meta.url), 'utf8');
     expect(source).toContain('PersonalBudgetPanel');
-    expect(source).toContain('TeamBudgetPanel');
+    expect(source).not.toContain('TeamBudgetPanel');
     expect(source).toContain('BudgetTrajectory');
     expect(source).toContain("useGetTeamsBudgets");
     expect(source).toContain('useGetBudgetTeamReport');
