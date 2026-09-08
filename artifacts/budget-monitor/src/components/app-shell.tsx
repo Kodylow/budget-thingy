@@ -163,7 +163,7 @@ function getNavSections(
       id: 'management-admin',
       items: [
         { path: '/allocations', label: 'Budget allocations', icon: WalletCards, show: capabilities.canViewAccountUsage, testId: 'nav-allocations' },
-        { path: '/limits', label: 'Limits', icon: ShieldCheck, show: capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
+        { path: '/limits', label: 'Usage Limits', icon: ShieldCheck, show: capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn.length > 0, testId: 'nav-limits' },
         { path: '/alerts', label: 'Email activity', icon: Bell, show: role !== 'member' && role !== 'denied' && role !== null, testId: 'nav-alerts' },
         { path: '/access', label: 'Access', icon: Users, show: capabilities.canManageAccess, testId: 'nav-access' },
         { path: '/settings', label: 'Settings', icon: Settings, show: capabilities.canManageSystem || capabilities.canManageNotifications, testId: 'nav-settings' },

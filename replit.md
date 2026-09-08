@@ -14,7 +14,7 @@ Internal spending and funding monitor for the Comcast Replit Enterprise account.
 The workspace uses TypeScript, pnpm, Express, PostgreSQL/Drizzle, and React/Vite. Main locations:
 
 - `artifacts/api-server/`: API, Enterprise ingestion, accounting, authorization, and notifications.
-- `artifacts/budget-monitor/`: web app; Home is personal/team context, Org Insights is authorized account reporting, Spend is the analytical ledger, and Limits manages workspace-qualified current-cycle limits.
+- `artifacts/budget-monitor/`: web app; Home is personal/team context, Org Insights is authorized account reporting, Spend is the analytical ledger, and Usage Limits manages workspace-qualified current-cycle limits.
 - `artifacts/budget-walkthrough/`: walkthrough slides.
 - `lib/db/`: schema, migrations, and approved seed inputs.
 - `lib/api-spec/openapi.yaml`: API contract. Regenerate clients/validators with `pnpm --filter @workspace/api-spec run codegen` after contract edits.
@@ -29,6 +29,7 @@ The workspace uses TypeScript, pnpm, Express, PostgreSQL/Drizzle, and React/Vite
 - Reporting ranges and forecast horizons do not redefine funding terms or billing cycles. Remaining/utilization requires matching scope, period, and sufficient observations; unknown is not zero, unlimited, or “not set.” Known recorded spend remains useful even when attribution is incomplete.
 - Full-term and billing-cycle budget comparisons use the whole authorized funding team across its mapped workspaces, with explicit full-team scope—not one workspace's contribution against the full budget. Annual funding uses all-service team spend; monthly limits use Agent-only spend in the verified billing cycle.
 - Replit member limits are workspace/user-scoped, not transferable pools. Current-cycle Agent consumption—not selected-range all-service spend—determines their remaining allowance. Read-only reconciliation is not authorization to write upstream limits; preserve explicit authorized application and deliberate operator overrides. Group-limit writes require revalidated explicit workspace/group targets, never name inference; legacy copies remain display-only.
+- Usage Limits separates shared group caps from individual limits. Only true account admins apply shared caps, after reviewing exact enabled, nonlegacy Members targets and old/new amounts. Admins/Viewers caps are never changed or automatically cleared; a person also in Members remains subject to its cap. Defaults and overrides are local proposals until explicitly applied; annual allocations and approved adjustments remain unchanged.
 - Access is scope plus server capability, not a broad role label. Stable identity, revocation, and effective preview scope govern both reads and writes. Bootstrap/seed behavior must not undo revocation. Shared-team totals and alerts must not disclose out-of-scope spend; true-admin settings remain separate from managed-editor operations.
 - Automated email is disabled by default. Delivery uses configured, authorized recipients; unavailable/disabled delivery must not consume threshold fire state. Manual tests remain distinct from production alert history. Bootstrap and seeded administrator identities are environment configuration, never standing personal values.
 

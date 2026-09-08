@@ -13,6 +13,7 @@ import {
 import {
   listBudgets,
   listReplitGroupBudgets,
+  ReplitBudgetConnectorError,
   setReplitGroupBudget,
   setWorkspaceDefaultUserLimit,
 } from "./replit-budgets";
@@ -20,7 +21,6 @@ import {
   getFreshDirectoryForLimitValidation,
   reconcilePersistedLimitWrite,
   buildCanonicalAccountDirectory,
-  buildCanonicalEffectiveTeams,
   type CanonicalRoleGroup,
   type DirectoryCache,
   type EnterpriseGroup,
@@ -985,11 +985,9 @@ export async function getTeamLimitTargetConfiguration() {
     db.select().from(workspaceDefaultLimitTargetsTable),
     fetchFreshLimitDirectory(),
   ]);
-  const effectiveTeams = buildCanonicalEffectiveTeams(directory.account, storedTargets);
-  const targets = storedTargets.map((target) => ({
-    ...target,
-    teamName: effectiveTeams.byRoleGroupId.get(target.groupId) ?? target.teamName,
-  }));
+  // The persisted exact assignment is authoritative. Do not replace its team
+  // with a same-name/family inference from the current directory.
+  const targets = storedTargets;
   const teamLimits = new Map(snapshot.teams.map((team) => [team.teamName, team.monthlyLimitUsd]));
   const validationByIdentity = new Map(targets.map((target) => [
     `${target.workspaceId}\0${target.groupId}`,
@@ -1011,7 +1009,14 @@ export async function getTeamLimitTargetConfiguration() {
       enabledCount.get(target.teamName) ?? 1,
       target.monthlyLimitUsd,
     );
-    return { ...target, teamMonthlyLimitUsd, targetAmountUsd };
+    const validationReason =
+      validationByIdentity.get(`${target.workspaceId}\0${target.groupId}`)?.reason ?? null;
+    return {
+      ...target,
+      teamMonthlyLimitUsd,
+      targetAmountUsd,
+      ...(validationReason ? { validationReason } : {}),
+    };
   });
   const sums = new Map<string, number>();
   for (const target of configured.filter((row) =>
@@ -1129,11 +1134,9 @@ async function performTeamBudgetUpstreamReconciliation(): Promise<void> {
     db.select().from(workspaceDefaultLimitTargetsTable),
     fetchFreshLimitDirectory(),
   ]);
-  const effectiveTeams = buildCanonicalEffectiveTeams(directory.account, storedTargets);
-  const targets = storedTargets.map((target) => ({
-    ...target,
-    teamName: effectiveTeams.byRoleGroupId.get(target.groupId) ?? target.teamName,
-  }));
+  // Reconciliation and writes use only the persisted exact team assignment.
+  // Family/name inference is for read attribution, never target selection.
+  const targets = storedTargets;
   const validationByIdentity = new Map(targets.map((target) => [
     `${target.workspaceId}\0${target.groupId}`,
     validateConfiguredTarget(target, directory),
@@ -1327,130 +1330,186 @@ export async function getTeamBudgetUpstreamSyncRows() {
 
 export interface ApplyTeamBudgetTargetOutcome {
   workspaceId: string;
-  targetGroupId: string | null;
+  targetGroupId: string;
   targetGroupName: string;
   desiredAmountUsd: number;
-  outcome: "success" | "failed";
+  outcome: "success" | "failed" | "uncertain";
   error: string | null;
 }
 
+export interface ReviewedTeamBudgetTarget {
+  teamName: string;
+  workspaceId: string;
+  groupId: string;
+  reviewedDesiredAmountUsd: number;
+  reviewedUpstreamAmountUsd: number | null;
+}
+
+function reviewedAmountMatches(left: number | null, right: number | null): boolean {
+  if (left === null || right === null) return left === right;
+  return Math.round(left * 100) === Math.round(right * 100);
+}
+
+function failedApplyOutcome(error: unknown): "failed" | "uncertain" {
+  if (!(error instanceof ReplitBudgetConnectorError)) return "uncertain";
+  if (
+    error.upstreamStatus != null &&
+    error.upstreamStatus >= 400 &&
+    error.upstreamStatus < 500
+  ) return "failed";
+  if (/is not configured for budget writes/i.test(error.message)) return "failed";
+  // A transport failure, 5xx, malformed success response, or failed readback
+  // can occur after the provider accepted the POST. Missing request IDs do not
+  // prove that no mutation occurred.
+  return "uncertain";
+}
+
 export async function applyTeamBudgetLimits(
-  selection:
-    | { all: true }
-    | { teamNames: string[] }
-    | { targets: Array<{ workspaceId: string; groupId?: string | null }> },
+  selection: { targets: ReviewedTeamBudgetTarget[] },
 ) {
-  const [allRows, groupTargets, legacyTargets] = await Promise.all([
+  const requestedTargets = [...new Map(selection.targets.map((target) => [
+    `${target.workspaceId}\0${target.groupId}`,
+    target,
+  ])).values()];
+  const byTeam = new Map<string, ApplyTeamBudgetTargetOutcome[]>();
+  const addOutcome = (
+    target: ReviewedTeamBudgetTarget,
+    outcome: ApplyTeamBudgetTargetOutcome["outcome"],
+    error: string | null,
+    targetGroupName = target.groupId,
+  ) => {
+    const outcomes = byTeam.get(target.teamName) ?? [];
+    outcomes.push({
+      workspaceId: target.workspaceId,
+      targetGroupId: target.groupId,
+      targetGroupName,
+      desiredAmountUsd: target.reviewedDesiredAmountUsd,
+      outcome,
+      error,
+    });
+    byTeam.set(target.teamName, outcomes);
+  };
+
+  try {
+    await reconcileTeamBudgetsUpstream();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Current group limits could not be refreshed";
+    for (const target of requestedTargets) {
+      addOutcome(target, "failed", `Current group limits could not be refreshed: ${message}`);
+    }
+    return {
+      teams: [...byTeam].map(([teamName, targets]) => ({
+        teamName,
+        outcome: "failed" as const,
+        targets,
+      })),
+    };
+  }
+
+  const [rows, configuredTargets, directory] = await Promise.all([
     getTeamBudgetUpstreamSyncRows(),
     db.select().from(teamLimitTargetsTable),
-    db.select().from(workspaceDefaultLimitTargetsTable),
+    fetchFreshLimitDirectory(),
   ]);
-  const enabledGroups = new Set(
-    groupTargets
-      .filter((target) => target.isEnabled)
-      .map((target) => `${target.workspaceId}\0${target.groupId}`),
-  );
-  const enabledDefaults = new Set(
-    legacyTargets
-      .filter((target) => target.isEnabled)
-      .map((target) => target.workspaceId),
-  );
-  const rows = allRows.filter((row) =>
-    row.targetType === "workspace_default"
-      ? !!row.workspaceId && enabledDefaults.has(row.workspaceId)
-      : !!row.workspaceId && !!row.targetGroupId &&
-        enabledGroups.has(`${row.workspaceId}\0${row.targetGroupId}`)
-  );
-  const selectedRows = "all" in selection
-    ? rows.filter((row) => row.status === "drift")
-    : "teamNames" in selection
-      ? rows.filter((row) =>
-          row.status === "drift" && new Set(selection.teamNames).has(row.teamName)
-        )
-      : rows.filter((row) => selection.targets.some((target) =>
-          target.workspaceId === row.workspaceId &&
-          (target.groupId ?? null) === row.targetGroupId
-        ));
-  const requested = new Set(selectedRows.map((row) => row.teamName));
-  const byTeam = new Map<string, ApplyTeamBudgetTargetOutcome[]>();
-  for (const teamName of requested) {
-    const targets = selectedRows.filter((row) =>
-      row.teamName === teamName &&
-      row.workspaceId &&
-      row.targetGroupName
+  for (const reviewed of requestedTargets) {
+    const configured = configuredTargets.find((target) =>
+      target.workspaceId === reviewed.workspaceId && target.groupId === reviewed.groupId
     );
-    const outcomes: ApplyTeamBudgetTargetOutcome[] = [];
-    for (const target of targets) {
-      try {
-        if (target.targetType === "workspace_default") {
-          await setWorkspaceDefaultUserLimit(
-            target.workspaceId!,
-            Math.round(target.desiredAmountUsd * 100) === 0 ? null : target.desiredAmountUsd,
-          );
-          await reconcilePersistedLimitWrite({
-            type: "workspace_default_user_limit",
-            workspaceId: target.workspaceId!,
-            amountUsd: Math.round(target.desiredAmountUsd * 100) === 0
-              ? null
-              : target.desiredAmountUsd,
-          });
-        } else {
-          const validation = validateConfiguredTarget(
-            {
-              workspaceId: target.workspaceId!,
-              groupId: target.targetGroupId!,
-            },
-            await fetchFreshLimitDirectory(),
-          );
-          if (validation.reason) {
-            if ("targets" in selection) {
-              outcomes.push({
-                workspaceId: target.workspaceId!,
-                targetGroupId: target.targetGroupId,
-                targetGroupName: target.targetGroupName!,
-                desiredAmountUsd: target.desiredAmountUsd,
-                outcome: "failed",
-                error: validation.reason,
-              });
-            }
-            continue;
-          }
-          await setReplitGroupBudget(
-            target.workspaceId!,
-            target.targetGroupId!,
-            Math.round(target.desiredAmountUsd * 100) === 0 ? null : target.desiredAmountUsd,
-          );
-          await reconcilePersistedLimitWrite({
-            type: "workspace_group_limit",
-            workspaceId: target.workspaceId!,
-            groupId: target.targetGroupId!,
-            amountUsd: Math.round(target.desiredAmountUsd * 100) === 0
-              ? null
-              : target.desiredAmountUsd,
-          });
-        }
-        outcomes.push({
-          workspaceId: target.workspaceId!,
-          targetGroupId: target.targetGroupId,
-          targetGroupName: target.targetGroupName!,
-          desiredAmountUsd: target.desiredAmountUsd,
-          outcome: "success",
-          error: null,
-        });
-      } catch (error) {
-        outcomes.push({
-          workspaceId: target.workspaceId!,
-          targetGroupId: target.targetGroupId,
-          targetGroupName: target.targetGroupName!,
-          desiredAmountUsd: target.desiredAmountUsd,
-          outcome: "failed",
-          error: error instanceof Error ? error.message : "Group budget mutation failed",
-        });
-      }
+    const row = rows.find((candidate) =>
+      candidate.targetType === "group" &&
+      candidate.workspaceId === reviewed.workspaceId &&
+      candidate.targetGroupId === reviewed.groupId
+    );
+    const groupName = configured?.groupName ?? row?.targetGroupName ?? reviewed.groupId;
+    if (!configured || !configured.isEnabled || configured.teamName !== reviewed.teamName) {
+      addOutcome(
+        reviewed,
+        "failed",
+        "Reviewed target is no longer an enabled explicit mapping for this team",
+        groupName,
+      );
+      continue;
     }
-    if (outcomes.length > 0) byTeam.set(teamName, outcomes);
+    const validation = validateConfiguredTarget(configured, directory);
+    if (validation.reason) {
+      addOutcome(reviewed, "failed", validation.reason, groupName);
+      continue;
+    }
+    if (!row || row.status === "failed") {
+      addOutcome(
+        reviewed,
+        "failed",
+        row?.reason ?? "Current platform limit is unavailable for the reviewed target",
+        groupName,
+      );
+      continue;
+    }
+    if (!reviewedAmountMatches(row.desiredAmountUsd, reviewed.reviewedDesiredAmountUsd)) {
+      addOutcome(
+        reviewed,
+        "failed",
+        "The proposed or current platform limit changed after review; review the target again",
+        groupName,
+      );
+      continue;
+    }
+    const amountUsd = Math.round(row.desiredAmountUsd * 100) === 0
+      ? null
+      : row.desiredAmountUsd;
+    if (reviewedAmountMatches(row.upstreamAmountUsd, amountUsd)) {
+      // A prior attempt may have reached the provider even when its response or
+      // readback was lost. A fresh observation of the exact reviewed proposal
+      // makes retry idempotently successful without issuing another write.
+      addOutcome(reviewed, "success", null, groupName);
+      continue;
+    }
+    if (!reviewedAmountMatches(row.upstreamAmountUsd, reviewed.reviewedUpstreamAmountUsd)) {
+      addOutcome(
+        reviewed,
+        "failed",
+        "The proposed or current platform limit changed after review; review the target again",
+        groupName,
+      );
+      continue;
+    }
+    if (row.status !== "drift") {
+      addOutcome(reviewed, "failed", "The reviewed target no longer has an unapplied change", groupName);
+      continue;
+    }
+
+    try {
+      await setReplitGroupBudget(reviewed.workspaceId, reviewed.groupId, amountUsd);
+    } catch (error) {
+      addOutcome(
+        reviewed,
+        failedApplyOutcome(error),
+        error instanceof Error ? error.message : "Group budget mutation failed",
+        groupName,
+      );
+      continue;
+    }
+    try {
+      await reconcilePersistedLimitWrite({
+        type: "workspace_group_limit",
+        workspaceId: reviewed.workspaceId,
+        groupId: reviewed.groupId,
+        amountUsd,
+      });
+      addOutcome(reviewed, "success", null, groupName);
+    } catch (error) {
+      addOutcome(
+        reviewed,
+        "uncertain",
+        error instanceof Error
+          ? error.message
+          : "Platform write succeeded but local confirmation failed",
+        groupName,
+      );
+    }
   }
-  await reconcileTeamBudgetsUpstream();
+  await reconcileTeamBudgetsUpstream().catch((error) => {
+    logger.error({ err: error }, "Post-apply team limit reconciliation failed");
+  });
   return {
     teams: [...byTeam].map(([teamName, targets]) => ({
       teamName,

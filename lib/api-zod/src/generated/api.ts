@@ -3153,7 +3153,8 @@ export const GetTeamBudgetTargetsResponse = zod.object({
   "monthlyLimitUsd": zod.number().nullable(),
   "isEnabled": zod.boolean(),
   "teamMonthlyLimitUsd": zod.number(),
-  "targetAmountUsd": zod.number()
+  "targetAmountUsd": zod.number(),
+  "validationReason": zod.string().optional().describe('Present when the stored target identity is missing or is no longer an eligible nonlegacy Members group.')
 })),
   "teams": zod.array(zod.object({
   "teamName": zod.string(),
@@ -3197,7 +3198,8 @@ export const AssignTeamBudgetTargetResponse = zod.object({
   "monthlyLimitUsd": zod.number().nullable(),
   "isEnabled": zod.boolean(),
   "teamMonthlyLimitUsd": zod.number(),
-  "targetAmountUsd": zod.number()
+  "targetAmountUsd": zod.number(),
+  "validationReason": zod.string().optional().describe('Present when the stored target identity is missing or is no longer an eligible nonlegacy Members group.')
 })
 
 
@@ -3225,7 +3227,8 @@ export const UpdateTeamBudgetTargetResponse = zod.object({
   "monthlyLimitUsd": zod.number().nullable(),
   "isEnabled": zod.boolean(),
   "teamMonthlyLimitUsd": zod.number(),
-  "targetAmountUsd": zod.number()
+  "targetAmountUsd": zod.number(),
+  "validationReason": zod.string().optional().describe('Present when the stored target identity is missing or is no longer an eligible nonlegacy Members group.')
 })
 
 
@@ -3249,25 +3252,28 @@ export const UpdateLegacyWorkspaceLimitResponse = zod.object({
 
 
 /**
- * True-account-admin-only. This is the only team-budget operation that writes upstream.
- * @summary Apply selected drifted monthly limits upstream
+ * True-account-admin-only. Every target and its current proposal are revalidated. An already observed reviewed proposal is confirmed without another write; otherwise the observed value must still match review. This is the only team-budget operation that writes upstream.
+ * @summary Apply exact reviewed Members-group monthly limits upstream
  */
 
 
 
+export const applyTeamBudgetLimitsBodyTargetsItemReviewedDesiredAmountUsdMin = 0;
+
+export const applyTeamBudgetLimitsBodyTargetsItemReviewedUpstreamAmountUsdMin = 0;
 
 
 
-export const ApplyTeamBudgetLimitsBody = zod.union([zod.object({
-  "teamNames": zod.array(zod.string().min(1)).min(1)
-}),zod.object({
-  "all": zod.boolean()
-}),zod.object({
+
+export const ApplyTeamBudgetLimitsBody = zod.object({
   "targets": zod.array(zod.object({
+  "teamName": zod.string().min(1),
   "workspaceId": zod.string().min(1),
-  "groupId": zod.string().nullish()
+  "groupId": zod.string().min(1),
+  "reviewedDesiredAmountUsd": zod.number().min(applyTeamBudgetLimitsBodyTargetsItemReviewedDesiredAmountUsdMin),
+  "reviewedUpstreamAmountUsd": zod.number().min(applyTeamBudgetLimitsBodyTargetsItemReviewedUpstreamAmountUsdMin).nullable()
 })).min(1)
-})])
+})
 
 export const ApplyTeamBudgetLimitsResponse = zod.object({
   "teams": zod.array(zod.object({
@@ -3278,7 +3284,7 @@ export const ApplyTeamBudgetLimitsResponse = zod.object({
   "targetGroupId": zod.string().nullable(),
   "targetGroupName": zod.string(),
   "desiredAmountUsd": zod.number(),
-  "outcome": zod.enum(['success', 'failed']),
+  "outcome": zod.enum(['success', 'failed', 'uncertain']),
   "error": zod.string().nullable()
 }))
 }))

@@ -962,7 +962,13 @@ describe("team budget upstream reconciliation", () => {
       allGroups: groups.filter((group) => group.id !== "member2"),
     }));
     const applied = await applyTeamBudgetLimits({
-      targets: [{ workspaceId, groupId: "member2" }],
+      targets: [{
+        teamName: TEAM_ONE,
+        workspaceId,
+        groupId: "member2",
+        reviewedDesiredAmountUsd: 0.83,
+        reviewedUpstreamAmountUsd: 0,
+      }],
     });
     const outcome = applied.teams.flatMap((team) => team.targets)[0];
     expect(outcome).toMatchObject({ targetGroupId: "member2", outcome: "failed" });
@@ -985,15 +991,18 @@ describe("team budget upstream reconciliation", () => {
       ),
     }));
     const applied = await applyTeamBudgetLimits({
-      targets: [{ workspaceId, groupId: "member2" }],
+      targets: [{
+        teamName: TEAM_ONE,
+        workspaceId,
+        groupId: "member2",
+        reviewedDesiredAmountUsd: 0.83,
+        reviewedUpstreamAmountUsd: 0,
+      }],
     });
     const outcome = applied.teams.flatMap((team) => team.targets)[0];
     expect(outcome).toMatchObject({ targetGroupId: "member2", outcome: "failed" });
     expect(outcome.error).toContain("no longer an eligible");
     expect(mutations).toEqual([]);
-    expect((await applyTeamBudgetLimits({ teamNames: [TEAM_ONE] })).teams).toEqual([]);
-    const broad = await applyTeamBudgetLimits({ all: true });
-    expect(broad.teams.some((team) => team.teamName === TEAM_ONE)).toBe(false);
     expect(mutations.some((mutation) => mutation.groupId === "member2")).toBe(false);
     setTeamBudgetDirectoryFetcherForTests(async () => ({ allGroups: groups }));
   });
@@ -1006,7 +1015,22 @@ describe("team budget upstream reconciliation", () => {
     installTransport(true);
     await reconcileTeamBudgetsUpstream();
     expect(mutations).toEqual([]);
-    const applied = await applyTeamBudgetLimits({ teamNames: [TEAM_ONE, TEAM_TWO, TEAM_TWO] });
+    const applied = await applyTeamBudgetLimits({ targets: [
+      {
+        teamName: TEAM_ONE,
+        workspaceId,
+        groupId: "member2",
+        reviewedDesiredAmountUsd: 0.83,
+        reviewedUpstreamAmountUsd: 0,
+      },
+      {
+        teamName: TEAM_TWO,
+        workspaceId,
+        groupId: "member3",
+        reviewedDesiredAmountUsd: 1.83,
+        reviewedUpstreamAmountUsd: 0,
+      },
+    ] });
     expect(applied.teams.map((team) => team.teamName)).toEqual([TEAM_ONE, TEAM_TWO]);
     expect(applied.teams.find((team) => team.teamName === TEAM_ONE)?.outcome).toBe("success");
     expect(applied.teams.find((team) => team.teamName === TEAM_TWO)?.outcome).toBe("failed");
@@ -1023,11 +1047,179 @@ describe("team budget upstream reconciliation", () => {
 
     failingGroupId = null;
     mutations = [];
-    const retried = await applyTeamBudgetLimits({ teamNames: [TEAM_TWO] });
+    const retried = await applyTeamBudgetLimits({ targets: [{
+      teamName: TEAM_TWO,
+      workspaceId,
+      groupId: "member3",
+      reviewedDesiredAmountUsd: 1.83,
+      reviewedUpstreamAmountUsd: 0,
+    }] });
     expect(retried.teams[0]?.outcome).toBe("success");
     expect(mutations).toEqual([
       { method: "POST", groupId: "member3", amountUsd: 1.83 },
     ]);
     expect(upstream.get("member3")).toBe(1.83);
+  });
+
+  it("rejects changed reviewed values and remapped targets without writing", async () => {
+    upstream.set("member2", 0);
+    mutations = [];
+    installTransport(true);
+    await reconcileTeamBudgetsUpstream();
+
+    const changedValue = await applyTeamBudgetLimits({ targets: [{
+      teamName: TEAM_ONE,
+      workspaceId,
+      groupId: "member2",
+      reviewedDesiredAmountUsd: 9,
+      reviewedUpstreamAmountUsd: 0,
+    }] });
+    expect(changedValue.teams[0]?.targets[0]).toMatchObject({
+      outcome: "failed",
+      targetGroupId: "member2",
+    });
+    expect(changedValue.teams[0]?.targets[0]?.error).toContain("changed after review");
+    expect(mutations).toEqual([]);
+
+    await db.update(teamLimitTargetsTable).set({ teamName: TEAM_TWO }).where(and(
+      eq(teamLimitTargetsTable.workspaceId, workspaceId),
+      eq(teamLimitTargetsTable.groupId, "member2"),
+    ));
+    const remapped = await applyTeamBudgetLimits({ targets: [{
+      teamName: TEAM_ONE,
+      workspaceId,
+      groupId: "member2",
+      reviewedDesiredAmountUsd: 0.83,
+      reviewedUpstreamAmountUsd: 0,
+    }] });
+    expect(remapped.teams[0]?.targets[0]?.outcome).toBe("failed");
+    expect(remapped.teams[0]?.targets[0]?.error).toContain("no longer an enabled explicit mapping");
+    expect(mutations).toEqual([]);
+    await db.update(teamLimitTargetsTable).set({ teamName: TEAM_ONE }).where(and(
+      eq(teamLimitTargetsTable.workspaceId, workspaceId),
+      eq(teamLimitTargetsTable.groupId, "member2"),
+    ));
+  });
+
+  it("confirms a reviewed zero proposal already cleared upstream without another write", async () => {
+    await db.update(teamLimitTargetsTable).set({ monthlyLimitUsd: 0 }).where(and(
+      eq(teamLimitTargetsTable.workspaceId, workspaceId),
+      eq(teamLimitTargetsTable.groupId, "member2"),
+    ));
+    upstream.set("member2", null);
+    mutations = [];
+    installTransport(true);
+    try {
+      const result = await applyTeamBudgetLimits({ targets: [{
+        teamName: TEAM_ONE, workspaceId, groupId: "member2",
+        reviewedDesiredAmountUsd: 0, reviewedUpstreamAmountUsd: 5,
+      }] });
+      expect(result.teams[0]?.targets[0]?.outcome).toBe("success");
+      expect(mutations).toEqual([]);
+    } finally {
+      await db.update(teamLimitTargetsTable).set({ monthlyLimitUsd: null }).where(and(
+        eq(teamLimitTargetsTable.workspaceId, workspaceId),
+        eq(teamLimitTargetsTable.groupId, "member2"),
+      ));
+    }
+  });
+
+  it("returns an explicit failure instead of empty success for an unmapped target", async () => {
+    mutations = [];
+    installTransport(true);
+    const applied = await applyTeamBudgetLimits({ targets: [{
+      teamName: TEAM_ONE,
+      workspaceId,
+      groupId: "not-configured",
+      reviewedDesiredAmountUsd: 1,
+      reviewedUpstreamAmountUsd: null,
+    }] });
+    expect(applied.teams).toEqual([expect.objectContaining({
+      teamName: TEAM_ONE,
+      outcome: "failed",
+      targets: [expect.objectContaining({
+        targetGroupId: "not-configured",
+        outcome: "failed",
+      })],
+    })]);
+    expect(mutations).toEqual([]);
+  });
+
+  it("reports a lost write response as uncertain and retries as a confirmed no-op", async () => {
+    upstream.set("member2", 0);
+    mutations = [];
+    setReplitBudgetTransportForTests(async (_path, init) => {
+      if (init.method === "GET") {
+        return Response.json({
+          data: [...upstream]
+            .filter(([, amountUsd]) => amountUsd !== null)
+            .map(([groupId, amountUsd]) => ({
+              type: "workspace_group_limit",
+              workspaceId,
+              groupId,
+              currency: "USD",
+              period: "billing_cycle",
+              amountUsd,
+            })),
+          pagination: { hasMore: false },
+        });
+      }
+      const body = JSON.parse(init.body!) as { groupId: string; amountUsd: number };
+      mutations.push({ method: init.method, groupId: body.groupId, amountUsd: body.amountUsd });
+      upstream.set(body.groupId, body.amountUsd);
+      throw new Error("response connection was lost");
+    }, true);
+    const reviewed = {
+      teamName: TEAM_ONE,
+      workspaceId,
+      groupId: "member2",
+      reviewedDesiredAmountUsd: 0.83,
+      reviewedUpstreamAmountUsd: 0,
+    };
+
+    const first = await applyTeamBudgetLimits({ targets: [reviewed] });
+    expect(first.teams[0]?.targets[0]?.outcome).toBe("uncertain");
+    expect(mutations).toHaveLength(1);
+
+    const retry = await applyTeamBudgetLimits({ targets: [reviewed] });
+    expect(retry.teams[0]?.targets[0]?.outcome).toBe("success");
+    expect(mutations).toHaveLength(1);
+  });
+
+  it("does not report success when provider readback differs from the requested value", async () => {
+    upstream.set("member2", 0);
+    mutations = [];
+    setReplitBudgetTransportForTests(async (_path, init) => {
+      if (init.method === "GET") {
+        return Response.json({
+          data: [{
+            type: "workspace_group_limit",
+            workspaceId,
+            groupId: "member2",
+            currency: "USD",
+            period: "billing_cycle",
+            amountUsd: 0,
+          }],
+          pagination: { hasMore: false },
+        });
+      }
+      const body = JSON.parse(init.body!) as { groupId: string; amountUsd: number };
+      mutations.push({ method: init.method, groupId: body.groupId, amountUsd: body.amountUsd });
+      return Response.json({ data: body });
+    }, true);
+
+    const applied = await applyTeamBudgetLimits({ targets: [{
+      teamName: TEAM_ONE,
+      workspaceId,
+      groupId: "member2",
+      reviewedDesiredAmountUsd: 0.83,
+      reviewedUpstreamAmountUsd: 0,
+    }] });
+    expect(applied.teams[0]?.targets[0]).toMatchObject({
+      outcome: "uncertain",
+      error: expect.stringContaining("readback did not match"),
+    });
+    expect(mutations).toHaveLength(1);
+    expect(upstream.get("member2")).toBe(0);
   });
 });

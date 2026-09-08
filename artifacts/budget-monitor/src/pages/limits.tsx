@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Link, useSearch } from 'wouter';
+import { Link, useLocation, useSearch } from 'wouter';
 import { useAuthContext } from '@/components/auth-context';
 import {
   activeLimitOperationQueryOptions,
@@ -53,11 +53,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { invalidateBudgetCaches } from '@/lib/budget-cache';
 import { GroupPolicyControl, WorkspacePolicyControl } from '@/components/policy-control';
 import { BudgetMeter, DataTable, EmptyState, StatusBadge } from '@/components/journey-primitives';
+import { GroupLimitsView } from '@/components/group-limits-view';
 
 export default function LimitsPage() {
   const searchParams = useSearch();
+  const [, setLocation] = useLocation();
   const urlContext = useMemo(() => parseLimitsUrlContext(searchParams), [searchParams]);
-  const { auth, isPreviewing } = useAuthContext();
+  const { auth, isPreviewing, capabilities } = useAuthContext();
   const {
     workspaceId, setWorkspaceId,
     activeOperations, addOperation, removeOperation,
@@ -65,6 +67,20 @@ export default function LimitsPage() {
     availableWorkspaces
   } = useLimitsState();
   const isReadOnly = isPreviewing || auth?.previewReadOnly === true;
+  const canManageGroups = capabilities.canWriteGroupLimits === true && !isReadOnly;
+  const params = new URLSearchParams(searchParams);
+  const view = canManageGroups && params.get('view') !== 'individual' &&
+    !urlContext.workspaceId && urlContext.groupIds.length === 0 ? 'groups' : 'individual';
+  const changeView = (next: string) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('view', next);
+    if (next === 'groups') {
+      nextParams.delete('workspaceId');
+      nextParams.delete('groupId');
+      nextParams.delete('groupIds');
+    }
+    setLocation(`/limits?${nextParams}`);
+  };
 
   const [amountUsd, setAmountUsd] = useState<string>('');
 
@@ -81,7 +97,7 @@ export default function LimitsPage() {
     if (resolved !== workspaceId) setWorkspaceId(resolved);
   }, [availableWorkspaces, setWorkspaceId, urlContext.workspaceId, workspaceId]);
 
-  if (availableWorkspaces.length === 0) {
+  if (availableWorkspaces.length === 0 && !canManageGroups) {
     return (
       <div className="mx-auto max-w-[1280px] px-4 py-6 md:px-8 md:py-8">
         <EmptyState
@@ -96,8 +112,9 @@ export default function LimitsPage() {
     <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col space-y-8 px-4 py-6 md:px-8 md:py-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-2">
-          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Limits</h1>
-          <p className="text-sm text-muted-foreground">Individual monthly Agent limits · reset each billing cycle · hard-block Agent usage when reached.</p>
+          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Usage Limits</h1>
+          <p className="text-sm text-muted-foreground">Monthly Replit Agent limits · reset each billing cycle · separate from annual funding.</p>
+          {capabilities.canViewAccountUsage && <Link href="/allocations" className="inline-block text-sm text-primary hover:underline">View Budget allocations</Link>}
         </div>
 
         {isReadOnly && (
@@ -107,7 +124,13 @@ export default function LimitsPage() {
         )}
       </div>
 
-      {!workspaceId ? (
+      <Tabs value={view} onValueChange={changeView}>
+        <TabsList aria-label="Usage limit type">
+          {canManageGroups && <TabsTrigger value="groups">Group limits</TabsTrigger>}
+          <TabsTrigger value="individual">Individual limits</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {view === 'groups' && canManageGroups ? <GroupLimitsView /> : !workspaceId ? (
         <WorkspaceSelectionList
           availableWorkspaces={availableWorkspaces}
           onSelect={setWorkspaceId}
@@ -142,6 +165,7 @@ function WorkspaceSelectionList({
   availableWorkspaces: string[];
   onSelect: (id: string) => void;
 }) {
+  const [search, setSearch] = useState('');
   const { data: visibleWorkspaces, isLoading, isError, refetch } = useListVisibleWorkspaces(undefined, {
     query: { queryKey: getListVisibleWorkspacesQueryKey() }
   });
@@ -161,13 +185,16 @@ function WorkspaceSelectionList({
     );
   }
 
-  const list = visibleWorkspaces?.filter(w => availableWorkspaces.includes(w.workspaceId)) || [];
+  const list = visibleWorkspaces?.filter(w => availableWorkspaces.includes(w.workspaceId) &&
+    `${w.workspaceName} ${w.workspaceId}`.toLowerCase().includes(search.toLowerCase().trim())) || [];
 
   return (
     <div className="sm:flex-1 flex flex-col gap-4 sm:min-h-0">
       <div className="flex items-center justify-between shrink-0">
         <h2 className="text-lg font-semibold text-foreground">Select a workspace</h2>
       </div>
+      <Input aria-label="Search workspaces" placeholder="Search workspaces…" value={search} onChange={event => setSearch(event.target.value)} className="max-w-sm" />
+      {list.length === 0 && <p className="text-sm text-muted-foreground">No matching workspaces.</p>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 overflow-auto pb-6">
         {list.map(w => (
@@ -290,7 +317,7 @@ function WorkspaceLimitsView({
           </p>
         )}
         <p className="text-muted-foreground lg:ml-auto">
-          Each amount is an individual monthly Agent limit, not a shared group cap.
+          Each amount is an individual monthly Agent limit, not a shared group cap. Raising an individual limit does not raise the shared group cap.
         </p>
       </div>
 
@@ -580,7 +607,7 @@ function WorkspaceLimitsManager({
             Advanced defaults and baseline policies
           </summary>
           <p className="mt-2 text-xs text-muted-foreground">
-            Defaults and policies provide ongoing limits while preserving hand-set overrides. They are separate from the selected one-time limits below.
+            Defaults and policies provide ongoing per-person limits while preserving hand-set overrides. They are not shared group caps and are separate from the selected one-time limits below.
           </p>
           {policiesQuery.isLoading && (
             <p className="mt-4 text-sm text-muted-foreground">Loading policy settings…</p>
@@ -620,8 +647,8 @@ function WorkspaceLimitsManager({
         <CardHeader className="gap-4 border-b pb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-lg">Review limits</CardTitle>
-              <CardDescription className="mt-1">Select members or groups to prepare a one-time monthly limit update.</CardDescription>
+              <CardTitle className="text-lg">Individual limits</CardTitle>
+              <CardDescription className="mt-1">Select people, or select people by group, to prepare a one-time monthly limit update. Each workspace/person is counted once.</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="font-mono font-semibold text-foreground">{selectableCount}</span> eligible
@@ -633,8 +660,8 @@ function WorkspaceLimitsManager({
           </div>
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <TabsList className="self-start">
-              <TabsTrigger value="members" className="gap-2 px-5" data-testid="tab-limits-members"><User className="h-4 w-4"/> Members</TabsTrigger>
-              <TabsTrigger value="groups" className="gap-2 px-5" data-testid="tab-limits-groups"><Users className="h-4 w-4"/> Groups</TabsTrigger>
+              <TabsTrigger value="members" className="gap-2 px-5" data-testid="tab-limits-members"><User className="h-4 w-4"/> People</TabsTrigger>
+              <TabsTrigger value="groups" className="gap-2 px-5" data-testid="tab-limits-groups"><Users className="h-4 w-4"/> Select by group</TabsTrigger>
             </TabsList>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
             <div className="relative w-full sm:w-64 shrink-0">

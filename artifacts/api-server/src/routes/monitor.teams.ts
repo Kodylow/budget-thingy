@@ -644,6 +644,7 @@ router.patch(
 
 router.post(
   "/admin/team-budgets/apply",
+  requireTrueAccountAdmin,
   requireCapability("canWriteGroupLimits"),
   async (req, res): Promise<void> => {
     const body = ApplyTeamBudgetLimitsBody.safeParse(req.body);
@@ -652,34 +653,25 @@ router.post(
       : [];
     const exactSelection =
       keys.length === 1 &&
-      (
-        (keys[0] === "teamNames" && Array.isArray(req.body.teamNames)) ||
-        (keys[0] === "all" && req.body.all === true) ||
-        (keys[0] === "targets" && Array.isArray(req.body.targets))
-      );
-    const exactTargets = !Array.isArray(req.body?.targets) ||
+      keys[0] === "targets" &&
+      Array.isArray(req.body.targets);
+    const exactTargets = Array.isArray(req.body?.targets) &&
       req.body.targets.every((target: unknown) => {
         if (!target || typeof target !== "object") return false;
-        const targetKeys = Object.keys(target as Record<string, unknown>);
-        return targetKeys.length >= 1 &&
-          targetKeys.length <= 2 &&
-          targetKeys.every((key) => key === "workspaceId" || key === "groupId");
+        const targetKeys = Object.keys(target as Record<string, unknown>).sort();
+        return targetKeys.join(",") ===
+          "groupId,reviewedDesiredAmountUsd,reviewedUpstreamAmountUsd,teamName,workspaceId";
       });
     if (!body.success || !exactSelection || !exactTargets) {
       res.status(400).json({
         error: body.success
-          ? 'Body must be exactly {"all":true} or {"teamNames":[...]}'
+          ? "Body must contain only exact reviewed targets"
           : body.error.message,
       });
       return;
     }
-    const selection = "teamNames" in body.data
-      ? { teamNames: body.data.teamNames }
-      : "targets" in body.data
-        ? { targets: body.data.targets }
-        : { all: true as const };
     res.json(ApplyTeamBudgetLimitsResponse.parse(
-      await applyTeamBudgetLimits(selection),
+      await applyTeamBudgetLimits({ targets: body.data.targets }),
     ));
   },
 );

@@ -1581,8 +1581,12 @@ paths:
     post:
       operationId: applyTeamBudgetLimits
       tags: [teams]
-      summary: Apply selected drifted monthly limits upstream
-      description: True-account-admin-only. This is the only team-budget operation that writes upstream.
+      summary: Apply exact reviewed Members-group monthly limits upstream
+      description: >
+        True-account-admin-only. Every target and its current proposal are
+        revalidated. An already observed reviewed proposal is confirmed without
+        another write; otherwise the observed value must still match review.
+        This is the only team-budget operation that writes upstream.
       requestBody:
         required: true
         content:
@@ -5499,43 +5503,35 @@ components:
           type: [number, "null"]
           minimum: 0
     TeamBudgetApplySelection:
-      oneOf:
-        - type: object
-          additionalProperties: false
-          required: [teamNames]
-          properties:
-            teamNames:
-              type: array
-              minItems: 1
-              items:
-                type: string
-                minLength: 1
-        - type: object
-          additionalProperties: false
-          required: [all]
-          properties:
-            all:
-              type: boolean
-              const: true
-        - type: object
-          additionalProperties: false
-          required: [targets]
-          properties:
-            targets:
-              type: array
-              minItems: 1
-              items:
-                $ref: "#/components/schemas/TeamBudgetTargetIdentity"
+      type: object
+      additionalProperties: false
+      required: [targets]
+      properties:
+        targets:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TeamBudgetTargetIdentity"
     TeamBudgetTargetIdentity:
       type: object
       additionalProperties: false
-      required: [workspaceId]
+      required: [teamName, workspaceId, groupId, reviewedDesiredAmountUsd, reviewedUpstreamAmountUsd]
       properties:
+        teamName:
+          type: string
+          minLength: 1
         workspaceId:
           type: string
           minLength: 1
         groupId:
-          type: [string, "null"]
+          type: string
+          minLength: 1
+        reviewedDesiredAmountUsd:
+          type: number
+          minimum: 0
+        reviewedUpstreamAmountUsd:
+          type: [number, "null"]
+          minimum: 0
     TeamBudgetApplyTargetOutcome:
       type: object
       required: [workspaceId, targetGroupId, targetGroupName, desiredAmountUsd, outcome, error]
@@ -5550,7 +5546,7 @@ components:
           type: number
         outcome:
           type: string
-          enum: [success, failed]
+          enum: [success, failed, uncertain]
         error:
           type: [string, "null"]
     TeamBudgetApplyTeamOutcome:
@@ -5594,6 +5590,9 @@ components:
         isEnabled: { type: boolean }
         teamMonthlyLimitUsd: { type: number }
         targetAmountUsd: { type: number }
+        validationReason:
+          type: string
+          description: Present when the stored target identity is missing or is no longer an eligible nonlegacy Members group.
     TeamBudgetTargetTeamSummary:
       type: object
       required: [teamName, monthlyLimitUsd, targetAmountSumUsd, differenceUsd]

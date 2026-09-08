@@ -16,4 +16,6 @@ export interface TeamBudgetTarget {
   isEnabled: boolean;
   teamMonthlyLimitUsd: number;
   targetAmountUsd: number;
+  /** Present when the stored target identity is missing or is no longer an eligible nonlegacy Members group. */
+  validationReason?: string;
 }

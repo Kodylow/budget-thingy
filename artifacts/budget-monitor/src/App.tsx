@@ -209,7 +209,7 @@ function AllocationsRoute() {
 
 function LimitsRoute() {
   const { capabilities, isPreviewing } = useAuthContext();
-  if (capabilities.canWriteUserLimitsIn && capabilities.canWriteUserLimitsIn.length > 0) return <Limits />;
+  if (capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn?.length > 0) return <Limits />;
   return (
     <ForbiddenRoute
       testId="limits-forbidden"
@@ -248,7 +248,7 @@ function Router() {
       '/spend': 'Spend',
       '/my-team': 'My Team',
       '/org-insights': 'Org Insights',
-      '/limits': 'Limits',
+      '/limits': 'Usage Limits',
       '/allocations': 'Budget allocations',
       '/alerts': 'Email activity',
       '/access': 'Access',

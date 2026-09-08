@@ -115,7 +115,7 @@ export function GroupPolicyControl({ workspaceId, groupId, currentAmount }: { wo
   return (
     <div className="mb-4">
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border bg-muted/20 p-3">
-        <div className="text-sm font-medium min-w-fit">Group Baseline Policy</div>
+        <div className="text-sm font-medium min-w-fit">Group per-person baseline</div>
         <Input 
           type="number" 
           inputMode="decimal"
@@ -136,7 +136,7 @@ export function GroupPolicyControl({ workspaceId, groupId, currentAmount }: { wo
           </Button>
         )}
         <span className="text-xs text-muted-foreground sm:ml-auto">
-          Applies to all members without a manual override.
+          An individual limit for each member without a manual override, not a shared group cap.
         </span>
       </div>
 
@@ -209,7 +209,7 @@ export function WorkspacePolicyControl({ workspaceId, currentAmount }: { workspa
   return (
     <div className="mb-4">
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border bg-muted/20 p-3">
-        <div className="text-sm font-medium min-w-fit">Workspace Default Policy</div>
+        <div className="text-sm font-medium min-w-fit">Workspace per-person default</div>
         <Input 
           type="number" 
           inputMode="decimal"

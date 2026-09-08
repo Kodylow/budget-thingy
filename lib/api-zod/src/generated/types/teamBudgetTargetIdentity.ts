@@ -8,7 +8,16 @@
 
 export interface TeamBudgetTargetIdentity {
   /** @minLength 1 */
+  teamName: string;
+  /** @minLength 1 */
   workspaceId: string;
-  /** @nullable */
-  groupId?: string | null;
+  /** @minLength 1 */
+  groupId: string;
+  /** @minimum 0 */
+  reviewedDesiredAmountUsd: number;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  reviewedUpstreamAmountUsd: number | null;
 }

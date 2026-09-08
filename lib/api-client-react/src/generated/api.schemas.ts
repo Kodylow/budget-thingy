@@ -2791,23 +2791,24 @@ export interface TeamBudgetLimitUpdate {
 
 export interface TeamBudgetTargetIdentity {
   /** @minLength 1 */
+  teamName: string;
+  /** @minLength 1 */
   workspaceId: string;
-  /** @nullable */
-  groupId?: string | null;
+  /** @minLength 1 */
+  groupId: string;
+  /** @minimum 0 */
+  reviewedDesiredAmountUsd: number;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  reviewedUpstreamAmountUsd: number | null;
 }
 
-export type TeamBudgetApplySelection = {
-  /**
-     * @minItems 1
-     * @items.minLength 1
-     */
-  teamNames: string[];
-} | {
-  all: true;
-} | {
+export interface TeamBudgetApplySelection {
   /** @minItems 1 */
   targets: TeamBudgetTargetIdentity[];
-};
+}
 
 export type TeamBudgetApplyTargetOutcomeOutcome = typeof TeamBudgetApplyTargetOutcomeOutcome[keyof typeof TeamBudgetApplyTargetOutcomeOutcome];
 
@@ -2815,6 +2816,7 @@ export type TeamBudgetApplyTargetOutcomeOutcome = typeof TeamBudgetApplyTargetOu
 export const TeamBudgetApplyTargetOutcomeOutcome = {
   success: 'success',
   failed: 'failed',
+  uncertain: 'uncertain',
 } as const;
 
 export interface TeamBudgetApplyTargetOutcome {
@@ -2865,6 +2867,8 @@ export interface TeamBudgetTarget {
   isEnabled: boolean;
   teamMonthlyLimitUsd: number;
   targetAmountUsd: number;
+  /** Present when the stored target identity is missing or is no longer an eligible nonlegacy Members group. */
+  validationReason?: string;
 }
 
 export interface TeamBudgetTargetTeamSummary {

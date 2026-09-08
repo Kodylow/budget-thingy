@@ -4145,8 +4145,8 @@ export const getApplyTeamBudgetLimitsUrl = () => {
 }
 
 /**
- * True-account-admin-only. This is the only team-budget operation that writes upstream.
- * @summary Apply selected drifted monthly limits upstream
+ * True-account-admin-only. Every target and its current proposal are revalidated. An already observed reviewed proposal is confirmed without another write; otherwise the observed value must still match review. This is the only team-budget operation that writes upstream.
+ * @summary Apply exact reviewed Members-group monthly limits upstream
  */
 export const applyTeamBudgetLimits = async (teamBudgetApplySelection: TeamBudgetApplySelection, options?: RequestInit): Promise<TeamBudgetApplyResponse> => {
 
@@ -4195,7 +4195,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type ApplyTeamBudgetLimitsMutationError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>
 
     /**
- * @summary Apply selected drifted monthly limits upstream
+ * @summary Apply exact reviewed Members-group monthly limits upstream
  */
 export const useApplyTeamBudgetLimits = <TError = ErrorType<ApiError | UnauthorizedResponse | ForbiddenResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyTeamBudgetLimits>>, TError,{data: BodyType<TeamBudgetApplySelection>}, TContext>, request?: SecondParameter<typeof customFetch>}

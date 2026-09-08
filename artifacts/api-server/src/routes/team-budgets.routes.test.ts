@@ -1486,6 +1486,39 @@ test("true admins can edit and reset monthly team and target limits", async () =
   });
 });
 
+test("target configuration exposes invalid exact mappings without changing their team", async () => {
+  setTeamBudgetDirectoryFetcherForTests(async () => ({
+    allGroups: [{
+      id: GROUP_ID,
+      workspaceId: "task158-ws",
+      name: `${GROUP_NAME} - Admin`,
+      type: "custom",
+    }],
+  }));
+  try {
+    const response = await request(
+      "/admin/team-budgets/targets",
+      "task158-account",
+    );
+    expect(response.status).toBe(200);
+    expect(response.json.targets.find((target) => target.groupId === GROUP_ID))
+      .toMatchObject({
+        teamName: ASSIGNED,
+        isEnabled: true,
+        validationReason: expect.stringContaining("no longer an eligible"),
+      });
+  } finally {
+    setTeamBudgetDirectoryFetcherForTests(async () => ({
+      allGroups: [{
+        id: GROUP_ID,
+        workspaceId: "task158-ws",
+        name: GROUP_NAME,
+        type: "custom",
+      }],
+    }));
+  }
+});
+
 test("apply validates an exact explicit selection", async () => {
   expect((await request("/admin/team-budgets/apply", "task158-account", "POST", {
     all: false,
@@ -1494,4 +1527,25 @@ test("apply validates an exact explicit selection", async () => {
     all: true,
     teamNames: [ASSIGNED],
   })).status).toBe(400);
+  const reviewed = {
+    targets: [{
+      teamName: ASSIGNED,
+      workspaceId: "task158-ws",
+      groupId: GROUP_ID,
+      reviewedDesiredAmountUsd: 10.42,
+      reviewedUpstreamAmountUsd: null,
+    }],
+  };
+  expect((await request(
+    "/admin/team-budgets/apply",
+    "task158-delegate",
+    "POST",
+    reviewed,
+  )).status).toBe(403);
+  expect((await request(
+    "/admin/team-budgets/apply",
+    "task158-readonly-account",
+    "POST",
+    reviewed,
+  )).status).toBe(403);
 });

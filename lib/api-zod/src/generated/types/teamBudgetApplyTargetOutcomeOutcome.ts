@@ -12,4 +12,5 @@ export type TeamBudgetApplyTargetOutcomeOutcome = typeof TeamBudgetApplyTargetOu
 export const TeamBudgetApplyTargetOutcomeOutcome = {
   success: 'success',
   failed: 'failed',
+  uncertain: 'uncertain',
 } as const;

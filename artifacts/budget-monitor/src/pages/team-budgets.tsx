@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
+import { Link } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getGetTeamAllocationAuditQueryKey,
@@ -479,6 +480,9 @@ export default function TeamBudgets() {
           <p className="max-w-3xl text-sm text-muted-foreground">
              {canEdit ? 'Manage' : 'View'} local planning funding. Undated opening funding, dated monthly additions, and carried-forward additions remain separate from platform limits.
           </p>
+          {(capabilities.canWriteGroupLimits || capabilities.canWriteUserLimitsIn.length > 0) && (
+            <Link href="/limits" className="inline-block text-sm text-primary hover:underline">Manage monthly Agent caps in Usage Limits</Link>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {canEdit && <AddAllocationDialog key={authorizationKey} teams={teams} onSuccess={() => invalidateBudgetCaches(queryClient)} />}

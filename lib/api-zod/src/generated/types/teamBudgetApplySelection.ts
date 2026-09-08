@@ -7,15 +7,7 @@
  */
 import type { TeamBudgetTargetIdentity } from './teamBudgetTargetIdentity';
 
-export type TeamBudgetApplySelection = {
-  /**
-     * @minItems 1
-     * @items.minLength 1
-     */
-  teamNames: string[];
-} | {
-  all: true;
-} | {
+export interface TeamBudgetApplySelection {
   /** @minItems 1 */
   targets: TeamBudgetTargetIdentity[];
-};
+}
