@@ -63,9 +63,15 @@ describe('personal membership context', () => {
     expect(resolvePersonalWorkspace(context, 'comcast').workspace?.workspaceId).toBe('comcast');
   });
 
-  it('fails closed for an invalid URL or an ambiguous context without a default', () => {
-    expect(resolvePersonalWorkspace(context, 'missing')).toEqual({ workspace: null, status: 'invalid' });
-    expect(resolvePersonalWorkspace({ ...context, defaultWorkspaceId: null }, null)).toEqual({ workspace: null, status: 'choose' });
+  it('replaces an obsolete selection with the eligible default', () => {
+    expect(resolvePersonalWorkspace(context, 'missing').workspace?.workspaceId).toBe('lift');
+    expect(resolvePersonalWorkspace({ ...context, workspaces: [context.workspaces[1]] }, 'comcast').workspace?.workspaceId).toBe('lift');
+  });
+
+  it('uses only returned candidates and distinguishes empty from unresolved membership', () => {
+    expect(resolvePersonalWorkspace({ ...context, defaultWorkspaceId: null }, null).workspace).toBe(context.workspaces[0]);
+    expect(resolvePersonalWorkspace({ ...context, workspaces: [] }, 'comcast')).toEqual({ workspace: null, status: 'empty' });
+    expect(resolvePersonalWorkspace(undefined, 'comcast')).toEqual({ workspace: null, status: 'loading' });
   });
 
   it('strips the previous person workspace when the effective identity changes', () => {
@@ -105,7 +111,7 @@ describe('personal membership context', () => {
     render(context.workspaces[0], true);
     act(() => container.querySelector<HTMLButtonElement>('button')?.click());
     expect(document.body.textContent).toContain('Comcast');
-    expect(document.body.textContent).toContain('Current allocated workspace');
+    expect(document.body.textContent).toContain('Default workspace');
     expect(document.body.textContent).toContain('LIFT Labs');
     expect(document.querySelector<HTMLAnchorElement>('a[href="/org-insights"]')).not.toBeNull();
     expect(document.body.textContent).not.toContain('No groups');

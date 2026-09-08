@@ -149,6 +149,12 @@ beforeAll(async () => {
       ["task158-plain", member("task158-plain", false, {
         "task158-ws": { role: "member", isDisabled: false },
       })],
+      ["task158-viewer", member("task158-viewer", false, {
+        "task158-ws": { role: "viewer", isDisabled: false },
+      })],
+      ["task158-unknown-role", member("task158-unknown-role", false, {
+        "task158-ws": { role: "future_role", isDisabled: false },
+      })],
       ["task158-creator-2", member("task158-creator-2", false, {
         "task158-ws-2": { role: "member", isDisabled: false },
       })],
@@ -1330,6 +1336,24 @@ test("regular members can read only their own workspace team Home summary", asyn
       reportingEnd: USAGE_DATE,
     },
   });
+  const directory = await getDirectory();
+  const originalGroupMembers = directory.groupMembers.get(GROUP_ID) ?? [];
+  directory.groupMembers.set(GROUP_ID, [
+    ...originalGroupMembers,
+    "task158-viewer",
+    "task158-unknown-role",
+  ]);
+  try {
+    for (const userId of ["task158-viewer", "task158-unknown-role"]) {
+      const legacyMembershipOwn = await request(
+        `/reporting/teams/${poolId}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&trackingRange=selected&${COMPLETE_RANGE}`,
+        userId,
+      );
+      expect(legacyMembershipOwn.status).toBe(200);
+    }
+  } finally {
+    directory.groupMembers.set(GROUP_ID, originalGroupMembers);
+  }
   const accountAdminOwn = await request(
     `/reporting/teams/${poolId}?scope=own&workspaceId=task158-ws&includeBudgetTracking=true&trackingRange=selected&${COMPLETE_RANGE}`,
     "task158-own-account",

@@ -41,11 +41,11 @@ export function resolvePersonalWorkspace(
   if (!context) return { workspace: null, status: 'loading' as const };
   if (requestedWorkspaceId) {
     const workspace = context.workspaces.find((candidate) => candidate.workspaceId === requestedWorkspaceId) ?? null;
-    return { workspace, status: workspace ? 'selected' as const : 'invalid' as const };
+    if (workspace) return { workspace, status: 'selected' as const };
   }
-  if (!context.defaultWorkspaceId) return { workspace: null, status: 'choose' as const };
-  const workspace = context.workspaces.find((candidate) => candidate.workspaceId === context.defaultWorkspaceId) ?? null;
-  return { workspace, status: workspace ? 'selected' as const : 'choose' as const };
+  const workspace = context.workspaces.find((candidate) => candidate.workspaceId === context.defaultWorkspaceId)
+    ?? context.workspaces[0] ?? null;
+  return { workspace, status: workspace ? 'selected' as const : 'empty' as const };
 }
 
 function groupNames(groups: PersonalMembershipGroup[]) {
@@ -82,7 +82,7 @@ export function MembershipContextSummary({
           </div>
           {!workspace.isPreferred && defaultWorkspace && (
             <div>
-              <span className="block text-xs text-muted-foreground">Current allocated workspace</span>
+              <span className="block text-xs text-muted-foreground">Default workspace</span>
               <strong className="font-medium">{defaultWorkspace.workspaceName}</strong>
             </div>
           )}

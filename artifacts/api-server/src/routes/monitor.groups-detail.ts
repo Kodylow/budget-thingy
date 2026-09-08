@@ -38,7 +38,7 @@ export {
 } from "../lib/reporting-usage-transition";
 import { authorizeSpendView } from "./monitor.spend-tables";
 import { buildAuthorization } from "../lib/authz";
-import { buildMembershipContext } from "../lib/membership-context";
+import { buildOwnReportMembershipContext } from "../lib/membership-context";
 
 const router = Router();
 const MAX_REPORTING_GROUP_IDS = 32;
@@ -263,7 +263,7 @@ async function reportingDetailHandler(req: Request, res: Response): Promise<void
       // Authorized manager/account views retain their normal authorization.
     } else try {
       const directory = await getDirectory();
-      const membershipContext = buildMembershipContext(
+      const membershipContext = buildOwnReportMembershipContext(
         req.authz!.userId,
         directory,
         req.configurationSnapshot!,

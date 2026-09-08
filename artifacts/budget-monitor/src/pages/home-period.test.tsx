@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import React from 'react';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from './home';
@@ -19,23 +20,26 @@ const mocks = vi.hoisted(() => ({
   teamReport: vi.fn(),
   membership: vi.fn(),
   refetch: vi.fn(),
-}));
-
-vi.mock('wouter', () => ({
-  Link: ({ children, href }: any) => <a href={href}>{children}</a>,
-  useLocation: () => ['/', vi.fn()],
-  useSearch: () => window.location.search,
-}));
-
-vi.mock('@/components/auth-context', () => ({
-  useAuthContext: () => ({
+  navigate: vi.fn(),
+  selectWorkspace: null as null | ((value: string) => void),
+  auth: {
     user: { id: 'member-1' },
     authorizationKey: 'authorization-member-1',
     isAccountAdmin: false,
     capabilities: { canViewAccountUsage: false },
-    preview: null,
+    preview: null as string | null,
     availability: 'authorized',
-  }),
+  },
+}));
+
+vi.mock('wouter', () => ({
+  Link: ({ children, href }: any) => <a href={href}>{children}</a>,
+  useLocation: () => ['/', mocks.navigate],
+  useSearch: () => window.location.search,
+}));
+
+vi.mock('@/components/auth-context', () => ({
+  useAuthContext: () => mocks.auth,
 }));
 
 vi.mock('@/components/range-context', () => ({
@@ -67,7 +71,10 @@ vi.mock('@/components/ui/card', () => ({
 }));
 
 vi.mock('@/components/ui/select', () => ({
-  Select: ({ children }: any) => <>{children}</>,
+  Select: ({ children, value, onValueChange }: any) => {
+    mocks.selectWorkspace = onValueChange;
+    return <div data-selected-workspace={value}>{children}</div>;
+  },
   SelectContent: ({ children }: any) => <>{children}</>,
   SelectItem: ({ children, value }: any) => <option value={value}>{children}</option>,
   SelectTrigger: ({ children, ...props }: any) => <button {...props}>{children}</button>,
@@ -78,14 +85,8 @@ vi.mock('@/components/ui/skeleton', () => ({
   Skeleton: (props: any) => <span aria-label="Loading" {...props} />,
 }));
 
-vi.mock('./home-components/membership-context', () => ({
-  resolvePersonalWorkspace: (context: any, requested: string | null) => {
-    const workspace = context?.workspaces?.find(
-      (item: any) => item.workspaceId === (requested || context.defaultWorkspaceId),
-    ) ?? null;
-    return { status: workspace ? 'resolved' : 'choose', workspace };
-  },
-  searchAfterEffectiveIdentityChange: (search: string) => search,
+vi.mock('./home-components/membership-context', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./home-components/membership-context')>(),
   MembershipContextSummary: ({ workspace }: any) => (
     <p aria-label="Membership context">{workspace.workspaceName}</p>
   ),
@@ -212,6 +213,12 @@ function calledQueryOptions(mock: ReturnType<typeof vi.fn>) {
 describe('Home selected-period regressions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.sessionStorage.clear();
+    mocks.auth.user = { id: 'member-1' };
+    mocks.auth.preview = null;
+    mocks.auth.authorizationKey = 'authorization-member-1';
+    mocks.auth.availability = 'authorized';
+    mocks.navigate.mockImplementation((href: string) => window.history.replaceState(null, '', href));
     window.history.replaceState(null, '', '/?workspaceId=workspace-1');
     mocks.range = { rangeType: 'custom', startDate: '2026-04-03', endDate: '2026-04-19' };
     mocks.membership.mockReturnValue(query({
@@ -273,6 +280,98 @@ describe('Home selected-period regressions', () => {
       ]));
       expect(JSON.stringify(calledQueryOptions(request).queryKey)).not.toContain('2026-04-03');
       expect(JSON.stringify(calledQueryOptions(request).queryKey)).not.toContain('2026-04-19');
+    }
+  });
+
+  it.each(['', '?workspaceId=viewer', '?workspaceId=disabled', '?workspaceId=removed'])(
+    'loads the eligible default immediately for %s without obsolete spend requests',
+    (search) => {
+      window.history.replaceState(null, '', `/${search}`);
+      const body = renderHome();
+      expect(body.textContent).not.toContain('Choose a workspace');
+      expect(body.querySelector('[data-selected-workspace]')?.getAttribute('data-selected-workspace')).toBe('workspace-1');
+      for (const request of [mocks.dashboard, mocks.comparison, mocks.teamBudgets]) {
+        expect(request.mock.calls.at(-1)?.[0].workspaceId).toBe('workspace-1');
+        expect(calledQueryOptions(request).enabled).toBe(true);
+      }
+      expect([...body.querySelectorAll('option')].map((option) => option.value)).toEqual(['workspace-1']);
+    },
+  );
+
+  it('persists the default, allows switching, retains it on refetch, and replaces revoked membership', () => {
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    mocks.range = { rangeType: 'full-term' };
+    const other = { ...workspace, workspaceId: 'workspace-2', workspaceName: 'Workspace Two' };
+    const context = { defaultWorkspaceId: 'workspace-1', workspaces: [workspace, other], qualification: null };
+    mocks.membership.mockReturnValue(query(context));
+    window.history.replaceState(null, '', '/?rangeType=full-term');
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    try {
+      act(() => root.render(<Home />));
+      expect(window.location.search).toBe('?rangeType=full-term&workspaceId=workspace-1');
+      act(() => mocks.selectWorkspace?.('workspace-2'));
+      act(() => root.render(<Home />));
+      mocks.membership.mockReturnValue(query({ ...context, workspaces: [other, workspace] }));
+      act(() => root.render(<Home />));
+      expect(window.location.search).toContain('workspaceId=workspace-2');
+      expect(mocks.dashboard.mock.calls.at(-1)?.[0].workspaceId).toBe('workspace-2');
+      mocks.membership.mockReturnValue(query({ ...context, workspaces: [workspace] }));
+      mocks.dashboard.mockClear();
+      act(() => root.render(<Home />));
+      expect(window.location.search).toContain('workspaceId=workspace-1');
+      expect(mocks.dashboard.mock.calls.every(([params]) => params.workspaceId === 'workspace-1')).toBe(true);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  it.each(['empty', 'unavailable', 'loading'])('does not request spend for %s membership', (state) => {
+    mocks.membership.mockReturnValue(state === 'empty'
+      ? query({ defaultWorkspaceId: null, workspaces: [], qualification: null })
+      : query(undefined, { isLoading: state === 'loading', isError: state === 'unavailable' }));
+    const body = renderHome();
+    for (const request of [mocks.dashboard, mocks.comparison, mocks.teamBudgets]) {
+      expect(calledQueryOptions(request).enabled).toBe(false);
+      expect(request.mock.calls.at(-1)?.[0].workspaceId).toBeUndefined();
+    }
+    expect(mocks.teamReport).not.toHaveBeenCalled();
+    if (state === 'empty') {
+      expect(body.textContent).toContain('No eligible workspace membership');
+      expect(body.textContent).not.toMatch(/Retry|Loading workspaces|Choose a workspace/);
+    } else if (state === 'unavailable') {
+      expect(body.textContent).toContain('Workspace memberships are unavailable');
+      expect(body.textContent).toContain('Retry');
+    }
+  });
+
+  it.each(['identity', 'preview'])('clears another %s selection before enabling spend and scopes every cache key', (change) => {
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    mocks.range = { rangeType: 'full-term' };
+    window.sessionStorage.setItem('budget-monitor:home-effective-user-id', 'previous-member');
+    // Even shared memberships cannot retain the previous identity's selection.
+    const shared = { ...workspace, workspaceId: 'shared' };
+    window.history.replaceState(null, '', '/?workspaceId=shared');
+    mocks.membership.mockReturnValue(query({
+      defaultWorkspaceId: 'workspace-1', workspaces: [workspace, shared], qualification: null,
+    }));
+    if (change === 'preview') mocks.auth.preview = 'member:preview-person';
+    mocks.auth.authorizationKey = `authorization-${change}`;
+    const root = createRoot(document.createElement('div'));
+    try {
+      act(() => root.render(<Home />));
+      for (const request of [mocks.dashboard, mocks.comparison, mocks.teamBudgets]) {
+        expect(calledQueryOptions(request).enabled).toBe(false);
+      }
+      expect(window.location.search).toBe('');
+      act(() => root.render(<Home />));
+      expect(window.location.search).toBe('?workspaceId=workspace-1');
+      for (const request of [mocks.membership, mocks.dashboard, mocks.comparison, mocks.teamBudgets, mocks.teamReport]) {
+        expect(calledQueryOptions(request).queryKey).toContain(`authorization-${change}`);
+      }
+      expect(mocks.dashboard.mock.calls.some(([params]) => params.workspaceId === 'shared')).toBe(false);
+    } finally {
+      act(() => root.unmount());
     }
   });
 

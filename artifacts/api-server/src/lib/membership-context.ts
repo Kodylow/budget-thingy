@@ -23,6 +23,24 @@ export interface MembershipContext {
   qualification: string | null;
 }
 
+// Include the administrative membership aliases recognized by isAdminRole;
+// these values must come from a workspace membership, never account authority.
+const ELIGIBLE_WORKSPACE_ROLES = new Set(["admin", "owner", "account_admin", "member", "guest"]);
+const KNOWN_WORKSPACE_ROLES = new Set([
+  ...ELIGIBLE_WORKSPACE_ROLES,
+  "viewer",
+]);
+
+function compareWorkspaceIds(
+  directory: DirectoryCache,
+  leftId: string,
+  rightId: string,
+): number {
+  const leftName = directory.workspaces.get(leftId)?.name ?? leftId;
+  const rightName = directory.workspaces.get(rightId)?.name ?? rightId;
+  return leftName.localeCompare(rightName) || leftId.localeCompare(rightId);
+}
+
 /**
  * Builds the personal workspace/team selector exclusively from the effective
  * identity's active directory memberships and the committed configuration.
@@ -33,12 +51,62 @@ export function buildMembershipContext(
   directory: DirectoryCache,
   configuration: ConfigurationSnapshot,
 ): MembershipContext {
-  const member = directory.members.get(userId);
-  const activeWorkspaceIds = new Set(
-    [...(member?.workspaces ?? [])]
-      .filter(([, membership]) => !membership.isDisabled)
-      .map(([workspaceId]) => workspaceId),
+  return buildMembershipContextForPurpose(
+    userId,
+    directory,
+    configuration,
+    "personal-home",
   );
+}
+
+/**
+ * Preserves the pre-Home-filter affiliation lookup used to authorize an
+ * identity's own mapped-team report. Viewer and unrecognized role values still
+ * represent an active membership for this narrow existing authorization path;
+ * this does not make them eligible for the personal Home switcher.
+ */
+export function buildOwnReportMembershipContext(
+  userId: string,
+  directory: DirectoryCache,
+  configuration: ConfigurationSnapshot,
+): MembershipContext {
+  return buildMembershipContextForPurpose(
+    userId,
+    directory,
+    configuration,
+    "own-report-authorization",
+  );
+}
+
+function buildMembershipContextForPurpose(
+  userId: string,
+  directory: DirectoryCache,
+  configuration: ConfigurationSnapshot,
+  purpose: "personal-home" | "own-report-authorization",
+): MembershipContext {
+  const member = directory.members.get(userId);
+  let unknownRoleCount = 0;
+  const eligibleWorkspaceIds = new Set<string>();
+  for (const [workspaceId, membership] of member?.workspaces ?? []) {
+    if (membership.isDisabled) {
+      continue;
+    }
+    if (purpose === "own-report-authorization") {
+      eligibleWorkspaceIds.add(workspaceId);
+      continue;
+    }
+    if (!directory.workspaces.has(workspaceId)) continue;
+    const role = typeof membership.role === "string"
+      ? membership.role.trim().toLowerCase()
+      : "";
+    if (!KNOWN_WORKSPACE_ROLES.has(role)) {
+      unknownRoleCount += 1;
+      continue;
+    }
+    if (ELIGIBLE_WORKSPACE_ROLES.has(role)) {
+      eligibleWorkspaceIds.add(workspaceId);
+    }
+  }
   const account = buildCanonicalAccountDirectory({
     workspaces: directory.workspaces,
     groups: directory.allGroups,
@@ -93,7 +161,7 @@ export function buildMembershipContext(
 
   for (const group of directory.allGroups) {
     if (
-      !activeWorkspaceIds.has(group.workspaceId) ||
+      !eligibleWorkspaceIds.has(group.workspaceId) ||
       !(directory.groupMembers.get(group.id) ?? []).includes(userId)
     ) continue;
     const canonical = account.roleGroupsById.get(group.id);
@@ -122,28 +190,30 @@ export function buildMembershipContext(
     byTeam.set(teamName, groups);
     groupsByWorkspaceAndTeam.set(group.workspaceId, byTeam);
     for (const workspaceId of targetWorkspaceIds) {
-      if (activeWorkspaceIds.has(workspaceId)) {
+      if (eligibleWorkspaceIds.has(workspaceId)) {
         applicableTargetWorkspaceIds.add(workspaceId);
       }
     }
   }
 
-  let defaultWorkspaceId: string | null = null;
-  const fundedWorkspaceIds = new Set(groupsByWorkspaceAndTeam.keys());
-  const displayedWorkspaceIds = fundedWorkspaceIds.size > 0
-    ? fundedWorkspaceIds
-    : activeWorkspaceIds;
-  if (applicableTargetWorkspaceIds.size === 1) {
-    defaultWorkspaceId = [...applicableTargetWorkspaceIds][0]!;
-  } else if (
-    applicableTargetWorkspaceIds.size === 0 &&
-    displayedWorkspaceIds.size === 1
-  ) {
-    defaultWorkspaceId = [...displayedWorkspaceIds][0]!;
-  }
-  const qualification = defaultWorkspaceId === null && displayedWorkspaceIds.size > 0
-    ? "Choose a workspace."
-    : null;
+  // Funding determines preference, not switcher visibility. Keeping every
+  // eligible membership here prevents a funded-but-ineligible workspace from
+  // hiding an unfunded workspace the effective user can actually use.
+  const displayedWorkspaceIds = eligibleWorkspaceIds;
+  const applicableTargets = [...applicableTargetWorkspaceIds]
+    .sort((left, right) => compareWorkspaceIds(directory, left, right));
+  const orderedEligibleWorkspaces = [...eligibleWorkspaceIds]
+    .sort((left, right) => compareWorkspaceIds(directory, left, right));
+  const defaultWorkspaceId = applicableTargets[0] ??
+    orderedEligibleWorkspaces[0] ??
+    null;
+  const qualification = unknownRoleCount > 0
+    ? defaultWorkspaceId === null
+      ? "Workspace membership roles are missing or unrecognized; no eligible workspace is available."
+      : "Some workspace memberships have missing or unrecognized roles and were excluded."
+    : defaultWorkspaceId === null
+      ? "No eligible non-viewer workspace memberships."
+      : null;
 
   const workspaces = [...displayedWorkspaceIds]
     .map((workspaceId) => ({

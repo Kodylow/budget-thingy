@@ -101,11 +101,13 @@ function OverviewHeader({
   workspaceId,
   selectedPeriodLabel,
   onWorkspaceChange,
+  workspacePlaceholder,
 }: {
   workspaces: Array<{ workspaceId: string; workspaceName: string }>;
   workspaceId: string | null;
   selectedPeriodLabel: string;
   onWorkspaceChange: (workspaceId: string) => void;
+  workspacePlaceholder: string;
 }) {
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -117,7 +119,7 @@ function OverviewHeader({
           <span className="block text-xs font-medium text-muted-foreground">Workspace</span>
           <Select value={workspaceId ?? ''} onValueChange={onWorkspaceChange} disabled={workspaces.length === 0}>
             <SelectTrigger className="h-11 w-full bg-background sm:h-8 sm:w-[220px]" aria-label="Workspace">
-              <SelectValue placeholder={workspaces.length === 0 ? 'Loading workspaces' : 'Choose a workspace'} />
+              <SelectValue placeholder={workspacePlaceholder} />
             </SelectTrigger>
             <SelectContent>{workspaces.map((workspace) => <SelectItem key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.workspaceName}</SelectItem>)}</SelectContent>
           </Select>
@@ -165,17 +167,17 @@ export default function Home() {
   const membershipQuery = useGetMyMembershipContext({
     query: {
       queryKey: [...getGetMyMembershipContextQueryKey(), authorizationKey],
+      enabled: availability === 'authorized',
     },
   });
   const membershipContext = membershipQuery.data;
   const workspaces = membershipContext?.workspaces ?? [];
   const workspaceResolution = resolvePersonalWorkspace(membershipContext, requestedWorkspaceId);
-  const selectedWorkspace = identityWorkspaceResetRequired ? null : workspaceResolution.workspace;
+  const selectedWorkspace = identityWorkspaceResetRequired || availability !== 'authorized' ? null : workspaceResolution.workspace;
   const defaultWorkspace = membershipContext?.defaultWorkspaceId
     ? workspaces.find((workspace) => workspace.workspaceId === membershipContext.defaultWorkspaceId) ?? null
     : null;
-  const invalidWorkspace = workspaceResolution.status === 'invalid';
-  const chooseWorkspace = workspaceResolution.status === 'choose';
+  const noEligibleWorkspace = workspaceResolution.status === 'empty';
   const workspaceId = selectedWorkspace?.workspaceId ?? null;
 
   const setWorkspaceId = useCallback((nextWorkspaceId: string) => {
@@ -213,10 +215,13 @@ export default function Home() {
   }, [availability, effectiveUserId, previousEffectiveUserId, setLocation]);
 
   useEffect(() => {
-    if (!requestedWorkspaceId && membershipContext?.defaultWorkspaceId && selectedWorkspace) {
-      setWorkspaceId(membershipContext.defaultWorkspaceId);
+    if (selectedWorkspace && requestedWorkspaceId !== selectedWorkspace.workspaceId) {
+      const params = new URLSearchParams(window.location.search);
+      params.set('workspaceId', selectedWorkspace.workspaceId);
+      params.delete('page');
+      setLocation(`${window.location.pathname}?${params.toString()}`, { replace: true });
     }
-  }, [membershipContext?.defaultWorkspaceId, requestedWorkspaceId, selectedWorkspace, setWorkspaceId]);
+  }, [requestedWorkspaceId, selectedWorkspace, setLocation]);
 
   const dashboardParams = {
     viewScope: 'my' as const,
@@ -279,6 +284,9 @@ export default function Home() {
       workspaceId={workspaceId}
       selectedPeriodLabel={selectedPeriodLabel}
       onWorkspaceChange={setWorkspaceId}
+      workspacePlaceholder={membershipQuery.isLoading || identityWorkspaceResetRequired
+        ? 'Loading workspaces'
+        : membershipContext ? 'No eligible workspace' : 'Workspaces unavailable'}
     />
   );
 
@@ -300,9 +308,9 @@ export default function Home() {
       <div className="mx-auto max-w-[1280px] space-y-6 p-4 md:p-8">
         {overviewHeader}
         <div className="flex min-h-[40vh] flex-col items-center justify-center text-center">
-          <p className="font-medium">{invalidWorkspace ? 'That workspace is not available.' : chooseWorkspace ? 'Choose a workspace.' : 'Your workspace dashboard is unavailable.'}</p>
+          <p className="font-medium">{noEligibleWorkspace ? 'No eligible workspace membership for personal Home.' : !membershipContext ? 'Workspace memberships are unavailable.' : 'Your workspace dashboard is unavailable.'}</p>
           {membershipContext?.qualification && <AdminDataQualityNote title="Workspace membership">{membershipContext.qualification}</AdminDataQualityNote>}
-          {!invalidWorkspace && !chooseWorkspace && (
+          {!noEligibleWorkspace && (
           <Button variant="outline" className="mt-4" onClick={() => {
             void membershipQuery.refetch();
             if (workspaceId) void myDashboardQuery.refetch();
